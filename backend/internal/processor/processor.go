@@ -166,12 +166,10 @@ func (p *Processor) lockMegaTarget(providerType, urlStr, username string) func()
 	return p.megaTargetLocks.lock(providerType + "\x00" + urlStr + "\x00" + strings.ToLower(username))
 }
 
-// ResolveTargetPath computes the target file or directory path for a task
+// ResolveTargetPath computes the destination path for a migrated file,
 // considering target directory and target filename/directory sanitization.
-// Immich sources/targets are always flat (the library root), but an Immich
-// source's asset UUID is renamed to its original filename from task metadata so
-// the destination keeps human-readable names. No virtual album/path translation
-// is applied.
+// For Immich sources, assets from an album are organized into Target/<AlbumName>/<filename>,
+// while assets from the entire library are organized by date into Target/<YYYY>/<MM>/<filename>.
 func ResolveTargetPath(resourceType, filePath string, metadata []byte, targetDir, sourceProvider, targetProvider string) string {
 	if resourceType != "files" {
 		return filePath
@@ -179,11 +177,21 @@ func ResolveTargetPath(resourceType, filePath string, metadata []byte, targetDir
 
 	relativePath := filePath
 
-	// Immich sources store the original filename in metadata; replace the asset
-	// UUID with it while staying flat (no album structure).
 	if sourceProvider == "immich" {
-		if filename := immichFilenameFromMetadata(metadata); filename != "" {
-			relativePath = path.Join(path.Dir(relativePath), path.Base(filename))
+		filename := immichFilenameFromMetadata(metadata)
+		if filename == "" {
+			filename = path.Base(filePath)
+		}
+
+		albumName := immichAlbumNameFromMetadata(metadata)
+		year, month := immichYearMonthFromMetadata(metadata)
+
+		if albumName != "" {
+			relativePath = path.Join(albumName, filename)
+		} else if year != "" && month != "" {
+			relativePath = path.Join(year, month, filename)
+		} else {
+			relativePath = filename
 		}
 	}
 
@@ -239,6 +247,71 @@ func immichFilenameFromMetadata(metadata []byte) string {
 		return meta.CustomProps["immich_filename"]
 	}
 	return ""
+}
+
+func immichAlbumNameFromMetadata(metadata []byte) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var meta struct {
+		CustomProps map[string]string `json:"custom_props"`
+		AlbumName   string            `json:"immich_album_name"`
+	}
+	if err := json.Unmarshal(metadata, &meta); err != nil {
+		return ""
+	}
+	// CustomProps is the canonical path; direct key is a legacy fallback.
+	if meta.AlbumName != "" {
+		return meta.AlbumName
+	}
+	if meta.CustomProps != nil {
+		return meta.CustomProps["immich_album_name"]
+	}
+	return ""
+}
+
+func immichYearMonthFromMetadata(metadata []byte) (string, string) {
+	if len(metadata) == 0 {
+		return "", ""
+	}
+	var meta struct {
+		CustomProps map[string]string `json:"custom_props"`
+		Year        string            `json:"immich_year"`
+		Month       string            `json:"immich_month"`
+		CreatedAt   string            `json:"immich_file_created_at"`
+		ModifiedAt  string            `json:"immich_file_modified_at"`
+	}
+	if err := json.Unmarshal(metadata, &meta); err != nil {
+		return "", ""
+	}
+	year := meta.Year
+	month := meta.Month
+	if year == "" && meta.CustomProps != nil {
+		year = meta.CustomProps["immich_year"]
+	}
+	if month == "" && meta.CustomProps != nil {
+		month = meta.CustomProps["immich_month"]
+	}
+	if year != "" && month != "" {
+		return year, month
+	}
+
+	createdAtStr := meta.CreatedAt
+	if createdAtStr == "" && meta.CustomProps != nil {
+		createdAtStr = meta.CustomProps["immich_file_created_at"]
+	}
+	if createdAtStr == "" {
+		createdAtStr = meta.ModifiedAt
+		if createdAtStr == "" && meta.CustomProps != nil {
+			createdAtStr = meta.CustomProps["immich_file_modified_at"]
+		}
+	}
+	if createdAtStr != "" {
+		if t, err := time.Parse(time.RFC3339, createdAtStr); err == nil && !t.IsZero() {
+			return t.Format("2006"), t.Format("01")
+		}
+	}
+	return "", ""
 }
 
 // newProvider creates a provider scoped to a single operation. Providers retain

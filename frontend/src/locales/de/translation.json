@@ -284,6 +284,11 @@
     "mainDir": "Hauptverzeichnis (/)",
     "immichDuplicateDetection": "Immich erkennt Duplikate selbstständig. Bereits vorhandene Medien werden übersprungen.",
     "immichSyncUnsupported": "Synchronisierungsaufträge werden nicht unterstützt, wenn ein Endpunkt Immich ist.",
+    "immichLibrary": "Gesamte Mediathek",
+    "immichLibrarySubtitle": "Wird auf dem Ziel nach Jahr/Monat strukturiert (z. B. 2024/05/foto.jpg)",
+    "immichAlbums": "Alben",
+    "immichAlbumsSubtitle": "Wähle Alben aus, die jeweils als eigener Zielordner angelegt werden",
+    "immichAlbumSubtitle": "Wird als eigener Zielordner angelegt",
     "errors": {
       "selectOne": "Bitte wähle mindestens einen Ordner, einen Kalender oder ein Adressbuch aus.",
       "futureTime": "Der geplante Startzeitpunkt muss in der Zukunft liegen.",

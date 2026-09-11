@@ -284,6 +284,11 @@
     "mainDir": "Main directory (/)",
     "immichDuplicateDetection": "Immich detects duplicates natively. Existing media will be skipped.",
     "immichSyncUnsupported": "Sync jobs are not supported when either endpoint is Immich.",
+    "immichLibrary": "Entire Library",
+    "immichLibrarySubtitle": "Structured on target by year/month (e.g. 2024/05/photo.jpg)",
+    "immichAlbums": "Albums",
+    "immichAlbumsSubtitle": "Select albums to transfer each as a dedicated target folder",
+    "immichAlbumSubtitle": "Created as a dedicated folder on target",
     "errors": {
       "selectOne": "Please select at least one folder, calendar, or address book.",
       "futureTime": "The scheduled start time must be in the future.",

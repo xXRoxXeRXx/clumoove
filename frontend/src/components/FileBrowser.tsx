@@ -71,6 +71,48 @@ const isOneDrivePersonalVault = (file: CloudFile) =>
 const isAbortError = (error: unknown) =>
   error instanceof DOMException && error.name === "AbortError";
 
+const canExpandNode = (file: CloudFile, isImmich: boolean): boolean => {
+  if (!file.is_dir) return false;
+  if (isImmich) {
+    return file.path === "/Albums";
+  }
+  return true;
+};
+
+const resolveImmichSelectionState = (
+  prev: Record<string, boolean>,
+  filePath: string,
+): Record<string, boolean> => {
+  const willBeSelected = !prev[filePath];
+  const next = { ...prev, [filePath]: willBeSelected };
+
+  if (filePath === "/Library" && willBeSelected) {
+    next["/Albums"] = false;
+    for (const key of Object.keys(next)) {
+      if (key.startsWith("/Albums/")) {
+        next[key] = false;
+      }
+    }
+  } else if (filePath === "/Albums") {
+    if (willBeSelected) {
+      next["/Library"] = false;
+    }
+    for (const key of Object.keys(next)) {
+      if (key.startsWith("/Albums/")) {
+        next[key] = willBeSelected;
+      }
+    }
+  } else if (filePath.startsWith("/Albums/")) {
+    if (willBeSelected) {
+      next["/Library"] = false;
+    } else {
+      next["/Albums"] = false;
+    }
+  }
+
+  return next;
+};
+
 interface SourceTreeRowProps {
   file: CloudFile;
   depth: number;
@@ -88,6 +130,9 @@ interface SourceTreeRowProps {
   onExpand: (path: string) => void;
   onSelect: (path: string) => void;
   onFocus: (path: string) => void;
+  canExpand?: boolean;
+  displayName?: string;
+  description?: string;
 }
 
 const SourceTreeRow = React.memo(function SourceTreeRow({
@@ -107,7 +152,12 @@ const SourceTreeRow = React.memo(function SourceTreeRow({
   onExpand,
   onSelect,
   onFocus,
+  canExpand = true,
+  displayName,
+  description,
 }: SourceTreeRowProps) {
+  const showExpandButton = file.is_dir && canExpand;
+
   return (
     <div
       ref={(element) => {
@@ -116,7 +166,7 @@ const SourceTreeRow = React.memo(function SourceTreeRow({
       }}
       role="treeitem"
       aria-level={depth + 1}
-      aria-expanded={file.is_dir ? isExpanded : undefined}
+      aria-expanded={showExpandButton ? isExpanded : undefined}
       aria-selected={isSelected}
       tabIndex={isFocused ? 0 : -1}
       onFocus={() => onFocus(file.path)}
@@ -125,7 +175,7 @@ const SourceTreeRow = React.memo(function SourceTreeRow({
       }`}
       style={{ paddingLeft: `${depth * 20 + 16}px` }}
     >
-      {file.is_dir ? (
+      {showExpandButton ? (
         <button
           type="button"
           tabIndex={-1}
@@ -134,9 +184,17 @@ const SourceTreeRow = React.memo(function SourceTreeRow({
           disabled={isPersonalVault}
           aria-label={isExpanded ? collapseLabel : expandLabel}
         >
-          {isLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-[var(--color-text-primary)]" /> : isExpanded ? <ChevronDown className="w-4 h-4 stroke-[2]" /> : <ChevronRight className="w-4 h-4 stroke-[2]" />}
+          {isLoading ? (
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-[var(--color-text-primary)]" />
+          ) : isExpanded ? (
+            <ChevronDown className="w-4 h-4 stroke-[2]" />
+          ) : (
+            <ChevronRight className="w-4 h-4 stroke-[2]" />
+          )}
         </button>
-      ) : <span className="w-5" />}
+      ) : (
+        <span className="w-5" />
+      )}
 
       <button
         type="button"
@@ -146,23 +204,60 @@ const SourceTreeRow = React.memo(function SourceTreeRow({
           if (!isPersonalVault) onSelect(file.path);
         }}
         disabled={isPersonalVault}
-        className="flex items-center justify-center"
+        className="flex items-center justify-center shrink-0"
         aria-label={isPersonalVault ? unavailableLabel : selectLabel}
         title={isPersonalVault ? unavailableLabel : undefined}
       >
-        <span className={`w-4 h-4 border rounded flex items-center justify-center transition-all duration-200 ${isSelected ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] border-transparent" : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:border-[var(--color-border)]"}`}>
-          {isSelected && <Check className="w-3 h-3 text-[var(--color-text-inverse)] stroke-[3.5]" />}
+        <span
+          className={`w-4 h-4 border rounded flex items-center justify-center transition-all duration-200 ${
+            isSelected
+              ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] border-transparent"
+              : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:border-[var(--color-border)]"
+          }`}
+        >
+          {isSelected && (
+            <Check className="w-3 h-3 text-[var(--color-text-inverse)] stroke-[3.5]" />
+          )}
         </span>
       </button>
 
       <span className="shrink-0">
-        {file.is_dir ? (isExpanded ? <FolderOpen className="w-5 h-5 text-[var(--color-text-secondary)]" /> : <Folder className="w-5 h-5 text-[var(--color-text-secondary)]" />) : <FileIcon name={file.name} className="w-5 h-5 shrink-0" />}
+        {file.is_dir ? (
+          showExpandButton && isExpanded ? (
+            <FolderOpen className="w-5 h-5 text-[var(--color-text-secondary)]" />
+          ) : (
+            <Folder className="w-5 h-5 text-[var(--color-text-secondary)]" />
+          )
+        ) : (
+          <FileIcon name={file.name} className="w-5 h-5 shrink-0" />
+        )}
       </span>
-      <span className={`text-[12px] truncate flex-grow leading-normal py-0.5 ${isPersonalVault ? "text-[var(--color-text-muted)]" : isSelected ? "text-[var(--color-text-primary)] font-bold" : "text-[var(--color-text-primary)]"}`}>
-        {file.name}
-        {isPersonalVault && <span className="ml-2 text-[10px]">{unavailableLabel}</span>}
-      </span>
-      {!file.is_dir && <span className="ui-badge ui-badge-muted text-[10px] font-bold px-2 py-0.5 rounded">{formattedSize}</span>}
+      <div className="flex flex-col flex-grow min-w-0 py-0.5">
+        <span
+          className={`text-[12px] truncate leading-normal ${
+            isPersonalVault
+              ? "text-[var(--color-text-muted)]"
+              : isSelected
+                ? "text-[var(--color-text-primary)] font-bold"
+                : "text-[var(--color-text-primary)]"
+          }`}
+        >
+          {displayName || file.name}
+          {isPersonalVault && (
+            <span className="ml-2 text-[10px]">{unavailableLabel}</span>
+          )}
+        </span>
+        {description && (
+          <span className="text-[11px] text-[var(--color-text-muted)] truncate leading-tight mt-0.5">
+            {description}
+          </span>
+        )}
+      </div>
+      {!file.is_dir && (
+        <span className="ui-badge ui-badge-muted text-[10px] font-bold px-2 py-0.5 rounded">
+          {formattedSize}
+        </span>
+      )}
     </div>
   );
 });
@@ -231,7 +326,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     () => {
       return initialFiles.reduce(
         (acc, f) => {
-          acc[f.path] = !isOneDrivePersonalVault(f);
+          if (isImmichSource) {
+            acc[f.path] = f.path === "/Library";
+          } else {
+            acc[f.path] = !isOneDrivePersonalVault(f);
+          }
           return acc;
         },
         {} as Record<string, boolean>,
@@ -711,6 +810,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const fetchChildren = useCallback(
     async (folderPath: string, force?: boolean) => {
+      if (isImmichSource && folderPath !== "/Albums") return;
       if (loadingPathsRef.current[folderPath]) return;
       if (!force && directoryContentsRef.current[folderPath]) return;
 
@@ -755,7 +855,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             const next = { ...prev };
             for (const child of items) {
               if (next[child.path] === undefined) {
-                next[child.path] = !isOneDrivePersonalVault(child);
+                if (isImmichSource && folderPath === "/Albums") {
+                  next[child.path] = !!prev["/Albums"];
+                } else {
+                  next[child.path] = !isOneDrivePersonalVault(child);
+                }
               }
             }
             return next;
@@ -788,6 +892,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       releaseRequestController,
       translateApiError,
       t,
+      isImmichSource,
     ],
   );
 
@@ -802,9 +907,16 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     void fetchChildren(folderPath);
   }, [fetchChildren]);
 
-  const toggleSelect = useCallback((filePath: string) => {
-    setSelectedPaths((prev) => ({ ...prev, [filePath]: !prev[filePath] }));
-  }, []);
+  const toggleSelect = useCallback(
+    (filePath: string) => {
+      setSelectedPaths((prev) =>
+        isImmichSource
+          ? resolveImmichSelectionState(prev, filePath)
+          : { ...prev, [filePath]: !prev[filePath] },
+      );
+    },
+    [isImmichSource],
+  );
 
   const deselectAll = () => {
     setSelectedPaths({});
@@ -817,14 +929,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     const addChildren = (entries: CloudFile[], depth: number) => {
       entries.forEach((file) => {
         nodes.push({ file, depth });
-        if (file.is_dir && expandedPaths[file.path]) {
+        if (
+          file.is_dir &&
+          canExpandNode(file, isImmichSource) &&
+          expandedPaths[file.path]
+        ) {
           addChildren(directoryContents[file.path] || [], depth + 1);
         }
       });
     };
     addChildren(directoryContents["/"] || [], 0);
     return nodes;
-  }, [directoryContents, expandedPaths]);
+  }, [directoryContents, expandedPaths, isImmichSource]);
 
   const resolvedFocusedSourcePath = focusedSourcePath && sourceVisibleNodes.some(({ file }) => file.path === focusedSourcePath)
     ? focusedSourcePath
@@ -852,15 +968,25 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         break;
       case "ArrowRight":
         event.preventDefault();
-        if (current.file.is_dir && !expandedPaths[current.file.path] && !isOneDrivePersonalVault(current.file)) {
+        if (
+          canExpandNode(current.file, isImmichSource) &&
+          !expandedPaths[current.file.path] &&
+          !isOneDrivePersonalVault(current.file)
+        ) {
           toggleExpand(current.file.path);
-        } else if (current.file.is_dir && sourceVisibleNodes[currentIndex + 1]?.depth === current.depth + 1) {
+        } else if (
+          current.file.is_dir &&
+          sourceVisibleNodes[currentIndex + 1]?.depth === current.depth + 1
+        ) {
           move(currentIndex + 1);
         }
         break;
       case "ArrowLeft": {
         event.preventDefault();
-        if (current.file.is_dir && expandedPaths[current.file.path]) {
+        if (
+          canExpandNode(current.file, isImmichSource) &&
+          expandedPaths[current.file.path]
+        ) {
           toggleExpand(current.file.path);
           break;
         }
@@ -1176,11 +1302,27 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   };
 
   const renderNode = (file: CloudFile, depth: number = 0) => {
-    const isExpanded = !!expandedPaths[file.path];
+    const canExpand = canExpandNode(file, isImmichSource);
+    const isExpanded = canExpand && !!expandedPaths[file.path];
     const isSelected = !!selectedPaths[file.path];
     const isLoading = !!loadingPaths[file.path];
     const children = directoryContents[file.path] || [];
     const isPersonalVault = isOneDrivePersonalVault(file);
+
+    let displayName = file.name;
+    let description: string | undefined;
+
+    if (isImmichSource) {
+      if (file.path === "/Library") {
+        displayName = t("fileBrowser.immichLibrary");
+        description = t("fileBrowser.immichLibrarySubtitle");
+      } else if (file.path === "/Albums") {
+        displayName = t("fileBrowser.immichAlbums");
+        description = t("fileBrowser.immichAlbumsSubtitle");
+      } else if (file.path.startsWith("/Albums/")) {
+        description = t("fileBrowser.immichAlbumSubtitle");
+      }
+    }
 
     return (
       <div key={file.path} className="select-none font-sans text-xs">
@@ -1193,18 +1335,21 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           isPersonalVault={isPersonalVault}
           isFocused={resolvedFocusedSourcePath === file.path}
           formattedSize={formatBytes(file.size)}
-          expandLabel={t("common.expand", { name: file.name })}
-          collapseLabel={t("common.collapse", { name: file.name })}
-          selectLabel={`${t("common.select")} ${file.name}`}
+          expandLabel={t("common.expand", { name: displayName })}
+          collapseLabel={t("common.collapse", { name: displayName })}
+          selectLabel={`${t("common.select")} ${displayName}`}
           unavailableLabel={t("fileBrowser.personalVaultUnavailable")}
           treeItemRefs={sourceTreeItemRefs}
           onExpand={toggleExpand}
           onSelect={toggleSelect}
           onFocus={setFocusedSourcePath}
+          canExpand={canExpand}
+          displayName={displayName}
+          description={description}
         />
 
         {/* Children (Recursion) */}
-        {file.is_dir && isExpanded && children.length > 0 && (
+        {file.is_dir && canExpand && isExpanded && children.length > 0 && (
           <div role="group" className="relative">
             {/* Visual connector left track */}
             <div className="absolute left-6.5 top-0 bottom-4.5 border-l border-[var(--color-border)]"></div>
@@ -1212,7 +1357,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           </div>
         )}
 
-        {file.is_dir && isExpanded && children.length === 0 && !isLoading && (
+        {file.is_dir && canExpand && isExpanded && children.length === 0 && !isLoading && (
           <div className="text-[10px] text-[var(--color-text-muted)] italic py-2.5 pl-14">
             {t("fileBrowser.emptyDir")}
           </div>

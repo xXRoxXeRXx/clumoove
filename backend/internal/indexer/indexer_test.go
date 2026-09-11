@@ -160,7 +160,7 @@ func TestIndexFolderFlushesStagedCountersAfterCommit(t *testing.T) {
 	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: []storage.CloudResource{
 		{Path: "/report.txt", Name: "report.txt", Size: 42},
 		{Path: "/notes.txt", Name: "notes.txt", Size: 8},
-	}}, "files", "/", "migration-1", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
+	}}, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
 	if err != nil {
 		t.Fatalf("indexFolder() error = %v", err)
 	}
@@ -177,7 +177,7 @@ func TestIndexFolderDoesNotApplyStagedCountersWhenBatchInsertFails(t *testing.T)
 	files, dirs, bytes := 0, 0, int64(0)
 	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: []storage.CloudResource{{
 		Path: "/report.txt", Name: "report.txt", Size: 42,
-	}}}, "files", "/", "migration-1", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
+	}}}, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
 	if err == nil {
 		t.Fatal("indexFolder() succeeded after batch insert failure")
 	}
@@ -195,7 +195,7 @@ func TestIndexFolderStopsWhenMigrationIndexingClaimIsLost(t *testing.T) {
 	files, dirs, bytes := 0, 0, int64(0)
 	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: []storage.CloudResource{{
 		Path: "/report.txt", Name: "report.txt", Size: 42,
-	}}}, "files", "/", "migration-1", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
+	}}}, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
 	if !errors.Is(err, db.ErrMigrationIndexingClaimLost) {
 		t.Fatalf("indexFolder() error = %v, want ErrMigrationIndexingClaimLost", err)
 	}
@@ -219,7 +219,7 @@ func TestIndexFolderFlushesPartialBatchAfterCancellation(t *testing.T) {
 			{Path: "/later", Name: "later", IsDir: true},
 		},
 		onListing: cancel,
-	}, "files", "/", "migration-1", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+	}, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
 	if err != nil {
 		t.Fatalf("indexFolder() error = %v", err)
 	}
@@ -248,7 +248,7 @@ func TestIndexFolderSkipsNonMediaForImmichWithoutError(t *testing.T) {
 		{Path: "/temp.tmp", Name: "temp.tmp", Size: 5},
 	}
 
-	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: listing}, "files", "/", "migration-1", "immich", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: listing}, "files", "/", "migration-1", "local", "immich", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
 	if err != nil {
 		t.Fatalf("indexFolder() error = %v", err)
 	}

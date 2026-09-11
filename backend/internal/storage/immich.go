@@ -12,16 +12,21 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 // ImmichProvider implements the stable v2 Immich API subset. It deliberately
 // uses asset IDs, never filenames, for source operations.
 type ImmichProvider struct {
-	BaseURL    string
-	APIKey     string
-	HTTPClient *http.Client
+	BaseURL      string
+	APIKey       string
+	HTTPClient   *http.Client
+	albumsMu     sync.RWMutex
+	albums       map[string]string // id -> albumName
+	albumsLoaded bool
 }
 
 func NewImmichProvider(baseURL, apiKey string) (*ImmichProvider, error) {
@@ -35,7 +40,12 @@ func NewImmichProvider(baseURL, apiKey string) (*ImmichProvider, error) {
 	u.Path = strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), "/api") + "/api"
 	u.RawQuery, u.Fragment = "", ""
 	tr := &http.Transport{DialContext: egressDialer(u.Hostname()), ForceAttemptHTTP2: true, MaxIdleConns: 100, MaxIdleConnsPerHost: 20, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 60 * time.Second}
-	return &ImmichProvider{BaseURL: strings.TrimSuffix(u.String(), "/"), APIKey: apiKey, HTTPClient: &http.Client{Transport: newUserAgentTransport(tr), CheckRedirect: rejectEgressRedirect}}, nil
+	return &ImmichProvider{
+		BaseURL:    strings.TrimSuffix(u.String(), "/"),
+		APIKey:     apiKey,
+		HTTPClient: &http.Client{Transport: newUserAgentTransport(tr), CheckRedirect: rejectEgressRedirect},
+		albums:     make(map[string]string),
+	}, nil
 }
 
 // Note: ImmichProvider intentionally does not implement MetadataApplier. Immich receives
@@ -136,17 +146,77 @@ func (p *ImmichProvider) lookupVerificationAsset(ctx context.Context, typ string
 	}
 	return asset, true, nil
 }
-func resourceForAsset(a immichAsset, virtualPath string) CloudResource {
-	props := map[string]string{"immich_asset_id": a.ID, "immich_filename": a.OriginalFileName, "immich_mime_type": a.OriginalMimeType, "immich_file_created_at": a.FileCreatedAt, "immich_file_modified_at": a.FileModifiedAt}
-	return CloudResource{Path: virtualPath, Name: a.OriginalFileName, Size: a.ExifInfo.FileSizeInByte, Hash: immichHash(a.Checksum), LastModified: parseImmichTime(a.FileModifiedAt), Metadata: FileMetadata{ModifiedTime: parseImmichTime(a.FileModifiedAt), CustomProps: props}}
+type immichAlbum struct {
+	ID        string `json:"id"`
+	AlbumName string `json:"albumName"`
 }
-func (p *ImmichProvider) search(ctx context.Context) ([]immichAsset, error) {
+
+func (p *ImmichProvider) listAlbums(ctx context.Context) ([]immichAlbum, error) {
+	r, err := p.request(ctx, "GET", "/albums", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Body.Close()
+	if r.StatusCode != 200 {
+		return nil, immichStatus(r, "albums")
+	}
+	var a []immichAlbum
+	err = json.NewDecoder(r.Body).Decode(&a)
+	return a, err
+}
+
+// refreshAlbums caches all albums for the lifetime of this provider.
+// Providers are single-use per migration task.
+func (p *ImmichProvider) refreshAlbums(ctx context.Context) error {
+	p.albumsMu.RLock()
+	loaded := p.albumsLoaded
+	p.albumsMu.RUnlock()
+	if loaded {
+		return nil
+	}
+
+	albums, err := p.listAlbums(ctx)
+	if err != nil {
+		return err
+	}
+
+	p.albumsMu.Lock()
+	defer p.albumsMu.Unlock()
+	for _, album := range albums {
+		p.albums[album.ID] = album.AlbumName
+	}
+	p.albumsLoaded = true
+	return nil
+}
+
+func resourceForAsset(a immichAsset, virtualPath string) CloudResource {
+	props := map[string]string{
+		"immich_asset_id":         a.ID,
+		"immich_filename":         a.OriginalFileName,
+		"immich_mime_type":        a.OriginalMimeType,
+		"immich_file_created_at":  a.FileCreatedAt,
+		"immich_file_modified_at": a.FileModifiedAt,
+	}
+	return CloudResource{
+		Path:         virtualPath,
+		Name:         a.OriginalFileName,
+		Size:         a.ExifInfo.FileSizeInByte,
+		Hash:         immichHash(a.Checksum),
+		LastModified: parseImmichTime(a.FileModifiedAt),
+		Metadata:     FileMetadata{ModifiedTime: parseImmichTime(a.FileModifiedAt), CustomProps: props},
+	}
+}
+
+func (p *ImmichProvider) search(ctx context.Context, albumID string) ([]immichAsset, error) {
 	var all []immichAsset
 	// Hard cap of 10000 pages × 500 assets = 5M assets. This is the only way to
 	// browse the flat library (no folder hierarchy), so for libraries larger than
 	// the cap the indexing warning surfaces rather than a silent truncation.
 	for page := 1; page <= 10000; page++ {
 		query := map[string]any{"page": page, "size": 500, "withArchived": false, "withDeleted": false, "withExif": true}
+		if albumID != "" {
+			query["albumIds"] = []string{albumID}
+		}
 		body, err := json.Marshal(query)
 		if err != nil {
 			return nil, err
@@ -181,26 +251,8 @@ func (p *ImmichProvider) search(ctx context.Context) ([]immichAsset, error) {
 	}
 	return nil, fmt.Errorf("immich search pagination limit exceeded")
 }
-func (p *ImmichProvider) GetDirectoryListing(ctx context.Context, typ, dir string) ([]CloudResource, error) {
-	if err := p.checkType(typ); err != nil {
-		return nil, err
-	}
-	dir = strings.TrimSuffix(dir, "/")
-	if dir != "" && dir != "/" {
-		// Immich exposes a single flat library; a non-root path is a single asset
-		// fetched directly, avoiding a full-library scan.
-		asset, err := p.getAssetByID(ctx, immichAssetID(dir))
-		if err != nil {
-			return nil, err
-		}
-		res := resourceForAsset(asset, "/"+asset.ID)
-		res.Name = asset.OriginalFileName
-		return []CloudResource{res}, nil
-	}
-	assets, err := p.search(ctx)
-	if err != nil {
-		return nil, err
-	}
+
+func resolveAssetResources(assets []immichAsset, kind, albumID, albumName string) []CloudResource {
 	seenNames := make(map[string]int)
 	for _, a := range assets {
 		origName := a.OriginalFileName
@@ -241,15 +293,112 @@ func (p *ImmichProvider) GetDirectoryListing(ctx context.Context, typ, dir strin
 		}
 		usedNames[resolvedName] = true
 
-		res := resourceForAsset(a, "/"+a.ID)
-		res.Name = resolvedName
-		if res.Metadata.CustomProps != nil {
-			res.Metadata.CustomProps["immich_filename"] = resolvedName
+		virtualPath := "/Library/" + a.ID
+		if kind == "album" {
+			virtualPath = "/Albums/" + albumID + "/" + a.ID
 		}
+
+		res := resourceForAsset(a, virtualPath)
+		res.Name = resolvedName
+		if res.Metadata.CustomProps == nil {
+			res.Metadata.CustomProps = make(map[string]string)
+		}
+		res.Metadata.CustomProps["immich_filename"] = resolvedName
+		res.Metadata.CustomProps["immich_source_kind"] = kind
+
+		if kind == "album" {
+			res.Metadata.CustomProps["immich_album_id"] = albumID
+			res.Metadata.CustomProps["immich_album_name"] = albumName
+		} else {
+			createdAt := parseImmichTime(a.FileCreatedAt)
+			if createdAt.IsZero() {
+				createdAt = parseImmichTime(a.FileModifiedAt)
+			}
+			if !createdAt.IsZero() {
+				res.Metadata.CustomProps["immich_year"] = createdAt.Format("2006")
+				res.Metadata.CustomProps["immich_month"] = createdAt.Format("01")
+			}
+			// When no date is available, omit both keys so the processor falls back
+			// to a flat filename rather than creating an "Unknown/Unknown/" hierarchy.
+		}
+
 		out = append(out, res)
 	}
-	return out, nil
+	return out
 }
+
+func (p *ImmichProvider) GetDirectoryListing(ctx context.Context, typ, dir string) ([]CloudResource, error) {
+	if err := p.checkType(typ); err != nil {
+		return nil, err
+	}
+	dir = strings.TrimSuffix(dir, "/")
+	if dir == "" || dir == "/" {
+		return []CloudResource{
+			{Path: "/Library", Name: "Gesamte Mediathek", IsDir: true},
+			{Path: "/Albums", Name: "Alben", IsDir: true},
+		}, nil
+	}
+	if dir == "/Albums" {
+		if err := p.refreshAlbums(ctx); err != nil {
+			return nil, err
+		}
+		p.albumsMu.RLock()
+		out := make([]CloudResource, 0, len(p.albums))
+		for id, name := range p.albums {
+			out = append(out, CloudResource{
+				Path:  "/Albums/" + id,
+				Name:  name,
+				IsDir: true,
+				Metadata: FileMetadata{
+					CustomProps: map[string]string{
+						"immich_album_id":   id,
+						"immich_album_name": name,
+					},
+				},
+			})
+		}
+		p.albumsMu.RUnlock()
+		sort.Slice(out, func(i, j int) bool {
+			return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+		})
+		return out, nil
+	}
+	if dir == "/Library" {
+		assets, err := p.search(ctx, "")
+		if err != nil {
+			return nil, err
+		}
+		return resolveAssetResources(assets, "library", "", ""), nil
+	}
+	if strings.HasPrefix(dir, "/Albums/") && strings.Count(strings.Trim(dir, "/"), "/") == 1 {
+		albumID := path.Base(dir)
+		if err := p.refreshAlbums(ctx); err != nil {
+			return nil, err
+		}
+		p.albumsMu.RLock()
+		albumName := p.albums[albumID]
+		p.albumsMu.RUnlock()
+		if albumName == "" {
+			albumName = albumID
+		}
+		assets, err := p.search(ctx, albumID)
+		if err != nil {
+			return nil, err
+		}
+		return resolveAssetResources(assets, "album", albumID, albumName), nil
+	}
+
+	// Immich exposes a single flat library; a non-root path is a single asset
+	// fetched directly, avoiding a full-library scan.
+	asset, err := p.getAssetByID(ctx, immichAssetID(dir))
+	if err != nil {
+		return nil, err
+	}
+	res := resourceForAsset(asset, dir)
+	res.Name = asset.OriginalFileName
+	return []CloudResource{res}, nil
+}
+
 func (p *ImmichProvider) InspectResource(ctx context.Context, typ, resourcePath string) (CloudResource, error) {
 	if err := p.checkType(typ); err != nil {
 		return CloudResource{}, err
@@ -257,13 +406,41 @@ func (p *ImmichProvider) InspectResource(ctx context.Context, typ, resourcePath 
 	if resourcePath == "/" || resourcePath == "" {
 		return CloudResource{Path: "/", Name: "", IsDir: true}, nil
 	}
-	// Immich is a flat library keyed by asset ID; a non-root path is an asset
-	// fetched directly via GET /assets/{id}, never a recursive library scan.
+	if resourcePath == "/Library" {
+		return CloudResource{Path: "/Library", Name: "Gesamte Mediathek", IsDir: true}, nil
+	}
+	if resourcePath == "/Albums" {
+		return CloudResource{Path: "/Albums", Name: "Alben", IsDir: true}, nil
+	}
+	if strings.HasPrefix(resourcePath, "/Albums/") && strings.Count(strings.Trim(resourcePath, "/"), "/") == 1 {
+		albumID := path.Base(resourcePath)
+		if err := p.refreshAlbums(ctx); err != nil {
+			return CloudResource{}, err
+		}
+		p.albumsMu.RLock()
+		albumName := p.albums[albumID]
+		p.albumsMu.RUnlock()
+		if albumName == "" {
+			albumName = albumID
+		}
+		return CloudResource{
+			Path:  resourcePath,
+			Name:  albumName,
+			IsDir: true,
+			Metadata: FileMetadata{
+				CustomProps: map[string]string{
+					"immich_album_id":   albumID,
+					"immich_album_name": albumName,
+				},
+			},
+		}, nil
+	}
+
 	asset, err := p.getAssetByID(ctx, immichAssetID(resourcePath))
 	if err != nil {
 		return CloudResource{}, err
 	}
-	res := resourceForAsset(asset, "/"+asset.ID)
+	res := resourceForAsset(asset, resourcePath)
 	res.Name = asset.OriginalFileName
 	return res, nil
 }

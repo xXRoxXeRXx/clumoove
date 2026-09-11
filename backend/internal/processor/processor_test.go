@@ -488,6 +488,58 @@ func TestResolveTargetPath(t *testing.T) {
 		}
 	})
 
+	t.Run("immich source maps album to target subfolder", func(t *testing.T) {
+		task := &db.Task{
+			ResourceType: "files",
+			FilePath:     "/Albums/album-1/asset-uuid",
+			Metadata:     []byte(`{"immich_filename":"vacation:1?.jpg","immich_album_name":"Urlaub 2024"}`),
+		}
+		got := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, "/Fotos", "immich", "smb")
+		want := "/Fotos/Urlaub 2024/vacation_1_.jpg"
+		if got != want {
+			t.Fatalf("ResolveTargetPath() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("immich source maps library assets to YYYY/MM subfolders", func(t *testing.T) {
+		task := &db.Task{
+			ResourceType: "files",
+			FilePath:     "/Library/asset-uuid",
+			Metadata:     []byte(`{"immich_filename":"sunset.jpg","immich_year":"2024","immich_month":"07"}`),
+		}
+		got := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, "/Fotos", "immich", "s3")
+		want := "/Fotos/2024/07/sunset.jpg"
+		if got != want {
+			t.Fatalf("ResolveTargetPath() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("immich source derives YYYY/MM from created_at fallback", func(t *testing.T) {
+		task := &db.Task{
+			ResourceType: "files",
+			FilePath:     "/Library/asset-uuid",
+			Metadata:     []byte(`{"immich_filename":"sunset.jpg","immich_file_created_at":"2023-11-20T12:00:00Z"}`),
+		}
+		got := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, "/Fotos", "immich", "nextcloud")
+		want := "/Fotos/2023/11/sunset.jpg"
+		if got != want {
+			t.Fatalf("ResolveTargetPath() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("immich source falls back to flat filename when date is unknown", func(t *testing.T) {
+		task := &db.Task{
+			ResourceType: "files",
+			FilePath:     "/Library/asset-uuid",
+			Metadata:     []byte(`{"immich_filename":"nodate.jpg","custom_props":{"immich_source_kind":"library"}}`),
+		}
+		got := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, "/Fotos", "immich", "nextcloud")
+		want := "/Fotos/nodate.jpg"
+		if got != want {
+			t.Fatalf("ResolveTargetPath() = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("virtual target provider skips sanitization", func(t *testing.T) {
 		task := &db.Task{
 			ResourceType: "files",

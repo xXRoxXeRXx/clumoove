@@ -175,7 +175,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			// Emit a mkdir task for the root selected directory itself (unless it
 			// is the root "/", which every provider already has). This ensures
 			// the directory is created on the target even when it is empty.
-			if p != "/" && mig.TargetProvider != "immich" {
+			if p != "/" && mig.TargetProvider != "immich" && !storage.IsVirtualProvider(mig.SourceProvider) {
 				dirKey := fmt.Sprintf("dir:files:%s", p)
 				if !indexedPaths[dirKey] {
 					indexedPaths[dirKey] = true
@@ -199,7 +199,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 					totalDirs++
 				}
 			}
-			err = indexFolder(ctx, idx.db, sourceClient, "files", p, migID, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
+			err = indexFolder(ctx, idx.db, sourceClient, "files", p, migID, mig.SourceProvider, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 			if err != nil {
 				if claimLost(err) {
 					return
@@ -258,7 +258,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	// 2. Index calendars
 	if len(calendars) > 0 && storage.ProviderSupportsResourceType(mig.SourceProvider, "calendars") && storage.ProviderSupportsResourceType(mig.TargetProvider, "calendars") {
 		for _, p := range calendars {
-			err = indexFolder(ctx, idx.db, sourceClient, "calendars", p, migID, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
+			err = indexFolder(ctx, idx.db, sourceClient, "calendars", p, migID, mig.SourceProvider, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 			if err != nil {
 				if claimLost(err) {
 					return
@@ -282,7 +282,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	// 3. Index contacts
 	if len(contacts) > 0 && storage.ProviderSupportsResourceType(mig.SourceProvider, "contacts") && storage.ProviderSupportsResourceType(mig.TargetProvider, "contacts") {
 		for _, p := range contacts {
-			err = indexFolder(ctx, idx.db, sourceClient, "contacts", p, migID, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
+			err = indexFolder(ctx, idx.db, sourceClient, "contacts", p, migID, mig.SourceProvider, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 			if err != nil {
 				if claimLost(err) {
 					return
@@ -499,7 +499,7 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 // the whole migration. Database insertion failures are not recoverable partial
 // successes: they are returned so the migration is failed rather than receiving
 // totals for tasks that were never committed.
-func indexFolder(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID, targetProvider string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
+func indexFolder(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID, sourceProvider, targetProvider string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
 	queue := []string{startPath}
 	head := 0
 	visited := make(map[string]bool)
@@ -572,7 +572,7 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 				// Emit a mkdir task for every sub-directory encountered so that
 				// empty directories (no files inside) are created on the target.
 				dirKey := fmt.Sprintf("dir:%s:%s", resourceType, file.Path)
-				if targetProvider != "immich" && !indexedPaths[dirKey] {
+				if targetProvider != "immich" && !storage.IsVirtualProvider(sourceProvider) && !indexedPaths[dirKey] {
 					indexedPaths[dirKey] = true
 					mkdirMeta, _ := json.Marshal(directoryTaskMetadata())
 					taskBatch = append(taskBatch, &db.Task{

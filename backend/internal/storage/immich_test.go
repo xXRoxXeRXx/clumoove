@@ -215,36 +215,128 @@ func TestImmichStreamUploadChunkedDuplicateDoesNotPopulateReceipt(t *testing.T) 
 	}
 }
 
-func TestImmichSearchReturnsFlatLibrary(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/search/metadata":
-			if got := r.Header.Get("Content-Type"); got != "application/json" {
-				t.Errorf("search Content-Type = %q", got)
-			}
-			var request map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request["withExif"] != true {
-				t.Error("search request did not include withExif: true")
-			}
-			if _, ok := request["albumIds"]; ok {
-				t.Error("search unexpectedly sent albumIds")
-			}
-			_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-1","originalFileName":"one.jpg"}],"nextPage":null}}`))
-		default:
-			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "key", HTTPClient: server.Client()}
+func TestImmichRootListingReturnsVirtualContainers(t *testing.T) {
+	p := &ImmichProvider{BaseURL: "https://example.com/api", APIKey: "key", HTTPClient: http.DefaultClient, albums: make(map[string]string)}
 	items, err := p.GetDirectoryListing(context.Background(), "files", "/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Path != "/asset-1" || items[0].Name != "one.jpg" {
-		t.Errorf("items = %#v", items)
+	if len(items) != 2 {
+		t.Fatalf("items = %d, want 2", len(items))
+	}
+	if items[0].Path != "/Library" || !items[0].IsDir {
+		t.Errorf("items[0] = %#v", items[0])
+	}
+	if items[1].Path != "/Albums" || !items[1].IsDir {
+		t.Errorf("items[1] = %#v", items[1])
+	}
+}
+
+func TestImmichAlbumsListing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/albums" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"id":"album-1","albumName":"Vacation"},{"id":"album-2","albumName":"Family"}]`))
+	}))
+	defer server.Close()
+	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "key", HTTPClient: server.Client(), albums: make(map[string]string)}
+	items, err := p.GetDirectoryListing(context.Background(), "files", "/Albums")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items = %d, want 2", len(items))
+	}
+	// Sorted alphabetically: Family before Vacation
+	if items[0].Name != "Family" || items[0].Path != "/Albums/album-2" || !items[0].IsDir {
+		t.Errorf("items[0] = %#v", items[0])
+	}
+	if items[1].Name != "Vacation" || items[1].Path != "/Albums/album-1" || !items[1].IsDir {
+		t.Errorf("items[1] = %#v", items[1])
+	}
+}
+
+func TestImmichLibraryListingAndMetadataMapping(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := request["albumIds"]; ok {
+			t.Error("library search unexpectedly sent albumIds")
+		}
+		if request["withExif"] != true {
+			t.Errorf("withExif = %v, want true", request["withExif"])
+		}
+		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-id","originalFileName":"photo.jpg","fileCreatedAt":"2024-07-15T10:00:00Z","exifInfo":{"fileSizeInByte":12345}}]}}`))
+	}))
+	defer server.Close()
+	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "key", HTTPClient: server.Client(), albums: make(map[string]string)}
+	items, err := p.GetDirectoryListing(context.Background(), "files", "/Library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Path != "/Library/asset-id" || items[0].Name != "photo.jpg" || items[0].Size != 12345 {
+		t.Fatalf("items = %#v", items)
+	}
+	if items[0].Metadata.CustomProps["immich_year"] != "2024" || items[0].Metadata.CustomProps["immich_month"] != "07" {
+		t.Errorf("date metadata = %v", items[0].Metadata.CustomProps)
+	}
+}
+
+func TestImmichLibraryListingOmitsDateWhenUnknown(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-nodate","originalFileName":"nodate.jpg","exifInfo":{"fileSizeInByte":100}}]}}`))
+	}))
+	defer server.Close()
+	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "key", HTTPClient: server.Client(), albums: make(map[string]string)}
+	items, err := p.GetDirectoryListing(context.Background(), "files", "/Library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1", len(items))
+	}
+	if _, ok := items[0].Metadata.CustomProps["immich_year"]; ok {
+		t.Errorf("expected immich_year to be omitted, got %q", items[0].Metadata.CustomProps["immich_year"])
+	}
+	if _, ok := items[0].Metadata.CustomProps["immich_month"]; ok {
+		t.Errorf("expected immich_month to be omitted, got %q", items[0].Metadata.CustomProps["immich_month"])
+	}
+}
+
+func TestImmichAlbumAssetsListing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/albums":
+			_, _ = w.Write([]byte(`[{"id":"album-1","albumName":"Vacation 2024"}]`))
+		case "/api/search/metadata":
+			var request map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			albumIds, _ := request["albumIds"].([]any)
+			if len(albumIds) != 1 || albumIds[0] != "album-1" {
+				t.Errorf("albumIds = %v, want [album-1]", albumIds)
+			}
+			_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-1","originalFileName":"beach.jpg","exifInfo":{"fileSizeInByte":555}}]}}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "key", HTTPClient: server.Client(), albums: make(map[string]string)}
+	items, err := p.GetDirectoryListing(context.Background(), "files", "/Albums/album-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Path != "/Albums/album-1/asset-1" || items[0].Name != "beach.jpg" {
+		t.Fatalf("items = %#v", items)
+	}
+	if items[0].Metadata.CustomProps["immich_album_name"] != "Vacation 2024" {
+		t.Errorf("album name metadata = %v", items[0].Metadata.CustomProps)
 	}
 }
 
@@ -264,7 +356,7 @@ func TestImmichNonRootListingResolvesSingleAsset(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "key", HTTPClient: server.Client()}
+	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "key", HTTPClient: server.Client(), albums: make(map[string]string)}
 
 	t.Run("non-root path returns single matching asset", func(t *testing.T) {
 		items, err := p.GetDirectoryListing(context.Background(), "files", "/asset-1")
@@ -314,8 +406,8 @@ func TestImmichSearchAcceptsStringNextPage(t *testing.T) {
 		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-2","originalFileName":"two.jpg"}],"nextPage":null}}`))
 	}))
 	defer server.Close()
-	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "key", HTTPClient: server.Client()}
-	assets, err := p.search(context.Background())
+	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "key", HTTPClient: server.Client(), albums: make(map[string]string)}
+	assets, err := p.search(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,34 +416,6 @@ func TestImmichSearchAcceptsStringNextPage(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&pages); got != 2 {
 		t.Errorf("search requests = %d, want 2", got)
-	}
-}
-
-func TestImmichRootListingSearchPayloadAndSizeMapping(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		if _, ok := request["albumIds"]; ok {
-			t.Error("library search unexpectedly sent albumIds")
-		}
-		if request["withArchived"] != false || request["withDeleted"] != false {
-			t.Errorf("archive filters = withArchived:%v withDeleted:%v, want false", request["withArchived"], request["withDeleted"])
-		}
-		if request["withExif"] != true {
-			t.Errorf("withExif = %v, want true", request["withExif"])
-		}
-		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-id","originalFileName":"photo.jpg","exifInfo":{"fileSizeInByte":12345}}]}}`))
-	}))
-	defer server.Close()
-	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client()}
-	items, err := p.GetDirectoryListing(context.Background(), "files", "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 1 || items[0].Path != "/asset-id" || items[0].Name != "photo.jpg" || items[0].Size != 12345 {
-		t.Errorf("items = %#v", items)
 	}
 }
 
