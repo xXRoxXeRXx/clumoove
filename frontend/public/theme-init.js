@@ -15,4 +15,8 @@
   const systemPrefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
   const theme = preference === 'auto' ? (systemPrefersDark ? 'dark' : 'light') : preference;
   document.documentElement.setAttribute('data-theme', theme);
+  const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+  if (metaThemeColor) {
+    metaThemeColor.setAttribute('content', theme === 'dark' ? '#18181b' : '#fafafa');
+  }
 })();

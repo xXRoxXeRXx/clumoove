@@ -48,6 +48,10 @@ export function useTheme() {
   // Apply theme to document
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', effectiveTheme);
+    const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+    if (metaThemeColor) {
+      metaThemeColor.setAttribute('content', effectiveTheme === 'dark' ? '#18181b' : '#fafafa');
+    }
   }, [effectiveTheme]);
 
   // Listen for system theme changes
