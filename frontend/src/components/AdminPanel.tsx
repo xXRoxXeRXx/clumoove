@@ -680,7 +680,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
           }
           const data = await res.json();
           if (cancelled) return;
-          setRegistrationsEnabled(data.registrations_enabled === 'true');
+          setRegistrationsEnabled(String(data.registrations_enabled) === 'true');
           setRegistrationsLoaded(true);
         } catch (err) {
           if (cancelled) return;
@@ -759,6 +759,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
               disabled={loading || !registrationsLoaded}
               onChange={handleToggleRegistrations}
               label={t('settings.allowRegistrations')}
+              hideLabel
             />
           </div>
         </SectionCard>
