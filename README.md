@@ -153,6 +153,7 @@ Key environment variables (full list in [`docs/08-deployment.md`](./docs/08-depl
 | `JWT_SECRET_KEY` | HMAC key for JWT signatures. **Required, must differ from `ENCRYPTION_SECRET_KEY`.** |
 | `REDIS_PASSWORD` | Redis password fallback. The effective password from `REDIS_URL` or this fallback is **required** and must not be a known default. |
 | `DATABASE_URL` / `DB_USER` / `DB_PASSWORD` | PostgreSQL connection. |
+| `LOCAL_STORAGE_HOST_PATH` | Host path mounted to `/clumoove` (`./local-storage`). On Linux hosts, grant write ownership to container UID `10001` (`chown -R 10001:10001 ./local-storage`). |
 | `MAX_THREADS` | Global max parallelism per worker process. Code default: `16`; Docker Compose production: `50`; Docker Compose development: `16`. |
 | `TRUSTED_PROXY` | Set to `1`/`true` behind a trusted reverse proxy that strips client-supplied `X-Forwarded-*` headers; required for correct client-IP accounting and the proxy-derived OAuth callback host/scheme. |
 

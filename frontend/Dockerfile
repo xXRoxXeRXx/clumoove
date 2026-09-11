@@ -16,12 +16,21 @@ COPY . .
 RUN chmod -R +x node_modules/.bin/ && npm run build
 
 # --- Production Stage ---
-FROM nginx:alpine AS prod
-COPY --from=builder /app/dist /usr/share/nginx/html
+FROM nginx:1.27-alpine AS prod
+# Configure Nginx for unprivileged non-root operation
+RUN rm -f /etc/nginx/conf.d/default.conf && \
+    sed -i 's|^user\s.*|# user directive omitted for unprivileged execution|' /etc/nginx/nginx.conf && \
+    sed -i 's|/var/run/nginx.pid|/tmp/nginx.pid|' /etc/nginx/nginx.conf && \
+    chown -R nginx:nginx /var/cache/nginx /var/log/nginx /etc/nginx/conf.d /docker-entrypoint.d
+
+COPY --from=builder --chown=nginx:nginx /app/dist /usr/share/nginx/html
 # The nginx entrypoint expands this template after validating the runtime API
 # origin and writes the runtime config before nginx starts.
-COPY nginx.conf.template /etc/nginx/templates/default.conf.template
-COPY docker-entrypoint.d/30-runtime-api-config.sh /docker-entrypoint.d/30-runtime-api-config.sh
-RUN chmod +x /docker-entrypoint.d/30-runtime-api-config.sh
+COPY --chown=nginx:nginx nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY --chown=nginx:nginx docker-entrypoint.d/30-runtime-api-config.sh /docker-entrypoint.d/30-runtime-api-config.sh
+RUN chmod +x /docker-entrypoint.d/30-runtime-api-config.sh && \
+    chown -R nginx:nginx /usr/share/nginx/html /etc/nginx/templates
+
+USER nginx
 EXPOSE 3000
 CMD ["nginx", "-g", "daemon off;"]

@@ -60,6 +60,7 @@ services:
       - INSTANCE_ID=${INSTANCE_ID:-}
       - LOCAL_STORAGE_ROOT=/clumoove
     volumes:
+      # Non-root container (UID 10001): on Linux hosts, ensure host path is writable (e.g. chown -R 10001:10001 ./local-storage)
       - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     depends_on:
       - postgres-db
@@ -93,6 +94,7 @@ services:
       # Local Storage Sandbox
       - LOCAL_STORAGE_ROOT=/clumoove
     volumes:
+      # Non-root container (UID 10001): on Linux hosts, ensure host path is writable (e.g. chown -R 10001:10001 ./local-storage)
       - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     depends_on:
       - postgres-db

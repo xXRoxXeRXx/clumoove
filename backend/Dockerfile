@@ -1,5 +1,5 @@
 # --- Development Stage ---
-FROM golang:alpine AS dev
+FROM golang:1.25-alpine AS dev
 WORKDIR /app/backend
 # Install git and other utilities if needed
 RUN apk add --no-cache git build-base
@@ -13,7 +13,7 @@ RUN go generate ./internal/i18n
 CMD ["go", "run", "./cmd/api"]
 
 # --- Build Stage ---
-FROM --platform=$BUILDPLATFORM golang:alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src/backend
@@ -26,10 +26,17 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /bin/worker ./cmd/worker
 
 # --- Production Stage ---
-FROM alpine:3.19 AS prod
+FROM alpine:3.23 AS prod
+ARG UID=10001
+ARG GID=10001
 WORKDIR /app
-RUN apk add --no-cache ca-certificates tzdata
-COPY --from=builder /bin/api /app/api
-COPY --from=builder /bin/worker /app/worker
+RUN apk add --no-cache ca-certificates tzdata && \
+    addgroup -g ${GID} -S clumoove && \
+    adduser -u ${UID} -S clumoove -G clumoove && \
+    mkdir -p /clumoove /app && \
+    chown -R clumoove:clumoove /clumoove /app
+COPY --from=builder --chown=clumoove:clumoove /bin/api /app/api
+COPY --from=builder --chown=clumoove:clumoove /bin/worker /app/worker
+USER clumoove:clumoove
 # Default command runs the API. Worker overrides this.
 CMD ["/app/api"]

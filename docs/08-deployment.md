@@ -44,6 +44,8 @@ Downloads and raw uploads are streamed without API buffering. The frontend nginx
 | `LOG_LEVEL` | Minimum JSON `slog` level. Valid values: `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive). | `INFO` |
 | `LOG_ENVIRONMENT` | Optional deployment label included in each log record, such as `development`, `staging`, or `production`. | unset |
 | `INSTANCE_ID` | Optional stable, distinct identifier for an API or worker replica; included in log records for correlation. | unset |
+| `LOCAL_STORAGE_ROOT` | Internal container path for local filesystem storage profiles (e.g. `/clumoove`). | `/clumoove` |
+| `LOCAL_STORAGE_HOST_PATH` | Host path mounted to `LOCAL_STORAGE_ROOT` in docker-compose. | `./local-storage` |
 
 > **OAuth providers** (Google, OneDrive, Dropbox, HiDrive) are configured by an administrator under **Administration → System**, not via environment variables. No `*_CLIENT_ID` / `*_CLIENT_SECRET` variables are read. The OAuth redirect URI is always `<scheme>://<host>/api/oauth/callback` and is shown read-only in the admin UI.
 
@@ -207,3 +209,27 @@ When fronting the API with a reverse proxy (e.g. nginx):
 - Ensure `CORS_ALLOWED_ORIGIN` matches the public frontend origin.
 - For SSE routes, disable response buffering (for nginx: `proxy_buffering off`) and configure proxy
   read/send timeouts longer than the expected idle period; the API sends a 15-second SSE heartbeat.
+
+---
+
+## 10. Container Security & Storage Permissions (Non-Root UID 10001)
+
+Clumoove production containers do not run as `root`:
+
+- **API & Worker containers** run under the dedicated non-root user `clumoove` (`UID 10001`, `GID 10001`).
+- **Frontend container** runs under the unprivileged `nginx` user (`UID 101`, `GID 101`).
+
+### Linux Host Bind-Mount Permissions
+
+When using local storage with bind-mounted directories on a native Linux host (e.g. `${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove`), the host directory must be writable by UID `10001`:
+
+```bash
+# Create the local storage directory if it does not exist
+mkdir -p ./local-storage
+
+# Grant write ownership to the container user (UID 10001)
+chown -R 10001:10001 ./local-storage
+chmod 775 ./local-storage
+```
+
+> **Note for Docker Desktop (Windows / macOS):** Docker Desktop handles volume file permissions transparently through its virtualization layer; manual `chown` is typically not required there.

@@ -65,6 +65,7 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./frontend/src/locales:/app/frontend/src/locales:ro
+      # On Linux hosts, ensure host path is writable if user runs with non-root (e.g. chown -R 10001:10001 ./local-storage)
       - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     depends_on:
       - postgres-db
@@ -103,6 +104,7 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./frontend/src/locales:/app/frontend/src/locales:ro
+      # On Linux hosts, ensure host path is writable if user runs with non-root (e.g. chown -R 10001:10001 ./local-storage)
       - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     depends_on:
       - postgres-db
