@@ -19,9 +19,12 @@ RUN chmod -R +x node_modules/.bin/ && npm run build
 FROM nginx:1.27-alpine AS prod
 # Configure Nginx for unprivileged non-root operation
 RUN rm -f /etc/nginx/conf.d/default.conf && \
-    sed -i 's|^user\s.*|# user directive omitted for unprivileged execution|' /etc/nginx/nginx.conf && \
-    sed -i 's|/var/run/nginx.pid|/tmp/nginx.pid|' /etc/nginx/nginx.conf && \
-    chown -R nginx:nginx /var/cache/nginx /var/log/nginx /etc/nginx/conf.d /docker-entrypoint.d
+    sed -i '/user\s/d' /etc/nginx/nginx.conf && \
+    sed -i '/pid\s/d' /etc/nginx/nginx.conf && \
+    sed -i '1i pid /tmp/nginx.pid;' /etc/nginx/nginx.conf && \
+    mkdir -p /run /var/run && \
+    touch /run/nginx.pid && \
+    chown -R nginx:nginx /run/nginx.pid /var/cache/nginx /var/log/nginx /etc/nginx/conf.d /docker-entrypoint.d
 
 COPY --from=builder --chown=nginx:nginx /app/dist /usr/share/nginx/html
 # The nginx entrypoint expands this template after validating the runtime API
