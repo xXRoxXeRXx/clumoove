@@ -298,7 +298,7 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 1. Transitions to `INDEXING` (`UpdateMigrationStatusIfIndexing`).
 2. Loads the migration (including persisted `selected_paths`/`calendars`/`contacts`),
     **decrypts source credentials at the last moment**.
-3. Walks each selected path/calendar/contact with `indexFolder` (BFS, visited-map to prevent cycles).
+3. Walks each selected path/calendar/contact with `indexFolder` (BFS, visited-map to prevent cycles), using up to four concurrent directory listings while the coordinator serializes task creation and totals.
 4. **Resilient indexing:** a single folder/file error is recorded in `indexErrors` and skipped rather
    than aborting the whole migration. Per-folder errors appear in the final report.
 5. Persists indexing errors, updates totals, and transitions `INDEXING → RUNNING` (or `COMPLETED` if 0

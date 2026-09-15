@@ -11,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"backend/internal/crypto"
@@ -493,6 +494,14 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 	return tokenResp.AccessToken, nil
 }
 
+const indexFolderListingWorkers = 4
+
+type folderListingResult struct {
+	path  string
+	files []storage.CloudResource
+	err   error
+}
+
 // Resilient indexing: a failure to list a single folder (e.g. a slow/stalled
 // WebDAV PROPFIND that hits the per-request timeout) is recorded in indexErrors
 // and skipped, so the rest of the tree keeps being indexed instead of aborting
@@ -504,6 +513,33 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 	head := 0
 	visited := make(map[string]bool)
 	visited[startPath] = true
+
+	// Directory listings are network-bound and benefit from limited parallelism.
+	// The coordinator remains the sole owner of the traversal and task state so
+	// deduplication, batches, counters, and indexing errors stay race-free.
+	listingCtx, cancelListings := context.WithCancel(ctx)
+	defer cancelListings()
+	listingJobs := make(chan string)
+	listingResults := make(chan folderListingResult, indexFolderListingWorkers)
+	var listingWorkers sync.WaitGroup
+	for range indexFolderListingWorkers {
+		listingWorkers.Add(1)
+		go func() {
+			defer listingWorkers.Done()
+			for folderPath := range listingJobs {
+				files, err := client.GetDirectoryListing(listingCtx, resourceType, folderPath)
+				// The buffer holds at most one result per worker, allowing an early
+				// return after a fatal database error to cancel and join workers
+				// without leaving a worker blocked on its result send.
+				listingResults <- folderListingResult{path: folderPath, files: files, err: err}
+			}
+		}()
+	}
+	defer func() {
+		cancelListings()
+		close(listingJobs)
+		listingWorkers.Wait()
+	}()
 
 	var taskBatch []*db.Task
 	var batchFiles, batchDirs int
@@ -530,38 +566,62 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 		return nil
 	}
 
-	for head < len(queue) {
-		currentPath := queue[head]
-		queue[head] = ""
-		head++
-
-		// Stop gracefully if the overall indexing deadline/context was cancelled.
-		// Keep whatever was already indexed (partial success) rather than failing.
-		// Attribute the interruption to the folder we were about to list.
-		if ctx.Err() != nil {
-			*indexErrors = append(*indexErrors, db.IndexingErrorInput{
-				Path:         currentPath,
-				ResourceType: resourceType,
-				ErrorMessage: "Indexing interrupted before the folder could be listed.",
-			})
-			break
+	inFlight := 0
+	interrupted := false
+	discardPending := func(currentPath string) {
+		*indexErrors = append(*indexErrors, db.IndexingErrorInput{
+			Path:         currentPath,
+			ResourceType: resourceType,
+			ErrorMessage: "Indexing interrupted before the folder could be listed.",
+		})
+		for head < len(queue) {
+			queue[head] = ""
+			head++
+		}
+		interrupted = true
+	}
+	for head < len(queue) || inFlight > 0 {
+		// Stop scheduling new listings after cancellation, but drain started
+		// listings so their completed work can still become a partial success.
+		// As before, attribute the interruption to the next unlisted folder.
+		if !interrupted && ctx.Err() != nil && head < len(queue) {
+			discardPending(queue[head])
 		}
 
-		files, err := client.GetDirectoryListing(ctx, resourceType, currentPath)
-		if err != nil {
+		for !interrupted && ctx.Err() == nil && head < len(queue) && inFlight < indexFolderListingWorkers {
+			currentPath := queue[head]
+			queue[head] = ""
+			head++
+			select {
+			case listingJobs <- currentPath:
+				inFlight++
+			case <-ctx.Done():
+				discardPending(currentPath)
+			}
+		}
+
+		if inFlight == 0 {
+			// Cancellation can discard the remaining queue before any listing is
+			// started; continue once so the loop condition can observe it is empty.
+			continue
+		}
+
+		result := <-listingResults
+		inFlight--
+		if result.err != nil {
 			// Skip this folder (and its subtree) but keep indexing siblings.
 			// Persist a neutral, user-safe message. Provider errors can contain
 			// credentials or implementation details, so they stay in logs only.
 			*indexErrors = append(*indexErrors, db.IndexingErrorInput{
-				Path:         currentPath,
+				Path:         result.path,
 				ResourceType: resourceType,
 				ErrorMessage: "Unable to list folder.",
 			})
-			observability.Logger(ctx).Debug("indexing_folder_skipped", slog.String("component", "indexer"), slog.String("migration_id", migID), slog.String("path", currentPath), slog.String("resource_type", resourceType), observability.ErrorAttr(err, true), slog.String("error_kind", observability.ErrorKind(err)))
+			observability.Logger(ctx).Debug("indexing_folder_skipped", slog.String("component", "indexer"), slog.String("migration_id", migID), slog.String("path", result.path), slog.String("resource_type", resourceType), observability.ErrorAttr(result.err, true), slog.String("error_kind", observability.ErrorKind(result.err)))
 			continue
 		}
 
-		for _, file := range files {
+		for _, file := range result.files {
 			if file.IsPersonalVault() {
 				// A vault found while traversing a selected parent is expected and
 				// intentionally excluded. Only an explicitly selected vault is

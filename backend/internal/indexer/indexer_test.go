@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -260,6 +261,178 @@ func TestIndexFolderSkipsNonMediaForImmichWithoutError(t *testing.T) {
 	}
 }
 
+func TestIndexFolderLimitsConcurrentListingsAndIndexesEveryPathOnce(t *testing.T) {
+	database, state := newBatchTestDB(t, false)
+	const folderCount = 8
+	releaseListings := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-releaseListings:
+		default:
+			close(releaseListings)
+		}
+	})
+	provider := &parallelIndexFolderProvider{
+		listings:   make(map[string][]storage.CloudResource),
+		blockPaths: make(map[string]bool),
+		started:    make(chan string, folderCount),
+		release:    releaseListings,
+	}
+
+	for i := range folderCount {
+		folderPath := fmt.Sprintf("/folder-%d", i)
+		filePath := fmt.Sprintf("%s/file-%d.txt", folderPath, i)
+		provider.listings["/"] = append(provider.listings["/"], storage.CloudResource{Path: folderPath, Name: fmt.Sprintf("folder-%d", i), IsDir: true})
+		provider.listings[folderPath] = []storage.CloudResource{{Path: filePath, Name: fmt.Sprintf("file-%d.txt", i), Size: int64(i + 1)}}
+		provider.blockPaths[folderPath] = true
+	}
+
+	files, dirs, bytes := 0, 0, int64(0)
+	var indexErrors []db.IndexingErrorInput
+	done := make(chan error, 1)
+	go func() {
+		done <- indexFolder(context.Background(), database, provider, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+	}()
+
+	for range indexFolderListingWorkers {
+		select {
+		case <-provider.started:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for concurrent directory listings")
+		}
+	}
+	provider.mu.Lock()
+	peakListings := provider.peakListings
+	provider.mu.Unlock()
+	if peakListings != indexFolderListingWorkers {
+		t.Fatalf("peak concurrent listings = %d, want %d", peakListings, indexFolderListingWorkers)
+	}
+	close(releaseListings)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("indexFolder() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("indexFolder() did not finish after listings were released")
+	}
+
+	if len(indexErrors) != 0 {
+		t.Fatalf("indexErrors = %#v, want none", indexErrors)
+	}
+	if files != folderCount || dirs != folderCount || bytes != 36 {
+		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want files:%d dirs:%d bytes:36", files, dirs, bytes, folderCount, folderCount)
+	}
+	if len(state.taskPaths) != folderCount*2 {
+		t.Fatalf("created task paths = %d, want %d", len(state.taskPaths), folderCount*2)
+	}
+	expectedPaths := make(map[string]bool, folderCount*2)
+	for i := range folderCount {
+		expectedPaths[fmt.Sprintf("/folder-%d", i)] = true
+		expectedPaths[fmt.Sprintf("/folder-%d/file-%d.txt", i, i)] = true
+	}
+	for _, taskPath := range state.taskPaths {
+		if !expectedPaths[taskPath] {
+			t.Fatalf("unexpected or duplicate task path %q", taskPath)
+		}
+		delete(expectedPaths, taskPath)
+	}
+	if len(expectedPaths) != 0 {
+		t.Fatalf("missing task paths: %#v", expectedPaths)
+	}
+}
+
+func TestIndexFolderSkipsFailedListingAndContinuesSibling(t *testing.T) {
+	database, _ := newBatchTestDB(t, false)
+	provider := &parallelIndexFolderProvider{
+		listings: map[string][]storage.CloudResource{
+			"/": {
+				{Path: "/unavailable", Name: "unavailable", IsDir: true},
+				{Path: "/available", Name: "available", IsDir: true},
+			},
+			"/available": {{Path: "/available/report.txt", Name: "report.txt", Size: 42}},
+		},
+		errs: map[string]error{"/unavailable": errors.New("injected listing failure")},
+	}
+	files, dirs, bytes := 0, 0, int64(0)
+	var indexErrors []db.IndexingErrorInput
+
+	err := indexFolder(context.Background(), database, provider, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+	if err != nil {
+		t.Fatalf("indexFolder() error = %v", err)
+	}
+	if files != 1 || dirs != 2 || bytes != 42 {
+		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want files:1 dirs:2 bytes:42", files, dirs, bytes)
+	}
+	if len(indexErrors) != 1 || indexErrors[0].Path != "/unavailable" || indexErrors[0].ErrorMessage != "Unable to list folder." {
+		t.Fatalf("indexErrors = %#v, want neutral error for unavailable folder", indexErrors)
+	}
+}
+
+func TestIndexFolderFlushesPartialBatchAfterInFlightListingCancellation(t *testing.T) {
+	database, state := newBatchTestDB(t, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	provider := &parallelIndexFolderProvider{
+		listings: map[string][]storage.CloudResource{
+			"/": {
+				{Path: "/first", Name: "first", IsDir: true},
+				{Path: "/second", Name: "second", IsDir: true},
+				{Path: "/third", Name: "third", IsDir: true},
+				{Path: "/fourth", Name: "fourth", IsDir: true},
+			},
+		},
+		blockPaths: map[string]bool{
+			"/first":  true,
+			"/second": true,
+			"/third":  true,
+			"/fourth": true,
+		},
+		started: make(chan string, indexFolderListingWorkers),
+		release: make(chan struct{}),
+	}
+	files, dirs, bytes := 0, 0, int64(0)
+	var indexErrors []db.IndexingErrorInput
+	done := make(chan error, 1)
+	go func() {
+		done <- indexFolder(ctx, database, provider, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+	}()
+
+	for range indexFolderListingWorkers {
+		select {
+		case <-provider.started:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for in-flight directory listings")
+		}
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("indexFolder() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("indexFolder() did not stop after cancellation")
+	}
+
+	if files != 0 || dirs != indexFolderListingWorkers || bytes != 0 {
+		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want files:0 dirs:%d bytes:0", files, dirs, bytes, indexFolderListingWorkers)
+	}
+	if len(state.taskPaths) != indexFolderListingWorkers {
+		t.Fatalf("created task paths = %d, want %d", len(state.taskPaths), indexFolderListingWorkers)
+	}
+	if len(indexErrors) != indexFolderListingWorkers {
+		t.Fatalf("indexErrors = %#v, want one listing error per in-flight folder", indexErrors)
+	}
+	for _, indexError := range indexErrors {
+		if indexError.ErrorMessage != "Unable to list folder." {
+			t.Fatalf("index error = %#v, want neutral listing error", indexError)
+		}
+	}
+}
+
 func TestIsImmichMedia(t *testing.T) {
 	media := []string{"photo.jpg", "PIC.JPEG", "video.mp4", "raw.cr2", "image.heic", "file.png"}
 	for _, m := range media {
@@ -286,6 +459,52 @@ type resolvingIndexFolderProvider struct {
 	size         int64
 	err          error
 	resourcePath string
+}
+
+type parallelIndexFolderProvider struct {
+	// Embed the no-op StorageProvider stubs; only directory listing behaviour is
+	// relevant to these concurrency tests.
+	indexFolderTestProvider
+	listings   map[string][]storage.CloudResource
+	errs       map[string]error
+	blockPaths map[string]bool
+	started    chan string
+	release    <-chan struct{}
+
+	mu             sync.Mutex
+	activeListings int
+	peakListings   int
+}
+
+func (p *parallelIndexFolderProvider) GetDirectoryListing(ctx context.Context, _ string, folderPath string) ([]storage.CloudResource, error) {
+	p.mu.Lock()
+	p.activeListings++
+	if p.activeListings > p.peakListings {
+		p.peakListings = p.activeListings
+	}
+	p.mu.Unlock()
+	defer func() {
+		p.mu.Lock()
+		p.activeListings--
+		p.mu.Unlock()
+	}()
+
+	if p.blockPaths[folderPath] {
+		select {
+		case p.started <- folderPath:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if err := p.errs[folderPath]; err != nil {
+		return nil, err
+	}
+	return p.listings[folderPath], nil
 }
 
 func (p *resolvingIndexFolderProvider) ResolveResourceSize(_ context.Context, _ string, resourcePath string) (int64, error) {
@@ -347,6 +566,7 @@ type batchDBState struct {
 	failInsert     bool
 	claimLost      bool
 	execs, commits int
+	taskPaths      []string
 }
 
 func newBatchTestDB(t *testing.T, failInsert bool) (*sql.DB, *batchDBState) {
@@ -393,7 +613,7 @@ func (c batchTestConn) BeginTx(ctx context.Context, _ driver.TxOptions) (driver.
 	}
 	return batchTestTx{state: c.state}, nil
 }
-func (c batchTestConn) ExecContext(ctx context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
+func (c batchTestConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -403,6 +623,13 @@ func (c batchTestConn) ExecContext(ctx context.Context, query string, _ []driver
 	}
 	if c.state.claimLost {
 		return driver.RowsAffected(0), nil
+	}
+	for i := 2; i < len(args); i += 6 {
+		filePath, ok := args[i].Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("task path argument %d = %T, want string", i, args[i].Value)
+		}
+		c.state.taskPaths = append(c.state.taskPaths, filePath)
 	}
 	// Each VALUES row ends with "),(" except for the final row.
 	return driver.RowsAffected(int64(strings.Count(query, "),(") + 1)), nil
