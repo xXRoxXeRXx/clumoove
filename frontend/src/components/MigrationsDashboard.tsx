@@ -935,7 +935,7 @@ export function MigrationsDashboard({
               </tbody>
             </table>
             {deletableMigrations.length > 3 && (
-              <div className="p-4 border-t border-[var(--color-border-subtle)] flex justify-end">
+              <div className="p-4 flex justify-end">
                 <button
                   onClick={handleDeleteAllMigrations}
                   disabled={deleteAllLoading}
@@ -1282,7 +1282,7 @@ function SyncList({
         </tbody>
       </table>
       {deletableSyncJobs.length > 3 && (
-        <div className="p-4 border-t border-[var(--color-border-subtle)] flex justify-end">
+        <div className="p-4 flex justify-end">
           <button
             onClick={handleDeleteAllSyncs}
             disabled={deleteAllLoading}
