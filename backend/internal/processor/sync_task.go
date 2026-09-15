@@ -27,7 +27,7 @@ import (
 )
 
 // processSyncTask handles execution of a single task belonging to a sync job.
-func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload, threadID int) (err error) {
+func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload, threadID int, pool *providerPool) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -109,6 +109,25 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	if err != nil {
 		return fmt.Errorf("failed to decrypt target MEGA session: %w", err)
 	}
+	poolKey := syncProviderPoolKey(job.ID, task.PassGeneration)
+	sourceSpec := providerPoolSpec{
+		providerType: job.SourceProvider, url: job.SourceURL, username: job.SourceUsername,
+		password: sourceProviderPass, passwordEncrypted: job.SourcePasswordEncrypted,
+		megaSessionIDEncrypted: job.SourceMegaSessionIDEncrypted, megaMasterKeyEncrypted: job.SourceMegaMasterKeyEncrypted,
+		threads: job.Threads,
+	}
+	targetSpec := providerPoolSpec{
+		providerType: job.TargetProvider, url: job.TargetURL, username: job.TargetUsername,
+		password: targetProviderPass, passwordEncrypted: job.TargetPasswordEncrypted,
+		megaSessionIDEncrypted: job.TargetMegaSessionIDEncrypted, megaMasterKeyEncrypted: job.TargetMegaMasterKeyEncrypted,
+		threads: job.Threads,
+	}
+	getSource := func() (storage.StorageProvider, error) {
+		return pool.get(sourceCtx, poolKey, "source", sourceSpec)
+	}
+	getTarget := func() (storage.StorageProvider, error) {
+		return pool.get(targetCtx, poolKey, "target", targetSpec)
+	}
 
 	// Handle directory creation tasks (action == "mkdir").
 	// Enqueued by the sync engine for directories present on one side but
@@ -121,33 +140,24 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		var mkClient storage.StorageProvider
 		var mkPath string
 		var mkProvider string
-		var mkURL, mkUsername string
 		if side == "source" {
-			mkClient, err = storage.NewProvider(sourceCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourceProviderPass)
+			unlockMegaTarget := p.lockMegaTarget(job.SourceProvider, job.SourceURL, job.SourceUsername)
+			defer unlockMegaTarget()
+			mkClient, err = getSource()
 			if err != nil {
-				return fmt.Errorf("failed to create source client for mkdir: %w", err)
+				return fmt.Errorf("failed to connect to source provider for mkdir: %w", err)
 			}
-			defer mkClient.Close()
 			mkPath = task.FilePath
 			mkProvider = job.SourceProvider
-			mkURL, mkUsername = job.SourceURL, job.SourceUsername
 		} else {
-			mkClient, err = storage.NewProvider(targetCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetProviderPass)
+			unlockMegaTarget := p.lockMegaTarget(job.TargetProvider, job.TargetURL, job.TargetUsername)
+			defer unlockMegaTarget()
+			mkClient, err = getTarget()
 			if err != nil {
-				return fmt.Errorf("failed to create target client for mkdir: %w", err)
+				return fmt.Errorf("failed to connect to target provider for mkdir: %w", err)
 			}
-			defer mkClient.Close()
 			mkPath = path.Clean(path.Join(job.TargetDir, task.FilePath))
 			mkProvider = job.TargetProvider
-			mkURL, mkUsername = job.TargetURL, job.TargetUsername
-		}
-		unlockMegaTarget := p.lockMegaTarget(mkProvider, mkURL, mkUsername)
-		defer unlockMegaTarget()
-		if ok, err := mkClient.Connect(ctx); !ok {
-			if err == nil {
-				err = errors.New("provider rejected connection")
-			}
-			return fmt.Errorf("failed to connect to %s provider for mkdir: %w", mkProvider, err)
 		}
 
 		// Sanitize directory name
@@ -181,38 +191,27 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	// Setup clients depending on action
 	if action == "delete" {
-		sourceClient, err := storage.NewProvider(sourceCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourceProviderPass)
+		sourceClient, err := getSource()
 		if err != nil {
-			return fmt.Errorf("failed to create source client: %w", err)
+			return fmt.Errorf("failed to connect to source provider: %w", err)
 		}
-		defer sourceClient.Close()
-
-		targetClient, err := storage.NewProvider(targetCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetProviderPass)
+		targetClient, err := getTarget()
 		if err != nil {
-			return fmt.Errorf("failed to create target client: %w", err)
+			return fmt.Errorf("failed to connect to target provider: %w", err)
 		}
-		defer targetClient.Close()
 
 		if side == "source" {
-			if ok, err := sourceClient.Connect(ctx); !ok {
-				return fmt.Errorf("failed to connect to source for delete: %w", err)
-			}
 			err = sourceClient.DeleteFile(ctx, task.ResourceType, task.FilePath)
 			if err != nil {
 				return fmt.Errorf("failed to delete source file: %w", err)
 			}
-			_, _ = targetClient.Connect(ctx)
 			pruneEmptyParentDirectories(ctx, sourceClient, targetClient, task.ResourceType, task.FilePath, "/", job.TargetDir)
 		} else {
-			if ok, err := targetClient.Connect(ctx); !ok {
-				return fmt.Errorf("failed to connect to target for delete: %w", err)
-			}
 			tgtPath := path.Clean(path.Join(job.TargetDir, task.FilePath))
 			err = targetClient.DeleteFile(ctx, task.ResourceType, tgtPath)
 			if err != nil {
 				return fmt.Errorf("failed to delete target file: %w", err)
 			}
-			_, _ = sourceClient.Connect(ctx)
 			pruneEmptyParentDirectories(ctx, targetClient, sourceClient, task.ResourceType, tgtPath, job.TargetDir, "/")
 		}
 
@@ -223,13 +222,9 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	}
 
 	if action == "conflict_copy" {
-		targetClient, err := storage.NewProvider(targetCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetProviderPass)
+		targetClient, err := getTarget()
 		if err != nil {
-			return fmt.Errorf("failed to create target client for conflict: %w", err)
-		}
-		defer targetClient.Close()
-		if ok, err := targetClient.Connect(ctx); !ok {
-			return fmt.Errorf("failed to connect to target for conflict: %w", err)
+			return fmt.Errorf("failed to connect to target provider for conflict: %w", err)
 		}
 
 		tgtPath := path.Clean(path.Join(job.TargetDir, task.FilePath))
@@ -259,17 +254,10 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	if action == "download" {
 		// Download: Target -> Source (Two-Way pull)
-		srcClient, err = storage.NewProvider(targetCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetProviderPass)
+		srcClient, err = getTarget()
 		if err != nil {
-			return fmt.Errorf("failed to create target (source) client: %w", err)
+			return fmt.Errorf("failed to connect to target (source) provider: %w", err)
 		}
-		defer srcClient.Close()
-
-		tgtClient, err = storage.NewProvider(sourceCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourceProviderPass)
-		if err != nil {
-			return fmt.Errorf("failed to create source (target) client: %w", err)
-		}
-		defer tgtClient.Close()
 
 		srcPath = path.Clean(path.Join(job.TargetDir, task.FilePath))
 		tgtPath = task.FilePath
@@ -277,17 +265,10 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		tgtProvider = job.SourceProvider
 	} else {
 		// Upload: Source -> Target (Standard migration style)
-		srcClient, err = storage.NewProvider(sourceCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourceProviderPass)
+		srcClient, err = getSource()
 		if err != nil {
-			return fmt.Errorf("failed to create source client: %w", err)
+			return fmt.Errorf("failed to connect to source provider: %w", err)
 		}
-		defer srcClient.Close()
-
-		tgtClient, err = storage.NewProvider(targetCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetProviderPass)
-		if err != nil {
-			return fmt.Errorf("failed to create target client: %w", err)
-		}
-		defer tgtClient.Close()
 
 		srcPath = task.FilePath
 		tgtPath = path.Clean(path.Join(job.TargetDir, task.FilePath))
@@ -300,17 +281,16 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	}
 	unlockMegaTarget := p.lockMegaTarget(tgtProvider, targetURL, targetUsername)
 	defer unlockMegaTarget()
-	if ok, err := srcClient.Connect(ctx); !ok {
-		if err == nil {
-			err = errors.New("provider rejected connection")
+	if action == "download" {
+		tgtClient, err = getSource()
+		if err != nil {
+			return fmt.Errorf("failed to connect to source (target) provider: %w", err)
 		}
-		return fmt.Errorf("failed to connect to source provider: %w", err)
-	}
-	if ok, err := tgtClient.Connect(ctx); !ok {
-		if err == nil {
-			err = errors.New("provider rejected connection")
+	} else {
+		tgtClient, err = getTarget()
+		if err != nil {
+			return fmt.Errorf("failed to connect to target provider: %w", err)
 		}
-		return fmt.Errorf("failed to connect to target provider: %w", err)
 	}
 	// Create directories if needed
 	if err := tgtClient.CreateParentDirectories(ctx, task.ResourceType, tgtPath); err != nil {

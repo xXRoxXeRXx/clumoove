@@ -366,6 +366,24 @@ func (p *Processor) releaseProviderSlot() {
 	<-p.providerSlots
 }
 
+func (p *Processor) pruneProviderPool(ctx context.Context, pool *providerPool) {
+	if p.db == nil {
+		return
+	}
+	pool.prune(func(key providerPoolKey) bool {
+		switch key.entityType {
+		case "migration":
+			mig, err := db.GetMigration(p.db, key.entityID)
+			return err == nil && (mig.Status == "COMPLETED" || mig.Status == "COMPLETED_WITH_ERRORS" || mig.Status == "FAILED" || mig.Status == "CANCELLED")
+		case "sync":
+			job, err := db.GetSyncJob(p.db, key.entityID)
+			return err == nil && (job.RunGeneration != key.generation || job.Status == "COMPLETED" || job.Status == "FAILED")
+		default:
+			return false
+		}
+	})
+}
+
 // workerCapacity starts enough dequeue loops to use every configured provider
 // slot. Verification workers share those slots, so idle verification capacity
 // never reduces transfer throughput.
@@ -609,6 +627,8 @@ func (p *Processor) Start(ctx context.Context) {
 		wg.Add(1)
 		go func(threadID int) {
 			defer wg.Done()
+			pool := newProviderPool()
+			defer pool.Close()
 			// fallbackPoll is the maximum time an idle thread waits before
 			// re-polling even without a notify signal. 5s is fine because
 			// pg_notify delivers the wake-up immediately in the common case.
@@ -637,6 +657,7 @@ func (p *Processor) Start(ctx context.Context) {
 					}
 
 					if payload == nil {
+						p.pruneProviderPool(ctx, pool)
 						// No task: wait for a pg_notify signal or fallback timeout.
 						// This eliminates the busy-poll while still reacting quickly.
 						select {
@@ -655,8 +676,11 @@ func (p *Processor) Start(ctx context.Context) {
 
 					if payload.SyncJobID != "" {
 						processorLogf("[Worker %s] Thread %d processing sync task %s for job %s\n", p.workerID, threadID, payload.TaskID, payload.SyncJobID)
-						err = p.processSyncTask(ctx, payload, threadID)
+						err = p.processSyncTask(ctx, payload, threadID, pool)
 						if err != nil {
+							if shouldInvalidateProviderPool(err) {
+								pool.invalidateSyncJob(payload.SyncJobID)
+							}
 							processorLogf("[Worker %s] Thread %d error processing sync task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
 							p.handleSyncTaskFailure(ctx, payload, err)
 						} else {
@@ -664,8 +688,11 @@ func (p *Processor) Start(ctx context.Context) {
 						}
 					} else {
 						processorLogf("[Worker %s] Thread %d processing migration task %s for migration %s\n", p.workerID, threadID, payload.TaskID, payload.MigrationID)
-						err = p.processTask(ctx, payload, threadID)
+						err = p.processTask(ctx, payload, threadID, pool)
 						if err != nil {
+							if shouldInvalidateProviderPool(err) {
+								pool.invalidate(migrationProviderPoolKey(payload.MigrationID))
+							}
 							processorLogf("[Worker %s] Thread %d error processing task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
 							p.handleTaskFailure(ctx, payload, err)
 						} else {
@@ -771,7 +798,7 @@ func promoteOverwrite(ctx context.Context, target storage.StorageProvider, resou
 	return nil
 }
 
-func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, threadID int) (err error) {
+func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, threadID int, pool *providerPool) (err error) {
 	// Shadow ctx with a cancelable one
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -870,7 +897,8 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
 	}
 
-	// Providers are task-scoped because they retain credentials internally.
+	// Provider contexts carry scoped local-user and MEGA session state while a
+	// worker-local pool owns the resulting provider for this migration.
 	sourceCtx, err := megasecret.WithMegaSession(ctx, mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, p.secretKey)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt source MEGA session: %w", err)
@@ -879,44 +907,28 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	if err != nil {
 		return fmt.Errorf("failed to decrypt target MEGA session: %w", err)
 	}
-	sourceClient, err := newProvider(sourceCtx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourceProviderPass)
+	poolKey := migrationProviderPoolKey(mig.ID)
+	sourceClient, err := pool.get(sourceCtx, poolKey, "source", providerPoolSpec{
+		providerType: mig.SourceProvider, url: mig.SourceURL, username: mig.SourceUsername,
+		password: sourceProviderPass, passwordEncrypted: mig.SourcePasswordEncrypted,
+		megaSessionIDEncrypted: mig.SourceMegaSessionIDEncrypted, megaMasterKeyEncrypted: mig.SourceMegaMasterKeyEncrypted,
+		threads: mig.Threads,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to create source client: %w", err)
-	}
-	defer sourceClient.Close()
-
-	targetClient, err := newProvider(targetCtx, mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetProviderPass)
-	if err != nil {
-		return fmt.Errorf("failed to create target client: %w", err)
-	}
-	defer targetClient.Close()
-
-	if nc, ok := sourceClient.(*storage.NextcloudProvider); ok {
-		nc.Threads = mig.Threads
-	}
-	if nc, ok := targetClient.(*storage.NextcloudProvider); ok {
-		nc.Threads = mig.Threads
-	}
-
-	// Providers are created per task, so neither client inherits the connection
-	// established while indexing. Connect before every operation below: MEGA in
-	// particular requires this to populate its in-memory filesystem tree before
-	// FileExists or CreateDirectory can run.
-	if connected, err := sourceClient.Connect(ctx); !connected {
-		if err == nil {
-			err = errors.New("provider rejected connection")
-		}
 		return fmt.Errorf("failed to connect to source provider: %w", err)
 	}
 	// MEGA's remote tree permits duplicate same-name folders. Serialize the
-	// complete target operation before connecting, so each client sees the
-	// preceding task's tree and cannot race its parent-directory creation.
+	// complete target operation before acquiring its client, so each client sees
+	// the preceding task's tree and cannot race its parent-directory creation.
 	unlockMegaTarget := p.lockMegaTarget(mig.TargetProvider, mig.TargetURL, mig.TargetUsername)
 	defer unlockMegaTarget()
-	if connected, err := targetClient.Connect(ctx); !connected {
-		if err == nil {
-			err = errors.New("provider rejected connection")
-		}
+	targetClient, err := pool.get(targetCtx, poolKey, "target", providerPoolSpec{
+		providerType: mig.TargetProvider, url: mig.TargetURL, username: mig.TargetUsername,
+		password: targetProviderPass, passwordEncrypted: mig.TargetPasswordEncrypted,
+		megaSessionIDEncrypted: mig.TargetMegaSessionIDEncrypted, megaMasterKeyEncrypted: mig.TargetMegaMasterKeyEncrypted,
+		threads: mig.Threads,
+	})
+	if err != nil {
 		return fmt.Errorf("failed to connect to target provider: %w", err)
 	}
 
@@ -1672,6 +1684,18 @@ func isNetworkError(err error) bool {
 		strings.Contains(errStr, "broken pipe") ||
 		strings.Contains(errStr, "handshake failure") ||
 		strings.Contains(errStr, "http2: server sent goaway")
+}
+
+func shouldInvalidateProviderPool(err error) bool {
+	if isNetworkError(err) || errors.Is(err, storage.ErrAuth) {
+		return true
+	}
+	// Google API errors expose authError text rather than storage.ErrAuth; the
+	// credential-message fallbacks cover legacy provider clients with the same gap.
+	errText := strings.ToLower(err.Error())
+	return strings.Contains(errText, "autherror") ||
+		strings.Contains(errText, "invalid credentials") ||
+		strings.Contains(errText, "invalid authentication credentials")
 }
 
 // ensureFreshOAuthToken checks whether a migration's OAuth access token is expired

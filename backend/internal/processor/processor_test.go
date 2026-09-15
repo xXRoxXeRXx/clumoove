@@ -30,6 +30,18 @@ func TestRetryDelayHonorsProviderRetryAfter(t *testing.T) {
 	}
 }
 
+func TestShouldInvalidateProviderPool(t *testing.T) {
+	if !shouldInvalidateProviderPool(errors.New("connection reset by peer")) {
+		t.Fatal("network errors must invalidate the provider pool")
+	}
+	if !shouldInvalidateProviderPool(errors.New("Google API authError")) {
+		t.Fatal("OAuth API authentication errors must invalidate the provider pool")
+	}
+	if shouldInvalidateProviderPool(errors.New("target path already exists")) {
+		t.Fatal("logical transfer errors must retain the provider pool")
+	}
+}
+
 func TestExpectedSizeReader(t *testing.T) {
 	cases := []struct {
 		name     string

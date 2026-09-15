@@ -72,27 +72,31 @@ func TestVerificationPassConnectsConstructedTargetProvider(t *testing.T) {
 		size:             3,
 		verificationMode: storage.VerificationSizeOnly,
 	}, connected: true}
-	verified := false
+	verified := 0
 	(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
 		EntityType: "Migration",
 		EntityID:   "connect-target",
+		Threads:    1,
 		NewTargetProvider: func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
 			return provider, nil
 		},
 		GetTasks: func(context.Context) ([]*db.Task, error) {
-			return []*db.Task{{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 3}}, nil
+			return []*db.Task{
+				{ID: "task-1", ResourceType: "files", FilePath: "/file-1", FileSize: 3},
+				{ID: "task-2", ResourceType: "files", FilePath: "/file-2", FileSize: 3},
+			}, nil
 		},
 		ReconcileProgress: func() error { return nil },
 		MarkVerified: func(context.Context, *db.Task, string) (bool, error) {
-			verified = true
+			verified++
 			return true, nil
 		},
 	})
 	if provider.connects != 1 {
 		t.Fatalf("target Connect calls = %d, want 1", provider.connects)
 	}
-	if !verified {
-		t.Fatal("connected target was not verified")
+	if verified != 2 {
+		t.Fatalf("verified tasks = %d, want 2", verified)
 	}
 }
 
