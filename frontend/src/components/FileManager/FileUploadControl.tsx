@@ -310,10 +310,11 @@ export function FileUploadControl({
           onClick={() => inputRef.current?.click()}
           disabled={isUploadDisabled}
           title={!capabilities.upload ? t('files.uploadUnavailable') : t('files.upload')}
+          aria-label={t('files.upload')}
           className="ui-button-secondary inline-flex items-center gap-2 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
         >
           <ArrowUpTrayIcon className="h-4 w-4" aria-hidden="true" />
-          {t('files.upload')}
+          <span className="hidden sm:inline">{t('files.upload')}</span>
         </button>
       </div>
 
