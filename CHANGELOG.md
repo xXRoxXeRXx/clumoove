@@ -5,6 +5,39 @@ All notable changes to Clumoove will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-09-16
+
+### Added
+- **Immich Storage Provider - Container & Album Migrations**:
+  - Full support for container- and album-based Immich migrations, enabling selective transfer of specific photo albums and media containers.
+  - Hierarchical album, asset, and container indexing within the migration engine and processor pipeline.
+  - File browser navigation support for Immich photo albums and asset libraries.
+- **Progressive Web App (PWA) Support**:
+  - Added Web App Manifest (`manifest.json`), icons, and mobile web app meta tags for installable desktop and mobile usage.
+- **Dashboard Navigation Redesign**:
+  - Promoted dashboard navigation tabs above card headers with accompanying iconography for clearer visual hierarchy.
+
+### Improved & Performance
+- **Parallel Directory Indexing**:
+  - High-concurrency worker pool for directory listings, significantly accelerating tree traversal and scan phases for large cloud directories.
+- **Migration Processor & Connection Reuse**:
+  - Optimized checksum verification pipeline and added tracking of already verified files to eliminate duplicate hash calculations.
+  - Storage provider client caching and reuse across migration tasks, eliminating per-file connection handshake overhead.
+- **Outgoing HTTP Client Standardization**:
+  - Standardized `User-Agent` header (`Clumoove/<version>`) across all outbound storage provider HTTP requests.
+- **File Manager & UI Enhancements**:
+  - Preserved sticky toolbar top border during continuous scroll.
+  - Compact responsive layout for file manager on mobile screens with icon-only upload triggers.
+  - Updated folder iconography and contrast (`#71717a`).
+  - Improved toggle switch alignment and deduplicated administration label.
+
+### Security & Infrastructure
+- **Non-Root Container Hardening**:
+  - Hardened backend and frontend Docker containers to execute under unprivileged non-root users (`UID 10001`).
+  - Configured unprivileged Nginx PID path (`/tmp/nginx.pid`) and improved runtime configuration substitutions.
+  - Upgraded base images (Alpine, Go, Node) and resolved Node 20 deprecations in GitHub Actions release workflows.
+  - Updated core dependencies (`grpc`, `vitest`, `@xmldom/xmldom`).
+
 ## [0.18.0] - 2026-09-09
 
 ### Added

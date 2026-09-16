@@ -6,9 +6,9 @@ func TestUserAgent(t *testing.T) {
 	orig := Version
 	defer func() { Version = orig }()
 
-	Version = "0.18.0"
-	if got := UserAgent(); got != "Clumoove/0.18.0" {
-		t.Errorf("UserAgent() = %q, want %q", got, "Clumoove/0.18.0")
+	Version = "0.19.0"
+	if got := UserAgent(); got != "Clumoove/0.19.0" {
+		t.Errorf("UserAgent() = %q, want %q", got, "Clumoove/0.19.0")
 	}
 
 	Version = "  "
