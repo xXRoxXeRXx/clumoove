@@ -138,14 +138,6 @@ func (p *GoogleProvider) Connect(ctx context.Context) (bool, error) {
 	if _, err := p.driveService.About.Get().Fields("user").Context(ctx).Do(); err != nil {
 		return false, wrapGoogleError("google drive connect", err)
 	}
-	// Verify Calendar access
-	if _, err := p.calendarService.CalendarList.List().MaxResults(1).Context(ctx).Do(); err != nil {
-		return false, wrapGoogleError("google calendar connect", err)
-	}
-	// Verify People (Contacts) access
-	if _, err := p.peopleService.People.Get("people/me").PersonFields("names").Context(ctx).Do(); err != nil {
-		return false, wrapGoogleError("google contacts connect", err)
-	}
 	return true, nil
 }
 

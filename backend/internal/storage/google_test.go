@@ -84,6 +84,63 @@ func TestNewGoogleProviderValidToken(t *testing.T) {
 	}
 }
 
+func TestGoogleProviderConnectSuccess(t *testing.T) {
+	calendarCalled := false
+	peopleCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "calendar") {
+			calendarCalled = true
+			http.Error(w, "should not call calendar", http.StatusBadRequest)
+			return
+		}
+		if strings.Contains(r.URL.Path, "people") {
+			peopleCalled = true
+			http.Error(w, "should not call people", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"user": map[string]any{
+				"displayName":  "Test User",
+				"emailAddress": "test@example.com",
+			},
+		})
+	}))
+	defer server.Close()
+
+	p := newGoogleTestProvider(t, server.URL+"/")
+	ok, err := p.Connect(context.Background())
+	if err != nil {
+		t.Fatalf("Connect() returned unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("Connect() returned false, want true")
+	}
+	if calendarCalled {
+		t.Error("Connect() unexpectedly called calendar service")
+	}
+	if peopleCalled {
+		t.Error("Connect() unexpectedly called people service")
+	}
+}
+
+func TestGoogleProviderConnectDriveFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeGoogleAuthorizationError(w)
+	}))
+	defer server.Close()
+
+	p := newGoogleTestProvider(t, server.URL+"/")
+	ok, err := p.Connect(context.Background())
+	if err == nil {
+		t.Fatal("Connect() returned nil error on unauthorized response, want error")
+	}
+	if ok {
+		t.Fatal("Connect() returned true on failure, want false")
+	}
+	requireGoogleAuthError(t, err)
+}
+
 func TestIsGoogleAuthError(t *testing.T) {
 	gAuthErr := &googleapi.Error{Code: http.StatusUnauthorized, Message: "Invalid Credentials"}
 	if !isGoogleAuthError(gAuthErr) {
