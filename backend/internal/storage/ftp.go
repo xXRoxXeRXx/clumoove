@@ -503,6 +503,35 @@ func (p *FTPProvider) DeleteFile(ctx context.Context, resourceType, filePath str
 	return nil
 }
 
+// deleteManagerDirectory removes a selected FTP directory with the protocol's
+// directory commands. The manager adapter performs the empty-directory check
+// before non-recursive calls reach this method.
+func (p *FTPProvider) deleteManagerDirectory(ctx context.Context, dirPath string, recursive bool) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	clean, err := ftpPath(dirPath)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.ensureConnected(ctx); err != nil {
+		return p.handleError(err)
+	}
+	if recursive {
+		err = p.client.RemoveDirRecur(clean)
+	} else {
+		err = p.client.RemoveDir(clean)
+	}
+	if err != nil {
+		return p.handleError(fmt.Errorf("ftp remove directory failed: %w", err))
+	}
+	return nil
+}
+
 func (p *FTPProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
 	if err := requireFTPFiles(resourceType); err != nil {
 		return "", err

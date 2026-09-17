@@ -126,6 +126,16 @@ func TestFTPProviderRefreshesDialContextOnSessionReuse(t *testing.T) {
 	}
 }
 
+func TestFTPManagerDirectoryDeleteRejectsCanceledContextBeforeMutation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := (&FTPProvider{}).deleteManagerDirectory(ctx, "/folder", true)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("deleteManagerDirectory() error = %v, want context.Canceled", err)
+	}
+}
+
 func TestFTPProviderFilesOnly(t *testing.T) {
 	p, err := NewFTPProvider("ftps://example.com", "user", "password")
 	if err != nil {

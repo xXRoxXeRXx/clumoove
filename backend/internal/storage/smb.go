@@ -559,6 +559,33 @@ func (p *SMBProvider) DeleteFile(ctx context.Context, resourceType, filePath str
 	return nil
 }
 
+// deleteManagerDirectory deletes a manager-selected directory through SMB's
+// native directory operations. The manager adapter has already confirmed that
+// a non-recursive request targets an empty directory.
+func (p *SMBProvider) deleteManagerDirectory(ctx context.Context, dirPath string, recursive bool) error {
+	if err := validateStoragePath(dirPath); err != nil {
+		return err
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cleanPath := p.cleanPath(dirPath)
+	err := p.operation(ctx, func(fs *smb2.Share) error {
+		share := fs.WithContext(ctx)
+		if recursive {
+			return share.RemoveAll(cleanPath)
+		}
+		return share.Remove(cleanPath)
+	})
+	if err != nil {
+		if recursive && errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("smb remove directory failed: %w", err)
+	}
+	return nil
+}
+
 func (p *SMBProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SMB", resourceType)

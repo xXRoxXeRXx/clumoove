@@ -237,6 +237,21 @@ func TestManagerReadCapabilitiesCoverEveryFilesProvider(t *testing.T) {
 	}
 }
 
+func TestFilesystemManagerDirectoryDeleteCapabilities(t *testing.T) {
+	for _, providerType := range []string{"smb", "sftp", "ftp", "local"} {
+		if providerType == "local" && runtime.GOOS == "windows" {
+			continue
+		}
+		capabilities := ManagerCapabilitiesFor(providerType)
+		if !capabilities.DeleteEmptyDirectory || !capabilities.DeleteRecursiveDirectory {
+			t.Fatalf("%s directory delete capabilities = %#v, want both enabled", providerType, capabilities)
+		}
+	}
+	if capabilities := ManagerCapabilitiesFor("s3"); capabilities.DeleteEmptyDirectory || capabilities.DeleteRecursiveDirectory {
+		t.Fatalf("s3 directory delete capabilities = %#v, want both disabled", capabilities)
+	}
+}
+
 func TestGoogleManagerUploadCapabilities(t *testing.T) {
 	capabilities := ManagerCapabilitiesFor("google")
 	if !capabilities.Upload || !capabilities.Rename || !capabilities.Move || !capabilities.ConflictSkip || !capabilities.ConflictOverwrite || !capabilities.ConflictOverwriteAtomic || !capabilities.ConflictRename {

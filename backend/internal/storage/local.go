@@ -284,6 +284,24 @@ func (p *LocalProvider) DeleteFile(ctx context.Context, resourceType, filePath s
 	return root.remove(parts)
 }
 
+// deleteManagerDirectory removes a selected directory through the tenant-root
+// descriptor. localRoot keeps every recursive step handle-relative so a
+// concurrent symlink replacement cannot escape the tenant sandbox.
+func (p *LocalProvider) deleteManagerDirectory(ctx context.Context, dirPath string, recursive bool) error {
+	root, err := p.localRoot()
+	if err != nil {
+		return err
+	}
+	parts, err := localPathComponents(dirPath)
+	if err != nil {
+		return err
+	}
+	if len(parts) == 0 {
+		return fmt.Errorf("cannot delete the storage root")
+	}
+	return root.removeDirectory(ctx, parts, recursive)
+}
+
 func (p *LocalProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
 	if resourceType != "files" {
 		return "", fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)

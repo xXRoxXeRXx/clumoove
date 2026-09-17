@@ -264,6 +264,90 @@ func (r *localRoot) remove(parts []string) error {
 	return err
 }
 
+// removeDirectory keeps directory deletion rooted at already-open directory
+// descriptors. Unlike os.RemoveAll, it never re-resolves a pathname through a
+// parent that may have been replaced by a symlink.
+func (r *localRoot) removeDirectory(ctx context.Context, parts []string, recursive bool) error {
+	if len(parts) == 0 {
+		return fmt.Errorf("cannot delete the storage root")
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	parent, err := r.directory(parts[:len(parts)-1], false)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(parent)
+	if !recursive {
+		err = unix.Unlinkat(parent, parts[len(parts)-1], unix.AT_REMOVEDIR)
+		if err == unix.ENOENT {
+			return nil
+		}
+		return err
+	}
+	return removeLocalDirectoryTree(ctx, parent, parts[len(parts)-1])
+}
+
+func removeLocalDirectoryTree(ctx context.Context, parent int, name string) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+
+	// A successful unlink removes files and symlinks without following the
+	// latter. Directories are opened only after this attempt reports the
+	// platform's directory-specific error.
+	err := unix.Unlinkat(parent, name, 0)
+	if err == nil || err == unix.ENOENT {
+		return nil
+	}
+	if err != unix.EISDIR && err != unix.EPERM {
+		return err
+	}
+
+	dirFD, err := unix.Openat(parent, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	dir := os.NewFile(uintptr(dirFD), "local recursive directory")
+	defer dir.Close()
+
+	for {
+		names, readErr := dir.Readdirnames(100)
+		for _, child := range names {
+			if child == "" || child == "." || child == ".." || filepath.Base(child) != child {
+				return fmt.Errorf("local directory contains an unsafe entry name")
+			}
+			if err := removeLocalDirectoryTree(ctx, dirFD, child); err != nil {
+				return err
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+	if err := dir.Close(); err != nil {
+		return err
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	err = unix.Unlinkat(parent, name, unix.AT_REMOVEDIR)
+	if err == unix.ENOENT {
+		return nil
+	}
+	return err
+}
+
 func (r *localRoot) rename(oldParts, newParts []string) error {
 	oldParent, err := r.directory(oldParts[:len(oldParts)-1], false)
 	if err != nil {

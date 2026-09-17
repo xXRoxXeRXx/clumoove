@@ -367,6 +367,59 @@ func TestLocalProviderDeleteRootRejected(t *testing.T) {
 	}
 }
 
+func TestLocalManagerDeleteDirectories(t *testing.T) {
+	p := newTestLocalProvider(t)
+	ctx := context.Background()
+
+	if err := p.CreateDirectory(ctx, "files", "empty"); err != nil {
+		t.Fatalf("create empty directory: %v", err)
+	}
+	if err := p.DeleteManagerItem(ctx, ManagerLocator{Path: "/empty"}, false); err != nil {
+		t.Fatalf("delete empty directory: %v", err)
+	}
+	if _, err := p.InspectResource(ctx, "files", "empty"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("empty directory still exists, err=%v", err)
+	}
+
+	if err := p.StreamUpload(ctx, "files", "full/nested/file.txt", bytes.NewReader([]byte("data")), 4); err != nil {
+		t.Fatalf("seed nested directory: %v", err)
+	}
+	if err := p.DeleteManagerItem(ctx, ManagerLocator{Path: "/full"}, false); !errors.Is(err, ErrManagerDirectoryNotEmpty) {
+		t.Fatalf("non-recursive delete error = %v, want ErrManagerDirectoryNotEmpty", err)
+	}
+	if err := p.DeleteManagerItem(ctx, ManagerLocator{Path: "/full"}, true); err != nil {
+		t.Fatalf("recursive delete: %v", err)
+	}
+	if _, err := p.InspectResource(ctx, "files", "full"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("recursive directory still exists, err=%v", err)
+	}
+}
+
+func TestLocalManagerRecursiveDeleteDoesNotFollowSymlink(t *testing.T) {
+	p := newTestLocalProvider(t)
+	ctx := context.Background()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "sentinel.txt"), []byte("outside"), 0o600); err != nil {
+		t.Fatalf("write outside sentinel: %v", err)
+	}
+	if err := p.CreateDirectory(ctx, "files", "tree"); err != nil {
+		t.Fatalf("create tree: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(p.root, "tree", "outside-link")); err != nil {
+		t.Skipf("symlink not supported on this platform: %v", err)
+	}
+
+	if err := p.DeleteManagerItem(ctx, ManagerLocator{Path: "/tree"}, true); err != nil {
+		t.Fatalf("recursive delete: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "sentinel.txt")); err != nil {
+		t.Fatalf("recursive delete followed symlink outside tenant root: %v", err)
+	}
+	if _, err := p.InspectResource(ctx, "files", "tree"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("tree still exists, err=%v", err)
+	}
+}
+
 func TestLocalProviderOperationsAfterClose(t *testing.T) {
 	p := newTestLocalProvider(t)
 	ctx := context.Background()

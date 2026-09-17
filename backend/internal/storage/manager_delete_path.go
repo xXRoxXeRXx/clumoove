@@ -21,10 +21,21 @@ func deleteManagerFileOnly(ctx context.Context, provider StorageProvider, locato
 	return provider.DeleteFile(ctx, "files", locator.Path)
 }
 
-// deleteManagerPathItem adapts path-backed providers that support both file
-// and directory deletion. Deleting a directory without recursive=true verifies
-// that the directory is empty; non-empty directories return ErrManagerDirectoryNotEmpty.
+// deleteManagerPathItem adapts HTTP-style path-backed providers that use their
+// DeleteFile primitive for both files and directories. Deleting a directory
+// without recursive=true verifies that the directory is empty; non-empty
+// directories return ErrManagerDirectoryNotEmpty.
 func deleteManagerPathItem(ctx context.Context, provider StorageProvider, locator ManagerLocator, recursive bool) error {
+	return deleteManagerPathItemWithDirectoryDeleter(ctx, provider, locator, recursive, func(ctx context.Context, path string, _ bool) error {
+		return provider.DeleteFile(ctx, "files", path)
+	})
+}
+
+// deleteManagerPathItemWithDirectoryDeleter applies the standard manager
+// safety checks to a path-backed provider while allowing providers whose file
+// deletion primitive cannot recursively remove directories to supply their
+// native directory operation.
+func deleteManagerPathItemWithDirectoryDeleter(ctx context.Context, provider StorageProvider, locator ManagerLocator, recursive bool, deleteDirectory func(context.Context, string, bool) error) error {
 	if locator.Path == "" || locator.Path == "/" {
 		return ErrManagerUnsupported
 	}
@@ -42,7 +53,7 @@ func deleteManagerPathItem(ctx context.Context, provider StorageProvider, locato
 				return ErrManagerDirectoryNotEmpty
 			}
 		}
-		return provider.DeleteFile(ctx, "files", locator.Path)
+		return deleteDirectory(ctx, locator.Path, recursive)
 	}
 	return provider.DeleteFile(ctx, "files", locator.Path)
 }
@@ -84,7 +95,7 @@ func (p *WebDAVProvider) DeleteManagerItem(ctx context.Context, locator ManagerL
 }
 
 func (p *SMBProvider) DeleteManagerItem(ctx context.Context, locator ManagerLocator, recursive bool) error {
-	return deleteManagerFileOnly(ctx, p, locator, recursive)
+	return deleteManagerPathItemWithDirectoryDeleter(ctx, p, locator, recursive, p.deleteManagerDirectory)
 }
 
 func (p *S3Provider) DeleteManagerItem(ctx context.Context, locator ManagerLocator, recursive bool) error {
@@ -92,15 +103,15 @@ func (p *S3Provider) DeleteManagerItem(ctx context.Context, locator ManagerLocat
 }
 
 func (p *SFTPProvider) DeleteManagerItem(ctx context.Context, locator ManagerLocator, recursive bool) error {
-	return deleteManagerFileOnly(ctx, p, locator, recursive)
+	return deleteManagerPathItemWithDirectoryDeleter(ctx, p, locator, recursive, p.deleteManagerDirectory)
 }
 
 func (p *FTPProvider) DeleteManagerItem(ctx context.Context, locator ManagerLocator, recursive bool) error {
-	return deleteManagerFileOnly(ctx, p, locator, recursive)
+	return deleteManagerPathItemWithDirectoryDeleter(ctx, p, locator, recursive, p.deleteManagerDirectory)
 }
 
 func (p *LocalProvider) DeleteManagerItem(ctx context.Context, locator ManagerLocator, recursive bool) error {
-	return deleteManagerFileOnly(ctx, p, locator, recursive)
+	return deleteManagerPathItemWithDirectoryDeleter(ctx, p, locator, recursive, p.deleteManagerDirectory)
 }
 
 func (p *MegaProvider) DeleteManagerItem(ctx context.Context, locator ManagerLocator, recursive bool) error {

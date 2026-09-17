@@ -39,6 +39,9 @@ func (r *localRoot) upload(_ context.Context, _ []string, _ io.Reader, _ chan<- 
 func (r *localRoot) remove(_ []string) error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows")
 }
+func (r *localRoot) removeDirectory(_ context.Context, _ []string, _ bool) error {
+	return fmt.Errorf("local provider mutations are unsupported on Windows")
+}
 func (r *localRoot) rename(_, _ []string) error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows")
 }

@@ -652,6 +652,79 @@ func (p *SFTPProvider) DeleteFile(ctx context.Context, resourceType, filePath st
 	return nil
 }
 
+// deleteManagerDirectory uses SFTP's directory removal primitive for empty
+// directories and a Lstat-based walk for recursive deletion. Lstat is
+// deliberate: a symbolic link is removed as a link and never traversed to a
+// target outside the selected directory tree.
+func (p *SFTPProvider) deleteManagerDirectory(ctx context.Context, dirPath string, recursive bool) error {
+	if err := validateStoragePath(dirPath); err != nil {
+		return err
+	}
+	cleanPath := p.cleanPath(dirPath)
+	err := p.operation(ctx, func() error {
+		if !recursive {
+			return p.sftpClient.RemoveDirectory(cleanPath)
+		}
+		return removeSFTPDirectoryTree(ctx, p.sftpClient, cleanPath)
+	})
+	if err != nil {
+		if ctx != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("sftp remove directory failed: %w", err)
+	}
+	return nil
+}
+
+func removeSFTPDirectoryTree(ctx context.Context, client *sftp.Client, dirPath string) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	info, err := client.Lstat(dirPath)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return client.Remove(dirPath)
+	}
+
+	entries, err := client.ReadDir(dirPath)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		name := entry.Name()
+		if name == "" || name == "." || name == ".." || path.Base(name) != name {
+			return fmt.Errorf("sftp directory contains an unsafe entry name")
+		}
+		childPath := path.Join(dirPath, name)
+		childInfo, err := client.Lstat(childPath)
+		if err != nil {
+			return err
+		}
+		if childInfo.IsDir() {
+			if err := removeSFTPDirectoryTree(ctx, client, childPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := client.Remove(childPath); err != nil {
+			return err
+		}
+	}
+	return client.RemoveDirectory(dirPath)
+}
+
 func (p *SFTPProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)
