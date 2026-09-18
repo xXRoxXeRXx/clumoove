@@ -24,45 +24,45 @@
 {# ── API Gateway ─────────────────────────────────────────────────────────── #}
 {% set api = tpl.add_container(values.consts.api_container_name, "api_image") %}
 {% do api.add_network(net) %}
-{% do api.add_dependency(values.consts.postgres_container_name) %}
-{% do api.add_dependency(values.consts.redis_container_name) %}
+{% do api.depends.add_dependency(values.consts.postgres_container_name, "service_healthy") %}
+{% do api.depends.add_dependency(values.consts.redis_container_name, "service_healthy") %}
 {% do api.set_user(values.run_as.user, values.run_as.group) %}
-{% do api.add_env("TZ", values.TZ) %}
-{% do api.add_env("DATABASE_URL", "postgres://" + values.consts.db_user + ":" + values.clumoove.db_password + "@" + values.consts.postgres_container_name + ":5432/" + values.consts.db_name + "?sslmode=disable") %}
-{% do api.add_env("REDIS_URL", "redis://:" + values.clumoove.redis_password + "@" + values.consts.redis_container_name + ":6379") %}
-{% do api.add_env("PORT", "8000") %}
-{% do api.add_env("ENCRYPTION_SECRET_KEY", values.clumoove.encryption_secret_key) %}
-{% do api.add_env("JWT_SECRET_KEY", values.clumoove.jwt_secret_key) %}
-{% do api.add_env("TRUSTED_PROXY", "1") %}
-{% do api.add_env("LOCAL_STORAGE_ROOT", "/clumoove") %}
-{% do api.add_storage(values.storage.local_storage, "/clumoove") %}
+{% do api.environment.add_env("DATABASE_URL", "postgres://" + values.consts.db_user + ":" + values.clumoove.db_password + "@" + values.consts.postgres_container_name + ":5432/" + values.consts.db_name + "?sslmode=disable") %}
+{% do api.environment.add_env("REDIS_URL", "redis://:" + values.clumoove.redis_password + "@" + values.consts.redis_container_name + ":6379") %}
+{% do api.environment.add_env("PORT", "8000") %}
+{% do api.environment.add_env("ENCRYPTION_SECRET_KEY", values.clumoove.encryption_secret_key) %}
+{% do api.environment.add_env("JWT_SECRET_KEY", values.clumoove.jwt_secret_key) %}
+{% do api.environment.add_env("TRUSTED_PROXY", "1") %}
+{% do api.environment.add_env("LOCAL_STORAGE_ROOT", "/clumoove") %}
+{% do api.add_storage("/clumoove", values.storage.local_storage) %}
 
 {% for env in values.clumoove.additional_envs %}
-  {% do api.add_env(env.name, env.value) %}
+  {% do api.environment.add_env(env.name, env.value) %}
 {% endfor %}
+{% do api.healthcheck.set_test("wget", {"port": 8000, "path": "/api/health"}) %}
 
 {# ── Migration Worker ────────────────────────────────────────────────────── #}
 {% set worker = tpl.add_container(values.consts.worker_container_name, "worker_image") %}
 {% do worker.add_network(net) %}
 {% do worker.set_command(["/app/worker"]) %}
-{% do worker.add_dependency(values.consts.postgres_container_name) %}
-{% do worker.add_dependency(values.consts.redis_container_name) %}
+{% do worker.depends.add_dependency(values.consts.postgres_container_name, "service_healthy") %}
+{% do worker.depends.add_dependency(values.consts.redis_container_name, "service_healthy") %}
 {% do worker.set_user(values.run_as.user, values.run_as.group) %}
-{% do worker.add_env("TZ", values.TZ) %}
-{% do worker.add_env("DATABASE_URL", "postgres://" + values.consts.db_user + ":" + values.clumoove.db_password + "@" + values.consts.postgres_container_name + ":5432/" + values.consts.db_name + "?sslmode=disable") %}
-{% do worker.add_env("REDIS_URL", "redis://:" + values.clumoove.redis_password + "@" + values.consts.redis_container_name + ":6379") %}
-{% do worker.add_env("ENCRYPTION_SECRET_KEY", values.clumoove.encryption_secret_key) %}
-{% do worker.add_env("LOCAL_STORAGE_ROOT", "/clumoove") %}
-{% do worker.add_storage(values.storage.local_storage, "/clumoove") %}
+{% do worker.environment.add_env("DATABASE_URL", "postgres://" + values.consts.db_user + ":" + values.clumoove.db_password + "@" + values.consts.postgres_container_name + ":5432/" + values.consts.db_name + "?sslmode=disable") %}
+{% do worker.environment.add_env("REDIS_URL", "redis://:" + values.clumoove.redis_password + "@" + values.consts.redis_container_name + ":6379") %}
+{% do worker.environment.add_env("ENCRYPTION_SECRET_KEY", values.clumoove.encryption_secret_key) %}
+{% do worker.environment.add_env("LOCAL_STORAGE_ROOT", "/clumoove") %}
+{% do worker.add_storage("/clumoove", values.storage.local_storage) %}
+{% do worker.healthcheck.disable() %}
 
 {# ── Web Frontend & Portal ───────────────────────────────────────────────── #}
 {% set frontend = tpl.add_container(values.consts.frontend_container_name, "frontend_image") %}
 {% do frontend.add_network(net) %}
-{% do frontend.add_dependency(values.consts.api_container_name) %}
-{% do frontend.add_env("TZ", values.TZ) %}
-{% do frontend.add_env("CLUMOOVE_API_URL", "") %}
-{% do frontend.add_port(values.network.web_port, 3000) %}
+{% do frontend.depends.add_dependency(values.consts.api_container_name, "service_healthy") %}
+{% do frontend.environment.add_env("CLUMOOVE_API_URL", "") %}
+{% do frontend.add_port(values.network.web_port, {"container_port": 3000}) %}
+{% do frontend.healthcheck.set_test("wget", {"port": 3000, "path": "/"}) %}
 
-{% do tpl.portals.add(values.network.web_port, scheme="http", path="/") %}
+{% do tpl.portals.add(values.network.web_port) %}
 
 {{ tpl.render() }}

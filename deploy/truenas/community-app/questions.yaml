@@ -359,6 +359,10 @@ questions:
                             description: API Gateway
                           - value: clumoove-worker
                             description: Worker Engine
+                          - value: clumoove-postgres
+                            description: PostgreSQL Database
+                          - value: clumoove-redis
+                            description: Redis Queue
 
   - variable: resources
     label: ""
