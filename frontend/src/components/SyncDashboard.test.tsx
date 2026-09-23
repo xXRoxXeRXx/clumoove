@@ -10,9 +10,11 @@ import { SyncDashboard } from './SyncDashboard';
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const toast = vi.fn();
+const { openOAuthPopup } = vi.hoisted(() => ({ openOAuthPopup: vi.fn() }));
 
 vi.mock('../contexts/useToast', () => ({ useToast: () => toast }));
 vi.mock('../utils/sse', () => ({ connectSseLoop: vi.fn(() => new Promise<void>(() => {})) }));
+vi.mock('../hooks/useOAuthPopup', () => ({ useOAuthPopup: () => ({ openOAuthPopup }) }));
 vi.mock('../utils/apiClient', async () => {
   const actual = await vi.importActual<typeof import('../utils/apiClient')>('../utils/apiClient');
   return {
@@ -62,6 +64,7 @@ describe('SyncDashboard initial snapshot ordering', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('en');
     toast.mockReset();
+    openOAuthPopup.mockReset();
     vi.mocked(apiFetch).mockReset();
     vi.mocked(apiFetch).mockResolvedValue(jsonResponse({ errors: [], total: 0 }));
     vi.mocked(apiJson).mockReset();
@@ -212,6 +215,94 @@ describe('SyncDashboard initial snapshot ordering', () => {
     expect(apiJson).toHaveBeenCalledWith(
       'https://api.example.test/api/sync/sync-1/bandwidth',
       expect.objectContaining({ method: 'PUT', body: JSON.stringify({ limit_mbps: 8 }) }),
+    );
+  });
+
+  it('reauthenticates the selected target when both sync endpoints use OAuth', async () => {
+    const job: SyncJob = {
+      ...createSyncJob('https://source.example.test'),
+      status: 'FAILED',
+      source_provider: 'google',
+      target_provider: 'dropbox',
+      error_message: 'Authentication failed - please check your credentials',
+    };
+    vi.mocked(apiJson).mockResolvedValue(jsonResult(job));
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<SyncDashboard syncId="sync-1" apiUrl="https://api.example.test" token="token" onBack={vi.fn()} />);
+      await Promise.resolve();
+    });
+
+    const endpointSelect = container.querySelector<HTMLSelectElement>('#sync-reauth-endpoint')!;
+    expect(endpointSelect).toBeDefined();
+    expect(endpointSelect.value).toBe('');
+
+    await act(async () => {
+      endpointSelect.value = 'target';
+      endpointSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const reauthButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === i18n.t('settings.connections.reauthenticate'))!;
+    expect(reauthButton.disabled).toBe(false);
+    await act(async () => reauthButton.click());
+
+    expect(openOAuthPopup).toHaveBeenCalledWith(
+      'dropbox',
+      'sync-reauth-sync-1-target',
+      expect.any(Object),
+    );
+
+    const callbacks = openOAuthPopup.mock.calls[0][2];
+    await act(async () => {
+      await callbacks.onSuccess({ provider: 'dropbox', token: 'new-access', refreshToken: 'new-refresh', expiresIn: 3600 });
+    });
+
+    expect(apiJson).toHaveBeenCalledWith(
+      'https://api.example.test/api/sync/sync-1/reauth',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          role: 'target',
+          access_token: 'new-access',
+          refresh_token: 'new-refresh',
+          expires_in: 3600,
+        }),
+      }),
+    );
+  });
+
+  it('automatically reauthenticates the only OAuth endpoint without rendering a selector', async () => {
+    const job: SyncJob = {
+      ...createSyncJob('https://source.example.test'),
+      status: 'FAILED',
+      source_provider: 'nextcloud',
+      target_provider: 'dropbox',
+      error_message: 'Authentication failed - please check your credentials',
+    };
+    vi.mocked(apiJson).mockResolvedValue(jsonResult(job));
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<SyncDashboard syncId="sync-1" apiUrl="https://api.example.test" token="token" onBack={vi.fn()} />);
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('#sync-reauth-endpoint')).toBeNull();
+    const reauthButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === i18n.t('settings.connections.reauthenticate'))!;
+    expect(reauthButton.disabled).toBe(false);
+    await act(async () => reauthButton.click());
+
+    expect(openOAuthPopup).toHaveBeenCalledWith(
+      'dropbox',
+      'sync-reauth-sync-1-target',
+      expect.any(Object),
     );
   });
 

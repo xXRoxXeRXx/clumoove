@@ -19,6 +19,7 @@ import { connectSseLoop } from '../utils/sse';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import { logger } from '../utils/logger';
 import { isAuthFailureError } from '../utils/authFailure';
+import { isOAuthProvider } from '../types';
 import {
   QueueListIcon,
   SignalIcon,
@@ -117,6 +118,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const [bandwidthLoading, setBandwidthLoading] = useState<boolean>(false);
   const [threads, setThreads] = useState<number>(8);
   const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
+  const [reauthRole, setReauthRole] = useState<'source' | 'target' | ''>('');
 
   const handleDownloadReport = async (e?: React.MouseEvent) => {
     e?.preventDefault();
@@ -218,37 +220,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     }
   };
 
-  const handleRetryFailed = async () => {
-    const oauthProviders = ['dropbox', 'google', 'onedrive', 'hidrive'];
+  const handleRetryFailed = async (requestedReauthRole?: 'source' | 'target') => {
     const authFailed = data?.status === 'FAILED' && isAuthFailureError(data.error_message);
-    let role: 'source' | 'target' = 'source';
-    const sourceIsOAuth = !!data?.source_provider && oauthProviders.includes(data.source_provider);
-    const targetIsOAuth = !!data?.target_provider && oauthProviders.includes(data.target_provider);
-
-    if (sourceIsOAuth && targetIsOAuth) {
-      const errLower = (data?.error_message || '').toLowerCase();
-      if (
-        (data?.target_provider && errLower.includes(`(${data.target_provider.toLowerCase()})`)) ||
-        (data?.target_provider && errLower.includes(data.target_provider.toLowerCase())) ||
-        errLower.includes('target oauth')
-      ) {
-        role = 'target';
-      } else {
-        role = 'source';
-      }
-    } else if (targetIsOAuth) {
-      role = 'target';
-    } else {
-      role = 'source';
-    }
+    const sourceIsOAuth = isOAuthProvider(data?.source_provider ?? '');
+    const targetIsOAuth = isOAuthProvider(data?.target_provider ?? '');
+    const role = sourceIsOAuth && targetIsOAuth
+      ? requestedReauthRole
+      : targetIsOAuth
+        ? 'target'
+        : sourceIsOAuth
+          ? 'source'
+          : undefined;
     const provider = role === 'source' ? data?.source_provider : data?.target_provider;
-    if (authFailed && provider && oauthProviders.includes(provider)) {
+    if (authFailed && sourceIsOAuth && targetIsOAuth && !role) return;
+    if (authFailed && role && provider && isOAuthProvider(provider)) {
       setControlLoading('retry');
       openOAuthPopup(provider, `migration-reauth-${migrationId}-${role}`, {
         onSuccess: async (msg) => {
           try {
             const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/reauth`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ role, access_token: msg.token, refresh_token: msg.refreshToken, expires_in: msg.expiresIn }) });
             if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(translateApiError(body.error_code)); }
+            setReauthRole('');
             setReconnectNonce((n) => n + 1);
           } catch (err) { toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action: 'reauth' }), 'error'); } finally { setControlLoading(null); }
         }, onError: (code) => { toast(translateApiError(code), 'error'); setControlLoading(null); },
@@ -408,6 +400,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     : 0;
 
   const successFiles = Math.max(0, data.processed_files - data.failed_files - data.skipped_files);
+  const isAuthFailure = data.status === 'FAILED' && isAuthFailureError(data.error_message);
+  const oauthReauthRoles = (['source', 'target'] as const).filter((role) =>
+    isOAuthProvider(role === 'source' ? data.source_provider ?? '' : data.target_provider ?? ''),
+  );
+  const selectedReauthRole = oauthReauthRoles.length === 1 ? oauthReauthRoles[0] : reauthRole;
+  const canReauthenticate = isAuthFailure && oauthReauthRoles.length > 0;
 
   return (
     <div className="w-full space-y-6">
@@ -432,16 +430,50 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               </button>
             )}
 
-            {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED') && (data.failed_files > 0 || data.processed_files < data.total_files) && (
+            {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED') && (data.failed_files > 0 || data.processed_files < data.total_files) && (canReauthenticate ? (
+              <>
+                {oauthReauthRoles.length > 1 && (
+                  <div className="flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)]">
+                    <label htmlFor="migration-reauth-endpoint">{t('dashboard.reauthenticateEndpoint')}</label>
+                    <select
+                      id="migration-reauth-endpoint"
+                      value={reauthRole}
+                      onChange={(event) => setReauthRole(event.target.value as 'source' | 'target' | '')}
+                      disabled={controlLoading !== null}
+                      className="ui-input px-2 py-1 text-xs disabled:opacity-50"
+                    >
+                      <option value="">{t('dashboard.reauthenticateEndpointPlaceholder')}</option>
+                      {oauthReauthRoles.map((role) => (
+                        <option key={role} value={role}>
+                          {role === 'source'
+                            ? t('dashboard.reauthenticateSourceEndpoint', { provider: data.source_provider })
+                            : t('dashboard.reauthenticateTargetEndpoint', { provider: data.target_provider })}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    if (selectedReauthRole) void handleRetryFailed(selectedReauthRole);
+                  }}
+                  disabled={controlLoading !== null || !selectedReauthRole}
+                  className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
+                >
+                  {controlLoading === 'retry' && `${t('common.loading')} `}
+                  {t('settings.connections.reauthenticate')}
+                </button>
+              </>
+            ) : (
               <button
-                onClick={handleRetryFailed}
+                onClick={() => void handleRetryFailed()}
                 disabled={controlLoading !== null}
                 className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
               >
                 {controlLoading === 'retry' && `${t('common.loading')} `}
-                {data.status === 'FAILED' && isAuthFailureError(data.error_message) ? t('settings.connections.reauthenticate') : t('dashboard.retryFailed')}
+                {t('dashboard.retryFailed')}
               </button>
-            )}
+            ))}
           </>
         } />
 

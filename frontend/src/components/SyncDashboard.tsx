@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { SyncJob } from '../types';
+import { isOAuthProvider, type SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat, formatDuration } from '../utils/format';
 import { useApiError } from '../utils/apiError';
@@ -44,6 +44,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
   const [bandwidthLimit, setBandwidthLimit] = useState<number>(0);
   const [bandwidthLoading, setBandwidthLoading] = useState<boolean>(false);
+  const [reauthRole, setReauthRole] = useState<'source' | 'target' | ''>('');
   const [now, setNow] = useState<number>(() => Date.now());
   const threadsDraggingRef = useRef<boolean>(false);
   const bandwidthDraggingRef = useRef<boolean>(false);
@@ -217,12 +218,10 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
     }
   };
 
-  const handleReauth = () => {
+  const handleReauth = (role: 'source' | 'target') => {
     if (!job) return;
-    const oauthProviders = ['dropbox', 'google', 'onedrive', 'hidrive'];
-    const role = oauthProviders.includes(job.source_provider) ? 'source' : 'target';
     const provider = role === 'source' ? job.source_provider : job.target_provider;
-    if (!oauthProviders.includes(provider)) return;
+    if (!isOAuthProvider(provider)) return;
     setActionLoading(true);
     openOAuthPopup(provider, `sync-reauth-${syncId}-${role}`, {
       onSuccess: async (msg) => {
@@ -243,6 +242,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           if (result.ok === false) {
             throw new Error(apiErrorMessage(result, translateApiError, t('sync.startFailed')));
           }
+          setReauthRole('');
           await handleTriggerStart();
         } catch (err) {
           toast(err instanceof Error ? err.message : t('sync.startFailed'), 'error');
@@ -354,6 +354,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
   const canPause = ['IDLE', 'INDEXING', 'RUNNING', 'VERIFYING'].includes(job.status);
   const canStart = ['IDLE', 'FAILED'].includes(job.status);
+  const isAuthFailure = job.status === 'FAILED' && isAuthFailureError(job.error_message);
+  const oauthReauthRoles = (['source', 'target'] as const).filter((role) =>
+    isOAuthProvider(role === 'source' ? job.source_provider : job.target_provider),
+  );
+  const selectedReauthRole = oauthReauthRoles.length === 1 ? oauthReauthRoles[0] : reauthRole;
+  const canReauthenticate = isAuthFailure && oauthReauthRoles.length > 0;
 
   return (
     <div className="w-full space-y-6">
@@ -391,16 +397,50 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               </button>
             ) : null}
 
-            {canStart && (
+            {canStart && (canReauthenticate ? (
+              <>
+                {oauthReauthRoles.length > 1 && (
+                  <div className="flex items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)]">
+                    <label htmlFor="sync-reauth-endpoint">{t('sync.reauthenticateEndpoint')}</label>
+                    <select
+                      id="sync-reauth-endpoint"
+                      value={reauthRole}
+                      onChange={(event) => setReauthRole(event.target.value as 'source' | 'target' | '')}
+                      disabled={actionLoading}
+                      className="ui-input px-2 py-1 text-xs disabled:opacity-50"
+                    >
+                      <option value="">{t('sync.reauthenticateEndpointPlaceholder')}</option>
+                      {oauthReauthRoles.map((role) => (
+                        <option key={role} value={role}>
+                          {role === 'source'
+                            ? t('sync.reauthenticateSourceEndpoint', { provider: job.source_provider })
+                            : t('sync.reauthenticateTargetEndpoint', { provider: job.target_provider })}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    if (selectedReauthRole) handleReauth(selectedReauthRole);
+                  }}
+                  disabled={actionLoading || !selectedReauthRole}
+                  className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
+                >
+                  {actionLoading && `${t('common.loading')} `}
+                  {t('settings.connections.reauthenticate')}
+                </button>
+              </>
+            ) : (
               <button
-                onClick={job.status === 'FAILED' && isAuthFailureError(job.error_message) ? handleReauth : handleTriggerStart}
+                onClick={handleTriggerStart}
                 disabled={actionLoading}
                 className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
               >
                 {actionLoading && `${t('common.loading')} `}
-                {job.status === 'FAILED' && isAuthFailureError(job.error_message) ? t('settings.connections.reauthenticate') : t('sync.syncNow')}
+                {t('sync.syncNow')}
               </button>
-            )}
+            ))}
           </>
         } />
 
