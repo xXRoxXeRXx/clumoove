@@ -254,3 +254,48 @@ func TestOAuthUserAgent(t *testing.T) {
 	}
 }
 
+func TestDropboxAuthURLOfflineAccess(t *testing.T) {
+	configureOAuthTestCredentials(t, "dropbox", "google")
+
+	dropboxURL, err := GetAuthURL("dropbox", "https://clumoove.example/api/oauth/callback", "csrf-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(dropboxURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	if got := q.Get("token_access_type"); got != "offline" {
+		t.Errorf("Dropbox token_access_type = %q, want %q", got, "offline")
+	}
+	if got := q.Get("response_type"); got != "code" {
+		t.Errorf("Dropbox response_type = %q, want %q", got, "code")
+	}
+	if got := q.Get("client_id"); got != "client-id" {
+		t.Errorf("Dropbox client_id = %q, want %q", got, "client-id")
+	}
+	if got := q.Get("state"); got != "csrf-state" {
+		t.Errorf("Dropbox state = %q, want %q", got, "csrf-state")
+	}
+	if got := q.Get("redirect_uri"); got != "https://clumoove.example/api/oauth/callback" {
+		t.Errorf("Dropbox redirect_uri = %q, want %q", got, "https://clumoove.example/api/oauth/callback")
+	}
+
+	googleURL, err := GetAuthURL("google", "https://clumoove.example/api/oauth/callback", "csrf-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uGoogle, err := url.Parse(googleURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qGoogle := uGoogle.Query()
+	if got := qGoogle.Get("token_access_type"); got != "" {
+		t.Errorf("Google token_access_type = %q, want empty", got)
+	}
+	if got := qGoogle.Get("access_type"); got != "offline" {
+		t.Errorf("Google access_type = %q, want %q", got, "offline")
+	}
+}
+

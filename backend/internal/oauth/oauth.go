@@ -153,6 +153,10 @@ func (c *oauthClient) getAuthURL(provider, redirectURI, state string) (string, e
 		q.Set("access_type", "offline")
 		q.Set("prompt", "consent") // force consent screen so refresh_token is always returned
 	}
+	// Request offline access for Dropbox to receive a refresh_token.
+	if provider == "dropbox" {
+		q.Set("token_access_type", "offline")
+	}
 	u.RawQuery = q.Encode()
 
 	return u.String(), nil
