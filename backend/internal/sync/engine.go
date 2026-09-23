@@ -430,7 +430,6 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		srcRelTargetDirETags[relDir] = etag
 	}
 
-
 	// Only delete terminal tasks from the previous pass. PENDING tasks that
 	// survived the drain (e.g. from a prior incomplete pass) are also cleared
 	// now since we are about to re-enqueue a fresh delta.
@@ -901,7 +900,6 @@ SyncTaskPoll:
 	}
 	total, completed, skipped, failed := stats.total, stats.completed, stats.skipped, stats.failed
 	changedCount, deletedCount := stats.changed, stats.deleted
-	taskOutcomes := stats.outcomes
 
 	// Determine final outcome status
 	finalRunStatus := "SUCCESS"
@@ -918,10 +916,17 @@ SyncTaskPoll:
 		}
 	}
 
-	// Persist the durable delta baseline and return to IDLE in one transaction.
+	// Reconcile the pre-transfer scans with every verified destination before
+	// making them durable. Failed and unreconciled paths remain protected so a
+	// later pass can retry from their prior baseline.
+	reconcileSuccessfulOperations(ctx, job.TargetDir, sourceClient, targetClient,
+		sourceMap, targetMap, sourceDirMap, srcRelTargetDirMap,
+		sourceDirETags, srcRelTargetDirETags, stats.completedOperations, stats.protectedPaths)
+
+	// Persist the durable post-operation baseline and return to IDLE in one transaction.
 	// The predicate excludes FAILED/PAUSED_*, so a concurrent task-worker
 	// failure is not overwritten.
-	upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, srcRelTargetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirs, prevTargetDirs, taskOutcomes)
+	upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, srcRelTargetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirs, prevTargetDirs, stats.protectedPaths)
 	finalized, err := db.FinalizeSyncJobPassWithStates(e.db, job.ID, generation, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed, upserts, deletes)
 	if err != nil {
 		slog.Error("failed to finalize sync pass", "sync_job_id", syncJobID, "outcome", finalRunStatus, "total", total, "processed", completed+skipped, "changed", changedCount, "deleted", deletedCount, "failed", failed, "error", err)

@@ -337,6 +337,186 @@ func TestSyncStateChangesStoresHashOnMatchingSide(t *testing.T) {
 	}
 }
 
+func TestReconcileSuccessfulDownloadUsesPostTransferDestinationBaseline(t *testing.T) {
+	// Pass 1 sees B only on the target and downloads it to the source. The
+	// source's pre-transfer listing is empty, so persisting it would make B
+	// look newly created on the next pass.
+	now := time.Now().UTC().Truncate(time.Second)
+	fileB := fileState{Path: "/report.txt", Size: 1, LastModified: now, Hash: "SHA1:b", ETag: "b"}
+	sourceMap := map[string]fileState{}
+	targetMap := map[string]fileState{"/report.txt": fileB}
+	sourceDirs := map[string]bool{"/": true}
+	targetDirs := map[string]bool{"/": true}
+	sourceETags := map[string]string{"/": "source-before"}
+	targetETags := map[string]string{"/": "target-before"}
+
+	source := listingTestProvider{inspect: func(resourcePath string) (storage.CloudResource, error) {
+		if resourcePath != "/report.txt" {
+			t.Fatalf("source InspectResource path = %q", resourcePath)
+		}
+		return storage.CloudResource{Path: resourcePath, Size: 1, LastModified: now, Hash: "SHA1:b", ETag: "b"}, nil
+	}}
+	target := listingTestProvider{inspect: func(resourcePath string) (storage.CloudResource, error) {
+		t.Fatalf("target InspectResource unexpectedly called for %q", resourcePath)
+		return storage.CloudResource{}, nil
+	}}
+
+	reconcileSuccessfulOperations(context.Background(), "/", source, target,
+		sourceMap, targetMap, sourceDirs, targetDirs, sourceETags, targetETags,
+		[]completedTaskOperation{{filePath: "/report.txt", action: "download"}}, map[string]bool{})
+
+	if got := sourceMap["/report.txt"]; got.Hash != fileB.Hash || got.ETag != fileB.ETag {
+		t.Fatalf("source post-transfer state = %#v; want verified destination metadata %#v", got, fileB)
+	}
+	if _, ok := sourceETags["/"]; ok {
+		t.Fatal("source root directory ETag was not invalidated after download")
+	}
+	if targetETags["/"] != "target-before" {
+		t.Fatal("download should not invalidate the unchanged target directory cache")
+	}
+
+	upserts, _ := syncStateChanges("job-1", sourceMap, targetMap, nil, nil, sourceETags, targetETags, sourceDirs, targetDirs, nil, nil, nil)
+	states := make(map[string]db.SyncState)
+	for _, state := range upserts {
+		if state.Size != -1 {
+			states[state.Side] = *state
+		}
+	}
+	previousSource, previousTarget := states["source"], states["target"]
+	if previousSource.SourceHash != "SHA1:b" || previousTarget.TargetHash != "SHA1:b" {
+		t.Fatalf("persisted post-download baseline = %#v; want B on both sides", states)
+	}
+
+	// Pass 2: target is immediately edited to C. B is not a new source file,
+	// and C is the only modified side, so two-way delta chooses a download
+	// instead of an OVERWRITE upload of stale B.
+	if isFileModified(fileB, previousSource, true) {
+		t.Fatal("source B was incorrectly treated as newly modified after download")
+	}
+	fileC := fileState{Path: "/report.txt", Size: 1, LastModified: now.Add(3 * time.Second), Hash: "SHA1:c", ETag: "c"}
+	if !isFileModified(fileC, previousTarget, false) {
+		t.Fatal("target C was not detected as the only next-pass modification")
+	}
+	srcModified := isFileModified(fileB, previousSource, true)
+	tgtModified := isFileModified(fileC, previousTarget, false)
+	if srcModified || !tgtModified {
+		t.Fatalf("second-pass delta flags = source:%v target:%v; want false/true", srcModified, tgtModified)
+	}
+	// This is the download branch in engine.go's two-way delta, rather than
+	// the conflict/OVERWRITE upload branch.
+	if !(tgtModified && !srcModified) {
+		t.Fatal("target edit would not select a target-to-source download")
+	}
+}
+
+func TestReconcileSuccessfulUploadPreventsDeletedSourceResurrection(t *testing.T) {
+	// Pass 1 uploads B to an empty target. If the source is deleted before
+	// pass 2, the persisted target baseline must still contain B so the delta
+	// recognizes a source deletion rather than uploading a phantom "new" B.
+	now := time.Now().UTC().Truncate(time.Second)
+	fileB := fileState{Path: "/gone.txt", Size: 1, LastModified: now, Hash: "SHA1:b"}
+	sourceMap := map[string]fileState{"/gone.txt": fileB}
+	targetMap := map[string]fileState{}
+	sourceDirs := map[string]bool{"/": true}
+	targetDirs := map[string]bool{"/": true}
+
+	source := listingTestProvider{inspect: func(resourcePath string) (storage.CloudResource, error) {
+		t.Fatalf("source InspectResource unexpectedly called for %q", resourcePath)
+		return storage.CloudResource{}, nil
+	}}
+	target := listingTestProvider{inspect: func(resourcePath string) (storage.CloudResource, error) {
+		if resourcePath != "/gone.txt" {
+			t.Fatalf("target InspectResource path = %q", resourcePath)
+		}
+		return storage.CloudResource{Path: resourcePath, Size: 1, LastModified: now, Hash: "SHA1:b"}, nil
+	}}
+
+	reconcileSuccessfulOperations(context.Background(), "/", source, target,
+		sourceMap, targetMap, sourceDirs, targetDirs, map[string]string{}, map[string]string{},
+		[]completedTaskOperation{{filePath: "/gone.txt", action: "upload"}}, map[string]bool{})
+	if _, ok := targetMap["/gone.txt"]; !ok {
+		t.Fatal("verified target upload was not added to the post-transfer baseline")
+	}
+
+	upserts, _ := syncStateChanges("job-1", sourceMap, targetMap, nil, nil, nil, nil, sourceDirs, targetDirs, nil, nil, nil)
+	states := make(map[string]db.SyncState)
+	for _, state := range upserts {
+		if state.Size != -1 {
+			states[state.Side] = *state
+		}
+	}
+	if _, sourceWasKnown := states["source"]; !sourceWasKnown {
+		t.Fatal("source upload baseline missing")
+	}
+	if _, targetWasKnown := states["target"]; !targetWasKnown {
+		t.Fatal("target upload baseline missing")
+	}
+
+	// On pass 2 the source is absent and the target still has B. Both previous
+	// entries make this a deletion-propagation candidate, never a new upload.
+	secondSourceMap := map[string]fileState{}
+	_, sourcePresent := secondSourceMap["/gone.txt"]
+	_, targetPresent := targetMap["/gone.txt"]
+	if sourcePresent || !targetPresent {
+		t.Fatalf("second-pass presence = source:%v target:%v; want absent/present", sourcePresent, targetPresent)
+	}
+	_, sourceWasKnown := states["source"]
+	_, targetWasKnown := states["target"]
+	srcDeleted := !sourcePresent && sourceWasKnown
+	tgtModified := false // target B matches its persisted post-upload state
+	if !srcDeleted || tgtModified || !targetWasKnown {
+		t.Fatalf("second-pass deletion flags = sourceDeleted:%v targetModified:%v targetKnown:%v; want true/false/true", srcDeleted, tgtModified, targetWasKnown)
+	}
+}
+
+func TestSyncStateChangesProtectsFailedPathIndependentlyOfSuccessfulOperations(t *testing.T) {
+	previousSource := map[string]db.SyncState{
+		"/retry.txt": {SyncJobID: "job-1", Side: "source", RelPath: "/retry.txt", Size: 1, SourceHash: "SHA1:old"},
+	}
+	upserts, deletes := syncStateChanges("job-1",
+		map[string]fileState{"/retry.txt": {Path: "/retry.txt", Size: 1, Hash: "SHA1:new"}}, nil,
+		previousSource, nil, nil, nil, nil, nil, nil, nil,
+		map[string]bool{"/retry.txt": true})
+	if len(upserts) != 0 || len(deletes) != 0 {
+		t.Fatalf("failed path state changes = upserts %#v deletes %#v; want no replacement of the old baseline", upserts, deletes)
+	}
+}
+
+func TestReconcileSuccessfulTransferProtectsPathWhenDestinationMetadataUnavailable(t *testing.T) {
+	// A verified transfer without a readable destination snapshot must not
+	// replace the baseline with the pre-transfer source listing.
+	sourceMap := map[string]fileState{}
+	targetMap := map[string]fileState{"/retry.txt": {Path: "/retry.txt", Size: 1, Hash: "SHA1:b"}}
+	protectedPaths := map[string]bool{}
+	source := listingTestProvider{inspect: func(string) (storage.CloudResource, error) {
+		return storage.CloudResource{}, errors.New("temporary provider error")
+	}}
+	target := listingTestProvider{inspect: func(resourcePath string) (storage.CloudResource, error) {
+		t.Fatalf("target InspectResource unexpectedly called for %q", resourcePath)
+		return storage.CloudResource{}, nil
+	}}
+
+	reconcileSuccessfulOperations(context.Background(), "/", source, target,
+		sourceMap, targetMap, map[string]bool{"/": true}, map[string]bool{"/": true},
+		map[string]string{"/": "source-before"}, map[string]string{"/": "target-before"},
+		[]completedTaskOperation{{filePath: "/retry.txt", action: "download"}}, protectedPaths)
+
+	if !protectedPaths["/retry.txt"] {
+		t.Fatal("uninspectable completed transfer did not protect its baseline path")
+	}
+	upserts, deletes := syncStateChanges("job-1", sourceMap, targetMap, nil, nil, nil, nil, nil, nil, nil, nil, protectedPaths)
+	for _, state := range upserts {
+		if state.RelPath == "/retry.txt" {
+			t.Fatalf("uninspectable transfer unexpectedly persisted state %#v", state)
+		}
+	}
+	for _, deletion := range deletes {
+		if deletion.RelPath == "/retry.txt" {
+			t.Fatalf("uninspectable transfer unexpectedly deleted state %#v", deletion)
+		}
+	}
+}
+
 // TestSyncStateChangesDeletesStaleTargetDirWithNonRootTargetDir verifies that
 // stale target directories are correctly detected and deleted when using a
 // non-root target_dir. prevTargetDirs and the targetDirMap parameter (which

@@ -40,9 +40,9 @@ func cleanRelPath(p string) string {
 	return cleaned
 }
 
-// syncStateChanges aligns sync_state entries with current listings, preserving
-// the old states of failed files. The caller persists the returned changes with
-// lifecycle finalization in one transaction.
+// syncStateChanges aligns sync_state entries with the post-operation listings,
+// preserving the old states of paths whose work did not complete. The caller
+// persists the returned changes with lifecycle finalization in one transaction.
 func syncStateChanges(
 	jobID string,
 	sourceMap, targetMap map[string]fileState,
@@ -50,7 +50,7 @@ func syncStateChanges(
 	sourceDirETags, targetDirETags map[string]string,
 	sourceDirMap, targetDirMap map[string]bool,
 	prevSourceDirs, prevTargetDirs map[string]bool,
-	taskOutcomes map[string]string,
+	protectedPaths map[string]bool,
 ) ([]*db.SyncState, []db.SyncStateDelete) {
 	allPaths := make(map[string]bool)
 	for k := range sourceMap {
@@ -72,11 +72,11 @@ func syncStateChanges(
 	for relPath := range allPaths {
 		sourceFile, hasSource := sourceMap[relPath]
 		targetFile, hasTarget := targetMap[relPath]
-		outcome, hasTask := taskOutcomes[relPath]
-
-		// Keep the old baseline for any task that did not finish successfully so
-		// the next pass retries it.
-		if hasTask && outcome != "COMPLETED" && outcome != "SKIPPED" {
+		// Keep the old baseline for failed work and for completed work whose
+		// destination metadata could not be reconciled. This is deliberately a
+		// separate set from successful operations: a conflict-copy may complete
+		// while the paired upload fails on the same path.
+		if protectedPaths[relPath] {
 			continue
 		}
 
@@ -184,6 +184,111 @@ func syncStateChanges(
 	}
 
 	return upserts, deletes
+}
+
+// completedTaskOperation is the minimum durable task information needed to
+// advance the listing snapshot after a successful sync operation.
+type completedTaskOperation struct {
+	filePath string
+	action   string
+	side     string
+}
+
+// reconcileSuccessfulOperations updates the listing maps used for sync_state
+// persistence with metadata read from each verified operation's destination.
+// The initial maps describe the pre-transfer scan, so persisting them directly
+// would make an immediately-following pass treat a completed transfer as a new
+// change. If destination metadata cannot be read, the path is protected and
+// its previous baseline is retained rather than recording an unsafe snapshot.
+//
+// Directory ETags cache complete subtrees. Every mutation invalidates the
+// destination parent chain so a later pass cannot reuse a pre-transfer cache.
+func reconcileSuccessfulOperations(
+	ctx context.Context,
+	targetDir string,
+	sourceClient, targetClient storage.StorageProvider,
+	sourceMap, targetMap map[string]fileState,
+	sourceDirMap, targetDirMap map[string]bool,
+	sourceDirETags, targetDirETags map[string]string,
+	operations []completedTaskOperation,
+	protectedPaths map[string]bool,
+) {
+	for _, operation := range operations {
+		relPath := cleanRelPath(operation.filePath)
+		if protectedPaths[relPath] {
+			continue
+		}
+
+		switch operation.action {
+		case "upload", "download":
+			destinationClient := targetClient
+			destinationPath := getTargetAbsPath(relPath, targetDir)
+			destinationMap := targetMap
+			destinationDirETags := targetDirETags
+			if operation.action == "download" {
+				destinationClient = sourceClient
+				destinationPath = relPath
+				destinationMap = sourceMap
+				destinationDirETags = sourceDirETags
+			}
+
+			resource, err := destinationClient.InspectResource(ctx, "files", destinationPath)
+			if err != nil || resource.IsDir {
+				// A completed task has already verified the transfer, but without
+				// provider metadata we cannot safely replace the old baseline.
+				slog.Warn("sync destination metadata unavailable during finalization", "path", relPath, "action", operation.action, "error", err)
+				protectedPaths[relPath] = true
+				continue
+			}
+			destinationMap[relPath] = fileState{
+				Path:         relPath,
+				Size:         resource.Size,
+				LastModified: resource.LastModified,
+				Hash:         resource.Hash,
+				ETag:         resource.ETag,
+			}
+			invalidateParentDirectoryETags(destinationDirETags, relPath)
+
+		case "delete":
+			if operation.side == "source" {
+				delete(sourceMap, relPath)
+				delete(sourceDirMap, relPath)
+				delete(sourceDirETags, relPath)
+				invalidateParentDirectoryETags(sourceDirETags, relPath)
+			} else {
+				delete(targetMap, relPath)
+				delete(targetDirMap, relPath)
+				delete(targetDirETags, relPath)
+				invalidateParentDirectoryETags(targetDirETags, relPath)
+			}
+
+		case "mkdir":
+			if operation.side == "source" {
+				sourceDirMap[relPath] = true
+				delete(sourceDirETags, relPath)
+				invalidateParentDirectoryETags(sourceDirETags, relPath)
+			} else {
+				targetDirMap[relPath] = true
+				delete(targetDirETags, relPath)
+				invalidateParentDirectoryETags(targetDirETags, relPath)
+			}
+
+		case "conflict_copy":
+			// conflict_copy chooses a new name in the worker, so its listing
+			// entry cannot be addressed here. Force a fresh listing of its
+			// parent directory on the next pass.
+			invalidateParentDirectoryETags(targetDirETags, relPath)
+		}
+	}
+}
+
+func invalidateParentDirectoryETags(dirETags map[string]string, relPath string) {
+	for dirPath := path.Dir(cleanRelPath(relPath)); ; dirPath = path.Dir(dirPath) {
+		delete(dirETags, dirPath)
+		if dirPath == "/" {
+			return
+		}
+	}
 }
 
 // listFiles traverses paths recursively using a parallel worker pool. When a
@@ -452,14 +557,15 @@ func isFileModified(curr fileState, prev db.SyncState, isSource bool) bool {
 type finalTaskStats struct {
 	total, completed, skipped, failed int
 	changed, deleted                  int
-	outcomes                          map[string]string
+	completedOperations               []completedTaskOperation
+	protectedPaths                    map[string]bool
 }
 
 // readFinalTaskOutcomes collects statistics and the durable state outcome map
 // in one cancellable query, so finalization cannot observe mismatched task
 // snapshots.
 func (e *Engine) readFinalTaskOutcomes(ctx context.Context, jobID string, generation int) (finalTaskStats, error) {
-	stats := finalTaskStats{outcomes: make(map[string]string)}
+	stats := finalTaskStats{protectedPaths: make(map[string]bool)}
 	rows, err := e.db.QueryContext(ctx, `SELECT file_path, status, metadata FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2`, jobID, generation)
 	if err != nil {
 		return stats, err
@@ -472,23 +578,40 @@ func (e *Engine) readFinalTaskOutcomes(ctx context.Context, jobID string, genera
 			return stats, err
 		}
 		stats.total++
-		stats.outcomes[filePath] = status
 		switch status {
 		case "COMPLETED":
 			stats.completed++
 		case "SKIPPED":
 			stats.skipped++
+			// A skipped task did not establish a verified post-operation
+			// destination snapshot. Retain its previous baseline rather than
+			// persisting the potentially stale pre-transfer listing.
+			stats.protectedPaths[cleanRelPath(filePath)] = true
 		case "FAILED", "CANCELLED":
 			stats.failed++
+			stats.protectedPaths[cleanRelPath(filePath)] = true
+		default:
+			// The polling loop should have drained non-terminal tasks. Preserve
+			// their old baseline if a race or future status extension violates
+			// that assumption.
+			stats.protectedPaths[cleanRelPath(filePath)] = true
 		}
 		if status != "COMPLETED" && status != "SKIPPED" {
 			continue
 		}
 		var meta struct {
 			Action string `json:"action"`
+			Side   string `json:"side"`
 		}
 		if json.Unmarshal(metadata, &meta) != nil {
 			continue
+		}
+		if status == "COMPLETED" {
+			stats.completedOperations = append(stats.completedOperations, completedTaskOperation{
+				filePath: filePath,
+				action:   meta.Action,
+				side:     meta.Side,
+			})
 		}
 		switch meta.Action {
 		case "delete":
