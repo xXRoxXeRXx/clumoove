@@ -170,6 +170,40 @@ func TestHandleChangePassword_MustChange_With2FA_RequiresTOTP(t *testing.T) {
 	}
 }
 
+func TestHandleChangePassword_MustChange_ReusingOriginalTokenAfterRotationIsRejected(t *testing.T) {
+	database := setupChangePassword2FATestDB(t)
+	defer database.Close()
+
+	s := &APIServer{db: database, jwtSecret: "test-jwt-secret-at-least-32-bytes-long!!"}
+	user := createChangePasswordTestUser(t, database, true)
+
+	// Issue the original must-change temporary token as login would do.
+	mustChangeToken, err := auth.GenerateMustChangePasswordToken(user, s.jwtSecret)
+	if err != nil {
+		t.Fatalf("generate must-change token: %v", err)
+	}
+
+	// 1. Password change succeeds using the temporary token.
+	changeReq := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", strings.NewReader(`{"new_password":"BrandNewPassword-456","confirm_password":"BrandNewPassword-456"}`))
+	changeReq.Header.Set("Authorization", "Bearer "+mustChangeToken)
+	changeRec := httptest.NewRecorder()
+	auth.AuthMiddlewareAllowMustChange(s.db, s.jwtSecret)(http.HandlerFunc(s.handleChangePassword)).ServeHTTP(changeRec, changeReq)
+	if changeRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from change-password, got %d: %s", changeRec.Code, changeRec.Body.String())
+	}
+
+	// 2. Caller attempts to present the original must-change token to a protected route (e.g. handleMe).
+	// Because 2FA has not been completed, this token must NOT grant access.
+	meReq := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	meReq.Header.Set("Authorization", "Bearer "+mustChangeToken)
+	meRec := httptest.NewRecorder()
+	auth.AuthMiddleware(s.db, s.jwtSecret)(http.HandlerFunc(s.handleMe)).ServeHTTP(meRec, meReq)
+
+	if meRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 when reusing original must-change token on protected route, got %d: %s", meRec.Code, meRec.Body.String())
+	}
+}
+
 func TestHandle2FADisable_WithBackupCode(t *testing.T) {
 	database := setupChangePassword2FATestDB(t)
 	defer database.Close()

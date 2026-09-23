@@ -273,3 +273,93 @@ func TestAuthMiddlewareAllowMustChangeRejectsSuspendedAndStaleMustChangeTokens(t
 		})
 	}
 }
+
+func TestAuthMiddlewareRejectsMustChangeTokenBeforeAndAfterRotation(t *testing.T) {
+	secret := "secret-key-32-bytes-long-abcdefghij!!"
+
+	// Both standard users and admin users must not be able to bypass 2FA / auth
+	// boundaries by reusing a temporary password-change token.
+	roles := []string{"USER", "ADMIN"}
+	for _, role := range roles {
+		t.Run("role_"+role, func(t *testing.T) {
+			user := testUser()
+			user.Role = role
+			user.MustChangePassword = true
+			token, err := GenerateMustChangePasswordToken(user, secret)
+			if err != nil {
+				t.Fatalf("GenerateMustChangePasswordToken failed: %v", err)
+			}
+
+			// 1. Token presented before rotation (user.MustChangePassword is still true).
+			recBefore := httptest.NewRecorder()
+			reqBefore := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			reqBefore.Header.Set("Authorization", "Bearer "+token)
+			AuthMiddlewareWithAuthStateLookup(secret, authStateLookup(user))(okHandler()).ServeHTTP(recBefore, reqBefore)
+
+			if recBefore.Code != http.StatusUnauthorized {
+				t.Errorf("expected 401 before rotation, got %d", recBefore.Code)
+			}
+
+			// 2. Token presented after password rotation:
+			// In the database, must_change_password is now false.
+			// Middleware must NOT promote the temporary token into an access token.
+			rotatedUser := testUser()
+			rotatedUser.Role = role
+			rotatedUser.MustChangePassword = false
+
+			recAfter := httptest.NewRecorder()
+			reqAfter := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			reqAfter.Header.Set("Authorization", "Bearer "+token)
+			AuthMiddlewareWithAuthStateLookup(secret, authStateLookup(rotatedUser))(okHandler()).ServeHTTP(recAfter, reqAfter)
+
+			if recAfter.Code != http.StatusUnauthorized {
+				t.Errorf("expected 401 after rotation, got %d (body %q)", recAfter.Code, recAfter.Body.String())
+			}
+		})
+	}
+}
+
+func TestRefreshClaimsFromAuthStateDoesNotPromoteTemporaryToken(t *testing.T) {
+	// A temporary token signed with MustChangePassword=true must never have
+	// that marker cleared to false by RefreshClaimsFromAuthState.
+	claims := &Claims{
+		UserID:             "user-1",
+		Role:               "USER",
+		MustChangePassword: true,
+	}
+	state := &db.UserAuthState{
+		Role:               "ADMIN",
+		Active:             true,
+		MustChangePassword: false,
+	}
+
+	if err := RefreshClaimsFromAuthState(claims, state); err != nil {
+		t.Fatalf("RefreshClaimsFromAuthState returned unexpected error: %v", err)
+	}
+
+	if !claims.MustChangePassword {
+		t.Errorf("claims.MustChangePassword was cleared to false; temporary token was promoted to access token")
+	}
+	if claims.Role != "ADMIN" {
+		t.Errorf("expected role to be refreshed to ADMIN, got %q", claims.Role)
+	}
+
+	// Normal access tokens (MustChangePassword=false) are restricted to true if DB requires rotation.
+	normalClaims := &Claims{
+		UserID:             "user-2",
+		Role:               "USER",
+		MustChangePassword: false,
+	}
+	forcedState := &db.UserAuthState{
+		Role:               "USER",
+		Active:             true,
+		MustChangePassword: true,
+	}
+	if err := RefreshClaimsFromAuthState(normalClaims, forcedState); err != nil {
+		t.Fatalf("RefreshClaimsFromAuthState returned unexpected error: %v", err)
+	}
+	if !normalClaims.MustChangePassword {
+		t.Errorf("expected normal claims to be restricted when DB requires password change")
+	}
+}
+

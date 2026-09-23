@@ -36,27 +36,32 @@ func databaseAuthStateLookup(database *sql.DB) AuthStateLookup {
 }
 
 // RefreshClaimsFromAuthState fails closed when an account is missing or
-// suspended, and copies mutable authorization claims from the database. The
-// nil-state check is defense-in-depth: db.GetUserAuthState reports a missing
-// user as sql.ErrNoRows, while tests and alternative lookups may return nil.
+// suspended, and copies mutable authorization claims from the database.
+// Database state may further restrict authorization, but must never promote
+// a temporary token into an access token. The nil-state check is defense-in-depth:
+// db.GetUserAuthState reports a missing user as sql.ErrNoRows, while tests
+// and alternative lookups may return nil.
 func RefreshClaimsFromAuthState(claims *Claims, state *db.UserAuthState) error {
 	if claims == nil || state == nil || !state.Active {
 		return errors.New("inactive or missing user")
 	}
 	claims.Role = state.Role
-	claims.MustChangePassword = state.MustChangePassword
+	claims.MustChangePassword = claims.MustChangePassword || state.MustChangePassword
 	return nil
 }
 
-func refreshClaims(claims *Claims, lookup AuthStateLookup) error {
+func refreshClaims(claims *Claims, lookup AuthStateLookup) (*db.UserAuthState, error) {
 	if lookup == nil {
-		return errors.New("missing auth state lookup")
+		return nil, errors.New("missing auth state lookup")
 	}
 	state, err := lookup(claims.UserID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return RefreshClaimsFromAuthState(claims, state)
+	if err := RefreshClaimsFromAuthState(claims, state); err != nil {
+		return nil, err
+	}
+	return state, nil
 }
 
 // AuthMiddleware intercepts requests to validate the JWT bearer token and
@@ -87,9 +92,15 @@ func AuthMiddlewareWithAuthStateLookup(secretKey string, lookup AuthStateLookup)
 				return
 			}
 
-			// Reject 2FA temp tokens: they authenticate the password step only and
-			// must never grant access to protected routes before the second factor.
-			if claims.TwoFAPending || refreshClaims(claims, lookup) != nil {
+			// Reject temporary tokens (incomplete authentication) before refreshing
+			// mutable account state. Intermediate tokens (2FA pending or must-change
+			// password tokens) authenticate an intermediate step only and must never
+			// grant access to protected routes, even if account state has since been updated.
+			if err := RequireAuthenticated(claims); err != nil {
+				writeUnauthorized(w)
+				return
+			}
+			if _, err := refreshClaims(claims, lookup); err != nil {
 				writeUnauthorized(w)
 				return
 			}
@@ -142,7 +153,15 @@ func AuthMiddlewareAllowMustChangeWithAuthStateLookup(secretKey string, lookup A
 				return
 			}
 			tokenMustChange := claims.MustChangePassword
-			if refreshClaims(claims, lookup) != nil || tokenMustChange != claims.MustChangePassword {
+			state, err := refreshClaims(claims, lookup)
+			if err != nil {
+				writeUnauthorized(w)
+				return
+			}
+			// The token's must-change marker must match the current DB state.
+			// A mismatch means the password has already been rotated and this
+			// token is stale; reject it so it cannot be replayed.
+			if tokenMustChange != state.MustChangePassword {
 				writeUnauthorized(w)
 				return
 			}
