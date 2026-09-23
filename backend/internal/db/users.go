@@ -667,18 +667,34 @@ func GetGlobalStats(database *sql.DB) (*GlobalStats, error) {
 	return stats, rows.Err()
 }
 
-func SetUserTOTPSecret(database *sql.DB, userID, encryptedSecret string) error {
+func SetUserTOTPSecret(database *sql.DB, userID, encryptedSecret string) (bool, error) {
+	return SetUserTOTPSecretContext(context.Background(), database, userID, encryptedSecret)
+}
+
+func SetUserTOTPSecretContext(ctx context.Context, database *sql.DB, userID, encryptedSecret string) (bool, error) {
 	query := `
 		UPDATE users
 		SET totp_secret_enc = $1,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $2
+		  AND totp_enabled = FALSE
 	`
-	_, err := database.Exec(query, encryptedSecret, userID)
-	return err
+	result, err := database.ExecContext(ctx, query, encryptedSecret, userID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows == 1, nil
 }
 
-func EnableUserTOTP(database *sql.DB, userID string, backupCodeHashes StringArray) error {
+func EnableUserTOTP(database *sql.DB, userID, expectedEncryptedSecret string, backupCodeHashes StringArray) (bool, error) {
+	return EnableUserTOTPContext(context.Background(), database, userID, expectedEncryptedSecret, backupCodeHashes)
+}
+
+func EnableUserTOTPContext(ctx context.Context, database *sql.DB, userID, expectedEncryptedSecret string, backupCodeHashes StringArray) (bool, error) {
 	query := `
 		UPDATE users
 		SET totp_enabled = TRUE,
@@ -687,9 +703,18 @@ func EnableUserTOTP(database *sql.DB, userID string, backupCodeHashes StringArra
 		    totp_locked_until = NULL,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $2
+		  AND totp_enabled = FALSE
+		  AND totp_secret_enc = $3
 	`
-	_, err := database.Exec(query, backupCodeHashes, userID)
-	return err
+	result, err := database.ExecContext(ctx, query, backupCodeHashes, userID, expectedEncryptedSecret)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows == 1, nil
 }
 
 func DisableUserTOTP(database *sql.DB, userID string) error {

@@ -219,11 +219,11 @@ func TestHandle2FADisable_WithBackupCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate backup codes: %v", err)
 	}
-	if err := db.SetUserTOTPSecret(database, user.ID, secret); err != nil {
-		t.Fatalf("store TOTP secret: %v", err)
+	if ok, err := db.SetUserTOTPSecret(database, user.ID, secret); err != nil || !ok {
+		t.Fatalf("store TOTP secret: ok=%v err=%v", ok, err)
 	}
-	if err := db.EnableUserTOTP(database, user.ID, db.StringArray(hashes)); err != nil {
-		t.Fatalf("enable TOTP: %v", err)
+	if ok, err := db.EnableUserTOTP(database, user.ID, secret, db.StringArray(hashes)); err != nil || !ok {
+		t.Fatalf("enable TOTP: ok=%v err=%v", ok, err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/2fa/disable", strings.NewReader(`{"code":"`+backupCodes[0]+`"}`))

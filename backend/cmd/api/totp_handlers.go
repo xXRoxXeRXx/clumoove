@@ -184,9 +184,14 @@ func (s *APIServer) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.SetUserTOTPSecret(s.db, userID, encrypted); err != nil {
+	ok, err := db.SetUserTOTPSecretContext(r.Context(), s.db, userID, encrypted)
+	if err != nil {
 		s.logf(r, "handle2FASetup: failed to store secret for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusConflict, ErrTotpAlreadyEnabled)
 		return
 	}
 
@@ -227,7 +232,7 @@ func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u.TotpEnabled {
-		writeError(w, http.StatusBadRequest, ErrTotpAlreadyEnabled)
+		writeError(w, http.StatusConflict, ErrTotpAlreadyEnabled)
 		return
 	}
 	if u.TotpSecretEnc == "" {
@@ -254,9 +259,24 @@ func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.EnableUserTOTP(s.db, userID, db.StringArray(hashes)); err != nil {
+	ok, err := db.EnableUserTOTPContext(r.Context(), s.db, userID, u.TotpSecretEnc, db.StringArray(hashes))
+	if err != nil {
 		s.logf(r, "handle2FAEnable: failed to enable 2FA for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !ok {
+		latest, lerr := db.GetUserByIDContext(r.Context(), s.db, userID)
+		if lerr != nil {
+			s.logf(r, "handle2FAEnable: failed to triage !ok for user %s: %v\n", userID, lerr)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		if latest.TotpEnabled {
+			writeError(w, http.StatusConflict, ErrTotpAlreadyEnabled)
+			return
+		}
+		writeError(w, http.StatusConflict, ErrTotpNoPendingSetup)
 		return
 	}
 

@@ -272,3 +272,104 @@ func TestConsumeTOTPBackupCode_ConcurrentRequestsConsumeOnlyOnce(t *testing.T) {
 		t.Fatalf("TOTP failure state not reset: attempts=%d locked=%v", updated.TotpFailedAttempts, updated.TotpLockedUntil.Valid)
 	}
 }
+
+func TestSetUserTOTPSecret_RejectsWhenAlreadyEnabled(t *testing.T) {
+	database := setupTestDB(t)
+	user, err := CreateUser(database, "totp-setup-guard@example.test", "hash", "Guard User", "en")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	secretA := "encrypted-secret-A"
+	secretB := "encrypted-secret-B"
+
+	ok, err := SetUserTOTPSecret(database, user.ID, secretA)
+	if err != nil {
+		t.Fatalf("set initial secret: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected set initial secret to succeed")
+	}
+
+	ok, err = EnableUserTOTP(database, user.ID, secretA, StringArray{"hash1"})
+	if err != nil {
+		t.Fatalf("enable TOTP: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected enable TOTP to succeed")
+	}
+
+	// Attempting to set a new secret while TOTP is already enabled must fail
+	ok, err = SetUserTOTPSecret(database, user.ID, secretB)
+	if err != nil {
+		t.Fatalf("set secret on enabled account: %v", err)
+	}
+	if ok {
+		t.Fatal("expected SetUserTOTPSecret to be rejected when TOTP is already enabled")
+	}
+
+	updated, err := GetUserByID(database, user.ID)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if updated.TotpSecretEnc != secretA {
+		t.Fatalf("secret overwritten: got %q, want %q", updated.TotpSecretEnc, secretA)
+	}
+}
+
+func TestEnableUserTOTP_RejectsMismatchedSecretOrAlreadyEnabled(t *testing.T) {
+	database := setupTestDB(t)
+	user, err := CreateUser(database, "totp-enable-guard@example.test", "hash", "Enable User", "en")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	secretA := "encrypted-secret-A"
+	secretB := "encrypted-secret-B"
+
+	ok, err := SetUserTOTPSecret(database, user.ID, secretA)
+	if err != nil || !ok {
+		t.Fatalf("set initial secret: ok=%v, err=%v", ok, err)
+	}
+
+	// Attempt to enable with mismatched secret B
+	ok, err = EnableUserTOTP(database, user.ID, secretB, StringArray{"hash1"})
+	if err != nil {
+		t.Fatalf("enable with mismatched secret: %v", err)
+	}
+	if ok {
+		t.Fatal("expected EnableUserTOTP to be rejected with mismatched secret")
+	}
+
+	u, err := GetUserByID(database, user.ID)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if u.TotpEnabled {
+		t.Fatal("user should not have TOTP enabled")
+	}
+
+	// Enable with correct secret A
+	ok, err = EnableUserTOTP(database, user.ID, secretA, StringArray{"hash1"})
+	if err != nil || !ok {
+		t.Fatalf("enable with valid secret: ok=%v, err=%v", ok, err)
+	}
+
+	u, err = GetUserByID(database, user.ID)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if !u.TotpEnabled {
+		t.Fatal("user should have TOTP enabled")
+	}
+
+	// Attempt to enable again when already enabled
+	ok, err = EnableUserTOTP(database, user.ID, secretA, StringArray{"hash2"})
+	if err != nil {
+		t.Fatalf("enable when already enabled: %v", err)
+	}
+	if ok {
+		t.Fatal("expected EnableUserTOTP to be rejected when already enabled")
+	}
+}
+
