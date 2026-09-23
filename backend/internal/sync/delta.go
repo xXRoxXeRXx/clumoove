@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,96 @@ type taskToCreate struct {
 	action              string
 	side                string // source or target
 	waitForConflictCopy bool
+}
+
+// directoryCleanupCandidate is a directory deleted on the opposite side of a
+// sync. It is intentionally handled after all queued file operations rather
+// than as a delete task: some providers recursively delete collections.
+type directoryCleanupCandidate struct {
+	relPath string
+	side    string
+}
+
+// cleanupEmptyDirectories removes only directories that are empty when the
+// pass has finished. Candidates are processed bottom-up so a deleted tree can
+// be removed without ever asking a provider to recursively delete a non-empty
+// parent. The returned directories were either removed here or had already
+// disappeared externally and must be removed from the persisted directory map.
+func cleanupEmptyDirectories(
+	ctx context.Context,
+	targetDir string,
+	sourceClient, targetClient storage.StorageProvider,
+	candidates []directoryCleanupCandidate,
+) []directoryCleanupCandidate {
+	unique := make(map[directoryCleanupCandidate]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		candidate.relPath = cleanRelPath(candidate.relPath)
+		if candidate.relPath != "/" && (candidate.side == "source" || candidate.side == "target") {
+			unique[candidate] = struct{}{}
+		}
+	}
+
+	ordered := make([]directoryCleanupCandidate, 0, len(unique))
+	for candidate := range unique {
+		ordered = append(ordered, candidate)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		leftDepth := strings.Count(ordered[i].relPath, "/")
+		rightDepth := strings.Count(ordered[j].relPath, "/")
+		if leftDepth != rightDepth {
+			return leftDepth > rightDepth
+		}
+		return ordered[i].relPath < ordered[j].relPath
+	})
+
+	removed := make([]directoryCleanupCandidate, 0, len(ordered))
+	for _, candidate := range ordered {
+		client := targetClient
+		providerPath := getTargetAbsPath(candidate.relPath, targetDir)
+		if candidate.side == "source" {
+			client = sourceClient
+			providerPath = candidate.relPath
+		}
+
+		items, err := client.GetDirectoryListing(ctx, "files", providerPath)
+		if errors.Is(err, storage.ErrNotFound) {
+			removed = append(removed, candidate)
+			continue
+		}
+		if err != nil {
+			slog.Warn("unable to inspect sync directory for empty-only cleanup", "path", candidate.relPath, "side", candidate.side, "error", err)
+			continue
+		}
+		if len(items) != 0 {
+			// A changed/new descendant survived or was created by a completed
+			// download. Never issue a collection delete in this case.
+			continue
+		}
+		if err := client.DeleteFile(ctx, "files", providerPath); err != nil {
+			slog.Warn("unable to remove empty sync directory", "path", candidate.relPath, "side", candidate.side, "error", err)
+			continue
+		}
+		removed = append(removed, candidate)
+	}
+	return removed
+}
+
+func applyDirectoryCleanupResults(
+	removed []directoryCleanupCandidate,
+	sourceDirMap, targetDirMap map[string]bool,
+	sourceDirETags, targetDirETags map[string]string,
+) {
+	for _, candidate := range removed {
+		if candidate.side == "source" {
+			delete(sourceDirMap, candidate.relPath)
+			delete(sourceDirETags, candidate.relPath)
+			invalidateParentDirectoryETags(sourceDirETags, candidate.relPath)
+			continue
+		}
+		delete(targetDirMap, candidate.relPath)
+		delete(targetDirETags, candidate.relPath)
+		invalidateParentDirectoryETags(targetDirETags, candidate.relPath)
+	}
 }
 
 // cleanRelPath normalizes a relative path so that it always starts with a single leading slash

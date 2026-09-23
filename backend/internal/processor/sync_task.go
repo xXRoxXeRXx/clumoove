@@ -205,14 +205,12 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			if err != nil {
 				return fmt.Errorf("failed to delete source file: %w", err)
 			}
-			pruneEmptyParentDirectories(ctx, sourceClient, targetClient, task.ResourceType, task.FilePath, "/", job.TargetDir)
 		} else {
 			tgtPath := path.Clean(path.Join(job.TargetDir, task.FilePath))
 			err = targetClient.DeleteFile(ctx, task.ResourceType, tgtPath)
 			if err != nil {
 				return fmt.Errorf("failed to delete target file: %w", err)
 			}
-			pruneEmptyParentDirectories(ctx, targetClient, sourceClient, task.ResourceType, tgtPath, job.TargetDir, "/")
 		}
 
 		// Success
@@ -771,41 +769,5 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 		} else {
 			p.recordRecoveryFailure(id, ra.attempts)
 		}
-	}
-}
-
-// pruneEmptyParentDirectories recursively checks parent directories of a deleted file and removes any that are empty,
-// provided they also no longer exist on the other storage provider (e.g. after a directory rename/delete).
-func pruneEmptyParentDirectories(ctx context.Context, client, otherClient storage.StorageProvider, resourceType, filePath, stopDir, otherStopDir string) {
-	stopDir = path.Clean(stopDir)
-	otherStopDir = path.Clean(otherStopDir)
-	currDir := path.Clean(path.Dir(filePath))
-
-	for currDir != "/" && currDir != "." && currDir != stopDir {
-		items, err := client.GetDirectoryListing(ctx, resourceType, currDir)
-		if err != nil || len(items) > 0 {
-			// Stop pruning if directory still contains items or listing fails
-			break
-		}
-
-		// Check if this directory still exists on the opposing storage provider
-		if otherClient != nil {
-			relDir := currDir
-			if stopDir != "/" && stopDir != "." {
-				relDir = strings.TrimPrefix(currDir, stopDir)
-			}
-			otherDir := path.Clean(path.Join(otherStopDir, relDir))
-			if res, err := otherClient.InspectResource(ctx, resourceType, otherDir); err == nil && res.IsDir {
-				// The directory STILL EXISTS on the other side (user only deleted files, kept folder)! Do not prune!
-				break
-			}
-		}
-
-		// Directory is completely empty AND does not exist on the other side! Prune it.
-		if err := client.DeleteFile(ctx, resourceType, currDir); err != nil {
-			break
-		}
-		processorLogf("[SyncTask] Pruned empty parent directory %s (no longer on other side)\n", currDir)
-		currDir = path.Clean(path.Dir(currDir))
 	}
 }

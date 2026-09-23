@@ -460,20 +460,12 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 
 	slog.Info("sync delta input", "sync_job_id", syncJobID, "source_files", len(sourceMap), "target_files", len(targetMap), "previous_source_files", len(prevSource), "previous_target_files", len(prevTarget), "paths", len(allKeys), "first_pass", len(prevStates) == 0)
 
-	type taskToCreate struct {
-		filePath     string
-		fileSize     int64
-		sourceHash   string
-		resourceType string
-		action       string
-		side         string // source or target
-		// waitForConflictCopy prevents a source upload from racing the target
-		// rename that preserves the target version of a two-way conflict.
-		waitForConflictCopy bool
-	}
-
 	var tasks []taskToCreate
 	var renameTasks []taskToCreate // Run renames before uploads to prevent overwrite of renamed files
+	// Directory removal is deliberately not a task. A number of providers treat
+	// DeleteFile on a collection as a recursive delete, so it must wait until
+	// every file operation in this pass has reached a terminal state.
+	var directoryCleanupCandidates []directoryCleanupCandidate
 
 	for S := range allKeys {
 		srcFile, hasSrc := sourceMap[S]
@@ -645,10 +637,8 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 			action:       "mkdir",
 			side:         "target",
 		})
-		// Also handle delete propagation: if dir existed before on source but now
-		// it's gone AND delete propagation is enabled, we delete it on target.
-		// (Handled in the file deletion loop for now; directories are pruned by
-		// pruneEmptyParentDirectories after all files are deleted.)
+		// Delete propagation for directories missing from the source is collected
+		// below and handled by cleanupEmptyDirectories after file work finishes.
 	}
 
 	// Two-Way only: target dir missing from source -> mkdir on source
@@ -671,15 +661,12 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 					side:         "source",
 				})
 			} else if job.DeletePropagation {
-				// Dir was previously on source, now gone from source but still on target:
-				// propagate deletion to target (delete the directory on target).
-				// Only safe if dir is empty; pruneEmptyParentDirectories will handle cleanup.
-				tasks = append(tasks, taskToCreate{
-					filePath:     dirPath,
-					fileSize:     0,
-					resourceType: "files",
-					action:       "delete",
-					side:         "target",
+				// Dir was previously on source, is now gone there, and still
+				// exists on target. Defer cleanup until all descendant file
+				// operations have finished, then delete only if it is empty.
+				directoryCleanupCandidates = append(directoryCleanupCandidates, directoryCleanupCandidate{
+					relPath: dirPath,
+					side:    "target",
 				})
 			}
 		}
@@ -695,13 +682,12 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 				continue // still present
 			}
 			if srcRelTargetDirMap[dirPath] {
-				// Was on source before, now gone, but exists on target: delete it.
-				tasks = append(tasks, taskToCreate{
-					filePath:     dirPath,
-					fileSize:     0,
-					resourceType: "files",
-					action:       "delete",
-					side:         "target",
+				// Do not enqueue a recursive provider delete. Once all file
+				// operations have completed, empty-only cleanup removes this
+				// directory bottom-up.
+				directoryCleanupCandidates = append(directoryCleanupCandidates, directoryCleanupCandidate{
+					relPath: dirPath,
+					side:    "target",
 				})
 			}
 		}
@@ -711,6 +697,12 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	slog.Info("sync tasks calculated", "sync_job_id", syncJobID, "task_count", totalCreatedTasks)
 
 	if totalCreatedTasks == 0 {
+		// Empty-only cleanup is also safe for an otherwise empty pass because its
+		// live listing is the final authority before any provider delete.
+		applyDirectoryCleanupResults(
+			cleanupEmptyDirectories(ctx, job.TargetDir, sourceClient, targetClient, directoryCleanupCandidates),
+			sourceDirMap, srcRelTargetDirMap, sourceDirETags, srcRelTargetDirETags,
+		)
 		// The baseline and lifecycle result must commit together. Otherwise a
 		// successful empty pass can lose deletion/conflict history.
 		upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, srcRelTargetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirs, prevTargetDirs, nil)
@@ -922,6 +914,14 @@ SyncTaskPoll:
 	reconcileSuccessfulOperations(ctx, job.TargetDir, sourceClient, targetClient,
 		sourceMap, targetMap, sourceDirMap, srcRelTargetDirMap,
 		sourceDirETags, srcRelTargetDirETags, stats.completedOperations, stats.protectedPaths)
+	// All file tasks, including target-to-source downloads, have now completed
+	// and verification has finished. This also applies to PARTIAL passes: the
+	// live listing remains the authority, so failed work retains any surviving
+	// descendant and blocks cleanup. Remove only empty deleted-source dirs.
+	applyDirectoryCleanupResults(
+		cleanupEmptyDirectories(ctx, job.TargetDir, sourceClient, targetClient, directoryCleanupCandidates),
+		sourceDirMap, srcRelTargetDirMap, sourceDirETags, srcRelTargetDirETags,
+	)
 
 	// Persist the durable post-operation baseline and return to IDLE in one transaction.
 	// The predicate excludes FAILED/PAUSED_*, so a concurrent task-worker

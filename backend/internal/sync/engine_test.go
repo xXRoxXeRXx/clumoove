@@ -29,6 +29,20 @@ func (p listingTestProvider) GetDirectoryListing(_ context.Context, _ string, di
 	return p.list(dirPath)
 }
 
+type directoryCleanupTestProvider struct {
+	storage.StorageProvider
+	list   func(path string) ([]storage.CloudResource, error)
+	delete func(path string) error
+}
+
+func (p directoryCleanupTestProvider) GetDirectoryListing(_ context.Context, _ string, dirPath string) ([]storage.CloudResource, error) {
+	return p.list(dirPath)
+}
+
+func (p directoryCleanupTestProvider) DeleteFile(_ context.Context, _ string, filePath string) error {
+	return p.delete(filePath)
+}
+
 func TestGetSourceRelPath(t *testing.T) {
 	tests := []struct {
 		targetPath string
@@ -182,6 +196,136 @@ func TestCleanRelPath(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("cleanRelPath(%q) = %q; want %q", tt.input, got, tt.expected)
 		}
+	}
+}
+
+func TestCleanupEmptyDirectoriesPreservesChangedDescendant(t *testing.T) {
+	var deleted []string
+	provider := directoryCleanupTestProvider{
+		list: func(dirPath string) ([]storage.CloudResource, error) {
+			if dirPath != "/backup/folder" {
+				t.Fatalf("GetDirectoryListing path = %q; want /backup/folder", dirPath)
+			}
+			return []storage.CloudResource{{Path: "/backup/folder/report.txt", Size: 1}}, nil
+		},
+		delete: func(filePath string) error {
+			deleted = append(deleted, filePath)
+			return nil
+		},
+	}
+
+	removed := cleanupEmptyDirectories(context.Background(), "/backup", provider, provider, []directoryCleanupCandidate{{relPath: "/folder", side: "target"}})
+	if len(removed) != 0 || len(deleted) != 0 {
+		t.Fatalf("changed descendant allowed directory cleanup: removed=%#v deleted=%#v", removed, deleted)
+	}
+}
+
+func TestCleanupEmptyDirectoriesRunsBottomUp(t *testing.T) {
+	deleted := make(map[string]bool)
+	provider := directoryCleanupTestProvider{
+		list: func(dirPath string) ([]storage.CloudResource, error) {
+			switch dirPath {
+			case "/backup/folder/child":
+				return nil, nil
+			case "/backup/folder":
+				if deleted["/backup/folder/child"] {
+					return nil, nil
+				}
+				return []storage.CloudResource{{Path: "/backup/folder/child", IsDir: true}}, nil
+			default:
+				t.Fatalf("unexpected directory listing for %q", dirPath)
+				return nil, nil
+			}
+		},
+		delete: func(filePath string) error {
+			deleted[filePath] = true
+			return nil
+		},
+	}
+
+	removed := cleanupEmptyDirectories(context.Background(), "/backup", provider, provider, []directoryCleanupCandidate{
+		{relPath: "/folder", side: "target"},
+		{relPath: "/folder/child", side: "target"},
+	})
+	if len(removed) != 2 || !deleted["/backup/folder/child"] || !deleted["/backup/folder"] {
+		t.Fatalf("bottom-up cleanup = removed=%#v deleted=%#v", removed, deleted)
+	}
+}
+
+func TestCleanupEmptyDirectoriesTreatsNotFoundAsRemoved(t *testing.T) {
+	deleteCalls := 0
+	provider := directoryCleanupTestProvider{
+		list: func(dirPath string) ([]storage.CloudResource, error) {
+			if dirPath != "/backup/gone" {
+				t.Fatalf("GetDirectoryListing path = %q; want /backup/gone", dirPath)
+			}
+			return nil, storage.ErrNotFound
+		},
+		delete: func(string) error {
+			deleteCalls++
+			return nil
+		},
+	}
+
+	candidate := directoryCleanupCandidate{relPath: "/gone", side: "target"}
+	removed := cleanupEmptyDirectories(context.Background(), "/backup", provider, provider, []directoryCleanupCandidate{candidate})
+	if len(removed) != 1 || removed[0] != candidate {
+		t.Fatalf("not-found cleanup result = %#v; want %#v", removed, []directoryCleanupCandidate{candidate})
+	}
+	if deleteCalls != 0 {
+		t.Fatalf("DeleteFile calls = %d; want 0 for an already removed directory", deleteCalls)
+	}
+}
+
+func TestCleanupEmptyDirectoriesSkipsRootAndDeduplicatesCandidates(t *testing.T) {
+	listCalls := 0
+	deleteCalls := 0
+	provider := directoryCleanupTestProvider{
+		list: func(dirPath string) ([]storage.CloudResource, error) {
+			if dirPath != "/backup/folder" {
+				t.Fatalf("GetDirectoryListing path = %q; want /backup/folder", dirPath)
+			}
+			listCalls++
+			return nil, nil
+		},
+		delete: func(filePath string) error {
+			if filePath != "/backup/folder" {
+				t.Fatalf("DeleteFile path = %q; want /backup/folder", filePath)
+			}
+			deleteCalls++
+			return nil
+		},
+	}
+
+	removed := cleanupEmptyDirectories(context.Background(), "/backup", provider, provider, []directoryCleanupCandidate{
+		{relPath: "/", side: "target"},
+		{relPath: "/folder", side: "target"},
+		{relPath: "//folder", side: "target"},
+	})
+	if len(removed) != 1 || removed[0].relPath != "/folder" || listCalls != 1 || deleteCalls != 1 {
+		t.Fatalf("root/dedup cleanup = removed=%#v lists=%d deletes=%d", removed, listCalls, deleteCalls)
+	}
+}
+
+func TestApplyDirectoryCleanupResultsUpdatesBothSides(t *testing.T) {
+	sourceDirs := map[string]bool{"/gone-source": true}
+	targetDirs := map[string]bool{"/gone-target": true}
+	sourceETags := map[string]string{"/gone-source": "source", "/": "source-root"}
+	targetETags := map[string]string{"/gone-target": "target", "/": "target-root"}
+
+	applyDirectoryCleanupResults([]directoryCleanupCandidate{
+		{relPath: "/gone-source", side: "source"},
+		{relPath: "/gone-target", side: "target"},
+	}, sourceDirs, targetDirs, sourceETags, targetETags)
+
+	if sourceDirs["/gone-source"] || targetDirs["/gone-target"] {
+		t.Fatalf("directory maps were not cleared: source=%#v target=%#v", sourceDirs, targetDirs)
+	}
+	if _, ok := sourceETags["/gone-source"]; ok {
+		t.Fatalf("source directory ETag was not cleared: %#v", sourceETags)
+	}
+	if _, ok := targetETags["/gone-target"]; ok {
+		t.Fatalf("target directory ETag was not cleared: %#v", targetETags)
 	}
 }
 
