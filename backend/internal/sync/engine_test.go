@@ -220,6 +220,30 @@ func TestCleanupEmptyDirectoriesPreservesChangedDescendant(t *testing.T) {
 	}
 }
 
+func TestCleanupEmptyDirectoriesPreservesFailedTransferSibling(t *testing.T) {
+	// A failed direct upload can leave a sibling in the target directory. The
+	// directory-cleanup pass runs after that task reaches a terminal status and
+	// must rely on the live empty check instead of deleting the collection.
+	deleteCalls := 0
+	provider := directoryCleanupTestProvider{
+		list: func(dirPath string) ([]storage.CloudResource, error) {
+			if dirPath != "/backup/folder" {
+				t.Fatalf("GetDirectoryListing path = %q; want /backup/folder", dirPath)
+			}
+			return []storage.CloudResource{{Path: "/backup/folder/failed-upload.txt", Size: 1}}, nil
+		},
+		delete: func(string) error {
+			deleteCalls++
+			return nil
+		},
+	}
+
+	removed := cleanupEmptyDirectories(context.Background(), "/backup", provider, provider, []directoryCleanupCandidate{{relPath: "/folder", side: "target"}})
+	if len(removed) != 0 || deleteCalls != 0 {
+		t.Fatalf("failed-transfer sibling allowed directory cleanup: removed=%#v deletes=%d", removed, deleteCalls)
+	}
+}
+
 func TestCleanupEmptyDirectoriesRunsBottomUp(t *testing.T) {
 	deleted := make(map[string]bool)
 	provider := directoryCleanupTestProvider{
@@ -456,6 +480,56 @@ func TestListFilesSkipsUnchangedETagSubtree(t *testing.T) {
 	}
 	if _, ok := files["/kept.txt"]; !ok || !dirs["/nested"] || etags["/nested"] != "nested-etag" {
 		t.Fatalf("unchanged subtree was not retained: files=%v dirs=%v etags=%v", files, dirs, etags)
+	}
+}
+
+func TestProtectedPathInvalidatesUnchangedDirectoryETag(t *testing.T) {
+	// Pass 1 discovers a new file, but its transfer exhausts retries. The file
+	// gets no baseline entry while the directory has the newly observed ETag.
+	// That ETag must not be persisted as a reusable complete-subtree cache.
+	sourceDirETags := map[string]string{"/": "after-new-file", "/retry": "retry-after-new-file"}
+	targetDirETags := map[string]string{"/": "target-before", "/retry": "target-retry-before"}
+	protectedPaths := map[string]bool{"/retry/new.txt": true}
+	invalidateProtectedPathDirectoryETags(sourceDirETags, targetDirETags, protectedPaths)
+	if _, ok := sourceDirETags["/"]; ok {
+		t.Fatal("source directory ETag survived an unresolved descendant")
+	}
+	if _, ok := sourceDirETags["/retry"]; ok {
+		t.Fatal("source ancestor ETag survived an unresolved descendant")
+	}
+	if _, ok := targetDirETags["/"]; ok {
+		t.Fatal("target directory ETag survived an unresolved descendant")
+	}
+	if _, ok := targetDirETags["/retry"]; ok {
+		t.Fatal("target ancestor ETag survived an unresolved descendant")
+	}
+
+	// Pass 2 sees the same ETag. With no reusable prior ETag, listFiles must
+	// enumerate the directory and rediscover the failed file for retry.
+	listCalls := 0
+	provider := listingTestProvider{
+		inspect: func(resourcePath string) (storage.CloudResource, error) {
+			return storage.CloudResource{Path: resourcePath, IsDir: true, ETag: "after-new-file"}, nil
+		},
+		list: func(dirPath string) ([]storage.CloudResource, error) {
+			listCalls++
+			if dirPath == "/" {
+				return []storage.CloudResource{{Path: "/retry", IsDir: true, ETag: "retry-etag"}}, nil
+			}
+			return []storage.CloudResource{{Path: "/retry/new.txt", Size: 1, ETag: "new-file"}}, nil
+		},
+	}
+	files, _, _, errs, err := NewEngine(nil, nil, "secret").listFiles(
+		context.Background(), provider, []string{"/"}, sourceDirETags, nil,
+	)
+	if err != nil || len(errs) != 0 {
+		t.Fatalf("listFiles returned err=%v errors=%v", err, errs)
+	}
+	if listCalls == 0 {
+		t.Fatal("unchanged directory ETag was incorrectly reused after failed transfer")
+	}
+	if _, ok := files["/retry/new.txt"]; !ok {
+		t.Fatal("failed transfer was not rediscovered after unchanged directory ETag")
 	}
 }
 

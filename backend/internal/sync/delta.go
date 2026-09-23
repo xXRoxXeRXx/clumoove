@@ -50,6 +50,8 @@ func cleanupEmptyDirectories(
 	sourceClient, targetClient storage.StorageProvider,
 	candidates []directoryCleanupCandidate,
 ) []directoryCleanupCandidate {
+	// directoryCleanupCandidate contains only comparable string fields; this
+	// map-based deduplication relies on that remaining true.
 	unique := make(map[directoryCleanupCandidate]struct{}, len(candidates))
 	for _, candidate := range candidates {
 		candidate.relPath = cleanRelPath(candidate.relPath)
@@ -382,6 +384,21 @@ func invalidateParentDirectoryETags(dirETags map[string]string, relPath string) 
 	}
 }
 
+// invalidateProtectedPathDirectoryETags removes reusable subtree cache entries
+// for paths whose work did not establish a durable file baseline. A failed,
+// skipped, or unreconciled operation can leave either side changed (for example
+// after a partial direct upload), so both listings must be refreshed before a
+// later pass is allowed to skip an unchanged directory ETag.
+func invalidateProtectedPathDirectoryETags(
+	sourceDirETags, targetDirETags map[string]string,
+	protectedPaths map[string]bool,
+) {
+	for relPath := range protectedPaths {
+		invalidateParentDirectoryETags(sourceDirETags, relPath)
+		invalidateParentDirectoryETags(targetDirETags, relPath)
+	}
+}
+
 // listFiles traverses paths recursively using a parallel worker pool. When a
 // directory ETag is unchanged, its previous subtree is retained without a
 // provider listing.
@@ -649,7 +666,10 @@ type finalTaskStats struct {
 	total, completed, skipped, failed int
 	changed, deleted                  int
 	completedOperations               []completedTaskOperation
-	protectedPaths                    map[string]bool
+	// protectedPaths contains normalized task resource paths. File tasks always
+	// contribute file paths; failed mkdir tasks contribute the directory path
+	// they could not create. Both require invalidating their parent ETag chain.
+	protectedPaths map[string]bool
 }
 
 // readFinalTaskOutcomes collects statistics and the durable state outcome map

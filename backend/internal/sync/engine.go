@@ -914,6 +914,10 @@ SyncTaskPoll:
 	reconcileSuccessfulOperations(ctx, job.TargetDir, sourceClient, targetClient,
 		sourceMap, targetMap, sourceDirMap, srcRelTargetDirMap,
 		sourceDirETags, srcRelTargetDirETags, stats.completedOperations, stats.protectedPaths)
+	// A protected path deliberately retains its old file baseline. Do not retain
+	// a newer directory ETag around it: that ETag would make the next pass copy
+	// the incomplete old subtree instead of discovering the unresolved change.
+	invalidateProtectedPathDirectoryETags(sourceDirETags, srcRelTargetDirETags, stats.protectedPaths)
 	// All file tasks, including target-to-source downloads, have now completed
 	// and verification has finished. This also applies to PARTIAL passes: the
 	// live listing remains the authority, so failed work retains any surviving
