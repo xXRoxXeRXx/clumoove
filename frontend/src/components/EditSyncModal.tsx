@@ -64,6 +64,12 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
     }
     return initial;
   });
+  // An empty selected_paths array represents the whole source root, not an
+  // empty selection. Keep that scope explicit so changing other settings does
+  // not turn it into a list of the entries currently visible in the browser.
+  const [isWholeRootSelected, setIsWholeRootSelected] = useState(
+    () => Array.isArray(job.selected_paths) && job.selected_paths.length === 0,
+  );
 
   // Sync options state
   const [targetDir, setTargetDir] = useState<string>(job.target_dir || "/");
@@ -99,7 +105,9 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
 
-  const pathsToMigrate = Object.keys(selectedPaths).filter((p) => selectedPaths[p]);
+  const pathsToMigrate = isWholeRootSelected
+    ? []
+    : Object.keys(selectedPaths).filter((p) => selectedPaths[p]);
 
   // Fetch directory contents for source
   const fetchSourceDirectory = useCallback(
@@ -215,11 +223,20 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
 
   // Toggle path selection
   const toggleSelect = (filePath: string) => {
+    // Selecting an individual entry intentionally changes the scope from the
+    // root to an explicit list.
+    setIsWholeRootSelected(false);
     setSelectedPaths((prev) => ({ ...prev, [filePath]: !prev[filePath] }));
   };
 
   const deselectAll = () => {
+    setIsWholeRootSelected(false);
     setSelectedPaths({});
+  };
+
+  const toggleWholeRoot = () => {
+    if (!isWholeRootSelected) setSelectedPaths({});
+    setIsWholeRootSelected((selected) => !selected);
   };
 
   // Toggle folder expansion in source tree
@@ -239,7 +256,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
 
   // Handle Save
   const handleSave = async () => {
-    if (pathsToMigrate.length === 0) {
+    if (!isWholeRootSelected && pathsToMigrate.length === 0) {
       setError(t("fileBrowser.errors.selectOne"));
       return;
     }
@@ -556,7 +573,9 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
                 </h3>
               </div>
               <span className="ui-badge ui-badge-muted text-[10px] font-mono font-bold px-2.5 py-0.5">
-                {t("fileBrowser.itemCount", { count: pathsToMigrate.length })}
+              {isWholeRootSelected
+                ? t("sync.wholeRoot")
+                : t("fileBrowser.itemCount", { count: pathsToMigrate.length })}
               </span>
             </div>
 
@@ -859,6 +878,43 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
           </div>
 
           <div className="flex-grow overflow-y-auto rounded-lg max-h-96">
+            <div className="select-none font-sans text-xs">
+              <div
+                className={`flex items-center gap-3 py-3.5 px-4 border-b border-[var(--color-border-light)] hover:bg-[var(--color-bg-tertiary)] transition-colors duration-150 ${
+                  isWholeRootSelected ? "bg-[var(--color-bg-tertiary)] font-semibold" : ""
+                }`}
+              >
+                <span className="w-5" />
+                <button
+                  type="button"
+                  onClick={toggleWholeRoot}
+                  className="flex items-center justify-center cursor-pointer"
+                  aria-label={t("sync.wholeRoot")}
+                  aria-pressed={isWholeRootSelected}
+                >
+                  <div
+                    className={`w-4.5 h-4.5 border rounded flex items-center justify-center transition-all duration-200 ${
+                      isWholeRootSelected
+                        ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] border-transparent"
+                        : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:border-[var(--color-border)]"
+                    }`}
+                  >
+                    {isWholeRootSelected && (
+                      <Check className="w-3 h-3 text-[var(--color-text-inverse)] stroke-[3.5]" />
+                    )}
+                  </div>
+                </button>
+                <Folder className="w-5 h-5 text-[var(--color-text-secondary)] shrink-0" />
+                <div className="min-w-0 flex-grow">
+                  <p className="text-[12px] text-[var(--color-text-primary)] font-bold">
+                    {t("sync.wholeRoot")}
+                  </p>
+                  <p className="text-[10px] text-[var(--color-text-muted)]">
+                    {t("sync.wholeRootHelp")}
+                  </p>
+                </div>
+              </div>
+            </div>
             {directoryContents["/"]?.length > 0 ? (
               directoryContents["/"].map((file) => renderNode(file, 0))
             ) : (

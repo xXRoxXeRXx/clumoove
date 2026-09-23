@@ -1063,6 +1063,8 @@
     "twoWay": "Two-Way",
     "direction": "Sync-Richtung",
     "interval": "Sync-Intervall",
+    "wholeRoot": "Gesamtes Quellverzeichnis (/)",
+    "wholeRootHelp": "Schließt alle aktuellen und zukünftigen Einträge im Stammverzeichnis ein.",
     "deletePropagation": "Löschungen synchronisieren",
     "deletePropagationHelp": "Gelöschte Dateien auch auf dem Zielspeicher entfernen.",
     "minutes": "Minuten",

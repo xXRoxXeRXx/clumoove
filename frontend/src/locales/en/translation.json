@@ -1063,6 +1063,8 @@
     "twoWay": "Two-way",
     "direction": "Sync Direction",
     "interval": "Sync Interval",
+    "wholeRoot": "Entire source root (/)",
+    "wholeRootHelp": "Includes all current and future root entries.",
     "deletePropagation": "Sync file deletions",
     "deletePropagationHelp": "Automatically remove files on target when deleted on source.",
     "minutes": "minutes",
