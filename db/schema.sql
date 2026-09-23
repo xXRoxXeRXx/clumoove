@@ -124,7 +124,6 @@ CREATE INDEX IF NOT EXISTS idx_tasks_migration_status ON tasks(migration_id, sta
 CREATE INDEX IF NOT EXISTS idx_tasks_retry ON tasks(status, next_retry_at) WHERE status = 'FAILED' AND next_retry_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_pending ON tasks(status, created_at) WHERE status = 'PENDING';
 CREATE INDEX IF NOT EXISTS idx_tasks_migration_verifying ON tasks(migration_id, updated_at) WHERE status = 'COMPLETED' AND checksum_verified = FALSE;
-CREATE INDEX IF NOT EXISTS idx_tasks_sync_verifying ON tasks(sync_job_id, pass_generation, updated_at) WHERE status = 'COMPLETED' AND checksum_verified = FALSE;
 
 -- Auto-update updated_at triggers
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -814,6 +813,7 @@ END $$;
 
 DROP INDEX IF EXISTS idx_tasks_sync_status;
 CREATE INDEX IF NOT EXISTS idx_tasks_sync_gen_status ON tasks(sync_job_id, pass_generation, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_sync_verifying ON tasks(sync_job_id, pass_generation, updated_at) WHERE status = 'COMPLETED' AND checksum_verified = FALSE;
 CREATE INDEX IF NOT EXISTS idx_tasks_wait_conflict_copy
     ON tasks ((metadata->>'wait_for_conflict_copy'))
     WHERE status = 'PENDING' AND metadata->>'wait_for_conflict_copy' = 'true';

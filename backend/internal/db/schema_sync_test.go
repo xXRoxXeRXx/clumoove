@@ -77,3 +77,30 @@ func initDBDDLForTable(source, tableName string) string {
 	alterRE := regexp.MustCompile(`(?is)ALTER\s+TABLE\s+` + name + `\b.*?(?:` + "`" + `|$)`)
 	return strings.Join(append(createRE.FindAllString(source, -1), alterRE.FindAllString(source, -1)...), "\n")
 }
+
+// TestCanonicalSchemaTaskIndexesFollowColumnDeclarations ensures indexes in schema.sql
+// do not reference columns before they are defined in either CREATE TABLE or ALTER TABLE.
+func TestCanonicalSchemaTaskIndexesFollowColumnDeclarations(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate schema sync test")
+	}
+	canonical, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "../../../db/schema.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalSchema := string(canonical)
+
+	syncJobColPos := strings.Index(canonicalSchema, "ADD COLUMN IF NOT EXISTS sync_job_id")
+	if syncJobColPos == -1 {
+		t.Fatal("schema.sql missing sync_job_id column addition on tasks")
+	}
+	syncVerifyingIdxPos := strings.Index(canonicalSchema, "idx_tasks_sync_verifying")
+	if syncVerifyingIdxPos == -1 {
+		t.Fatal("schema.sql missing idx_tasks_sync_verifying index")
+	}
+	if syncVerifyingIdxPos < syncJobColPos {
+		t.Errorf("idx_tasks_sync_verifying index (offset %d) appears before sync_job_id column addition (offset %d)",
+			syncVerifyingIdxPos, syncJobColPos)
+	}
+}
