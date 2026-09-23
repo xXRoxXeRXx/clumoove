@@ -353,6 +353,52 @@ func TestApplyDirectoryCleanupResultsUpdatesBothSides(t *testing.T) {
 	}
 }
 
+func TestCalculateDirectoryDeltaPropagatesTwoWayDirectoryDeletionsSymmetrically(t *testing.T) {
+	tasks, cleanup := calculateDirectoryDelta(
+		"two_way", true,
+		map[string]bool{"/": true, "/target-deleted": true},
+		map[string]bool{"/": true},
+		map[string]bool{"/": true, "/target-deleted": true},
+		map[string]bool{"/": true, "/target-deleted": true},
+	)
+	if len(tasks) != 0 {
+		t.Fatalf("target directory deletion recreated directory: %#v", tasks)
+	}
+	if len(cleanup) != 1 || cleanup[0] != (directoryCleanupCandidate{relPath: "/target-deleted", side: "source"}) {
+		t.Fatalf("target directory deletion cleanup = %#v", cleanup)
+	}
+
+	tasks, cleanup = calculateDirectoryDelta(
+		"two_way", true,
+		map[string]bool{"/": true},
+		map[string]bool{"/": true, "/source-deleted": true},
+		map[string]bool{"/": true, "/source-deleted": true},
+		map[string]bool{"/": true, "/source-deleted": true},
+	)
+	if len(tasks) != 0 {
+		t.Fatalf("source directory deletion recreated directory: %#v", tasks)
+	}
+	if len(cleanup) != 1 || cleanup[0] != (directoryCleanupCandidate{relPath: "/source-deleted", side: "target"}) {
+		t.Fatalf("source directory deletion cleanup = %#v", cleanup)
+	}
+}
+
+func TestCalculateDirectoryDeltaPreservesNewDescendantAgainstDeletion(t *testing.T) {
+	tasks, cleanup := calculateDirectoryDelta(
+		"two_way", true,
+		map[string]bool{"/": true, "/folder": true, "/folder/new": true},
+		map[string]bool{"/": true},
+		map[string]bool{"/": true, "/folder": true},
+		map[string]bool{"/": true, "/folder": true},
+	)
+	if len(tasks) != 1 || tasks[0].filePath != "/folder/new" || tasks[0].action != "mkdir" || tasks[0].side != "target" {
+		t.Fatalf("new descendant mkdir = %#v", tasks)
+	}
+	if len(cleanup) != 1 || cleanup[0] != (directoryCleanupCandidate{relPath: "/folder", side: "source"}) {
+		t.Fatalf("parent deletion cleanup = %#v", cleanup)
+	}
+}
+
 func TestListFilesReportsTraversalErrors(t *testing.T) {
 	provider := listingTestProvider{
 		inspect: func(resourcePath string) (storage.CloudResource, error) {

@@ -39,6 +39,89 @@ type directoryCleanupCandidate struct {
 	side    string
 }
 
+// calculateDirectoryDelta reconciles directory presence without asking a
+// provider to recursively delete a collection. In two-way syncs, a directory
+// that was present on the opposite side in the previous pass is a deletion,
+// not a missing directory to recreate. Its surviving counterpart is checked
+// for emptiness only after all descendant file operations finish. Directories
+// that are new on the current side still produce mkdir tasks, so a new
+// descendant safely wins over a simultaneous parent deletion.
+func calculateDirectoryDelta(
+	direction string,
+	deletePropagation bool,
+	sourceDirs, targetDirs, prevSourceDirs, prevTargetDirs map[string]bool,
+) ([]taskToCreate, []directoryCleanupCandidate) {
+	var tasks []taskToCreate
+	var cleanupCandidates []directoryCleanupCandidate
+
+	addMkdir := func(dirPath, side string) {
+		tasks = append(tasks, taskToCreate{
+			filePath:     dirPath,
+			fileSize:     0,
+			resourceType: "files",
+			action:       "mkdir",
+			side:         side,
+		})
+	}
+
+	for dirPath := range sourceDirs {
+		dirPath = cleanRelPath(dirPath)
+		if dirPath == "/" || targetDirs[dirPath] {
+			continue
+		}
+		if direction != "two_way" || !prevTargetDirs[dirPath] {
+			// One-way sync, or a directory created on source since the previous
+			// pass: create it on target.
+			addMkdir(dirPath, "target")
+			continue
+		}
+		if deletePropagation {
+			// Target deliberately removed a directory that source still has.
+			// Do not recreate it; empty-only cleanup after descendant deltas
+			// preserves any changed or newly-created source descendants.
+			cleanupCandidates = append(cleanupCandidates, directoryCleanupCandidate{
+				relPath: dirPath,
+				side:    "source",
+			})
+		}
+	}
+
+	if direction == "two_way" {
+		for dirPath := range targetDirs {
+			dirPath = cleanRelPath(dirPath)
+			if dirPath == "/" || sourceDirs[dirPath] {
+				continue
+			}
+			if !prevSourceDirs[dirPath] {
+				// Directory created on target since the previous pass.
+				addMkdir(dirPath, "source")
+				continue
+			}
+			if deletePropagation {
+				// Source deliberately removed a directory that target still has.
+				cleanupCandidates = append(cleanupCandidates, directoryCleanupCandidate{
+					relPath: dirPath,
+					side:    "target",
+				})
+			}
+		}
+	}
+
+	if direction == "one_way" && deletePropagation {
+		for dirPath := range prevSourceDirs {
+			dirPath = cleanRelPath(dirPath)
+			if dirPath != "/" && !sourceDirs[dirPath] && targetDirs[dirPath] {
+				cleanupCandidates = append(cleanupCandidates, directoryCleanupCandidate{
+					relPath: dirPath,
+					side:    "target",
+				})
+			}
+		}
+	}
+
+	return tasks, cleanupCandidates
+}
+
 // cleanupEmptyDirectories removes only directories that are empty when the
 // pass has finished. Candidates are processed bottom-up so a deleted tree can
 // be removed without ever asking a provider to recursively delete a non-empty

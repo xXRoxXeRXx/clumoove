@@ -618,80 +618,12 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 
 	}
 
-	// Directory delta: create missing directories on target (or source for two-way).
-	// We only emit mkdir tasks for directories discovered in the *current* scan that
-	// are absent on the other side. We skip root paths ("/") and the target root itself.
-	for dirPath := range sourceDirMap {
-		if dirPath == "/" {
-			continue
-		}
-		// Does this directory already exist on the target?
-		if srcRelTargetDirMap[dirPath] {
-			continue
-		}
-		// One-Way or Two-Way: source dir missing from target -> mkdir on target
-		tasks = append(tasks, taskToCreate{
-			filePath:     dirPath,
-			fileSize:     0,
-			resourceType: "files",
-			action:       "mkdir",
-			side:         "target",
-		})
-		// Delete propagation for directories missing from the source is collected
-		// below and handled by cleanupEmptyDirectories after file work finishes.
-	}
-
-	// Two-Way only: target dir missing from source -> mkdir on source
-	if job.Direction == "two_way" {
-		for dirPath := range srcRelTargetDirMap {
-			if dirPath == "/" {
-				continue
-			}
-			if sourceDirMap[dirPath] {
-				continue
-			}
-			// Target has the dir but source doesn't.
-			if !prevSourceDirs[dirPath] {
-				// Dir is new on target (not previously known on source): create on source.
-				tasks = append(tasks, taskToCreate{
-					filePath:     dirPath,
-					fileSize:     0,
-					resourceType: "files",
-					action:       "mkdir",
-					side:         "source",
-				})
-			} else if job.DeletePropagation {
-				// Dir was previously on source, is now gone there, and still
-				// exists on target. Defer cleanup until all descendant file
-				// operations have finished, then delete only if it is empty.
-				directoryCleanupCandidates = append(directoryCleanupCandidates, directoryCleanupCandidate{
-					relPath: dirPath,
-					side:    "target",
-				})
-			}
-		}
-	}
-
-	// One-Way: delete propagation for source dirs no longer present
-	if job.Direction == "one_way" && job.DeletePropagation {
-		for dirPath := range prevSourceDirs {
-			if dirPath == "/" {
-				continue
-			}
-			if sourceDirMap[dirPath] {
-				continue // still present
-			}
-			if srcRelTargetDirMap[dirPath] {
-				// Do not enqueue a recursive provider delete. Once all file
-				// operations have completed, empty-only cleanup removes this
-				// directory bottom-up.
-				directoryCleanupCandidates = append(directoryCleanupCandidates, directoryCleanupCandidate{
-					relPath: dirPath,
-					side:    "target",
-				})
-			}
-		}
-	}
+	directoryTasks, directoryCleanup := calculateDirectoryDelta(
+		job.Direction, job.DeletePropagation,
+		sourceDirMap, srcRelTargetDirMap, prevSourceDirs, prevTargetDirs,
+	)
+	tasks = append(tasks, directoryTasks...)
+	directoryCleanupCandidates = append(directoryCleanupCandidates, directoryCleanup...)
 
 	totalCreatedTasks := len(renameTasks) + len(tasks)
 	slog.Info("sync tasks calculated", "sync_job_id", syncJobID, "task_count", totalCreatedTasks)
