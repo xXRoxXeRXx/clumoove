@@ -1713,6 +1713,30 @@ func (p *Processor) refreshOAuthToken(ctx context.Context, mig *db.Migration, ro
 	return p.refreshOAuthTokenIfNeeded(ctx, mig, role, "", true)
 }
 
+func applyOAuthTokensToMigration(mig *db.Migration, role string, accessEnc string, refreshEnc sql.NullString, expiresAt sql.NullTime) {
+	if role == "source" {
+		mig.SourcePasswordEncrypted = accessEnc
+		mig.SourceRefreshTokenEncrypted = refreshEnc
+		mig.SourceTokenExpiresAt = expiresAt
+	} else {
+		mig.TargetPasswordEncrypted = accessEnc
+		mig.TargetRefreshTokenEncrypted = refreshEnc
+		mig.TargetTokenExpiresAt = expiresAt
+	}
+}
+
+func applyOAuthTokensToSyncJob(job *db.SyncJob, role string, accessEnc string, refreshEnc sql.NullString, expiresAt sql.NullTime) {
+	if role == "source" {
+		job.SourcePasswordEncrypted = accessEnc
+		job.SourceRefreshTokenEncrypted = refreshEnc
+		job.SourceTokenExpiresAt = expiresAt
+	} else {
+		job.TargetPasswordEncrypted = accessEnc
+		job.TargetRefreshTokenEncrypted = refreshEnc
+		job.TargetTokenExpiresAt = expiresAt
+	}
+}
+
 func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migration, role string, accessToken string, force bool) (string, error) {
 	tokenSet := func(m *db.Migration) struct {
 		refreshEnc sql.NullString
@@ -1801,6 +1825,8 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 	// the newer access token instead of rotating a freshly issued refresh token
 	// again (Microsoft can invalidate older refresh tokens during rotation).
 	if force && latestMig.UpdatedAt.After(mig.UpdatedAt) {
+		applyOAuthTokensToMigration(mig, role, latest.accessEnc, latest.refreshEnc, latest.expiresAt)
+		mig.UpdatedAt = latestMig.UpdatedAt
 		return accessToken, nil
 	}
 
@@ -1835,6 +1861,7 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 	if expiresIn <= 0 {
 		expiresIn = 3600
 	}
+	newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
 
 	expectedRefreshEnc := refreshTokenEnc.String
 	err = db.UpdateMigrationOAuthTokens(p.db, db.OAuthTokenUpdate{
@@ -1842,13 +1869,15 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 		Role:                  role,
 		AccessTokenEncrypted:  newAccessEnc,
 		RefreshTokenEncrypted: newRefreshEnc,
-		ExpiresAt:             time.Now().Add(time.Duration(expiresIn) * time.Second),
+		ExpiresAt:             newExpiresAt,
 	}, expectedRefreshEnc)
 
 	if errors.Is(err, db.ErrOAuthTokenConflict) {
 		processorLogf("[Worker %s] Token update conflict for migration %s (%s) — adopting winner token from DB\n", p.workerID, mig.ID, role)
 		if latestMig, lerr := db.GetMigration(p.db, mig.ID); lerr == nil {
 			latest := tokenSet(latestMig)
+			applyOAuthTokensToMigration(mig, role, latest.accessEnc, latest.refreshEnc, latest.expiresAt)
+			mig.UpdatedAt = latestMig.UpdatedAt
 			if latestAccess, derr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); derr == nil {
 				return latestAccess, nil
 			}
@@ -1858,6 +1887,8 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 	if err != nil {
 		return "", fmt.Errorf("failed to persist new %s OAuth tokens after refresh: %w", role, err)
 	}
+
+	applyOAuthTokensToMigration(mig, role, newAccessEnc, sql.NullString{String: newRefreshEnc, Valid: true}, sql.NullTime{Time: newExpiresAt, Valid: true})
 
 	return tokenResp.AccessToken, nil
 }
@@ -1955,6 +1986,8 @@ func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.S
 	refreshTokenEnc, expiresAt, provider = latest.refreshEnc, latest.expiresAt, latest.provider
 
 	if force && latestJob.UpdatedAt.After(job.UpdatedAt) {
+		applyOAuthTokensToSyncJob(job, role, latest.accessEnc, latest.refreshEnc, latest.expiresAt)
+		job.UpdatedAt = latestJob.UpdatedAt
 		return currentToken, nil
 	}
 
@@ -1997,6 +2030,8 @@ func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.S
 		processorLogf("[Worker %s] Token update conflict for sync job %s (%s) — adopting winner token from DB\n", p.workerID, job.ID, role)
 		if latestJob, lerr := db.GetSyncJob(p.db, job.ID); lerr == nil {
 			latest := tokenSet(latestJob)
+			applyOAuthTokensToSyncJob(job, role, latest.accessEnc, latest.refreshEnc, latest.expiresAt)
+			job.UpdatedAt = latestJob.UpdatedAt
 			if latestAccess, derr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); derr == nil {
 				return latestAccess, nil
 			}
@@ -2006,6 +2041,8 @@ func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.S
 	if err != nil {
 		return "", fmt.Errorf("failed to persist new %s OAuth tokens after refresh: %w", role, err)
 	}
+
+	applyOAuthTokensToSyncJob(job, role, newAccessEnc, sql.NullString{String: newRefreshEnc, Valid: true}, sql.NullTime{Time: newExpiresAt, Valid: true})
 
 	return tokenResp.AccessToken, nil
 }

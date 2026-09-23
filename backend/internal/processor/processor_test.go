@@ -830,3 +830,77 @@ func TestShouldEvictThrottler(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyOAuthTokensToMigration(t *testing.T) {
+	expTime := time.Date(2026, 9, 23, 14, 0, 0, 0, time.UTC)
+	expiresAt := sql.NullTime{Time: expTime, Valid: true}
+	refreshEnc := sql.NullString{String: "enc-refresh", Valid: true}
+
+	t.Run("updates source fields and preserves target", func(t *testing.T) {
+		mig := &db.Migration{
+			SourcePasswordEncrypted:     "old-src-pass",
+			SourceRefreshTokenEncrypted: sql.NullString{String: "old-src-ref", Valid: true},
+			TargetPasswordEncrypted:     "target-pass",
+			TargetRefreshTokenEncrypted: sql.NullString{String: "target-ref", Valid: true},
+		}
+		applyOAuthTokensToMigration(mig, "source", "new-src-pass", refreshEnc, expiresAt)
+
+		if mig.SourcePasswordEncrypted != "new-src-pass" {
+			t.Fatalf("SourcePasswordEncrypted = %q, want new-src-pass", mig.SourcePasswordEncrypted)
+		}
+		if mig.SourceRefreshTokenEncrypted != refreshEnc {
+			t.Fatalf("SourceRefreshTokenEncrypted = %v, want %v", mig.SourceRefreshTokenEncrypted, refreshEnc)
+		}
+		if mig.SourceTokenExpiresAt != expiresAt {
+			t.Fatalf("SourceTokenExpiresAt = %v, want %v", mig.SourceTokenExpiresAt, expiresAt)
+		}
+		if mig.TargetPasswordEncrypted != "target-pass" {
+			t.Fatalf("TargetPasswordEncrypted changed unexpectedly: %q", mig.TargetPasswordEncrypted)
+		}
+	})
+
+	t.Run("updates target fields and preserves source", func(t *testing.T) {
+		mig := &db.Migration{
+			SourcePasswordEncrypted:     "source-pass",
+			SourceRefreshTokenEncrypted: sql.NullString{String: "source-ref", Valid: true},
+			TargetPasswordEncrypted:     "old-tgt-pass",
+			TargetRefreshTokenEncrypted: sql.NullString{String: "old-tgt-ref", Valid: true},
+		}
+		applyOAuthTokensToMigration(mig, "target", "new-tgt-pass", refreshEnc, expiresAt)
+
+		if mig.TargetPasswordEncrypted != "new-tgt-pass" {
+			t.Fatalf("TargetPasswordEncrypted = %q, want new-tgt-pass", mig.TargetPasswordEncrypted)
+		}
+		if mig.TargetRefreshTokenEncrypted != refreshEnc {
+			t.Fatalf("TargetRefreshTokenEncrypted = %v, want %v", mig.TargetRefreshTokenEncrypted, refreshEnc)
+		}
+		if mig.TargetTokenExpiresAt != expiresAt {
+			t.Fatalf("TargetTokenExpiresAt = %v, want %v", mig.TargetTokenExpiresAt, expiresAt)
+		}
+		if mig.SourcePasswordEncrypted != "source-pass" {
+			t.Fatalf("SourcePasswordEncrypted changed unexpectedly: %q", mig.SourcePasswordEncrypted)
+		}
+	})
+}
+
+func TestApplyOAuthTokensToSyncJob(t *testing.T) {
+	expTime := time.Date(2026, 9, 23, 14, 0, 0, 0, time.UTC)
+	expiresAt := sql.NullTime{Time: expTime, Valid: true}
+	refreshEnc := sql.NullString{String: "enc-refresh", Valid: true}
+
+	t.Run("updates source fields", func(t *testing.T) {
+		job := &db.SyncJob{SourcePasswordEncrypted: "old"}
+		applyOAuthTokensToSyncJob(job, "source", "new", refreshEnc, expiresAt)
+		if job.SourcePasswordEncrypted != "new" || job.SourceRefreshTokenEncrypted != refreshEnc || job.SourceTokenExpiresAt != expiresAt {
+			t.Fatalf("job source tokens mismatch: %v", job)
+		}
+	})
+
+	t.Run("updates target fields", func(t *testing.T) {
+		job := &db.SyncJob{TargetPasswordEncrypted: "old"}
+		applyOAuthTokensToSyncJob(job, "target", "new", refreshEnc, expiresAt)
+		if job.TargetPasswordEncrypted != "new" || job.TargetRefreshTokenEncrypted != refreshEnc || job.TargetTokenExpiresAt != expiresAt {
+			t.Fatalf("job target tokens mismatch: %v", job)
+		}
+	})
+}

@@ -50,8 +50,11 @@ func (p *HiDriveProvider) CopyManagerItem(ctx context.Context, locator, destinat
 			return err
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("hidrive copy: %w", ErrAuth)
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("hidrive copy: %w", ErrPermission)
 		}
 		if resp.StatusCode == http.StatusConflict {
 			return ErrManagerConflict
@@ -103,8 +106,11 @@ func (p *HiDriveProvider) ListManager(ctx context.Context, locator ManagerLocato
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return ManagerPage{}, fmt.Errorf("hidrive manager list: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return ManagerPage{}, fmt.Errorf("hidrive manager list: %w", ErrPermission)
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return ManagerPage{}, fmt.Errorf("hidrive manager list: %w", ErrNotFound)
@@ -201,8 +207,11 @@ func (p *HiDriveProvider) CreateManagerDirectory(ctx context.Context, parent Man
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("hidrive mkdir: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("hidrive mkdir: %w", ErrPermission)
 	}
 	if resp.StatusCode == http.StatusConflict {
 		return ErrManagerConflict
@@ -351,9 +360,13 @@ func (p *HiDriveProvider) ThumbnailManager(ctx context.Context, locator ManagerL
 		return nil, "", err
 	}
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		resp.Body.Close()
 		return nil, "", fmt.Errorf("hidrive thumbnail: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		resp.Body.Close()
+		return nil, "", fmt.Errorf("hidrive thumbnail: %w", ErrPermission)
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		resp.Body.Close()

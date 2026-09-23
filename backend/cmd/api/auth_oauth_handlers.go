@@ -306,6 +306,23 @@ func oauthRotationLogger(ctx context.Context) *slog.Logger {
 	return observability.Logger(ctx).With(slog.String("component", "oauth_rotation"))
 }
 
+// shouldSkipOAuthTokenRotation checks whether a token's expiry still lies sufficiently
+// far in the future (at least 5 minutes) that rotation by the background daemon should
+// be skipped, for example because a worker recently performed an inline refresh.
+func shouldSkipOAuthTokenRotation(expiresAt time.Time, now time.Time) bool {
+	if expiresAt.IsZero() {
+		return false
+	}
+	return now.Before(expiresAt.Add(-5 * time.Minute))
+}
+
+// isOAuthRotationAlreadyResolved detects whether a concurrent worker has already
+// persisted a new refresh token in the database, meaning that an invalid_grant /
+// rejected refresh token was caused by rotation race rather than real revocation.
+func isOAuthRotationAlreadyResolved(currentRefreshEnc, freshRefreshEnc string) bool {
+	return freshRefreshEnc != "" && freshRefreshEnc != currentRefreshEnc
+}
+
 func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 	logger := oauthRotationLogger(ctx)
 	expiringMig, err := db.GetExpiringOAuthMigrations(s.db)
@@ -339,7 +356,44 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					defer s.queue.ReleaseOAuthLock(ctx, "migration", entry.MigrationID, entry.Role, lockToken)
 				}
 
-				refreshToken, err := crypto.DecryptWithDomain(entry.RefreshTokenEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+				mig, err := db.GetMigrationContext(ctx, s.db, entry.MigrationID)
+				if err != nil {
+					logger.ErrorContext(ctx, "oauth_rotation_fetch_failed", slog.String("job_type", "migration"), slog.String("job_id", entry.MigrationID), slog.String("role", entry.Role), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+					return
+				}
+				if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
+					logger.DebugContext(ctx, "oauth_rotation_migration_not_active", slog.String("job_id", entry.MigrationID), slog.String("status", mig.Status))
+					return
+				}
+
+				var currentRefreshEnc string
+				var currentExpiresAt time.Time
+				if entry.Role == "source" {
+					if mig.SourceRefreshTokenEncrypted.Valid {
+						currentRefreshEnc = mig.SourceRefreshTokenEncrypted.String
+					}
+					if mig.SourceTokenExpiresAt.Valid {
+						currentExpiresAt = mig.SourceTokenExpiresAt.Time
+					}
+				} else {
+					if mig.TargetRefreshTokenEncrypted.Valid {
+						currentRefreshEnc = mig.TargetRefreshTokenEncrypted.String
+					}
+					if mig.TargetTokenExpiresAt.Valid {
+						currentExpiresAt = mig.TargetTokenExpiresAt.Time
+					}
+				}
+
+				if currentRefreshEnc == "" {
+					return
+				}
+
+				if shouldSkipOAuthTokenRotation(currentExpiresAt, time.Now()) {
+					logger.DebugContext(ctx, "oauth_rotation_already_fresh", slog.String("job_type", "migration"), slog.String("job_id", entry.MigrationID), slog.String("role", entry.Role))
+					return
+				}
+
+				refreshToken, err := crypto.DecryptWithDomain(currentRefreshEnc, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 				if err != nil {
 					logger.ErrorContext(ctx, "oauth_rotation_decrypt_failed", slog.String("job_type", "migration"), slog.String("job_id", entry.MigrationID), slog.String("role", entry.Role), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 					return
@@ -356,6 +410,21 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 						// the next rotation pass instead of failing an otherwise valid job.
 						return
 					}
+
+					// Verify whether another worker updated the token concurrently before marking as FAILED
+					if freshMig, ferr := db.GetMigrationContext(ctx, s.db, entry.MigrationID); ferr == nil {
+						var freshRefreshEnc string
+						if entry.Role == "source" && freshMig.SourceRefreshTokenEncrypted.Valid {
+							freshRefreshEnc = freshMig.SourceRefreshTokenEncrypted.String
+						} else if entry.Role == "target" && freshMig.TargetRefreshTokenEncrypted.Valid {
+							freshRefreshEnc = freshMig.TargetRefreshTokenEncrypted.String
+						}
+						if isOAuthRotationAlreadyResolved(currentRefreshEnc, freshRefreshEnc) {
+							logger.InfoContext(ctx, "oauth_rotation_already_resolved", slog.String("job_type", "migration"), slog.String("job_id", entry.MigrationID), slog.String("role", entry.Role))
+							return
+						}
+					}
+
 					// Provider error bodies can contain credential hints. Persist only a
 					// stable, non-sensitive failure reason.
 					errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", entry.Provider)
@@ -386,7 +455,7 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					AccessTokenEncrypted:  newAccessEnc,
 					RefreshTokenEncrypted: newRefreshEnc,
 					ExpiresAt:             newExpiresAt,
-				}, entry.RefreshTokenEncrypted)
+				}, currentRefreshEnc)
 				if errors.Is(err, db.ErrOAuthTokenConflict) {
 					logger.InfoContext(ctx, "oauth_rotation_update_conflict", slog.String("job_type", "migration"), slog.String("job_id", entry.MigrationID), slog.String("role", entry.Role))
 					return
@@ -417,7 +486,44 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					defer s.queue.ReleaseOAuthLock(ctx, "sync", entry.SyncJobID, entry.Role, lockToken)
 				}
 
-				refreshToken, err := crypto.DecryptWithDomain(entry.RefreshTokenEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+				job, err := db.GetSyncJobContext(ctx, s.db, entry.SyncJobID)
+				if err != nil {
+					logger.ErrorContext(ctx, "oauth_rotation_fetch_failed", slog.String("job_type", "sync"), slog.String("job_id", entry.SyncJobID), slog.String("role", entry.Role), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+					return
+				}
+				if job.Status != "RUNNING" && job.Status != "ACTIVE" {
+					logger.DebugContext(ctx, "oauth_rotation_sync_not_active", slog.String("job_id", entry.SyncJobID), slog.String("status", job.Status))
+					return
+				}
+
+				var currentRefreshEnc string
+				var currentExpiresAt time.Time
+				if entry.Role == "source" {
+					if job.SourceRefreshTokenEncrypted.Valid {
+						currentRefreshEnc = job.SourceRefreshTokenEncrypted.String
+					}
+					if job.SourceTokenExpiresAt.Valid {
+						currentExpiresAt = job.SourceTokenExpiresAt.Time
+					}
+				} else {
+					if job.TargetRefreshTokenEncrypted.Valid {
+						currentRefreshEnc = job.TargetRefreshTokenEncrypted.String
+					}
+					if job.TargetTokenExpiresAt.Valid {
+						currentExpiresAt = job.TargetTokenExpiresAt.Time
+					}
+				}
+
+				if currentRefreshEnc == "" {
+					return
+				}
+
+				if shouldSkipOAuthTokenRotation(currentExpiresAt, time.Now()) {
+					logger.DebugContext(ctx, "oauth_rotation_already_fresh", slog.String("job_type", "sync"), slog.String("job_id", entry.SyncJobID), slog.String("role", entry.Role))
+					return
+				}
+
+				refreshToken, err := crypto.DecryptWithDomain(currentRefreshEnc, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 				if err != nil {
 					logger.ErrorContext(ctx, "oauth_rotation_decrypt_failed", slog.String("job_type", "sync"), slog.String("job_id", entry.SyncJobID), slog.String("role", entry.Role), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 					return
@@ -433,6 +539,20 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 						// the next rotation pass instead of failing an otherwise valid job.
 						return
 					}
+
+					if freshJob, ferr := db.GetSyncJobContext(ctx, s.db, entry.SyncJobID); ferr == nil {
+						var freshRefreshEnc string
+						if entry.Role == "source" && freshJob.SourceRefreshTokenEncrypted.Valid {
+							freshRefreshEnc = freshJob.SourceRefreshTokenEncrypted.String
+						} else if entry.Role == "target" && freshJob.TargetRefreshTokenEncrypted.Valid {
+							freshRefreshEnc = freshJob.TargetRefreshTokenEncrypted.String
+						}
+						if isOAuthRotationAlreadyResolved(currentRefreshEnc, freshRefreshEnc) {
+							logger.InfoContext(ctx, "oauth_rotation_already_resolved", slog.String("job_type", "sync"), slog.String("job_id", entry.SyncJobID), slog.String("role", entry.Role))
+							return
+						}
+					}
+
 					errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", entry.Provider)
 					_ = db.UpdateSyncJobStatus(s.db, entry.SyncJobID, "FAILED", &errMsg)
 					return
@@ -454,7 +574,7 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					expiresIn = 3600
 				}
 				newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
-				err = db.UpdateSyncJobOAuthTokens(s.db, entry.SyncJobID, entry.Role, newAccessEnc, newRefreshEnc, newExpiresAt, entry.RefreshTokenEncrypted)
+				err = db.UpdateSyncJobOAuthTokens(s.db, entry.SyncJobID, entry.Role, newAccessEnc, newRefreshEnc, newExpiresAt, currentRefreshEnc)
 				if errors.Is(err, db.ErrOAuthTokenConflict) {
 					logger.InfoContext(ctx, "oauth_rotation_update_conflict", slog.String("job_type", "sync"), slog.String("job_id", entry.SyncJobID), slog.String("role", entry.Role))
 					return
@@ -484,7 +604,22 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					defer s.queue.ReleaseOAuthLock(ctx, "restore", entry.RestoreRunID, "target", lockToken)
 				}
 
-				refreshToken, err := crypto.DecryptWithDomain(entry.RefreshTokenEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+				_, refreshEnc, expiresAt, err := db.GetRestoreRunCredentialSnapshotContext(ctx, s.db, entry.RestoreRunID)
+				if err != nil {
+					logger.ErrorContext(ctx, "oauth_rotation_fetch_failed", slog.String("job_type", "restore"), slog.String("job_id", entry.RestoreRunID), slog.String("role", "target"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+					return
+				}
+				if !refreshEnc.Valid || refreshEnc.String == "" {
+					return
+				}
+				currentRefreshEnc := refreshEnc.String
+
+				if expiresAt.Valid && shouldSkipOAuthTokenRotation(expiresAt.Time, time.Now()) {
+					logger.DebugContext(ctx, "oauth_rotation_already_fresh", slog.String("job_type", "restore"), slog.String("job_id", entry.RestoreRunID), slog.String("role", "target"))
+					return
+				}
+
+				refreshToken, err := crypto.DecryptWithDomain(currentRefreshEnc, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 				if err != nil {
 					logger.ErrorContext(ctx, "oauth_rotation_decrypt_failed", slog.String("job_type", "restore"), slog.String("job_id", entry.RestoreRunID), slog.String("role", "target"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 					return
@@ -514,7 +649,7 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					expiresIn = 3600
 				}
 				newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
-				err = db.UpdateRestoreRunOAuthTokens(ctx, s.db, entry.RestoreRunID, newAccessEnc, newRefreshEnc, newExpiresAt, entry.RefreshTokenEncrypted)
+				err = db.UpdateRestoreRunOAuthTokens(ctx, s.db, entry.RestoreRunID, newAccessEnc, newRefreshEnc, newExpiresAt, currentRefreshEnc)
 				if errors.Is(err, db.ErrOAuthTokenConflict) {
 					logger.InfoContext(ctx, "oauth_rotation_update_conflict", slog.String("job_type", "restore"), slog.String("job_id", entry.RestoreRunID), slog.String("role", "target"))
 					return

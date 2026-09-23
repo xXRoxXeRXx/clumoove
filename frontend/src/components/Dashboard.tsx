@@ -221,7 +221,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const handleRetryFailed = async () => {
     const oauthProviders = ['dropbox', 'google', 'onedrive', 'hidrive'];
     const authFailed = data?.status === 'FAILED' && isAuthFailureError(data.error_message);
-    const role = data?.source_provider && oauthProviders.includes(data.source_provider) ? 'source' : 'target';
+    let role: 'source' | 'target' = 'source';
+    const sourceIsOAuth = !!data?.source_provider && oauthProviders.includes(data.source_provider);
+    const targetIsOAuth = !!data?.target_provider && oauthProviders.includes(data.target_provider);
+
+    if (sourceIsOAuth && targetIsOAuth) {
+      const errLower = (data?.error_message || '').toLowerCase();
+      if (
+        (data?.target_provider && errLower.includes(`(${data.target_provider.toLowerCase()})`)) ||
+        (data?.target_provider && errLower.includes(data.target_provider.toLowerCase())) ||
+        errLower.includes('target oauth')
+      ) {
+        role = 'target';
+      } else {
+        role = 'source';
+      }
+    } else if (targetIsOAuth) {
+      role = 'target';
+    } else {
+      role = 'source';
+    }
     const provider = role === 'source' ? data?.source_provider : data?.target_provider;
     if (authFailed && provider && oauthProviders.includes(provider)) {
       setControlLoading('retry');

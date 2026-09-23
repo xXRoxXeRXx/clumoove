@@ -110,8 +110,11 @@ func (p *HiDriveProvider) Connect(ctx context.Context) (bool, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return false, fmt.Errorf("hidrive connect: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return false, fmt.Errorf("hidrive connect: %w", ErrPermission)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("hidrive connect failed, status: %d", resp.StatusCode)
@@ -174,9 +177,13 @@ func (p *HiDriveProvider) GetDirectoryListing(ctx context.Context, resourceType,
 			return nil, err
 		}
 
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if resp.StatusCode == http.StatusUnauthorized {
 			resp.Body.Close()
 			return nil, fmt.Errorf("hidrive listing: %w", ErrAuth)
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
+			return nil, fmt.Errorf("hidrive listing: %w", ErrPermission)
 		}
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
@@ -268,8 +275,11 @@ func (p *HiDriveProvider) InspectResource(ctx context.Context, resourceType, res
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return CloudResource{}, fmt.Errorf("hidrive inspect: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return CloudResource{}, fmt.Errorf("hidrive inspect: %w", ErrPermission)
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return CloudResource{}, fmt.Errorf("hidrive inspect: %w", ErrNotFound)
@@ -324,9 +334,13 @@ func (p *HiDriveProvider) StreamDownload(ctx context.Context, resourceType, file
 		return nil, err
 	}
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		resp.Body.Close()
 		return nil, fmt.Errorf("hidrive download: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		resp.Body.Close()
+		return nil, fmt.Errorf("hidrive download: %w", ErrPermission)
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
@@ -360,9 +374,13 @@ func (p *HiDriveProvider) StreamDownloadRange(ctx context.Context, resourceType,
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		resp.Body.Close()
 		return nil, fmt.Errorf("hidrive download range: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		resp.Body.Close()
+		return nil, fmt.Errorf("hidrive download range: %w", ErrPermission)
 	}
 	return ValidateHTTPRangeResponse(resp, offset, length)
 }
@@ -402,8 +420,11 @@ func (p *HiDriveProvider) uploadFile(ctx context.Context, filePath string, strea
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("hidrive upload: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("hidrive upload: %w", ErrPermission)
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("hidrive upload failed, status: %d", resp.StatusCode)
@@ -505,10 +526,15 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 			cancel()
 			return fail(fmt.Errorf("hidrive chunked upload chunk %d: %w", chunkIndex, err))
 		}
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if resp.StatusCode == http.StatusUnauthorized {
 			resp.Body.Close()
 			cancel()
 			return fail(fmt.Errorf("hidrive chunked upload: %w", ErrAuth))
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
+			cancel()
+			return fail(fmt.Errorf("hidrive chunked upload: %w", ErrPermission))
 		}
 		if resp.StatusCode == http.StatusConflict {
 			resp.Body.Close()
@@ -573,8 +599,11 @@ func (p *HiDriveProvider) FileExists(ctx context.Context, resourceType, filePath
 	if resp.StatusCode == http.StatusNotFound {
 		return false, 0, nil
 	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return false, 0, fmt.Errorf("hidrive file exists: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return false, 0, fmt.Errorf("hidrive file exists: %w", ErrPermission)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return false, 0, fmt.Errorf("hidrive file exists failed, status: %d", resp.StatusCode)
@@ -624,8 +653,11 @@ func (p *HiDriveProvider) DeleteFile(ctx context.Context, resourceType, filePath
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("hidrive delete: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("hidrive delete: %w", ErrPermission)
 	}
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("hidrive delete failed, status: %d", resp.StatusCode)
@@ -700,8 +732,11 @@ func (p *HiDriveProvider) CreateDirectory(ctx context.Context, resourceType, dir
 		}
 		resp.Body.Close()
 
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("hidrive create dir: %w", ErrAuth)
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("hidrive create dir: %w", ErrPermission)
 		}
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
 			return fmt.Errorf("hidrive create dir failed for %s, status: %d", accumulated, resp.StatusCode)
@@ -779,8 +814,11 @@ func (p *HiDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("hidrive rename: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("hidrive rename: %w", ErrPermission)
 	}
 	if resp.StatusCode == http.StatusConflict {
 		return ErrManagerConflict

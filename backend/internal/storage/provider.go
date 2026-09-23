@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -77,6 +78,10 @@ func isConnectionFailure(err error) bool {
 // retry (for example an unexportable Google document). Callers can fail the
 // task immediately without relying on provider error text.
 var ErrPermanentTransfer = errors.New("permanent transfer error")
+
+// ErrPermission indicates an authorization or permission rejection (HTTP 403 Forbidden).
+// It wraps ErrPermanentTransfer so callers treat it as permanent instead of retrying credentials.
+var ErrPermission = fmt.Errorf("permission denied: %w", ErrPermanentTransfer)
 
 // ErrNotFound is returned when a requested resource does not exist.
 var ErrNotFound = errors.New("resource not found")
