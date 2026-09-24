@@ -421,6 +421,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   // active mode keeps the UI and request path migration-only without a stateful
   // effect that would cause an unnecessary render.
   const effectiveJobType = hasImmichEndpoint ? "migration" : jobType;
+  // Calendar and contact transfers are implemented by the one-off migration
+  // endpoint. Sync jobs only persist file paths, so never expose resource
+  // selections while creating a sync.
+  const canSelectCalendars = effectiveJobType === "migration" && supportsCalendars;
+  const canSelectContacts = effectiveJobType === "migration" && supportsContacts;
   const [backupCronExpression, setBackupCronExpression] = useState("0 2 * * *");
   const [backupTimezone, setBackupTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [backupRetentionCount, setBackupRetentionCount] = useState(7);
@@ -792,21 +797,21 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   );
 
   const effectiveActiveTab = useMemo(() => {
-    if (effectiveJobType === "backup") return "files";
-    if (activeTab === "calendars" && !supportsCalendars) return "files";
-    if (activeTab === "contacts" && !supportsContacts) return "files";
+    if (effectiveJobType !== "migration") return "files";
+    if (activeTab === "calendars" && !canSelectCalendars) return "files";
+    if (activeTab === "contacts" && !canSelectContacts) return "files";
     return activeTab;
-  }, [activeTab, effectiveJobType, supportsCalendars, supportsContacts]);
+  }, [activeTab, canSelectCalendars, canSelectContacts, effectiveJobType]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (effectiveJobType !== "backup" && supportsCalendars && !hasFetchedCalendarsRef.current) {
+      if (canSelectCalendars && !hasFetchedCalendarsRef.current) {
         hasFetchedCalendarsRef.current = true;
         void fetchCalendars();
       } else if (!supportsCalendars) {
         setSelectedCalendars({});
       }
-      if (effectiveJobType !== "backup" && supportsContacts && !hasFetchedContactsRef.current) {
+      if (canSelectContacts && !hasFetchedContactsRef.current) {
         hasFetchedContactsRef.current = true;
         void fetchContacts();
       } else if (!supportsContacts) {
@@ -814,7 +819,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       }
     }, 0);
     return () => clearTimeout(timer);
-  }, [effectiveJobType, supportsCalendars, supportsContacts, fetchCalendars, fetchContacts]);
+  }, [canSelectCalendars, canSelectContacts, supportsCalendars, supportsContacts, fetchCalendars, fetchContacts]);
 
   const handleTabChange = (tab: "files" | "calendars" | "contacts") => {
     setActiveTab(tab);
@@ -824,8 +829,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const handleTabListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const tabs: Array<"files" | "calendars" | "contacts"> = ["files"];
-    if (effectiveJobType !== "backup" && supportsCalendars) tabs.push("calendars");
-    if (effectiveJobType !== "backup" && supportsContacts) tabs.push("contacts");
+    if (canSelectCalendars) tabs.push("calendars");
+    if (canSelectContacts) tabs.push("contacts");
     const currentIndex = tabs.indexOf(effectiveActiveTab);
     if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
       event.preventDefault();
@@ -1125,10 +1130,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   };
 
   const handleStartMigration = async () => {
-    const calendarsToMigrate = effectiveJobType !== "backup" && supportsCalendars
+    const calendarsToMigrate = canSelectCalendars
       ? Object.keys(selectedCalendars).filter((p) => selectedCalendars[p])
       : [];
-    const contactsToMigrate = effectiveJobType !== "backup" && supportsContacts
+    const contactsToMigrate = canSelectContacts
       ? Object.keys(selectedContacts).filter((p) => selectedContacts[p])
       : [];
 
@@ -1726,7 +1731,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             >
               {t("fileBrowser.files")} ({pathsToMigrate.length})
             </button>
-            {effectiveJobType !== "backup" && supportsCalendars && (
+            {canSelectCalendars && (
               <button
                 id="calendars-tab"
                 type="button"
@@ -1745,7 +1750,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 {Object.values(selectedCalendars).filter(Boolean).length})
               </button>
             )}
-            {effectiveJobType !== "backup" && supportsContacts && (
+            {canSelectContacts && (
               <button
                 id="contacts-tab"
                 type="button"

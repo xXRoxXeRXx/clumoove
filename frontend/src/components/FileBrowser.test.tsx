@@ -180,4 +180,34 @@ describe("FileBrowser sync start retry", () => {
     expect(vi.mocked(apiFetch).mock.calls.filter(([url]) => String(url).endsWith("/api/sync/sync-2/start"))).toHaveLength(1);
     expect(onStartSuccess).toHaveBeenCalledWith("sync-2", true);
   });
+
+  it("does not offer calendar or contact selections for continuous sync", async () => {
+    vi.mocked(apiFetch).mockResolvedValue(jsonResponse({ success: true, items: [] }));
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <FileBrowser
+          initialFiles={initialFiles}
+          credentials={credentials}
+          apiUrl="https://api.example.test"
+          onBack={vi.fn()}
+          onStartSuccess={vi.fn()}
+          token="token"
+        />,
+      );
+      await flush();
+    });
+
+    const syncButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Continuous Sync") as HTMLButtonElement;
+    await act(async () => {
+      syncButton.click();
+    });
+
+    expect(container.querySelector("#calendars-tab")).toBeNull();
+    expect(container.querySelector("#contacts-tab")).toBeNull();
+  });
 });
