@@ -355,6 +355,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [starting, setStarting] = useState(false);
+  // A sync is persisted before its first pass is triggered. Keep its ID and
+  // configuration for a same-form retry after a failed start. This is
+  // intentionally component-local: leaving the form returns the user to the
+  // persisted job list instead.
+  const [pendingSync, setPendingSync] = useState<{
+    id: string;
+    configurationKey: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const targetDialogRef = useRef<HTMLDivElement>(null);
   const targetCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -450,6 +458,26 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       selectableRootItems.every((item) => selectedPaths[item.path]);
     return allRootSelected ? [] : pathsToMigrate;
   }, [directoryContents, initialFiles, selectedPaths, pathsToMigrate]);
+
+  const syncConfigurationKey = useMemo(() => JSON.stringify({
+    direction,
+    intervalMinutes,
+    conflictStrategy,
+    deletePropagation,
+    syncSelectedPaths,
+    targetDir,
+    threads,
+    bandwidthLimit,
+  }), [
+    direction,
+    intervalMinutes,
+    conflictStrategy,
+    deletePropagation,
+    syncSelectedPaths,
+    targetDir,
+    threads,
+    bandwidthLimit,
+  ]);
 
   const backupSelectedPaths = useMemo(() => pathsToMigrate.filter((candidate) => !pathsToMigrate.some(
     (other) => other !== candidate && candidate.startsWith(`${other}/`),
@@ -1166,78 +1194,98 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         if (!controller.signal.aborted && data.id) onStartSuccess(data.id, false, true);
         else if (!controller.signal.aborted) setError(t("backup.createFailed"));
       } else if (effectiveJobType === "sync") {
-        const response = await apiFetch(`${apiUrl}/api/sync`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            source_profile_id: credentials.source_profile_id,
-            target_profile_id: credentials.target_profile_id,
-            source_url: credentials.source_url,
-            source_username: credentials.source_username,
-            source_password: credentials.source_password,
-            source_refresh_token: credentials.source_refresh_token,
-            target_url: credentials.target_url,
-            target_username: credentials.target_username,
-            target_password: credentials.target_password,
-            target_refresh_token: credentials.target_refresh_token,
-            source_provider: credentials.source_provider,
-            target_provider: credentials.target_provider,
-            direction: direction,
-            conflict_strategy: conflictStrategy,
-            delete_propagation: deletePropagation,
-            interval_minutes: intervalMinutes,
-            threads: threads,
-            bandwidth_limit_mbps: bandwidthLimit,
-            target_dir: targetDir,
-            selected_paths: syncSelectedPaths,
-          }),
-          signal: controller.signal,
-        });
+        // A pending job can only be retried with the exact configuration that
+        // created it. Form edits always create a new sync job instead.
+        let syncId = pendingSync?.configurationKey === syncConfigurationKey
+          ? pendingSync.id
+          : null;
 
-        if (!response.ok) {
-          const b = await response
-            .json()
-            .catch(() => ({}) as { error_code?: string });
-          throw new Error(
-            b.error_code
-              ? translateApiError(b.error_code)
-              : t("sync.createFailed"),
-          );
-        }
-
-        const data = (await response.json()) as { id?: string; success?: boolean; error_code?: string };
-        if (controller.signal.aborted) return;
-        if (data.success === false) {
-          setError(data.error_code ? translateApiError(data.error_code) : t("sync.createFailed"));
-          return;
-        }
-        if (data.id) {
-          // Trigger first pass immediately
-          const startResponse = await apiFetch(
-            `${apiUrl}/api/sync/${data.id}/start`,
-            {
-              method: "POST",
-              headers: { Authorization: `Bearer ${token}` },
-              signal: controller.signal,
+        if (!syncId) {
+          const response = await apiFetch(`${apiUrl}/api/sync`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
             },
-          );
-          if (!startResponse.ok) {
-            const body = await startResponse
+            body: JSON.stringify({
+              source_profile_id: credentials.source_profile_id,
+              target_profile_id: credentials.target_profile_id,
+              source_url: credentials.source_url,
+              source_username: credentials.source_username,
+              source_password: credentials.source_password,
+              source_refresh_token: credentials.source_refresh_token,
+              target_url: credentials.target_url,
+              target_username: credentials.target_username,
+              target_password: credentials.target_password,
+              target_refresh_token: credentials.target_refresh_token,
+              source_provider: credentials.source_provider,
+              target_provider: credentials.target_provider,
+              direction: direction,
+              conflict_strategy: conflictStrategy,
+              delete_propagation: deletePropagation,
+              interval_minutes: intervalMinutes,
+              threads: threads,
+              bandwidth_limit_mbps: bandwidthLimit,
+              target_dir: targetDir,
+              selected_paths: syncSelectedPaths,
+            }),
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            const b = await response
               .json()
               .catch(() => ({}) as { error_code?: string });
             throw new Error(
-              body.error_code
-                ? translateApiError(body.error_code)
-                : t("sync.startFailed"),
+              b.error_code
+                ? translateApiError(b.error_code)
+                : t("sync.createFailed"),
             );
           }
-          onStartSuccess(data.id, true);
-        } else {
-          setError(t("sync.createFailed"));
+
+          const data = (await response.json()) as { id?: string; success?: boolean; error_code?: string };
+          if (controller.signal.aborted) return;
+          if (data.success === false) {
+            setError(data.error_code ? translateApiError(data.error_code) : t("sync.createFailed"));
+            return;
+          }
+          if (!data.id) {
+            setError(t("sync.createFailed"));
+            return;
+          }
+
+          syncId = data.id;
+          setPendingSync({ id: syncId, configurationKey: syncConfigurationKey });
         }
+
+        const resolvedSyncId = syncId;
+        if (!resolvedSyncId) {
+          setError(t("sync.createFailed"));
+          return;
+        }
+
+        // Trigger the first pass immediately. If this fails, pendingSync is
+        // intentionally retained so the next click retries this request only.
+        const startResponse = await apiFetch(
+          `${apiUrl}/api/sync/${resolvedSyncId}/start`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          },
+        );
+        if (!startResponse.ok) {
+          const body = await startResponse
+            .json()
+            .catch(() => ({}) as { error_code?: string });
+          throw new Error(
+            body.error_code
+              ? translateApiError(body.error_code)
+              : t("sync.startFailed"),
+          );
+        }
+        setPendingSync(null);
+        onStartSuccess(resolvedSyncId, true);
       } else {
         const requestBody: Record<string, unknown> = {
           ...credentials,
