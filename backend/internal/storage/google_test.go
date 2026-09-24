@@ -11,6 +11,7 @@ import (
 	"path"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/api/calendar/v3"
 	"google.golang.org/api/drive/v3"
@@ -148,8 +149,8 @@ func TestIsGoogleAuthError(t *testing.T) {
 	}
 
 	gForbiddenErr := &googleapi.Error{Code: http.StatusForbidden, Message: "Access Denied"}
-	if !isGoogleAuthError(gForbiddenErr) {
-		t.Errorf("expected isGoogleAuthError(gForbiddenErr) = true")
+	if isGoogleAuthError(gForbiddenErr) {
+		t.Errorf("expected isGoogleAuthError(gForbiddenErr) = false")
 	}
 
 	rawTransportErr := errors.New("request failed with status 401")
@@ -167,20 +168,36 @@ func TestIsGoogleAuthError(t *testing.T) {
 	}
 }
 
-func TestWrapGoogleErrorMarksUnauthorizedAndForbiddenResponsesAsAuthenticationFailures(t *testing.T) {
-	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
-			apiErr := &googleapi.Error{Code: status, Message: http.StatusText(status)}
-			err := wrapGoogleError("google test operation", apiErr)
-			if !errors.Is(err, ErrAuth) {
-				t.Fatalf("errors.Is(err, ErrAuth) = false, want true (err = %v)", err)
-			}
+func TestWrapGoogleErrorMarksUnauthorizedResponsesAsAuthenticationFailures(t *testing.T) {
+	apiErr := &googleapi.Error{Code: http.StatusUnauthorized, Message: http.StatusText(http.StatusUnauthorized)}
+	err := wrapGoogleError("google test operation", apiErr)
+	if !errors.Is(err, ErrAuth) {
+		t.Fatalf("errors.Is(err, ErrAuth) = false, want true (err = %v)", err)
+	}
 
-			var wrappedAPIError *googleapi.Error
-			if !errors.As(err, &wrappedAPIError) || wrappedAPIError != apiErr {
-				t.Fatalf("wrapped error does not retain the Google API error: %v", err)
-			}
-		})
+	var wrappedAPIError *googleapi.Error
+	if !errors.As(err, &wrappedAPIError) || wrappedAPIError != apiErr {
+		t.Fatalf("wrapped error does not retain the Google API error: %v", err)
+	}
+}
+
+func TestWrapGoogleErrorMarksQuotaExceeded403AsRetryable(t *testing.T) {
+	apiErr := &googleapi.Error{
+		Code:    http.StatusForbidden,
+		Message: "Quota exceeded",
+		Errors:  []googleapi.ErrorItem{{Reason: "rateLimitExceeded"}},
+	}
+	err := wrapGoogleError("google test operation", apiErr)
+	if errors.Is(err, ErrAuth) {
+		t.Fatalf("quota response was incorrectly classified as authentication failure: %v", err)
+	}
+	var retryAfterErr *RetryAfterError
+	if !errors.As(err, &retryAfterErr) || retryAfterErr.After != time.Minute {
+		t.Fatalf("quota response retry delay = %v, want one minute (err = %v)", retryAfterErr, err)
+	}
+	var wrappedAPIError *googleapi.Error
+	if !errors.As(err, &wrappedAPIError) || wrappedAPIError != apiErr {
+		t.Fatalf("wrapped error does not retain the Google API error: %v", err)
 	}
 }
 

@@ -37,12 +37,32 @@ func isGoogleAuthError(err error) bool {
 	}
 	var gErr *googleapi.Error
 	if errors.As(err, &gErr) {
-		return gErr.Code == http.StatusUnauthorized || gErr.Code == http.StatusForbidden
+		// Drive also returns 403 for quota exhaustion and authorization failures.
+		// Neither condition proves that the OAuth credential is invalid; only a
+		// 401 response is an authentication failure.
+		return gErr.Code == http.StatusUnauthorized
 	}
 	// The OAuth library's invalid_grant is not wrapped in googleapi.Error.
 	// Avoid substring matching HTTP status values: an unrelated provider error
 	// can contain "401" or "forbidden" without being an expired credential.
 	return strings.Contains(strings.ToLower(err.Error()), "invalid_grant")
+}
+
+func isGoogleRateLimitError(err error) bool {
+	var gErr *googleapi.Error
+	if !errors.As(err, &gErr) {
+		return false
+	}
+	if gErr.Code == http.StatusTooManyRequests {
+		return true
+	}
+	for _, detail := range gErr.Errors {
+		switch detail.Reason {
+		case "rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded", "quotaExceeded":
+			return true
+		}
+	}
+	return false
 }
 
 func isGooglePermanentTransferError(err error) bool {
@@ -73,6 +93,11 @@ func wrapGoogleError(operation string, err error) error {
 	}
 	if isGoogleAuthError(err) {
 		return fmt.Errorf("%s: %w: %w", operation, ErrAuth, err)
+	}
+	if isGoogleRateLimitError(err) {
+		// Drive quota responses do not reliably include Retry-After. Its
+		// per-minute quota window makes one minute the conservative minimum.
+		return fmt.Errorf("%s: %w: %w", operation, &RetryAfterError{After: time.Minute}, err)
 	}
 	if isGooglePermanentTransferError(err) {
 		return fmt.Errorf("%s: %w: %w", operation, ErrPermanentTransfer, err)
