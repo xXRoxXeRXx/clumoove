@@ -94,4 +94,41 @@ describe('EditSyncModal root scope', () => {
     expect(scheduleCall).toBeDefined();
     expect(JSON.parse(String(scheduleCall?.[1]?.body))).toEqual({ interval_minutes: 30 });
   });
+
+  it('shows only directories in the target destination picker', async () => {
+    vi.mocked(apiFetch).mockImplementation((url) => {
+      if (String(url).includes('/browse?role=target')) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          items: [
+            { name: 'Documents', path: '/Documents', is_dir: true, size: 0 },
+            { name: 'report.pdf', path: '/report.pdf', is_dir: false, size: 1024 },
+          ],
+        }));
+      }
+      if (String(url).includes('/browse')) {
+        return Promise.resolve(jsonResponse({ success: true, items: [] }));
+      }
+      return Promise.resolve(jsonResponse({ success: true }));
+    });
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root.render(<EditSyncModal job={job} apiUrl="https://api.example.test" token="token" onClose={vi.fn()} onSuccess={vi.fn()} />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const selectFolder = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Select folder'));
+    expect(selectFolder).toBeDefined();
+    await act(async () => {
+      selectFolder?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.textContent).toContain('Documents');
+    expect(container.textContent).not.toContain('report.pdf');
+  });
 });

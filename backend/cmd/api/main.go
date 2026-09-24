@@ -310,6 +310,7 @@ func (server *APIServer) setupRoutes() *http.ServeMux {
 	mux.Handle("PUT /api/sync/{id}/threads", jwtMiddleware(http.HandlerFunc(server.handleSetSyncThreads)))
 	mux.Handle("PUT /api/sync/{id}/bandwidth", jwtMiddleware(http.HandlerFunc(server.handleSetSyncBandwidth)))
 	mux.Handle("GET /api/sync/{id}/browse", jwtMiddleware(http.HandlerFunc(server.handleBrowseSyncJob)))
+	mux.Handle("POST /api/sync/{id}/mkdir", jwtMiddleware(http.HandlerFunc(server.handleSyncMkdir)))
 	mux.Handle("PUT /api/sync/{id}/schedule", jwtMiddleware(http.HandlerFunc(server.handleUpdateSyncSchedule)))
 	mux.Handle("PUT /api/sync/{id}/scope", jwtMiddleware(http.HandlerFunc(server.handleUpdateSyncScope)))
 

@@ -159,7 +159,9 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
         if (!data.success) {
           throw new Error(data.error_code ? translateApiError(data.error_code) : t("fileBrowser.errors.loadTarget"));
         }
-        const items = sortEntries(data.items || data.files || []);
+        const items = sortEntries(
+          (data.items || data.files || []).filter((file: CloudFile) => file.is_dir),
+        );
         setTargetDirectoryContents((prev) => ({ ...prev, [folderPath]: items }));
       } catch (err) {
         logger.error("Error loading target directory", err);
@@ -206,8 +208,8 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ role: "target", path: parentPath, name: newFolderName.trim() }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.success) {
         throw new Error(body?.error_code ? translateApiError(body.error_code) : t("fileBrowser.mkdirFailed"));
       }
       setIsCreatingFolder(false);

@@ -258,6 +258,7 @@
     "targetDir": "Ziel-Ordner",
     "mkdirIn": "Neuer Ordnername in {{path}}",
     "mkdirPlaceholder": "z. B. Archiv",
+    "mkdirFailed": "Ordner konnte nicht erstellt werden",
     "selectionLabel": "Auswahl:",
     "newFolder": "Neuer Ordner",
     "newFolderHint": "Neuen Ordner in diesem Verzeichnis erstellen",

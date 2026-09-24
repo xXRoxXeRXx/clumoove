@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
+	"strings"
 	"time"
 
 	"backend/internal/crypto"
@@ -1025,6 +1027,100 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		"items":   collections,
 		"files":   collections,
 	})
+}
+
+type syncMkdirRequest struct {
+	Role string `json:"role"`
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
+func syncMkdirPath(parent, name string) (string, bool) {
+	if parent == "" {
+		parent = "/"
+	}
+	name = strings.TrimSpace(name)
+	if !validManagedPath(parent) || !validManagerUploadName(name) {
+		return "", false
+	}
+	return path.Join(path.Clean(parent), name), true
+}
+
+func (s *APIServer) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "sync-mkdir", s.clientIP(r), connectRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
+		return
+	}
+	if !s.requireSyncOwnership(w, r, id, userID) {
+		return
+	}
+
+	var req syncMkdirRequest
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
+		return
+	}
+	if req.Role != "target" {
+		writeValidationError(w, ErrInvalidBody)
+		return
+	}
+	dirPath, valid := syncMkdirPath(req.Path, req.Name)
+	if !valid {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrFolderPathInvalid})
+		return
+	}
+
+	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
+	if err != nil {
+		s.logf(r, "handleSyncMkdir: failed to load sync job %s: %v", id, err)
+		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+
+	creds, err := s.syncJobBrowseCredentials(r.Context(), id, "target", job)
+	if err != nil {
+		s.logf(r, "handleSyncMkdir: failed to load target credentials for job %s: %v", id, err)
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetConnectionFailed})
+		return
+	}
+	if !storage.IsValidProvider(creds.provider) {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetUrlInvalid})
+		return
+	}
+
+	providerCtx := storage.WithLocalUserScope(r.Context(), userID)
+	client, err := storage.NewProvider(providerCtx, creds.provider, creds.url, creds.username, creds.password)
+	if err != nil {
+		s.logf(r, "handleSyncMkdir: failed to initialize target provider for job %s: %v", id, err)
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetUrlInvalid})
+		return
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if ok, err := client.Connect(ctx); !ok {
+		s.logf(r, "handleSyncMkdir: target connection failed for job %s: %v", id, err)
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetConnectionFailed})
+		return
+	}
+	if err := client.CreateDirectory(ctx, "files", dirPath); err != nil {
+		s.logf(r, "handleSyncMkdir: target directory creation failed for job %s: %v", id, err)
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrFolderCreateFailed})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 func (s *APIServer) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request) {

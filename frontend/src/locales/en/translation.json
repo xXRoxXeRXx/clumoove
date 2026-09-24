@@ -258,6 +258,7 @@
     "targetDir": "Target folder",
     "mkdirIn": "New folder name in {{path}}",
     "mkdirPlaceholder": "e.g. Archive",
+    "mkdirFailed": "Failed to create folder",
     "selectionLabel": "Selection:",
     "newFolder": "New folder",
     "newFolderHint": "Create new folder in this directory",
