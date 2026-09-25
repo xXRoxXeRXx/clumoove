@@ -1,9 +1,44 @@
 package scheduler
 
 import (
+	"database/sql"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
+
+func TestShouldDeactivateScheduleForTriggerError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "missing linked job",
+			err:  fmt.Errorf("fetch sync job: %w", sql.ErrNoRows),
+			want: true,
+		},
+		{
+			name: "non runnable linked job",
+			err:  fmt.Errorf("paused: %w", errScheduleTargetNotRunnable),
+			want: true,
+		},
+		{
+			name: "transient database failure",
+			err:  errors.New("database connection reset"),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldDeactivateScheduleForTriggerError(tt.err); got != tt.want {
+				t.Errorf("shouldDeactivateScheduleForTriggerError(%v) = %t, want %t", tt.err, got, tt.want)
+			}
+		})
+	}
+}
 
 func TestValidateCronExpression(t *testing.T) {
 	valid := []string{

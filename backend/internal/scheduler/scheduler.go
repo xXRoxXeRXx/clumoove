@@ -24,6 +24,12 @@ type Scheduler struct {
 	syncEngine atomic.Pointer[sync.Engine]
 }
 
+// errScheduleTargetNotRunnable marks a trigger failure caused by a linked job
+// state that cannot be retried by the scheduler. Infrastructure failures must
+// not use this marker: keeping their schedule active makes the next tick retry
+// once the dependency has recovered.
+var errScheduleTargetNotRunnable = errors.New("scheduled task target is not runnable")
+
 // SetSyncEngine registers the sync engine with the scheduler
 func (s *Scheduler) SetSyncEngine(se *sync.Engine) {
 	s.syncEngine.Store(se)
@@ -130,9 +136,16 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 	err = s.triggerJob(ctx, schedule)
 	if err != nil {
 		logger.ErrorContext(ctx, "schedule_trigger_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)), slog.Bool("linked_job_missing", errors.Is(err, sql.ErrNoRows)))
-		// A trigger failure is not safe to retry blindly: the linked job may have
-		// been deleted or moved to a non-runnable state. Deactivate every schedule
-		// type so an operator can make the recovery decision explicitly.
+		if !shouldDeactivateScheduleForTriggerError(err) {
+			// The schedule remains active and due. This is essential for recurring
+			// syncs: a transient failure after overlap protection (for example, a
+			// failed job fetch or pass claim) must be retried on the next tick.
+			logger.WarnContext(ctx, "schedule_trigger_retry_deferred")
+			return
+		}
+
+		// A missing target or a confirmed non-runnable state cannot recover by
+		// retrying the same schedule, so require explicit operator action.
 		if deactErr := db.DeactivateScheduleContext(ctx, s.db, schedule.ID); deactErr != nil {
 			logger.ErrorContext(ctx, "failed_schedule_deactivation_failed", observability.Error(deactErr), slog.String("error_kind", observability.ErrorKind(deactErr)))
 		} else {
@@ -166,6 +179,10 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 			logger.InfoContext(ctx, "one_shot_schedule_deactivated")
 		}
 	}
+}
+
+func shouldDeactivateScheduleForTriggerError(err error) bool {
+	return errors.Is(err, sql.ErrNoRows) || errors.Is(err, errScheduleTargetNotRunnable)
 }
 
 // nextRunForSchedule calculates the next occurrence for a recurring schedule.
@@ -262,7 +279,7 @@ func (s *Scheduler) triggerJob(ctx context.Context, schedule *db.Schedule) error
 	case "backup":
 		return s.triggerBackup(ctx, schedule)
 	default:
-		return fmt.Errorf("unknown task type: %s", schedule.TaskType)
+		return fmt.Errorf("unknown task type %q: %w", schedule.TaskType, errScheduleTargetNotRunnable)
 	}
 }
 
@@ -315,7 +332,7 @@ func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
 	}
 
 	if job.Status != "IDLE" && job.Status != "FAILED" {
-		return fmt.Errorf("sync job %s is in a non-runnable state (current: %s)", syncJobID, job.Status)
+		return fmt.Errorf("sync job %s is in a non-runnable state (current: %s): %w", syncJobID, job.Status, errScheduleTargetNotRunnable)
 	}
 
 	claimed, err := syncEngine.StartSyncPass(ctx, syncJobID)
@@ -341,7 +358,7 @@ func (s *Scheduler) triggerBackup(ctx context.Context, schedule *db.Schedule) er
 		return fmt.Errorf("get backup job %s: %w", schedule.TaskID, err)
 	}
 	if job.Status == "PAUSED" || job.Status == "DELETING" {
-		return fmt.Errorf("backup job %s is administratively blocked", schedule.TaskID)
+		return fmt.Errorf("backup job %s is administratively blocked: %w", schedule.TaskID, errScheduleTargetNotRunnable)
 	}
 
 	dueAt := time.Now().UTC()
@@ -361,7 +378,7 @@ func (s *Scheduler) triggerBackup(ctx context.Context, schedule *db.Schedule) er
 	case db.BackupClaimed, db.BackupClaimOverlap, db.BackupClaimDuplicate:
 		return nil
 	case db.BackupClaimBlocked:
-		return fmt.Errorf("backup job %s is administratively blocked", schedule.TaskID)
+		return fmt.Errorf("backup job %s is administratively blocked: %w", schedule.TaskID, errScheduleTargetNotRunnable)
 	default:
 		return fmt.Errorf("unknown backup claim outcome %q", claim.Outcome)
 	}
