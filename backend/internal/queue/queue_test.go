@@ -19,6 +19,23 @@ const (
 	syncJobID    = "00000000-0000-0000-0000-000000000004"
 )
 
+func TestParseSyncCancelEvent(t *testing.T) {
+	legacy := parseSyncCancelEvent("legacy-sync-job")
+	if legacy.SyncJobID != "legacy-sync-job" || !legacy.AllGenerations || legacy.PassGeneration != 0 {
+		t.Fatalf("legacy event = %+v, want broad cancellation for legacy-sync-job", legacy)
+	}
+
+	fenced := parseSyncCancelEvent(`{"sync_job_id":"fenced-sync-job","pass_generation":7,"all_generations":false}`)
+	if fenced.SyncJobID != "fenced-sync-job" || fenced.AllGenerations || fenced.PassGeneration != 7 {
+		t.Fatalf("fenced event = %+v, want generation 7 for fenced-sync-job", fenced)
+	}
+
+	broad := parseSyncCancelEvent(`{"sync_job_id":"delete-sync-job","all_generations":true}`)
+	if broad.SyncJobID != "delete-sync-job" || !broad.AllGenerations {
+		t.Fatalf("broad event = %+v, want all generations for delete-sync-job", broad)
+	}
+}
+
 // setupDequeueTestDB creates a connection-local temporary schema used by
 // DequeueSQL. It mirrors the queue-relevant production constraints.
 func setupDequeueTestDB(t *testing.T) *sql.DB {

@@ -473,7 +473,7 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 	// A paused sync abandons the current pass. Resume starts a freshly indexed
 	// pass; it never attempts to continue a coordinator that was cancelled.
 	emptyErr := ""
-	paused, err := db.PauseSyncJob(s.db, id, &emptyErr)
+	pausedGeneration, paused, err := db.PauseSyncJobAndDeactivateSchedules(r.Context(), s.db, id, &emptyErr)
 	if err != nil {
 		s.logf(r, "Failed to pause sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -483,17 +483,11 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, ErrSyncInvalidState)
 		return
 	}
-	if err := db.DeactivateSchedulesForTask(s.db, "sync", id); err != nil {
-		s.logf(r, "failed to deactivate schedules for paused sync job %s: %v", id, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-
-	if _, err := db.CancelOpenSyncTasksForPause(s.db, id); err != nil {
-		s.logf(r, "Warning: failed to cancel open tasks for paused sync job %s: %v", id, err)
-	}
-	s.syncEngine.CancelPass(id)
-	if err := s.queue.PublishSyncCancelEvent(r.Context(), id); err != nil {
+	// The database transition, schedule deactivation, and pending-task
+	// cancellation committed together. Fence the asynchronous signal so a late
+	// pause cannot cancel a successor pass created by a concurrent resume.
+	s.syncEngine.CancelPassForGeneration(id, pausedGeneration)
+	if err := s.queue.PublishSyncCancelEventForGeneration(r.Context(), id, pausedGeneration); err != nil {
 		s.logf(r, "Warning: failed to publish cancel event for sync job %s: %v", id, err)
 	}
 
@@ -524,7 +518,8 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	emptyErr := ""
-	resumed, err := db.ResumeSyncJob(s.db, id, &emptyErr)
+	nextRun := time.Now()
+	resumed, err := db.ResumeSyncJobAndReactivateSchedules(r.Context(), s.db, id, &emptyErr, nextRun)
 	if err != nil {
 		s.logf(r, "Failed to resume sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -535,15 +530,9 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claimed, startErr := s.syncEngine.StartSyncPass(s.backgroundCtx, id)
-	// Always reactivate the schedule. If the immediate claim was lost to an
-	// instance race or a transient DB error, the next scheduler tick safely
-	// starts the already-resumed IDLE job instead of reporting a false failure.
-	nextRun := time.Now()
-	if err := db.ReactivateSchedulesForTask(s.db, "sync", id, nextRun); err != nil {
-		s.logf(r, "failed to reactivate schedules for resumed sync job %s: %v", id, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
+	// The transaction above also reactivated the schedule. If the immediate
+	// claim was lost to an instance race or a transient DB error, the next
+	// scheduler tick safely starts the already-resumed IDLE job.
 	if startErr != nil {
 		s.warnf(r, "Deferred resumed sync job %s after immediate start error: %v", id, startErr)
 	} else if !claimed {

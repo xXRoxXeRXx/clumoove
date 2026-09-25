@@ -43,6 +43,23 @@ func (p directoryCleanupTestProvider) DeleteFile(_ context.Context, _ string, fi
 	return p.delete(filePath)
 }
 
+func TestCancelPassForGenerationDoesNotCancelSuccessor(t *testing.T) {
+	engine := &Engine{activePassCancels: make(map[string]activePassCancel)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	engine.activePassCancels["sync-job"] = activePassCancel{generation: 2, cancel: cancel}
+
+	engine.CancelPassForGeneration("sync-job", 1)
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("stale pause cancelled successor pass: %v", err)
+	}
+
+	engine.CancelPassForGeneration("sync-job", 2)
+	if err := ctx.Err(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("current-generation pause context = %v, want context canceled", err)
+	}
+}
+
 func TestGetSourceRelPath(t *testing.T) {
 	tests := []struct {
 		targetPath string

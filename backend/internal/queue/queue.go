@@ -23,6 +23,16 @@ type Payload struct {
 	// ClaimEpoch fences this execution attempt. A task may be reclaimed while a
 	// prior worker is still alive, so every worker-side mutation must match it.
 	ClaimEpoch int64 `json:"claim_epoch"`
+	// PassGeneration fences sync control events to the pass that owns this task.
+	PassGeneration int `json:"pass_generation"`
+}
+
+// SyncCancelEvent targets either one sync pass or every pass for a job. Broad
+// cancellation is reserved for destructive lifecycle actions such as deletion.
+type SyncCancelEvent struct {
+	SyncJobID      string `json:"sync_job_id"`
+	PassGeneration int    `json:"pass_generation"`
+	AllGenerations bool   `json:"all_generations"`
 }
 
 // BandwidthEvent updates exactly one job's throttler. Exactly one of
@@ -231,10 +241,10 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP, worker_hash = $1,
 		    claim_epoch = claim_epoch + 1
 		WHERE id = (SELECT id FROM candidate)
-		RETURNING id, migration_id, sync_job_id, claim_epoch
+		RETURNING id, migration_id, sync_job_id, claim_epoch, pass_generation
 	`
 	var payload Payload
-	err = tx.QueryRowContext(ctx, query, workerID, taskID).Scan(&payload.TaskID, &migID, &syncID, &payload.ClaimEpoch)
+	err = tx.QueryRowContext(ctx, query, workerID, taskID).Scan(&payload.TaskID, &migID, &syncID, &payload.ClaimEpoch, &payload.PassGeneration)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return commitEmpty() // No tasks available
@@ -391,11 +401,25 @@ func (q *Queue) PublishCancelEvent(ctx context.Context, migrationID string) erro
 	return q.client.Publish(ctx, channel, migrationID).Err()
 }
 
-// PublishSyncCancelEvent broadcasts a request to stop active transfers for a
-// sync job. Sync passes and transfer workers run in separate processes, so the
-// database status alone cannot promptly interrupt an in-flight stream.
+// PublishSyncCancelEvent requests broad cancellation of all active passes for
+// a sync job. Use it only for destructive lifecycle events such as deletion;
+// pause must use PublishSyncCancelEventForGeneration.
 func (q *Queue) PublishSyncCancelEvent(ctx context.Context, syncJobID string) error {
-	return q.client.Publish(ctx, "sync-control:cancel", syncJobID).Err()
+	payload, err := json.Marshal(SyncCancelEvent{SyncJobID: syncJobID, AllGenerations: true})
+	if err != nil {
+		return fmt.Errorf("marshal sync cancellation event: %w", err)
+	}
+	return q.client.Publish(ctx, "sync-control:cancel", payload).Err()
+}
+
+// PublishSyncCancelEventForGeneration requests cancellation of only the pass
+// that was paused. A resumed successor must not observe this event.
+func (q *Queue) PublishSyncCancelEventForGeneration(ctx context.Context, syncJobID string, generation int) error {
+	payload, err := json.Marshal(SyncCancelEvent{SyncJobID: syncJobID, PassGeneration: generation})
+	if err != nil {
+		return fmt.Errorf("marshal fenced sync cancellation event: %w", err)
+	}
+	return q.client.Publish(ctx, "sync-control:cancel", payload).Err()
 }
 
 // SubscribeToCancelEvents listens for cancellation events and calls the callback.
@@ -444,7 +468,7 @@ func (q *Queue) SubscribeToCancelEvents(ctx context.Context, callback func(migra
 
 // SubscribeToSyncCancelEvents listens for sync transfer cancellation events.
 // It has the same reconnect behaviour as migration cancellation subscriptions.
-func (q *Queue) SubscribeToSyncCancelEvents(ctx context.Context, callback func(syncJobID string)) {
+func (q *Queue) SubscribeToSyncCancelEvents(ctx context.Context, callback func(event SyncCancelEvent)) {
 	channel := "sync-control:cancel"
 	backoff := time.Second
 
@@ -466,7 +490,7 @@ func (q *Queue) SubscribeToSyncCancelEvents(ctx context.Context, callback func(s
 					closed = true
 				} else {
 					backoff = time.Second
-					callback(msg.Payload)
+					callback(parseSyncCancelEvent(msg.Payload))
 				}
 			}
 		}
@@ -481,6 +505,16 @@ func (q *Queue) SubscribeToSyncCancelEvents(ctx context.Context, callback func(s
 			backoff *= 2
 		}
 	}
+}
+
+// parseSyncCancelEvent accepts the current JSON event format and the legacy
+// plain-ID payload emitted before cancellation was generation-fenced.
+func parseSyncCancelEvent(payload string) SyncCancelEvent {
+	var event SyncCancelEvent
+	if err := json.Unmarshal([]byte(payload), &event); err != nil || event.SyncJobID == "" {
+		return SyncCancelEvent{SyncJobID: payload, AllGenerations: true}
+	}
+	return event
 }
 
 // PublishBandwidthChange publishes a bandwidth change event for a migration or sync job via Redis Pub/Sub.

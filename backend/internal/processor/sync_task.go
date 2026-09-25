@@ -32,8 +32,9 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	defer cancel()
 
 	p.activeTasks.Store(payload.TaskID, activeTaskInfo{
-		syncJobID: payload.SyncJobID,
-		cancel:    cancel,
+		syncJobID:      payload.SyncJobID,
+		syncGeneration: payload.PassGeneration,
+		cancel:         cancel,
 	})
 	defer func() {
 		p.activeTasks.Delete(payload.TaskID)

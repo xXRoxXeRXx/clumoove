@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -57,7 +58,8 @@ func setupSyncClaimTestDB(t *testing.T) *sql.DB {
 			task_type TEXT NOT NULL,
 			task_id TEXT NOT NULL,
 			is_active BOOLEAN NOT NULL DEFAULT TRUE,
-			next_run_at TIMESTAMP WITH TIME ZONE
+			next_run_at TIMESTAMP WITH TIME ZONE,
+			updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)
 	`); err != nil {
 		database.Close()
@@ -105,6 +107,49 @@ func setupSyncClaimTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	return database
+}
+
+func TestPauseResumeSyncLifecycleFencesScheduleAndTasks(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+	insertSyncClaimJob(t, database, "pause-resume-fence", "IDLE")
+	if _, err := database.Exec(`UPDATE sync_jobs SET run_generation = 4 WHERE id = 'pause-resume-fence'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO schedules (task_type, task_id, is_active, next_run_at)
+		VALUES ('sync', 'pause-resume-fence', TRUE, NOW() + INTERVAL '1 hour');
+		INSERT INTO tasks (id, sync_job_id, pass_generation, file_path, status, next_retry_at) VALUES
+			('paused-pending', 'pause-resume-fence', 4, '/pending', 'PENDING', NULL),
+			('paused-retry', 'pause-resume-fence', 4, '/retry', 'FAILED', NOW()),
+			('other-pass', 'pause-resume-fence', 5, '/new', 'PENDING', NULL)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	generation, paused, err := PauseSyncJobAndDeactivateSchedules(context.Background(), database, "pause-resume-fence", nil)
+	if err != nil || !paused || generation != 4 {
+		t.Fatalf("pause lifecycle = generation %d, paused %v, err %v; want 4, true, nil", generation, paused, err)
+	}
+	var inactive bool
+	if err := database.QueryRow(`SELECT NOT is_active FROM schedules WHERE task_id = 'pause-resume-fence'`).Scan(&inactive); err != nil || !inactive {
+		t.Fatalf("schedule inactive = %v, err %v; want true, nil", inactive, err)
+	}
+	var cancelled, preserved int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = 'pause-resume-fence' AND pass_generation = 4 AND status = 'CANCELLED'`).Scan(&cancelled); err != nil || cancelled != 2 {
+		t.Fatalf("cancelled paused tasks = %d, err %v; want 2, nil", cancelled, err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tasks WHERE id = 'other-pass' AND status = 'PENDING'`).Scan(&preserved); err != nil || preserved != 1 {
+		t.Fatalf("preserved other pass tasks = %d, err %v; want 1, nil", preserved, err)
+	}
+
+	resumed, err := ResumeSyncJobAndReactivateSchedules(context.Background(), database, "pause-resume-fence", nil, time.Now())
+	if err != nil || !resumed || syncClaimStatus(t, database, "pause-resume-fence") != "IDLE" {
+		t.Fatalf("resume lifecycle = %v, %v, status %s; want true, nil, IDLE", resumed, err, syncClaimStatus(t, database, "pause-resume-fence"))
+	}
+	var active bool
+	if err := database.QueryRow(`SELECT is_active FROM schedules WHERE task_id = 'pause-resume-fence'`).Scan(&active); err != nil || !active {
+		t.Fatalf("schedule active = %v, err %v; want true, nil", active, err)
+	}
 }
 
 func TestSyncPassGenerationFencesVerificationReconciliationAndReporting(t *testing.T) {

@@ -28,7 +28,12 @@ type Engine struct {
 	// sync-pass goroutines. Entries are added just before the goroutine body
 	// runs and removed when it returns, allowing CancelPass to interrupt them.
 	cancelMu          sync.Mutex
-	activePassCancels map[string]context.CancelFunc
+	activePassCancels map[string]activePassCancel
+}
+
+type activePassCancel struct {
+	generation int
+	cancel     context.CancelFunc
 }
 
 func NewEngine(database *sql.DB, q *queue.Queue, encryptionKey string) *Engine {
@@ -36,7 +41,7 @@ func NewEngine(database *sql.DB, q *queue.Queue, encryptionKey string) *Engine {
 		db:                database,
 		queue:             q,
 		encryptionKey:     encryptionKey,
-		activePassCancels: make(map[string]context.CancelFunc),
+		activePassCancels: make(map[string]activePassCancel),
 	}
 }
 
@@ -47,14 +52,31 @@ func (e *Engine) CancelPass(syncJobID string) {
 	cancel, ok := e.activePassCancels[syncJobID]
 	e.cancelMu.Unlock()
 	if ok {
-		cancel()
+		cancel.cancel()
+	}
+}
+
+// CancelPassForGeneration cancels only the pass that was active when a pause
+// was committed. It deliberately ignores a successor started by a resume.
+func (e *Engine) CancelPassForGeneration(syncJobID string, generation int) {
+	e.cancelMu.Lock()
+	active, ok := e.activePassCancels[syncJobID]
+	e.cancelMu.Unlock()
+	if ok && active.generation == generation {
+		active.cancel()
 	}
 }
 
 // SubscribeToCancelEvents stops locally owned sync-pass coordinators when a
 // pause or deletion was requested through another API/worker process.
 func (e *Engine) SubscribeToCancelEvents(ctx context.Context) {
-	e.queue.SubscribeToSyncCancelEvents(ctx, e.CancelPass)
+	e.queue.SubscribeToSyncCancelEvents(ctx, func(event queue.SyncCancelEvent) {
+		if event.AllGenerations {
+			e.CancelPass(event.SyncJobID)
+			return
+		}
+		e.CancelPassForGeneration(event.SyncJobID, event.PassGeneration)
+	})
 }
 
 type fileState struct {
@@ -135,7 +157,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	// Register only after acquiring the cross-instance pass lock. This avoids a
 	// successor overwriting the predecessor's cancel entry while it is draining.
 	e.cancelMu.Lock()
-	e.activePassCancels[syncJobID] = cancel
+	e.activePassCancels[syncJobID] = activePassCancel{generation: generation, cancel: cancel}
 	e.cancelMu.Unlock()
 	defer func() {
 		e.cancelMu.Lock()

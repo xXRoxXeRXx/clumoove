@@ -37,9 +37,10 @@ func formatWorkerHashValue(algo string, hasher hash.Hash) string {
 }
 
 type activeTaskInfo struct {
-	migrationID string
-	syncJobID   string
-	cancel      context.CancelFunc
+	migrationID    string
+	syncJobID      string
+	syncGeneration int
+	cancel         context.CancelFunc
 }
 
 type Processor struct {
@@ -581,11 +582,11 @@ func (p *Processor) Start(ctx context.Context) {
 
 	// Sync transfers have their own control channel because their lifecycle is
 	// coordinated by the sync engine rather than the migration processor.
-	go p.queue.SubscribeToSyncCancelEvents(ctx, func(syncJobID string) {
-		processorLogf("[Worker %s] Received Cancel Event for Sync Job: %s\n", p.workerID, syncJobID)
+	go p.queue.SubscribeToSyncCancelEvents(ctx, func(event queue.SyncCancelEvent) {
+		processorLogf("[Worker %s] Received Cancel Event for Sync Job: %s generation %d\n", p.workerID, event.SyncJobID, event.PassGeneration)
 		p.activeTasks.Range(func(key, value interface{}) bool {
 			info, ok := value.(activeTaskInfo)
-			if ok && info.syncJobID == syncJobID {
+			if ok && info.syncJobID == event.SyncJobID && (event.AllGenerations || info.syncGeneration == event.PassGeneration) {
 				processorLogf("[Worker %s] Cancelling active sync stream for task: %s\n", p.workerID, key)
 				info.cancel()
 			}

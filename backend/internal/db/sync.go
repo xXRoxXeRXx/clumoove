@@ -383,6 +383,73 @@ func PauseSyncJob(db *sql.DB, id string, errMsg *string) (bool, error) {
 	return true, nil
 }
 
+// PauseSyncJobAndDeactivateSchedules serializes the user-pause lifecycle with
+// its schedule and task mutations. The returned generation is the pass that
+// was paused and must be used to fence asynchronous cancellation signals.
+func PauseSyncJobAndDeactivateSchedules(ctx context.Context, database *sql.DB, id string, errMsg *string) (generation int, paused bool, err error) {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback()
+
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT status, run_generation FROM sync_jobs WHERE id = $1 FOR UPDATE`, id).Scan(&status, &generation); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	if status != "IDLE" && status != "INDEXING" && status != "RUNNING" && status != "VERIFYING" {
+		return generation, false, nil
+	}
+
+	var errVal sql.NullString
+	if errMsg != nil {
+		errVal = sql.NullString{String: *errMsg, Valid: true}
+	}
+	// The FOR UPDATE lock keeps this generation stable until commit. Keep the
+	// predicate and affected-row check as a defensive fence if this transaction
+	// is ever refactored to stop holding that lock across the update.
+	result, err := tx.ExecContext(ctx, `
+		UPDATE sync_jobs
+		SET status = 'PAUSED', verification_lease_until = NULL,
+		    error_message = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE error_message END,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2 AND run_generation = $3
+	`, errVal, id, generation)
+	if err != nil {
+		return 0, false, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return 0, false, err
+	}
+	if updated == 0 {
+		return generation, false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE schedules
+		SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+		WHERE task_type = 'sync' AND task_id = $1
+	`, id); err != nil {
+		return 0, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'CANCELLED', worker_hash = NULL, next_retry_at = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE sync_job_id = $1 AND pass_generation = $2
+		  AND (status = 'PENDING' OR (status = 'FAILED' AND next_retry_at IS NOT NULL))
+	`, id, generation); err != nil {
+		return 0, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, false, err
+	}
+	return generation, true, nil
+}
+
 // ResumeSyncJob atomically returns a user-paused job to IDLE so a new pass can
 // be claimed. It must not overwrite a live or connection-recovery lifecycle.
 func ResumeSyncJob(db *sql.DB, id string, errMsg *string) (bool, error) {
@@ -403,6 +470,55 @@ func ResumeSyncJob(db *sql.DB, id string, errMsg *string) (bool, error) {
 		return false, nil
 	}
 	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ResumeSyncJobAndReactivateSchedules serializes the user-resume lifecycle
+// with its schedule mutation, preventing a preceding pause from disabling a
+// successfully resumed job after it starts a new pass.
+func ResumeSyncJobAndReactivateSchedules(ctx context.Context, database *sql.DB, id string, errMsg *string, nextRunAt time.Time) (bool, error) {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	// SELECT FOR UPDATE is intentional: it makes this check and the UPDATE
+	// predicate below consistent, and serializes a concurrent user pause.
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM sync_jobs WHERE id = $1 FOR UPDATE`, id).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if status != "PAUSED" {
+		return false, nil
+	}
+
+	var errVal sql.NullString
+	if errMsg != nil {
+		errVal = sql.NullString{String: *errMsg, Valid: true}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sync_jobs
+		SET status = 'IDLE',
+		    error_message = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE error_message END,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2 AND status = 'PAUSED'
+	`, errVal, id); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE schedules
+		SET is_active = TRUE, next_run_at = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE task_type = 'sync' AND task_id = $2
+	`, nextRunAt, id); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -898,25 +1014,6 @@ func CancelRemainingPendingSyncTasksForGeneration(dbsql *sql.DB, syncJobID strin
 	}
 	n, err := res.RowsAffected()
 	return int(n), err
-}
-
-// CancelOpenSyncTasksForPause cancels work that no worker owns. RUNNING rows
-// deliberately remain RUNNING: their terminal transition is the durable worker
-// acknowledgement that makes it safe to begin the next pass.
-func CancelOpenSyncTasksForPause(dbsql *sql.DB, syncJobID string) (int, error) {
-	res, err := dbsql.Exec(`
-		UPDATE tasks
-		SET status = 'CANCELLED', worker_hash = NULL, next_retry_at = NULL,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE sync_job_id = $1
-		  AND pass_generation = (SELECT run_generation FROM sync_jobs WHERE id = $1)
-		  AND (status = 'PENDING' OR (status = 'FAILED' AND next_retry_at IS NOT NULL))
-	`, syncJobID)
-	if err != nil {
-		return 0, err
-	}
-	rows, err := res.RowsAffected()
-	return int(rows), err
 }
 
 // ReconcileSyncJobProgress repairs progress counter drift for a sync job
