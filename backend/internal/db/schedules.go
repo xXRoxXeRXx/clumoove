@@ -138,10 +138,6 @@ func GetDueSchedulesContext(ctx context.Context, db *sql.DB) ([]Schedule, error)
 	return schedules, nil
 }
 
-func UpdateNextRunAt(db *sql.DB, id string, nextRunAt time.Time) error {
-	return UpdateNextRunAtContext(context.Background(), db, id, nextRunAt)
-}
-
 // UpdateNextRunAtContext updates a schedule while honoring caller cancellation.
 func UpdateNextRunAtContext(ctx context.Context, db *sql.DB, id string, nextRunAt time.Time) error {
 	query := `
@@ -151,6 +147,25 @@ func UpdateNextRunAtContext(ctx context.Context, db *sql.DB, id string, nextRunA
 	`
 	_, err := db.ExecContext(ctx, query, nextRunAt, id)
 	return err
+}
+
+// UpdateNextRunAtIfUnchangedContext advances a schedule only when its next run
+// is still the value observed by the caller. This prevents a stale scheduler
+// read from overwriting a schedule explicitly rescheduled by a user.
+func UpdateNextRunAtIfUnchangedContext(ctx context.Context, db *sql.DB, id string, expectedNextRunAt, nextRunAt time.Time) (bool, error) {
+	result, err := db.ExecContext(ctx, `
+		UPDATE schedules
+		SET next_run_at = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2 AND next_run_at IS NOT DISTINCT FROM $3
+	`, nextRunAt, id, expectedNextRunAt)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }
 
 func DeactivateSchedule(db *sql.DB, id string) error {

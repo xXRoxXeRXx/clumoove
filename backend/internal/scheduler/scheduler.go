@@ -118,8 +118,11 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 		if schedule.CronExpression.Valid || schedule.TaskType == "sync" || schedule.TaskType == "backup" {
 			nextRun, err := s.nextRunForSchedule(ctx, schedule)
 			if err == nil {
-				if err := db.UpdateNextRunAtContext(ctx, s.db, schedule.ID, nextRun); err != nil {
+				advanced, err := db.UpdateNextRunAtIfUnchangedContext(ctx, s.db, schedule.ID, schedule.NextRunAt.Time, nextRun)
+				if err != nil {
 					logger.ErrorContext(ctx, "schedule_next_run_update_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+				} else if !advanced {
+					logger.InfoContext(ctx, "schedule_overlap_next_run_update_skipped", slog.String("reason", "schedule_changed"))
 				}
 			} else {
 				logger.ErrorContext(ctx, "schedule_next_run_calculation_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
@@ -164,9 +167,11 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 			logger.ErrorContext(ctx, "schedule_next_run_calculation_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			return
 		}
-		err = db.UpdateNextRunAtContext(ctx, s.db, schedule.ID, nextRun)
+		advanced, err := db.UpdateNextRunAtIfUnchangedContext(ctx, s.db, schedule.ID, schedule.NextRunAt.Time, nextRun)
 		if err != nil {
 			logger.ErrorContext(ctx, "schedule_next_run_update_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		} else if !advanced {
+			logger.InfoContext(ctx, "schedule_next_run_update_skipped", slog.String("reason", "schedule_changed"))
 		} else {
 			logger.InfoContext(ctx, "schedule_next_run_updated", slog.Time("next_run_at", nextRun))
 		}
