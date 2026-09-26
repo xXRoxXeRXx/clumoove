@@ -376,7 +376,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 					continue
 				}
 
-				targetPath := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, cfg.TargetDir, cfg.SourceProvider, cfg.TargetProvider)
+				targetPath := effectiveTargetPath(task, cfg.TargetDir, cfg.SourceProvider, cfg.TargetProvider)
 				taskCtx := passCtx
 				if cfg.TargetProvider == "immich" {
 					var metadata storage.FileMetadata

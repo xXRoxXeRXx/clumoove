@@ -13,17 +13,20 @@ import (
 )
 
 type Task struct {
-	ID           string         `json:"id"`
-	MigrationID  string         `json:"migration_id,omitempty"`
-	SyncJobID    string         `json:"sync_job_id,omitempty"`
-	ResourceType string         `json:"resource_type"` // files, calendars, contacts
-	FilePath     string         `json:"file_path"`
-	FileSize     int64          `json:"file_size"`
-	Status       string         `json:"status"` // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED, CANCELLED
-	Attempts     int            `json:"attempts"`
-	ErrorMessage sql.NullString `json:"error_message,omitempty"`
-	NextRetryAt  sql.NullTime   `json:"next_retry_at,omitempty"`
-	WorkerHash   sql.NullString `json:"worker_hash,omitempty"`
+	ID           string `json:"id"`
+	MigrationID  string `json:"migration_id,omitempty"`
+	SyncJobID    string `json:"sync_job_id,omitempty"`
+	ResourceType string `json:"resource_type"` // files, calendars, contacts
+	// FilePath is the immutable source-provider path. ResolvedTargetPath is the
+	// destination selected after sanitization and conflict resolution.
+	FilePath           string         `json:"file_path"`
+	ResolvedTargetPath string         `json:"resolved_target_path,omitempty"`
+	FileSize           int64          `json:"file_size"`
+	Status             string         `json:"status"` // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED, CANCELLED
+	Attempts           int            `json:"attempts"`
+	ErrorMessage       sql.NullString `json:"error_message,omitempty"`
+	NextRetryAt        sql.NullTime   `json:"next_retry_at,omitempty"`
+	WorkerHash         sql.NullString `json:"worker_hash,omitempty"`
 	// ClaimEpoch is assigned by DequeueSQL and fences a particular worker claim.
 	ClaimEpoch       int64           `json:"claim_epoch"`
 	PassGeneration   int             `json:"pass_generation"`
@@ -94,14 +97,14 @@ func CreateTask(db *sql.DB, t *Task) (string, error) {
 
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
-		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), resource_type, file_path, file_size, status,
+		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), resource_type, file_path, COALESCE(resolved_target_path, ''), file_size, status,
 		       attempts, error_message, next_retry_at, worker_hash, claim_epoch, pass_generation, source_hash, target_hash,
 		       checksum_verified, COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM tasks WHERE id = $1
 	`
 	var t Task
 	err := db.QueryRow(query, id).Scan(
-		&t.ID, &t.MigrationID, &t.SyncJobID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
+		&t.ID, &t.MigrationID, &t.SyncJobID, &t.ResourceType, &t.FilePath, &t.ResolvedTargetPath, &t.FileSize, &t.Status,
 		&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.ClaimEpoch, &t.PassGeneration, &t.SourceHash, &t.TargetHash,
 		&t.ChecksumVerified, &t.Metadata, &t.CreatedAt, &t.UpdatedAt,
 	)
@@ -183,7 +186,7 @@ func TransitionClaimedTask(db *sql.DB, ctx context.Context, taskID string, claim
 
 func GetUnverifiedCompletedTasks(db *sql.DB, ctx context.Context, migrationID string) ([]*Task, error) {
 	query := `
-		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), resource_type, file_path, file_size, status,
+		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), resource_type, file_path, COALESCE(resolved_target_path, ''), file_size, status,
 		       attempts, error_message, next_retry_at, worker_hash, source_hash, target_hash,
 		       checksum_verified, COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM tasks
@@ -199,7 +202,7 @@ func GetUnverifiedCompletedTasks(db *sql.DB, ctx context.Context, migrationID st
 	for rows.Next() {
 		var t Task
 		if err := rows.Scan(
-			&t.ID, &t.MigrationID, &t.SyncJobID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
+			&t.ID, &t.MigrationID, &t.SyncJobID, &t.ResourceType, &t.FilePath, &t.ResolvedTargetPath, &t.FileSize, &t.Status,
 			&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.SourceHash, &t.TargetHash,
 			&t.ChecksumVerified, &t.Metadata, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
@@ -286,14 +289,10 @@ func MarkAllMigrationTasksVerified(db *sql.DB, ctx context.Context, migrationID 
 	return err
 }
 
-func UpdateTaskFilePath(db *sql.DB, taskID, newFilePath string) error {
-	query := `UPDATE tasks SET file_path = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
-	_, err := db.Exec(query, newFilePath, taskID)
-	return err
-}
-
-func UpdateClaimedTaskFilePath(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64, newFilePath string) error {
-	res, err := db.ExecContext(ctx, `UPDATE tasks SET file_path = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3`, newFilePath, taskID, claimEpoch)
+// UpdateClaimedTaskResolvedTargetPath persists the destination selected for a
+// migration task without ever changing its source-provider file_path.
+func UpdateClaimedTaskResolvedTargetPath(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64, targetPath string) error {
+	res, err := db.ExecContext(ctx, `UPDATE tasks SET resolved_target_path = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3`, targetPath, taskID, claimEpoch)
 	if err != nil {
 		return err
 	}
@@ -618,7 +617,7 @@ func ResetMigrationForReindex(db *sql.DB, ctx context.Context, migrationID strin
 
 func GetFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
 	query := `
-		SELECT id, migration_id, resource_type, file_path, file_size, status, attempts, error_message, metadata, created_at, updated_at
+		SELECT id, migration_id, resource_type, file_path, COALESCE(resolved_target_path, ''), file_size, status, attempts, error_message, metadata, created_at, updated_at
 		FROM tasks
 		WHERE migration_id = $1 AND status = 'FAILED'
 		ORDER BY file_path ASC
@@ -632,7 +631,7 @@ func GetFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
 	var tasks []Task
 	for rows.Next() {
 		var t Task
-		if err := rows.Scan(&t.ID, &t.MigrationID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status, &t.Attempts, &t.ErrorMessage, &t.Metadata, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.MigrationID, &t.ResourceType, &t.FilePath, &t.ResolvedTargetPath, &t.FileSize, &t.Status, &t.Attempts, &t.ErrorMessage, &t.Metadata, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
 		tasks = append(tasks, t)

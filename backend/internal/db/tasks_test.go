@@ -202,6 +202,25 @@ func TestUpdateClaimedTaskMetadataFencesClaimAndPersistsMetadata(t *testing.T) {
 	}
 }
 
+func TestUpdateClaimedTaskResolvedTargetPathPreservesSourcePath(t *testing.T) {
+	database, state := newCreateTaskTestDB(t)
+	if err := UpdateClaimedTaskResolvedTargetPath(database, context.Background(), "task-1", 7, "/dest/a_copy1.txt"); err != nil {
+		t.Fatalf("UpdateClaimedTaskResolvedTargetPath() error = %v", err)
+	}
+	if strings.Contains(state.execQuery, "SET file_path") {
+		t.Fatalf("resolved target update changed source path: %q", state.execQuery)
+	}
+	if !strings.Contains(state.execQuery, "SET resolved_target_path = $1") {
+		t.Fatalf("resolved target update query = %q", state.execQuery)
+	}
+	if !strings.Contains(state.execQuery, "status = 'RUNNING' AND claim_epoch = $3") {
+		t.Fatalf("resolved target update is not fenced: %q", state.execQuery)
+	}
+	if got := state.execArgs[0].Value; got != "/dest/a_copy1.txt" {
+		t.Fatalf("resolved target argument = %#v", got)
+	}
+}
+
 type createTaskTx struct{}
 
 func (createTaskTx) Commit() error   { return nil }

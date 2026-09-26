@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     migration_id UUID NOT NULL REFERENCES migrations(id) ON DELETE CASCADE,
     file_path TEXT NOT NULL,
+    resolved_target_path TEXT,
     file_size BIGINT NOT NULL,
     source_hash TEXT,
     worker_hash TEXT,

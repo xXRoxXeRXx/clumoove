@@ -1598,7 +1598,7 @@ func ListAllSyncJobsContext(ctx context.Context, database *sql.DB, p SyncListPar
 // GetUnverifiedCompletedSyncTasks fetches tasks for a sync job that completed but have checksum_verified = FALSE.
 func GetUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID string, generation int) ([]*Task, error) {
 	query := `
-		SELECT id, sync_job_id, pass_generation, resource_type, file_path, file_size, status,
+		SELECT id, sync_job_id, pass_generation, resource_type, file_path, COALESCE(resolved_target_path, ''), file_size, status,
 		       attempts, error_message, next_retry_at, worker_hash, source_hash, target_hash,
 		       checksum_verified, COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM tasks
@@ -1614,7 +1614,7 @@ func GetUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID 
 	for rows.Next() {
 		var t Task
 		if err := rows.Scan(
-			&t.ID, &t.SyncJobID, &t.PassGeneration, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
+			&t.ID, &t.SyncJobID, &t.PassGeneration, &t.ResourceType, &t.FilePath, &t.ResolvedTargetPath, &t.FileSize, &t.Status,
 			&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.SourceHash, &t.TargetHash,
 			&t.ChecksumVerified, &t.Metadata, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {

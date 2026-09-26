@@ -763,6 +763,7 @@ $$ language 'plpgsql'`)
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 				migration_id UUID REFERENCES migrations(id) ON DELETE CASCADE,
 				file_path TEXT NOT NULL,
+				resolved_target_path TEXT,
 				file_size BIGINT NOT NULL DEFAULT 0,
 				source_hash TEXT,
 				target_hash TEXT,
@@ -790,6 +791,11 @@ $$ language 'plpgsql'`)
 			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS metadata JSONB`)
 			if err != nil {
 				log.Printf("Failed schema migration (tasks metadata): %v\n", err)
+			}
+
+			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS resolved_target_path TEXT`)
+			if err != nil {
+				log.Printf("Failed schema migration (tasks resolved_target_path): %v\\n", err)
 			}
 
 			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE`)

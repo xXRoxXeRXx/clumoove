@@ -1372,7 +1372,10 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 		if task.ErrorMessage.Valid {
 			errMsg = task.ErrorMessage.String
 		}
-		displayPath := processor.ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
+		displayPath := task.ResolvedTargetPath
+		if displayPath == "" {
+			displayPath = processor.ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
+		}
 		_ = writer.Write([]string{
 			csvCell(displayPath),
 			fmt.Sprintf("%d", task.FileSize),

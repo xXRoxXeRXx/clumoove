@@ -213,6 +213,16 @@ func ResolveTargetPath(resourceType, filePath string, metadata []byte, targetDir
 	return path.Clean(relativePath)
 }
 
+// effectiveTargetPath returns the destination selected for this task. Once a
+// transfer has resolved its destination, that value must be reused instead of
+// deriving a new path from the immutable source file_path.
+func effectiveTargetPath(task *db.Task, targetDir, sourceProvider, targetProvider string) string {
+	if task.ResolvedTargetPath != "" {
+		return task.ResolvedTargetPath
+	}
+	return ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, targetDir, sourceProvider, targetProvider)
+}
+
 func fileManagerTransferOperation(pickerSessionID string) string {
 	const marker = "file-manager-transfer:"
 	if !strings.HasPrefix(pickerSessionID, marker) {
@@ -867,7 +877,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 
 	logPath := task.FilePath
 	if task.ResourceType == "files" {
-		logPath = ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
+		logPath = effectiveTargetPath(task, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
 	}
 
 	processorLogf("[Worker %s] Thread %d -> Request: [%s] %s (%d bytes) [%s -> %s]\n",
@@ -1016,8 +1026,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// 3. Conflict Resolution
 	var deleteAfterUpload bool // set true by OVERWRITE: delete original only after upload succeeds
 	targetPath := task.FilePath
-	if task.ResourceType == "files" {
-		targetPath = ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
+	targetPathPersisted := task.ResolvedTargetPath != ""
+	if task.ResourceType == "files" && targetPathPersisted {
+		targetPath = task.ResolvedTargetPath
+	} else if task.ResourceType == "files" {
+		targetPath = effectiveTargetPath(task, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
 	}
 
 	// Synchronize parallel worker threads operating on the exact same target path
@@ -1025,14 +1038,13 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	defer unlockTarget()
 
 	// 3a. Filename Sanitization (before conflict resolution)
-	if task.ResourceType == "files" && mig.TargetProvider != "immich" {
+	if task.ResourceType == "files" && !targetPathPersisted && mig.TargetProvider != "immich" {
 		result := sanitize.SanitizeFilename(path.Base(targetPath), mig.TargetProvider)
 		if result.Changed {
 			dir := path.Dir(targetPath)
 			targetPath = path.Join(dir, result.SanitizedName)
 			processorLogf("[SANITIZE] %s: \"%s\" → \"%s\" (%s)",
 				task.ID, result.OriginalName, result.SanitizedName, strings.Join(result.Reasons, ", "))
-			_ = db.UpdateClaimedTaskFilePath(p.db, ctx, task.ID, task.ClaimEpoch, targetPath)
 		}
 
 		if sanitize.IsCaseInsensitive(mig.TargetProvider) {
@@ -1049,7 +1061,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 				targetPath = path.Join(path.Dir(targetPath), resolved)
 				processorLogf("[COLLISION] %s: case collision with \"%s\" → \"%s\"",
 					task.ID, collision, path.Base(targetPath))
-				_ = db.UpdateClaimedTaskFilePath(p.db, ctx, task.ID, task.ClaimEpoch, targetPath)
 			}
 		}
 	}
@@ -1071,7 +1082,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	}
 
 	_, nativeDuplicates := targetClient.(storage.NativeDuplicateDetector)
-	if nativeDuplicates {
+	if targetPathPersisted {
+		// A prior attempt selected this exact destination. Re-running conflict
+		// resolution would turn a retry into another rename once the first
+		// attempt has created the target.
+	} else if nativeDuplicates {
 		// Immich determines duplicates from its native asset identity/checksum;
 		// filename preflight would be both inaccurate and unsafe.
 	} else if task.ResourceType == "files" && mig.ConflictStrategy == "OVERWRITE" {
@@ -1103,9 +1118,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 				case "SKIP":
 					// An existing target must never be overwritten under SKIP,
 					// including after a create-only HiDrive POST reports a race.
-					if exists {
-						return p.skipTask(ctx, task, "File already exists in target (SKIP)")
-					}
+					return p.skipTask(ctx, task, "File already exists in target (SKIP)")
 
 				case "RENAME":
 					// Generate new target name
@@ -1125,7 +1138,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 						}
 						if !candidateExists {
 							targetPath = candidatePath
-							_ = db.UpdateClaimedTaskFilePath(p.db, ctx, task.ID, task.ClaimEpoch, targetPath)
 							break
 						}
 						counter++
@@ -1136,6 +1148,17 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 				}
 			}
 		}
+	}
+
+	if task.ResourceType == "files" && !targetPathPersisted {
+		// Persist the fully resolved destination before any upload. file_path is
+		// deliberately immutable: retries must continue to download it from the
+		// source while reusing this chosen target, and deferred verification must
+		// not apply TargetDir a second time.
+		if err := db.UpdateClaimedTaskResolvedTargetPath(p.db, ctx, task.ID, task.ClaimEpoch, targetPath); err != nil {
+			return fmt.Errorf("persist resolved target path: %w", err)
+		}
+		task.ResolvedTargetPath = targetPath
 	}
 
 	// 4. Download and Upload stream. The provider-facing pipeline is isolated in

@@ -42,6 +42,24 @@ func TestShouldInvalidateProviderPool(t *testing.T) {
 	}
 }
 
+func TestEffectiveTargetPathPrefersPersistedDestination(t *testing.T) {
+	task := &db.Task{
+		ResourceType:       "files",
+		FilePath:           "/a.txt",
+		ResolvedTargetPath: "/dest/a_copy1.txt",
+	}
+	if got := effectiveTargetPath(task, "/dest", "nextcloud", "nextcloud"); got != "/dest/a_copy1.txt" {
+		t.Fatalf("effectiveTargetPath() = %q, want persisted destination", got)
+	}
+}
+
+func TestEffectiveTargetPathFallsBackToSourceResolution(t *testing.T) {
+	task := &db.Task{ResourceType: "files", FilePath: "/a.txt"}
+	if got := effectiveTargetPath(task, "/dest", "nextcloud", "nextcloud"); got != "/dest/a.txt" {
+		t.Fatalf("effectiveTargetPath() = %q, want computed destination", got)
+	}
+}
+
 func TestExpectedSizeReader(t *testing.T) {
 	cases := []struct {
 		name     string
