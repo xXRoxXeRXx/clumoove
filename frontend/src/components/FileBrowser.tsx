@@ -113,6 +113,57 @@ const resolveImmichSelectionState = (
   return next;
 };
 
+const parentPath = (path: string): string | null => {
+  const separator = path.lastIndexOf("/");
+  return separator <= 0 ? null : path.slice(0, separator);
+};
+
+// A selected directory represents its complete recursive contents to the API.
+// Keep the checkbox state compatible with that contract: excluding a descendant
+// replaces every selected ancestor with its selected siblings.
+const resolveHierarchicalSelectionState = (
+  prev: Record<string, boolean>,
+  filePath: string,
+  directoryContents: Record<string, CloudFile[]>,
+): Record<string, boolean> => {
+  const next = { ...prev };
+  const setLoadedSubtree = (path: string, selected: boolean) => {
+    next[path] = selected;
+    for (const child of directoryContents[path] || []) {
+      if (isOneDrivePersonalVault(child)) {
+        next[child.path] = false;
+        continue;
+      }
+      setLoadedSubtree(child.path, selected);
+    }
+  };
+
+  if (!prev[filePath]) {
+    setLoadedSubtree(filePath, true);
+    return next;
+  }
+
+  setLoadedSubtree(filePath, false);
+  let excludedPath = filePath;
+  let ancestorPath = parentPath(filePath);
+  while (ancestorPath !== null) {
+    // If this ancestor was the inclusive scope, replace it with all of its
+    // other children. If it was already excluded, its existing child scopes
+    // may contain earlier exclusions and must be preserved unchanged.
+    if (prev[ancestorPath]) {
+      for (const sibling of directoryContents[ancestorPath] || []) {
+        if (sibling.path !== excludedPath && !isOneDrivePersonalVault(sibling)) {
+          setLoadedSubtree(sibling.path, true);
+        }
+      }
+    }
+    next[ancestorPath] = false;
+    excludedPath = ancestorPath;
+    ancestorPath = parentPath(ancestorPath);
+  }
+  return next;
+};
+
 interface SourceTreeRowProps {
   file: CloudFile;
   depth: number;
@@ -449,7 +500,16 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   );
 
   const pathsToMigrate = useMemo(
-    () => Object.keys(selectedPaths).filter((p) => selectedPaths[p]),
+    () => {
+      const selectedKeys = Object.keys(selectedPaths).filter(
+        (path) => selectedPaths[path],
+      );
+      return selectedKeys.filter(
+        (candidate) => !selectedKeys.some(
+          (other) => other !== candidate && candidate.startsWith(`${other}/`),
+        ),
+      );
+    },
     [selectedPaths],
   );
 
@@ -484,9 +544,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     bandwidthLimit,
   ]);
 
-  const backupSelectedPaths = useMemo(() => pathsToMigrate.filter((candidate) => !pathsToMigrate.some(
-    (other) => other !== candidate && candidate.startsWith(`${other}/`),
-  )), [pathsToMigrate]);
+  const backupSelectedPaths = pathsToMigrate;
 
   // Minimum selectable start time: now + 1 minute, formatted in the user's
   // local timezone (datetime-local inputs expect local time, not UTC).
@@ -891,7 +949,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 if (isImmichSource && folderPath === "/Albums") {
                   next[child.path] = !!prev["/Albums"];
                 } else {
-                  next[child.path] = !isOneDrivePersonalVault(child);
+                  next[child.path] =
+                    !!prev[folderPath] && !isOneDrivePersonalVault(child);
                 }
               }
             }
@@ -945,7 +1004,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       setSelectedPaths((prev) =>
         isImmichSource
           ? resolveImmichSelectionState(prev, filePath)
-          : { ...prev, [filePath]: !prev[filePath] },
+          : resolveHierarchicalSelectionState(
+              prev,
+              filePath,
+              directoryContentsRef.current,
+            ),
       );
     },
     [isImmichSource],

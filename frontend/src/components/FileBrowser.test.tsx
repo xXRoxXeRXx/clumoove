@@ -211,3 +211,113 @@ describe("FileBrowser sync start retry", () => {
     expect(container.querySelector("#contacts-tab")).toBeNull();
   });
 });
+
+describe("FileBrowser hierarchical file selection", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  const privateFile: CloudFile = {
+    path: "/Documents/private.txt",
+    name: "private.txt",
+    size: 1,
+    is_dir: false,
+    hash: "",
+    last_modified: "2026-01-01T00:00:00Z",
+  };
+  const publicFile: CloudFile = {
+    path: "/Documents/public.txt",
+    name: "public.txt",
+    size: 1,
+    is_dir: false,
+    hash: "",
+    last_modified: "2026-01-01T00:00:00Z",
+  };
+
+  const button = (label: string) => container.querySelector(
+    `button[aria-label="${label}"]`,
+  ) as HTMLButtonElement;
+  const row = (name: string) => Array.from(container.querySelectorAll('[role="treeitem"]'))
+    .find((item) => item.textContent?.includes(name)) as HTMLDivElement;
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    vi.mocked(apiFetch).mockReset();
+  });
+
+  afterEach(() => {
+    act(() => root?.unmount());
+    container?.remove();
+  });
+
+  it("serializes selected siblings instead of a parent after excluding a child", async () => {
+    vi.mocked(apiFetch).mockImplementation((url) => {
+      const path = String(url);
+      if (path.endsWith("/api/sync")) {
+        return Promise.resolve(jsonResponse({ id: "sync-1", success: true }));
+      }
+      if (path.endsWith("/api/sync/sync-1/start")) {
+        return Promise.resolve(jsonResponse({ success: true }));
+      }
+      return Promise.resolve(jsonResponse({ success: true, items: [privateFile, publicFile] }));
+    });
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<FileBrowser initialFiles={initialFiles} credentials={credentials} apiUrl="https://api.example.test" onBack={vi.fn()} onStartSuccess={vi.fn()} token="token" />);
+      await flush();
+    });
+    await act(async () => {
+      button("Expand Documents").click();
+      await flush();
+    });
+    await act(async () => {
+      button("Select private.txt").click();
+      await flush();
+    });
+
+    expect(row("Documents").getAttribute("aria-selected")).toBe("false");
+    expect(row("private.txt").getAttribute("aria-selected")).toBe("false");
+    expect(row("public.txt").getAttribute("aria-selected")).toBe("true");
+
+    const syncButton = Array.from(container.querySelectorAll("button"))
+      .find((item) => item.textContent?.trim() === "Continuous Sync") as HTMLButtonElement;
+    const startButton = Array.from(container.querySelectorAll("button"))
+      .find((item) => item.textContent?.trim() === "Start transfer") as HTMLButtonElement;
+    await act(async () => {
+      syncButton.click();
+      await flush();
+    });
+    await act(async () => {
+      startButton.click();
+      await flush();
+    });
+
+    const syncCall = vi.mocked(apiFetch).mock.calls.find(([url]) => String(url).endsWith("/api/sync"));
+    expect(JSON.parse(String(syncCall?.[1]?.body))).toMatchObject({
+      selected_paths: ["/Documents/public.txt"],
+    });
+  });
+
+  it("keeps newly loaded children unchecked when their folder was deselected", async () => {
+    vi.mocked(apiFetch).mockResolvedValue(jsonResponse({ success: true, items: [privateFile, publicFile] }));
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<FileBrowser initialFiles={initialFiles} credentials={credentials} apiUrl="https://api.example.test" onBack={vi.fn()} onStartSuccess={vi.fn()} token="token" />);
+      await flush();
+    });
+    await act(async () => {
+      button("Select Documents").click();
+      button("Expand Documents").click();
+      await flush();
+    });
+
+    expect(row("Documents").getAttribute("aria-selected")).toBe("false");
+    expect(row("private.txt").getAttribute("aria-selected")).toBe("false");
+    expect(row("public.txt").getAttribute("aria-selected")).toBe("false");
+  });
+});
