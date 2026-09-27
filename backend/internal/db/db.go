@@ -525,6 +525,17 @@ $$ language 'plpgsql'`)
 			if err != nil {
 				log.Printf("Failed schema migration (migrations failed_retry_done): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS discovery_complete BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN IF NOT EXISTS discovery_generation BIGINT NOT NULL DEFAULT 1`)
+			if err != nil {
+				log.Printf("Failed schema migration (migration discovery state): %v\n", err)
+			}
+			// Rows created before discovery was tracked had already reached an
+			// execution/terminal state. Preserve that fact during upgrade rather
+			// than incorrectly restarting their discovery on a later resume.
+			_, err = db.Exec(`UPDATE migrations SET discovery_complete = TRUE WHERE discovery_complete = FALSE AND status IN ('RUNNING', 'VERIFYING', 'COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED')`)
+			if err != nil {
+				log.Printf("Failed schema migration (legacy discovery completion): %v\n", err)
+			}
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_status ON migrations(status)`)
 			if err != nil {
 				log.Printf("Failed schema migration (idx_migrations_status): %v\n", err)

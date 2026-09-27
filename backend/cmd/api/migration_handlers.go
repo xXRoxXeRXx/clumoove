@@ -342,10 +342,13 @@ func (s *APIServer) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.UpdateMigrationStatus(s.db, id, "RUNNING", nil)
+	needsDiscovery, err := db.ResumeMigration(s.db, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
+	}
+	if needsDiscovery {
+		go s.indexer.Start(s.backgroundCtx, id)
 	}
 
 	s.writeAudit(r, db.AuditMigrationResumed, id, userID, nil)

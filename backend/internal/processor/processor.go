@@ -20,6 +20,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/indexer"
 	"backend/internal/megasecret"
 	"backend/internal/oauth"
 	"backend/internal/queue"
@@ -46,6 +47,7 @@ type activeTaskInfo struct {
 type Processor struct {
 	db                         *sql.DB
 	queue                      *queue.Queue
+	indexer                    *indexer.Indexer
 	workerID                   string
 	secretKey                  string
 	maxThreads                 int
@@ -353,6 +355,7 @@ func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey s
 	return &Processor{
 		db:                         database,
 		queue:                      q,
+		indexer:                    indexer.NewIndexer(database, secretKey, q),
 		workerID:                   workerID,
 		secretKey:                  secretKey,
 		maxThreads:                 maxThreads,

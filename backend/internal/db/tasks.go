@@ -606,6 +606,7 @@ func ResetMigrationForReindex(db *sql.DB, ctx context.Context, migrationID strin
 		UPDATE migrations
 		SET total_files = 0, total_bytes = 0, processed_files = 0, processed_bytes = 0,
 		    live_bytes = 0, skipped_files = 0, failed_files = 0, status = 'INDEXING',
+		    discovery_complete = FALSE, discovery_generation = discovery_generation + 1,
 		    error_message = NULL, email_sent = FALSE, notification_generation = notification_generation + 1, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
 	`, migrationID); err != nil {

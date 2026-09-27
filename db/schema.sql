@@ -89,6 +89,10 @@ CREATE TABLE IF NOT EXISTS migrations (
     verification_generation INT NOT NULL DEFAULT 0,
     verification_lease_until TIMESTAMP WITH TIME ZONE,
     failed_retry_done BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Discovery is deliberately independent from execution status.  A paused
+    -- migration may retain a partially discovered task set.
+    discovery_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    discovery_generation BIGINT NOT NULL DEFAULT 1,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

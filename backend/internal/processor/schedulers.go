@@ -383,13 +383,19 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 
 		if sOK && tOK {
 			processorLogf("[RecoveryScheduler] Connection restored for migration %s! Resuming...\n", id)
-			recovered, recoverErr := db.RecoverConnectionLostMigration(p.db, id)
+			recovered, needsDiscovery, recoverErr := db.RecoverConnectionLostMigration(p.db, id)
 			if recoverErr != nil {
 				processorLogf("[RecoveryScheduler] Error resuming migration %s: %v\n", id, recoverErr)
 				continue
 			}
 			if recovered {
 				p.recoveryAttempts.Delete(id)
+				if needsDiscovery {
+					// Recovery owns the execution transition, but incomplete discovery
+					// must be restarted by a fenced indexer before reconciliation can
+					// complete the migration.
+					go p.indexer.Start(ctx, id)
+				}
 			} else {
 				processorLogf("[RecoveryScheduler] Did not resume migration %s because its status changed", id)
 			}
