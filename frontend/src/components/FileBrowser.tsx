@@ -1193,6 +1193,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   };
 
   const handleStartMigration = async () => {
+    let scheduledTimeISO: string | undefined;
     const calendarsToMigrate = canSelectCalendars
       ? Object.keys(selectedCalendars).filter((p) => selectedCalendars[p])
       : [];
@@ -1221,12 +1222,21 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       }
     } else {
       // Validate scheduled time if scheduling is enabled
-      if (enableScheduling && scheduledTime) {
+      if (enableScheduling) {
+        if (!scheduledTime) {
+          setError(t("fileBrowser.errors.scheduleTimeRequired"));
+          return;
+        }
         const scheduledDate = new Date(scheduledTime);
+        if (Number.isNaN(scheduledDate.getTime())) {
+          setError(t("fileBrowser.errors.invalidScheduledTime"));
+          return;
+        }
         if (scheduledDate <= new Date()) {
           setError(t("fileBrowser.errors.futureTime"));
           return;
         }
+        scheduledTimeISO = scheduledDate.toISOString();
       }
     }
 
@@ -1366,9 +1376,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           bandwidth_limit_mbps: bandwidthLimit,
         };
 
-        // Add scheduled_time if scheduling is enabled
-        if (enableScheduling && scheduledTime) {
-          requestBody.scheduled_time = new Date(scheduledTime).toISOString();
+        // The timestamp was validated before any request is started.
+        if (scheduledTimeISO) {
+          requestBody.scheduled_time = scheduledTimeISO;
         }
 
         const response = await apiFetch(`${apiUrl}/api/migration/start`, {

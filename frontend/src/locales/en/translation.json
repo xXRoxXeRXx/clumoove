@@ -292,6 +292,8 @@
     "immichAlbumSubtitle": "Created as a dedicated folder on target",
     "errors": {
       "selectOne": "Please select at least one folder, calendar, or address book.",
+      "scheduleTimeRequired": "Please select a scheduled start time.",
+      "invalidScheduledTime": "The scheduled start time is invalid.",
       "futureTime": "The scheduled start time must be in the future.",
       "startFailed": "The transfer could not be started.",
       "startError": "Error starting the transfer.",

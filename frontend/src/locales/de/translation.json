@@ -292,6 +292,8 @@
     "immichAlbumSubtitle": "Wird als eigener Zielordner angelegt",
     "errors": {
       "selectOne": "Bitte wähle mindestens einen Ordner, einen Kalender oder ein Adressbuch aus.",
+      "scheduleTimeRequired": "Bitte wähle einen geplanten Startzeitpunkt aus.",
+      "invalidScheduledTime": "Der geplante Startzeitpunkt ist ungültig.",
       "futureTime": "Der geplante Startzeitpunkt muss in der Zukunft liegen.",
       "startFailed": "Die Übertragung konnte nicht gestartet werden.",
       "startError": "Fehler beim Starten der Übertragung.",

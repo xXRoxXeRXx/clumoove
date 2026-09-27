@@ -212,6 +212,63 @@ describe("FileBrowser sync start retry", () => {
   });
 });
 
+describe("FileBrowser migration scheduling", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    vi.mocked(apiFetch).mockReset();
+  });
+
+  afterEach(() => {
+    act(() => root?.unmount());
+    container?.remove();
+  });
+
+  it("does not start a migration when scheduling is enabled without a start time", async () => {
+    vi.mocked(apiFetch).mockImplementation(() => (
+      Promise.resolve(jsonResponse({ success: true, items: [] }))
+    ));
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <FileBrowser
+          initialFiles={initialFiles}
+          credentials={credentials}
+          apiUrl="https://api.example.test"
+          onBack={vi.fn()}
+          onStartSuccess={vi.fn()}
+          token="token"
+        />,
+      );
+      await flush();
+    });
+
+    const scheduleCheckbox = container.querySelector(
+      'input[type="checkbox"][aria-label="Schedule transfer for later"]',
+    ) as HTMLInputElement;
+    const startButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Start transfer") as HTMLButtonElement;
+
+    await act(async () => {
+      scheduleCheckbox.click();
+      await flush();
+    });
+    await act(async () => {
+      startButton.click();
+      await flush();
+    });
+
+    expect(container.textContent).toContain("Please select a scheduled start time.");
+    expect(vi.mocked(apiFetch).mock.calls.filter(([url]) => (
+      String(url).endsWith("/api/migration/start")
+    ))).toHaveLength(0);
+  });
+});
+
 describe("FileBrowser hierarchical file selection", () => {
   let container: HTMLDivElement;
   let root: Root;

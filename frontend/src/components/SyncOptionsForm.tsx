@@ -373,6 +373,7 @@ export const SyncOptionsForm: React.FC<SyncOptionsFormProps> = ({
           <label className="flex items-center gap-3 cursor-pointer group">
             <input
               type="checkbox"
+              aria-label={t("fileBrowser.schedule")}
               checked={enableScheduling}
               onChange={(e) => setEnableScheduling(e.target.checked)}
               className="w-4 h-4 rounded border-[var(--color-border)] accent-[var(--color-text-primary)] cursor-pointer"
@@ -395,6 +396,7 @@ export const SyncOptionsForm: React.FC<SyncOptionsFormProps> = ({
                 value={scheduledTime}
                 onChange={(e) => setScheduledTime(e.target.value)}
                 min={minScheduledTime}
+                required
                 className="ui-input w-full py-2.5 px-4 text-sm transition-all font-sans"
               />
               <p className="text-xs text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
