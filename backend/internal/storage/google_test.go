@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -198,6 +199,40 @@ func TestWrapGoogleErrorMarksQuotaExceeded403AsRetryable(t *testing.T) {
 	var wrappedAPIError *googleapi.Error
 	if !errors.As(err, &wrappedAPIError) || wrappedAPIError != apiErr {
 		t.Fatalf("wrapped error does not retain the Google API error: %v", err)
+	}
+}
+
+func TestGoogleCreateParentDirectoriesUsesPathCache(t *testing.T) {
+	var lookups, creates int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			lookups++
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": []any{}})
+		case http.MethodPost:
+			creates++
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "folder-" + strconv.Itoa(creates)})
+		default:
+			t.Errorf("unexpected Drive request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	p := newGoogleTestProvider(t, server.URL+"/")
+	if err := p.CreateParentDirectories(context.Background(), "files", "/first/second/third/file.txt"); err != nil {
+		t.Fatalf("first CreateParentDirectories() error = %v", err)
+	}
+	if lookups != 3 || creates != 3 {
+		t.Fatalf("first directory creation made %d lookups and %d creates, want 3 each", lookups, creates)
+	}
+
+	if err := p.CreateParentDirectories(context.Background(), "files", "/first/second/third/another.txt"); err != nil {
+		t.Fatalf("cached CreateParentDirectories() error = %v", err)
+	}
+	if lookups != 3 || creates != 3 {
+		t.Errorf("cached parent directories made additional Drive requests: %d lookups, %d creates", lookups, creates)
 	}
 }
 

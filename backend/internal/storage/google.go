@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"path"
 	"strings"
@@ -97,6 +98,13 @@ func wrapGoogleError(operation string, err error) error {
 	if isGoogleRateLimitError(err) {
 		// Drive quota responses do not reliably include Retry-After. Its
 		// per-minute quota window makes one minute the conservative minimum.
+		var apiErr *googleapi.Error
+		errors.As(err, &apiErr)
+		slog.Warn("google_drive_quota_limited",
+			slog.String("operation", operation),
+			slog.Int("status_code", apiErr.Code),
+			slog.Duration("retry_after", time.Minute),
+		)
 		return fmt.Errorf("%s: %w: %w", operation, &RetryAfterError{After: time.Minute}, err)
 	}
 	if isGooglePermanentTransferError(err) {
@@ -929,6 +937,10 @@ func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 			currentPath = part
 		} else {
 			currentPath += "/" + part
+		}
+		if cachedID, ok := p.cachedPath(currentPath); ok {
+			currentID = cachedID
+			continue
 		}
 		query := driveFolderQuery(currentID, part)
 		res, err := p.driveService.Files.List().Q(query).Fields("files(id)").Context(ctx).Do()
