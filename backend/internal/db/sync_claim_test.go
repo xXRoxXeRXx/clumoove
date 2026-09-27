@@ -197,18 +197,78 @@ func TestSyncPassGenerationFencesVerificationReconciliationAndReporting(t *testi
 	if err := ReconcileSyncJobProgress(database, "generation-fence", 2); err != nil {
 		t.Fatalf("reconcile current pass: %v", err)
 	}
-	var status, result string
+	var status string
+	var result sql.NullString
 	var total, processed, failed int
 	if err := database.QueryRow(`SELECT status, last_run_status, total_files, processed_files, failed_files FROM sync_jobs WHERE id = 'generation-fence'`).Scan(&status, &result, &total, &processed, &failed); err != nil {
 		t.Fatal(err)
 	}
-	if status != "IDLE" || result != "PARTIAL" || total != 0 || processed != 1 || failed != 1 {
-		t.Fatalf("reconciled current pass = status=%s result=%s total=%d processed=%d failed=%d; want IDLE/PARTIAL/0/1/1", status, result, total, processed, failed)
+	if status != "RUNNING" || result.Valid || total != 0 || processed != 1 || failed != 1 {
+		t.Fatalf("reconciled current pass = status=%s result=%#v total=%d processed=%d failed=%d; want RUNNING/NULL/0/1/1", status, result, total, processed, failed)
 	}
 
 	reportTasks, err := GetFailedSyncTasksForReport(database, "generation-fence", 2)
 	if err != nil || len(reportTasks) != 1 || reportTasks[0].ID != "current-failed" {
 		t.Fatalf("current pass report = %#v, %v; want only current-failed", reportTasks, err)
+	}
+}
+
+func TestReconcileSyncJobProgressDoesNotFinalizeUnverifiedPass(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+	insertSyncClaimJob(t, database, "unverified-reconcile", "RUNNING")
+	if _, err := database.Exec(`
+		INSERT INTO sync_state (sync_job_id, side, rel_path, size) VALUES
+			('unverified-reconcile', 'source', '/previous-baseline', 1);
+		INSERT INTO tasks (id, sync_job_id, pass_generation, file_path, status, checksum_verified) VALUES
+			('unverified-completed', 'unverified-reconcile', 0, '/changed', 'COMPLETED', FALSE)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ReconcileSyncJobProgress(database, "unverified-reconcile", 0); err != nil {
+		t.Fatalf("reconcile unverified pass: %v", err)
+	}
+
+	var status string
+	var lastRunStatus sql.NullString
+	var processed int
+	if err := database.QueryRow(`SELECT status, last_run_status, processed_files FROM sync_jobs WHERE id = 'unverified-reconcile'`).Scan(&status, &lastRunStatus, &processed); err != nil {
+		t.Fatal(err)
+	}
+	if status != "RUNNING" || lastRunStatus.Valid || processed != 1 {
+		t.Fatalf("reconciled unverified pass = status=%s result=%#v processed=%d; want RUNNING/NULL/1", status, lastRunStatus, processed)
+	}
+
+	var baselineCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM sync_state WHERE sync_job_id = 'unverified-reconcile'`).Scan(&baselineCount); err != nil {
+		t.Fatal(err)
+	}
+	if baselineCount != 1 {
+		t.Fatalf("sync state count = %d, want unchanged baseline count 1", baselineCount)
+	}
+}
+
+func TestReconcileSyncJobProgressDoesNotTouchVerifyingPass(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+	insertSyncClaimJob(t, database, "verifying-reconcile", "VERIFYING")
+	if _, err := database.Exec(`
+		INSERT INTO tasks (id, sync_job_id, pass_generation, file_path, status, checksum_verified) VALUES
+			('verifying-completed', 'verifying-reconcile', 0, '/changed', 'COMPLETED', FALSE)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ReconcileSyncJobProgress(database, "verifying-reconcile", 0); err != nil {
+		t.Fatalf("reconcile verifying pass: %v", err)
+	}
+
+	var status string
+	var processed int
+	if err := database.QueryRow(`SELECT status, processed_files FROM sync_jobs WHERE id = 'verifying-reconcile'`).Scan(&status, &processed); err != nil {
+		t.Fatal(err)
+	}
+	if status != "VERIFYING" || processed != 0 {
+		t.Fatalf("reconciled verifying pass = status=%s processed=%d; want VERIFYING/0", status, processed)
 	}
 }
 

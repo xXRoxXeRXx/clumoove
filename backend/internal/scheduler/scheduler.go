@@ -391,11 +391,12 @@ func (s *Scheduler) triggerBackup(ctx context.Context, schedule *db.Schedule) er
 
 // RunOrphanedSyncJobRecovery periodically frees sync jobs whose API-side
 // coordinator goroutine died (deploy, crash, OOM) while status remained
-// INDEXING/RUNNING. Overlap protection then skips every future trigger and the
+// INDEXING/RUNNING/VERIFYING. Overlap protection then skips every future trigger and the
 // job wedges permanently — workers cannot rescue a stuck parent status.
 //
-// Recovery resets eligible jobs to IDLE, records a recovery error_message, and
-// advances the linked active schedule so the next scheduler tick re-triggers.
+// Recovery releases eligible jobs to IDLE without publishing an outcome or
+// changing sync_state, then advances the linked active schedule so a newly
+// claimed coordinator owns the retry.
 func (s *Scheduler) RunOrphanedSyncJobRecovery(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -427,6 +428,8 @@ func (s *Scheduler) RunOrphanedSyncJobRecovery(ctx context.Context) {
 //   - RUNNING: job.updated_at stale > 30m AND no non-terminal task with
 //     task.updated_at within the last 10m (worker progress refreshes both task
 //     and job updated_at; a live transfer must not be reset).
+//   - VERIFYING: job.updated_at stale > 30m AND its verifier lease is absent or
+//     expired. A live verifier renews the lease and updated_at every two minutes.
 //   - Multi-instance: Redis SET NX lock so only one API replica runs recovery.
 func (s *Scheduler) recoverOrphanedSyncJobs(ctx context.Context) {
 	logger := schedulerLogger(ctx).With(slog.String("recovery_type", "orphaned_sync"))
@@ -441,14 +444,16 @@ func (s *Scheduler) recoverOrphanedSyncJobs(ctx context.Context) {
 		}
 	}
 
-	const recoveryMsg = "Recovered from stale INDEXING/RUNNING (coordinator lost)"
+	const recoveryMsg = "Recovered from stale INDEXING/RUNNING/VERIFYING (coordinator lost)"
 
-	// (INDEXING AND stale) OR (RUNNING AND stale AND no fresh open work).
+	// (INDEXING AND stale) OR (RUNNING AND stale AND no fresh open work) OR
+	// (VERIFYING AND stale AND no active verification lease).
 	// Open work matches the engine poll predicate: PENDING/RUNNING, or FAILED
 	// awaiting retry (next_retry_at set).
 	query := `
 		UPDATE sync_jobs sj
 		SET status = 'IDLE',
+		    verification_lease_until = NULL,
 		    error_message = $1,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE (
@@ -467,6 +472,11 @@ func (s *Scheduler) recoverOrphanedSyncJobs(ctx context.Context) {
 		          )
 		          AND t.updated_at > NOW() - INTERVAL '10 minutes'
 		    )
+		  )
+		   OR (
+		        sj.status = 'VERIFYING'
+		    AND sj.updated_at < NOW() - INTERVAL '30 minutes'
+		    AND (sj.verification_lease_until IS NULL OR sj.verification_lease_until <= NOW())
 		  )
 		RETURNING sj.id, sj.user_id
 	`

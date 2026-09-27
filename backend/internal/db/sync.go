@@ -1016,7 +1016,10 @@ func CancelRemainingPendingSyncTasksForGeneration(dbsql *sql.DB, syncJobID strin
 	return int(n), err
 }
 
-// ReconcileSyncJobProgress repairs progress counter drift for a sync job
+// ReconcileSyncJobProgress repairs progress counter drift for an active sync
+// pass. It deliberately does not finalize the pass: the coordinator alone
+// owns checksum-verification handoff and the atomic sync_state-plus-IDLE
+// transition.
 func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) error {
 	tx, err := dbsql.Begin()
 	if err != nil {
@@ -1055,49 +1058,6 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) e
 	`
 	if _, err := tx.Exec(updateQuery, completed+skipped, failed+cancelled, syncJobID, generation); err != nil {
 		return err
-	}
-
-	// Only reconcile a RUNNING pass. INDEXING intentionally has no tasks while
-	// listing remote trees and building its delta; the engine alone finalizes it.
-	if open == 0 {
-		finalRunStatus := "SUCCESS"
-		var finalErr *string
-		if failed > 0 {
-			if failed == total {
-				finalRunStatus = "FAILED"
-				msg := "All file transfer tasks failed"
-				finalErr = &msg
-			} else {
-				finalRunStatus = "PARTIAL"
-				msg := fmt.Sprintf("%d of %d tasks failed", failed, total)
-				finalErr = &msg
-			}
-		}
-
-		statusQuery := `
-			UPDATE sync_jobs
-			SET status = 'IDLE',
-			    last_run_status = $1,
-			    error_message = COALESCE($2, error_message),
-			    last_run_at = CURRENT_TIMESTAMP,
-			    updated_at = CURRENT_TIMESTAMP
-			WHERE id = $3 AND run_generation = $4 AND status = 'RUNNING'
-		`
-		var finalizedID string
-		err = tx.QueryRow(statusQuery+` RETURNING id`, finalRunStatus, finalErr, syncJobID, generation).Scan(&finalizedID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return tx.Commit()
-		}
-		if err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-		if err := CreateSyncNotificationEvent(dbsql, syncJobID); err != nil {
-			log.Printf("notification event creation for reconciled sync %s failed: %v", syncJobID, err)
-		}
-		return nil
 	}
 
 	return tx.Commit()
