@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/megasecret"
@@ -573,8 +575,11 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 				case "RENAME":
 					// Rename target first, then upload source
 					needsRename := conflictNeedsRename(job.ConflictStrategy)
+					prerequisiteTaskID := ""
 					if needsRename {
+						prerequisiteTaskID = uuid.NewString()
 						renameTasks = append(renameTasks, taskToCreate{
+							id:           prerequisiteTaskID,
 							filePath:     S,
 							fileSize:     0,
 							resourceType: "files",
@@ -583,12 +588,12 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 						})
 					}
 					tasks = append(tasks, taskToCreate{
-						filePath:            S,
-						fileSize:            srcFile.Size,
-						sourceHash:          srcFile.Hash,
-						resourceType:        "files",
-						action:              "upload",
-						waitForConflictCopy: needsRename,
+						filePath:           S,
+						fileSize:           srcFile.Size,
+						sourceHash:         srcFile.Hash,
+						resourceType:       "files",
+						action:             "upload",
+						prerequisiteTaskID: prerequisiteTaskID,
 					})
 				default:
 					// Creation validates this value, but a corrupt legacy row must
@@ -688,20 +693,22 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		if tc.side != "" {
 			meta["side"] = tc.side
 		}
-		if tc.waitForConflictCopy {
-			meta["wait_for_conflict_copy"] = true
-		}
 		metaJSON, _ := json.Marshal(meta)
+		if tc.id == "" {
+			tc.id = uuid.NewString()
+		}
 
 		dbTasks = append(dbTasks, &db.Task{
-			SyncJobID:      job.ID,
-			PassGeneration: generation,
-			FilePath:       tc.filePath,
-			FileSize:       tc.fileSize,
-			SourceHash:     sql.NullString{String: tc.sourceHash, Valid: tc.sourceHash != ""},
-			Status:         "PENDING",
-			ResourceType:   tc.resourceType,
-			Metadata:       metaJSON,
+			ID:                 tc.id,
+			SyncJobID:          job.ID,
+			PrerequisiteTaskID: tc.prerequisiteTaskID,
+			PassGeneration:     generation,
+			FilePath:           tc.filePath,
+			FileSize:           tc.fileSize,
+			SourceHash:         sql.NullString{String: tc.sourceHash, Valid: tc.sourceHash != ""},
+			Status:             "PENDING",
+			ResourceType:       tc.resourceType,
+			Metadata:           metaJSON,
 		})
 	}
 	if err := db.BulkCreateSyncTasks(ctx, e.db, dbTasks); err != nil {

@@ -437,6 +437,7 @@ $$ language 'plpgsql'`)
 				failed_files INT NOT NULL DEFAULT 0,
 				threads INT NOT NULL DEFAULT 8,
 				bandwidth_limit_mbps INT NOT NULL DEFAULT 0,
+				indexing_lease_until TIMESTAMP WITH TIME ZONE,
 				email_sent BOOLEAN NOT NULL DEFAULT FALSE,
 				error_message TEXT,
 				created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -492,6 +493,14 @@ $$ language 'plpgsql'`)
 			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS picker_session_id TEXT`)
 			if err != nil {
 				log.Printf("Failed schema migration (picker_session_id): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS indexing_lease_until TIMESTAMP WITH TIME ZONE`)
+			if err != nil {
+				log.Printf("Failed schema migration (migrations indexing lease): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_indexing_lease ON migrations(indexing_lease_until) WHERE status = 'INDEXING'`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_migrations_indexing_lease): %v\n", err)
 			}
 
 			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS selected_paths JSONB`)
@@ -783,6 +792,7 @@ $$ language 'plpgsql'`)
 				error_message TEXT,
 				next_retry_at TIMESTAMP WITH TIME ZONE,
 				worker_hash VARCHAR(64),
+				prerequisite_task_id UUID REFERENCES tasks(id),
 				created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 			)`)
@@ -826,6 +836,10 @@ $$ language 'plpgsql'`)
 			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS pass_generation INT NOT NULL DEFAULT 0`)
 			if err != nil {
 				log.Printf("Failed schema migration (tasks pass_generation): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS prerequisite_task_id UUID REFERENCES tasks(id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (tasks prerequisite_task_id): %v\n", err)
 			}
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_migration_id ON tasks(migration_id)`)
 			if err != nil {
@@ -919,9 +933,29 @@ $$ language 'plpgsql'`)
 			if err != nil {
 				log.Printf("Failed schema migration (idx_tasks_sync_gen_status): %v\n", err)
 			}
-			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_wait_conflict_copy ON tasks ((metadata->>'wait_for_conflict_copy')) WHERE status = 'PENDING' AND metadata->>'wait_for_conflict_copy' = 'true'`)
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_prerequisite_pending ON tasks(prerequisite_task_id) WHERE status = 'PENDING' AND prerequisite_task_id IS NOT NULL`)
 			if err != nil {
-				log.Printf("Failed schema migration (idx_tasks_wait_conflict_copy): %v\n", err)
+				log.Printf("Failed schema migration (idx_tasks_prerequisite_pending): %v\n", err)
+			}
+			_, err = db.Exec(`DROP INDEX IF EXISTS idx_tasks_wait_conflict_copy`)
+			if err != nil {
+				log.Printf("Failed schema migration (drop idx_tasks_wait_conflict_copy): %v\n", err)
+			}
+			// Legacy inferred dependencies are safe to backfill only when exactly one
+			// matching conflict-copy task exists. Ambiguous operations are skipped so a
+			// later pass can regenerate them with direct IDs.
+			_, err = db.Exec(`WITH legacy AS (
+				SELECT d.id, (array_agg(p.id))[1] AS prerequisite_id, count(p.id) AS matches
+				FROM tasks d LEFT JOIN tasks p ON p.sync_job_id = d.sync_job_id AND p.pass_generation = d.pass_generation AND p.file_path = d.file_path AND p.resource_type = d.resource_type AND p.metadata->>'action' = 'conflict_copy'
+				WHERE d.status = 'PENDING' AND d.prerequisite_task_id IS NULL AND d.metadata->>'wait_for_conflict_copy' = 'true'
+				GROUP BY d.id
+			) UPDATE tasks d SET prerequisite_task_id = l.prerequisite_id FROM legacy l WHERE d.id = l.id AND l.matches = 1`)
+			if err != nil {
+				log.Printf("Failed data migration (backfill task prerequisites): %v\n", err)
+			}
+			_, err = db.Exec(`UPDATE tasks SET status = 'SKIPPED', error_message = 'legacy conflict_copy prerequisite ambiguous or missing; upload skipped', updated_at = CURRENT_TIMESTAMP WHERE status = 'PENDING' AND prerequisite_task_id IS NULL AND metadata->>'wait_for_conflict_copy' = 'true'`)
+			if err != nil {
+				log.Printf("Failed data migration (skip ambiguous task prerequisites): %v\n", err)
 			}
 
 			// Notification tables intentionally follow migrations and sync_jobs because

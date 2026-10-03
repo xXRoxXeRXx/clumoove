@@ -22,13 +22,14 @@ import (
 
 // taskToCreate is the provider-independent result of delta calculation.
 type taskToCreate struct {
-	filePath            string
-	fileSize            int64
-	sourceHash          string
-	resourceType        string
-	action              string
-	side                string // source or target
-	waitForConflictCopy bool
+	filePath           string
+	fileSize           int64
+	sourceHash         string
+	resourceType       string
+	action             string
+	side               string // source or target
+	id                 string
+	prerequisiteTaskID string
 }
 
 // directoryCleanupCandidate is a directory deleted on the opposite side of a

@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS migrations (
     -- migration may retain a partially discovered task set.
     discovery_complete BOOLEAN NOT NULL DEFAULT FALSE,
     discovery_generation BIGINT NOT NULL DEFAULT 1,
+    indexing_lease_until TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -108,6 +109,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     worker_hash TEXT,
     claim_epoch BIGINT NOT NULL DEFAULT 0,
     pass_generation INT NOT NULL DEFAULT 0,
+    prerequisite_task_id UUID REFERENCES tasks(id),
     target_hash TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, RUNNING, COMPLETED, FAILED, SKIPPED, CANCELLED
     resource_type TEXT NOT NULL DEFAULT 'files', -- files, calendars, contacts
@@ -128,7 +130,9 @@ CREATE INDEX IF NOT EXISTS idx_migrations_user_id ON migrations(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_migration_status ON tasks(migration_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_retry ON tasks(status, next_retry_at) WHERE status = 'FAILED' AND next_retry_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_pending ON tasks(status, created_at) WHERE status = 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_tasks_prerequisite_pending ON tasks(prerequisite_task_id) WHERE status = 'PENDING' AND prerequisite_task_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_migration_verifying ON tasks(migration_id, updated_at) WHERE status = 'COMPLETED' AND checksum_verified = FALSE;
+CREATE INDEX IF NOT EXISTS idx_migrations_indexing_lease ON migrations(indexing_lease_until) WHERE status = 'INDEXING';
 
 -- Auto-update updated_at triggers
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -819,9 +823,7 @@ END $$;
 DROP INDEX IF EXISTS idx_tasks_sync_status;
 CREATE INDEX IF NOT EXISTS idx_tasks_sync_gen_status ON tasks(sync_job_id, pass_generation, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_sync_verifying ON tasks(sync_job_id, pass_generation, updated_at) WHERE status = 'COMPLETED' AND checksum_verified = FALSE;
-CREATE INDEX IF NOT EXISTS idx_tasks_wait_conflict_copy
-    ON tasks ((metadata->>'wait_for_conflict_copy'))
-    WHERE status = 'PENDING' AND metadata->>'wait_for_conflict_copy' = 'true';
+DROP INDEX IF EXISTS idx_tasks_wait_conflict_copy;
 
 -- Multi-channel completion notification outbox (after migrations and sync_jobs).
 CREATE TABLE IF NOT EXISTS notification_channels (

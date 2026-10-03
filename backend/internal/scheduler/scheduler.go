@@ -570,9 +570,9 @@ func (s *Scheduler) recoverOrphanedMigrationIndexing(ctx context.Context) {
 func (s *Scheduler) recoverScheduledMigrations(ctx context.Context, logger *slog.Logger, recoveryMsg string) {
 	rows, err := s.db.QueryContext(ctx, `
 		UPDATE migrations m
-		SET status = 'SCHEDULED', error_message = $1, updated_at = CURRENT_TIMESTAMP
+		SET status = 'SCHEDULED', indexing_lease_until = NULL, error_message = $1, updated_at = CURRENT_TIMESTAMP
 		WHERE m.status = 'INDEXING'
-		  AND m.updated_at < NOW() - INTERVAL '30 minutes'
+		  AND (m.indexing_lease_until IS NULL OR m.indexing_lease_until <= NOW())
 		  AND EXISTS (
 			SELECT 1 FROM schedules s
 			WHERE s.task_type = 'migration' AND s.task_id = m.id
@@ -619,7 +619,7 @@ func (s *Scheduler) recoverScheduledMigrations(ctx context.Context, logger *slog
 func (s *Scheduler) failOrphanedImmediateMigrations(ctx context.Context, logger *slog.Logger, recoveryMsg string) {
 	unscheduledRows, err := s.db.QueryContext(ctx, `
 		SELECT m.id, m.user_id FROM migrations m
-		WHERE m.status = 'INDEXING' AND m.updated_at < NOW() - INTERVAL '30 minutes'
+		WHERE m.status = 'INDEXING' AND (m.indexing_lease_until IS NULL OR m.indexing_lease_until <= NOW())
 		  AND NOT EXISTS (SELECT 1 FROM schedules s WHERE s.task_type = 'migration' AND s.task_id = m.id)
 	`)
 	if err != nil {

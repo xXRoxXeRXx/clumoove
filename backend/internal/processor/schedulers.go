@@ -12,44 +12,65 @@ import (
 )
 
 func (p *Processor) RunWorkerLiveness(ctx context.Context) {
-	_ = p.queue.RegisterActiveWorker(ctx, p.workerID, 120*time.Second)
+	p.refreshWorkerLease(ctx)
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-
-	cleanupTicker := time.NewTicker(60 * time.Second)
-	defer cleanupTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			err := p.queue.RegisterActiveWorker(ctx, p.workerID, 120*time.Second)
-			if err != nil {
-				processorLogf("[Liveness] Error registering active worker: %v\n", err)
-			}
-		case <-cleanupTicker.C:
-			deadWorkers, err := p.queue.GetAbandonedWorkerQueues(ctx, p.db)
-			if err != nil {
-				processorLogf("[Liveness] Error scanning for dead workers: %v\n", err)
-				continue
-			}
-			for _, deadWorkerID := range deadWorkers {
-				if deadWorkerID == p.workerID {
-					continue
-				}
-				claimed, lockErr := p.queue.TryClaimWorkerRecoveryLock(ctx, deadWorkerID, 120*time.Second)
-				if lockErr != nil || !claimed {
-					continue
-				}
-				processorLogf("[Liveness] Found abandoned queue for worker %s, recovering tasks...\n", deadWorkerID)
-				if err := p.queue.RecoverAbandonedTasks(ctx, p.db, deadWorkerID); err != nil {
-					processorLogf("[Liveness] Error recovering tasks for worker %s: %v\n", deadWorkerID, err)
-				} else {
-					p.queue.NotifyTaskAvailable(ctx, p.db)
-				}
-			}
+			p.refreshWorkerLease(ctx)
+		}
+	}
+}
+
+func (p *Processor) refreshWorkerLease(ctx context.Context) {
+	opCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := p.queue.RegisterActiveWorker(opCtx, p.workerID, 120*time.Second); err != nil {
+		processorLogf("[Liveness] Error registering active worker: %v\n", err)
+	}
+}
+
+func (p *Processor) RunAbandonedWorkerCleanup(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			passCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			p.cleanupAbandonedWorkers(passCtx)
+			cancel()
+		}
+	}
+}
+
+func (p *Processor) cleanupAbandonedWorkers(ctx context.Context) {
+	deadWorkers, err := p.queue.GetAbandonedWorkerQueues(ctx, p.db)
+	if err != nil {
+		processorLogf("[Liveness] Error scanning for dead workers: %v\n", err)
+		return
+	}
+	for _, deadWorkerID := range deadWorkers {
+		if ctx.Err() != nil {
+			return
+		}
+		if deadWorkerID == p.workerID {
+			continue
+		}
+		claimed, err := p.queue.TryClaimWorkerRecoveryLock(ctx, deadWorkerID, 120*time.Second)
+		if err != nil || !claimed {
+			continue
+		}
+		if err := p.queue.RecoverAbandonedTasks(ctx, p.db, deadWorkerID); err != nil {
+			processorLogf("[Liveness] Error recovering tasks for worker %s: %v\n", deadWorkerID, err)
+		} else {
+			p.queue.NotifyTaskAvailable(ctx, p.db)
 		}
 	}
 }
@@ -273,6 +294,12 @@ type recoveryState struct {
 // credential decryptions and provider connection probes, triggered by a shared
 // connection outage. Entries currently in backoff do not consume the budget.
 const maxMigrationRecoveryProbesPerTick = 10
+const recoveryScanWindow = 30
+
+type migrationRecoveryCandidate struct {
+	id, sourceURL, sourceUsername, sourcePassword, targetURL, targetUsername, targetPassword, sourceProvider, targetProvider string
+	userID                                                                                                                   sql.NullString
+}
 
 func (p *Processor) recoveryCursor(syncJob bool) string {
 	p.recoveryCursorMu.Lock()
@@ -293,8 +320,15 @@ func (p *Processor) setRecoveryCursor(syncJob bool, id string) {
 	p.migrationRecoveryCursor = id
 }
 
-func (p *Processor) recordRecoveryFailure(id string, attempts int) {
-	p.recoveryAttempts.Store(id, recoveryState{lastAttempt: time.Now(), attempts: attempts + 1})
+func recoveryAttemptKey(syncJob bool, id string) string {
+	if syncJob {
+		return "sync:" + id
+	}
+	return "migration:" + id
+}
+
+func (p *Processor) recordRecoveryFailure(syncJob bool, id string, attempts int) {
+	p.recoveryAttempts.Store(recoveryAttemptKey(syncJob, id), recoveryState{lastAttempt: time.Now(), attempts: attempts + 1})
 }
 
 func recoveryBackoff(attempts int) time.Duration {
@@ -313,6 +347,17 @@ func shouldProbeRecovery(state recoveryState, now time.Time) bool {
 	return backoff == 0 || now.Sub(state.lastAttempt) >= backoff
 }
 
+// examineRecoveryCandidate records cursor progress only for candidates the
+// probe loop reached. This prevents a scan window larger than the probe budget
+// from permanently skipping the tail of each window.
+func examineRecoveryCandidate(lastExamined *string, probes, budget int, id string) bool {
+	if probes >= budget {
+		return false
+	}
+	*lastExamined = id
+	return true
+}
+
 func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 	query := `
 		SELECT id, user_id, source_url, source_username, source_password_encrypted,
@@ -321,56 +366,69 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 		FROM migrations
 		WHERE status = 'PAUSED_CONNECTION_LOSS'
 		ORDER BY (id::text <= $1), id
+		LIMIT $2
 	`
-	rows, err := p.db.QueryContext(ctx, query, p.recoveryCursor(false))
+	rows, err := p.db.QueryContext(ctx, query, p.recoveryCursor(false), recoveryScanWindow)
 	if err != nil {
 		return
 	}
-	defer rows.Close()
-
-	probes := 0
+	var candidates []migrationRecoveryCandidate
 	for rows.Next() {
-		if probes >= maxMigrationRecoveryProbesPerTick {
-			break
-		}
-
-		var id, sURL, sUser, sPassEnc, tURL, tUser, tPassEnc, sProv, tProv string
-		var userID sql.NullString
-		if err := rows.Scan(&id, &userID, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc, &sProv, &tProv); err != nil {
+		var candidate migrationRecoveryCandidate
+		if err := rows.Scan(&candidate.id, &candidate.userID, &candidate.sourceURL, &candidate.sourceUsername, &candidate.sourcePassword, &candidate.targetURL, &candidate.targetUsername, &candidate.targetPassword, &candidate.sourceProvider, &candidate.targetProvider); err != nil {
 			continue
 		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		processorLogf("[RecoveryScheduler] rows error: %v\n", err)
+		return
+	}
+	if err := rows.Close(); err != nil {
+		processorLogf("[RecoveryScheduler] close rows: %v\n", err)
+		return
+	}
+
+	probes := 0
+	lastExamined := ""
+	for _, candidate := range candidates {
+		if !examineRecoveryCandidate(&lastExamined, probes, maxMigrationRecoveryProbesPerTick, candidate.id) {
+			break
+		}
+		id, sURL, sUser, sPassEnc := candidate.id, candidate.sourceURL, candidate.sourceUsername, candidate.sourcePassword
+		tURL, tUser, tPassEnc, sProv, tProv, userID := candidate.targetURL, candidate.targetUsername, candidate.targetPassword, candidate.sourceProvider, candidate.targetProvider, candidate.userID
 
 		var ra recoveryState
-		if v, ok := p.recoveryAttempts.Load(id); ok {
+		if v, ok := p.recoveryAttempts.Load(recoveryAttemptKey(false, id)); ok {
 			ra = v.(recoveryState)
 		}
 		if !shouldProbeRecovery(ra, time.Now()) {
 			continue
 		}
 		probes++
-		p.setRecoveryCursor(false, id)
 
 		sPass, err := crypto.DecryptWithDomain(sPassEnc, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(sProv)))
 		if err != nil {
-			p.recordRecoveryFailure(id, ra.attempts)
+			p.recordRecoveryFailure(false, id, ra.attempts)
 			continue
 		}
 		tPass, err := crypto.DecryptWithDomain(tPassEnc, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(tProv)))
 		if err != nil {
-			p.recordRecoveryFailure(id, ra.attempts)
+			p.recordRecoveryFailure(false, id, ra.attempts)
 			continue
 		}
 
 		userCtx := storage.WithLocalUserScope(ctx, userID.String)
 		sClient, err := storage.NewProvider(userCtx, sProv, sURL, sUser, sPass)
 		if err != nil {
-			p.recordRecoveryFailure(id, ra.attempts)
+			p.recordRecoveryFailure(false, id, ra.attempts)
 			continue
 		}
 		tClient, err := storage.NewProvider(userCtx, tProv, tURL, tUser, tPass)
 		if err != nil {
 			sClient.Close()
-			p.recordRecoveryFailure(id, ra.attempts)
+			p.recordRecoveryFailure(false, id, ra.attempts)
 			continue
 		}
 
@@ -389,7 +447,7 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 				continue
 			}
 			if recovered {
-				p.recoveryAttempts.Delete(id)
+				p.recoveryAttempts.Delete(recoveryAttemptKey(false, id))
 				if needsDiscovery {
 					// Recovery owns the execution transition, but incomplete discovery
 					// must be restarted by a fenced indexer before reconciliation can
@@ -400,10 +458,10 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 				processorLogf("[RecoveryScheduler] Did not resume migration %s because its status changed", id)
 			}
 		} else {
-			p.recordRecoveryFailure(id, ra.attempts)
+			p.recordRecoveryFailure(false, id, ra.attempts)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		processorLogf("[RecoveryScheduler] rows error: %v\n", err)
+	if lastExamined != "" {
+		p.setRecoveryCursor(false, lastExamined)
 	}
 }

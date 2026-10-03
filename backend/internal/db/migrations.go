@@ -15,6 +15,10 @@ var (
 	ErrMigrationIndexingClaimLost = errors.New("migration indexing claim lost")
 )
 
+// indexingLeaseDuration matches the maximum lease used by the indexer heartbeat.
+// The heartbeat immediately derives a shorter duration from INDEXING_TIMEOUT_MINUTES.
+const indexingLeaseDuration = 20 * time.Minute
+
 func isTerminalMigrationStatus(status string) bool {
 	switch status {
 	case "COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED":
@@ -71,6 +75,7 @@ type Migration struct {
 	FailedFiles                  int                     `json:"failed_files"`
 	DiscoveryComplete            bool                    `json:"discovery_complete"`
 	DiscoveryGeneration          int64                   `json:"-"`
+	IndexingLeaseUntil           sql.NullTime            `json:"-"`
 	ErrorMessage                 sql.NullString          `json:"error_message,omitempty"`
 	CreatedAt                    time.Time               `json:"created_at"`
 	UpdatedAt                    time.Time               `json:"updated_at"`
@@ -240,7 +245,7 @@ func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration
 		       target_refresh_token_encrypted, target_token_expires_at, COALESCE(target_mega_session_id_encrypted, ''), COALESCE(target_mega_master_key_encrypted, ''),
 		       status, conflict_strategy, total_files, total_bytes, processed_files,
 		       processed_bytes, live_bytes, verified_files, skipped_files, failed_files, error_message,
-		       discovery_complete, discovery_generation,
+		       discovery_complete, discovery_generation, indexing_lease_until,
 		       created_at, updated_at, target_dir, threads, bandwidth_limit_mbps,
 		       picker_session_id, selected_paths, selected_calendars, selected_contacts
 		FROM migrations WHERE id = $1
@@ -252,7 +257,7 @@ func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted, &m.TargetProvider,
 		&m.TargetRefreshTokenEncrypted, &m.TargetTokenExpiresAt, &m.TargetMegaSessionIDEncrypted, &m.TargetMegaMasterKeyEncrypted,
 		&m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes, &m.ProcessedFiles,
-		&m.ProcessedBytes, &m.LiveBytes, &m.VerifiedFiles, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage, &m.DiscoveryComplete, &m.DiscoveryGeneration,
+		&m.ProcessedBytes, &m.LiveBytes, &m.VerifiedFiles, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage, &m.DiscoveryComplete, &m.DiscoveryGeneration, &m.IndexingLeaseUntil,
 		&m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads, &m.BandwidthLimitMbps,
 		&m.PickerSessionID, &m.SelectedPaths, &m.SelectedCalendars, &m.SelectedContacts,
 	)
@@ -390,7 +395,7 @@ func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string)
 func PauseMigrationForConnectionLoss(db *sql.DB, id string) (bool, error) {
 	result, err := db.Exec(`
 		UPDATE migrations
-		SET status = 'PAUSED_CONNECTION_LOSS', error_message = NULL, updated_at = CURRENT_TIMESTAMP
+		SET status = 'PAUSED_CONNECTION_LOSS', indexing_lease_until = NULL, error_message = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1 AND status IN ('RUNNING', 'INDEXING')
 	`, id)
 	if err != nil {
@@ -409,10 +414,11 @@ func RecoverConnectionLostMigration(db *sql.DB, id string) (recovered bool, need
 		UPDATE migrations
 		SET status = CASE WHEN discovery_complete THEN 'RUNNING' ELSE 'INDEXING' END,
 		    discovery_generation = CASE WHEN discovery_complete THEN discovery_generation ELSE discovery_generation + 1 END,
+		    indexing_lease_until = CASE WHEN discovery_complete THEN NULL ELSE CURRENT_TIMESTAMP + ($2 * INTERVAL '1 second') END,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1 AND status = 'PAUSED_CONNECTION_LOSS'
 		RETURNING NOT discovery_complete
-	`, id).Scan(&needsDiscovery)
+	`, id, int64(indexingLeaseDuration.Seconds())).Scan(&needsDiscovery)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, false, nil
 	}
@@ -428,10 +434,11 @@ func ResumeMigration(db *sql.DB, id string) (bool, error) {
 		UPDATE migrations
 		SET status = CASE WHEN discovery_complete THEN 'RUNNING' ELSE 'INDEXING' END,
 		    discovery_generation = CASE WHEN discovery_complete THEN discovery_generation ELSE discovery_generation + 1 END,
+		    indexing_lease_until = CASE WHEN discovery_complete THEN NULL ELSE CURRENT_TIMESTAMP + ($2 * INTERVAL '1 second') END,
 		    error_message = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1 AND status IN ('PAUSED', 'PAUSED_CONNECTION_LOSS')
 		RETURNING NOT discovery_complete
-	`, id).Scan(&needsDiscovery)
+	`, id, int64(indexingLeaseDuration.Seconds())).Scan(&needsDiscovery)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -453,7 +460,7 @@ func FailMigrationWhileIndexingClaim(db *sql.DB, id string, generation int64, er
 	defer tx.Rollback()
 	result, err := tx.Exec(`
 		UPDATE migrations
-		SET status = 'FAILED', error_message = $1, updated_at = CURRENT_TIMESTAMP,
+		SET status = 'FAILED', error_message = $1, indexing_lease_until = NULL, updated_at = CURRENT_TIMESTAMP,
 		    notification_generation = notification_generation + 1
 		WHERE id = $2 AND status = 'INDEXING' AND ($3 = 0 OR discovery_generation = $3)
 	`, errMsg, id, generation)
@@ -488,7 +495,7 @@ func FailStaleIndexingMigration(ctx context.Context, database *sql.DB, id string
 		    notification_generation = notification_generation + 1
 		WHERE id = $2
 		  AND status = 'INDEXING'
-		  AND updated_at < NOW() - INTERVAL '30 minutes'
+		  AND (indexing_lease_until IS NULL OR indexing_lease_until <= NOW())
 	`, errMsg, id)
 	if err != nil {
 		return false, err
@@ -518,10 +525,10 @@ func ClaimScheduledMigrationForIndexing(db *sql.DB, id string) (bool, error) {
 func ClaimScheduledMigrationForIndexingContext(ctx context.Context, db *sql.DB, id string) (bool, error) {
 	query := `
 		UPDATE migrations
-		SET status = 'INDEXING', discovery_complete = FALSE, discovery_generation = discovery_generation + 1, error_message = NULL, updated_at = CURRENT_TIMESTAMP
+		SET status = 'INDEXING', discovery_complete = FALSE, discovery_generation = discovery_generation + 1, indexing_lease_until = CURRENT_TIMESTAMP + ($2 * INTERVAL '1 second'), error_message = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1 AND status = 'SCHEDULED'
 	`
-	result, err := db.ExecContext(ctx, query, id)
+	result, err := db.ExecContext(ctx, query, id, int64(indexingLeaseDuration.Seconds()))
 	if err != nil {
 		return false, err
 	}
@@ -530,6 +537,21 @@ func ClaimScheduledMigrationForIndexingContext(ctx context.Context, db *sql.DB, 
 		return false, err
 	}
 	return rowsAffected == 1, nil
+}
+
+// RenewMigrationIndexingLease extends a generation-fenced indexer lease. A false
+// result means a pause/resume successor or terminal transition owns the row.
+func RenewMigrationIndexingLease(ctx context.Context, database *sql.DB, id string, generation int64, duration time.Duration) (bool, error) {
+	res, err := database.ExecContext(ctx, `
+		UPDATE migrations
+		SET indexing_lease_until = CURRENT_TIMESTAMP + ($3 * INTERVAL '1 second')
+		WHERE id = $1 AND status = 'INDEXING' AND discovery_generation = $2
+	`, id, generation, int64(duration.Seconds()))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // TransitionMigrationIndexingToRunning completes indexing. It rejects a stale
@@ -541,7 +563,7 @@ func TransitionMigrationIndexingToRunning(db *sql.DB, id string) error {
 func TransitionMigrationIndexingToRunningClaim(db *sql.DB, id string, generation int64) error {
 	query := `
 		UPDATE migrations
-		SET status = 'RUNNING', discovery_complete = TRUE, failed_retry_done = FALSE, updated_at = CURRENT_TIMESTAMP
+		SET status = 'RUNNING', discovery_complete = TRUE, failed_retry_done = FALSE, indexing_lease_until = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1 AND status = 'INDEXING' AND ($2 = 0 OR discovery_generation = $2)
 	`
 	result, err := db.Exec(query, id, generation)

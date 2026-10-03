@@ -437,7 +437,7 @@ func SuspendUser(database *sql.DB, id string) ([]string, error) {
 		return nil, err
 	}
 	if _, err := tx.Exec(
-		`UPDATE migrations SET status = 'PAUSED', updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND status IN ('RUNNING', 'INDEXING')`,
+		`UPDATE migrations SET status = 'PAUSED', indexing_lease_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND status IN ('RUNNING', 'INDEXING')`,
 		id,
 	); err != nil {
 		return nil, err

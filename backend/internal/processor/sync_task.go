@@ -606,7 +606,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		_ = db.UpdateSyncJobStatusForGeneration(p.db, payload.SyncJobID, task.PassGeneration, "PAUSED_CONNECTION_LOSS", nil)
 		p.clearConnLoss(payload.SyncJobID)
 		p.clearConnLossTask(task.ID)
-		p.recoveryAttempts.Delete(payload.SyncJobID)
+		p.recoveryAttempts.Delete(recoveryAttemptKey(true, payload.SyncJobID))
 
 		task.Status = "PENDING"
 		if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
@@ -644,7 +644,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		_ = db.UpdateSyncJobStatusForGeneration(p.db, payload.SyncJobID, task.PassGeneration, "FAILED", &authErrMsg)
 		p.clearConnLoss(payload.SyncJobID)
 		p.clearConnLossTask(payload.TaskID)
-		p.recoveryAttempts.Delete(payload.SyncJobID)
+		p.recoveryAttempts.Delete(recoveryAttemptKey(true, payload.SyncJobID))
 
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
@@ -686,6 +686,10 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 
 const maxSyncRecoveryProbesPerTick = 10
 
+type syncRecoveryCandidate struct {
+	id, userID, sourceURL, sourceUsername, sourcePassword, targetURL, targetUsername, targetPassword, sourceProvider, targetProvider string
+}
+
 // recoverPausedSyncJobs checks connection-loss paused sync jobs and restores connection.
 func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 	query := `
@@ -695,55 +699,70 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 		FROM sync_jobs
 		WHERE status = 'PAUSED_CONNECTION_LOSS'
 		ORDER BY (id::text <= $1), id
+		LIMIT $2
 	`
-	rows, err := p.db.QueryContext(ctx, query, p.recoveryCursor(true))
+	rows, err := p.db.QueryContext(ctx, query, p.recoveryCursor(true), recoveryScanWindow)
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	var candidates []syncRecoveryCandidate
+	for rows.Next() {
+		var candidate syncRecoveryCandidate
+		if err := rows.Scan(&candidate.id, &candidate.userID, &candidate.sourceURL, &candidate.sourceUsername, &candidate.sourcePassword, &candidate.targetURL, &candidate.targetUsername, &candidate.targetPassword, &candidate.sourceProvider, &candidate.targetProvider); err != nil {
+			continue
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		processorLogf("[RecoveryScheduler] sync rows error: %v\n", err)
+		return
+	}
+	if err := rows.Close(); err != nil {
+		processorLogf("[RecoveryScheduler] close sync rows: %v\n", err)
+		return
+	}
 
 	probes := 0
-	for rows.Next() {
-		if probes >= maxSyncRecoveryProbesPerTick {
+	lastExamined := ""
+	for _, candidate := range candidates {
+		if !examineRecoveryCandidate(&lastExamined, probes, maxSyncRecoveryProbesPerTick, candidate.id) {
 			break
 		}
 
-		var id, userID, sURL, sUser, sPassEnc, tURL, tUser, tPassEnc, sProv, tProv string
-		if err := rows.Scan(&id, &userID, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc, &sProv, &tProv); err != nil {
-			continue
-		}
+		id, userID, sURL, sUser, sPassEnc := candidate.id, candidate.userID, candidate.sourceURL, candidate.sourceUsername, candidate.sourcePassword
+		tURL, tUser, tPassEnc, sProv, tProv := candidate.targetURL, candidate.targetUsername, candidate.targetPassword, candidate.sourceProvider, candidate.targetProvider
 
 		var ra recoveryState
-		if v, ok := p.recoveryAttempts.Load(id); ok {
+		if v, ok := p.recoveryAttempts.Load(recoveryAttemptKey(true, id)); ok {
 			ra = v.(recoveryState)
 		}
 		if !shouldProbeRecovery(ra, time.Now()) {
 			continue
 		}
 		probes++
-		p.setRecoveryCursor(true, id)
 
 		sPass, err := crypto.DecryptWithDomain(sPassEnc, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(sProv)))
 		if err != nil {
-			p.recordRecoveryFailure(id, ra.attempts)
+			p.recordRecoveryFailure(true, id, ra.attempts)
 			continue
 		}
 		tPass, err := crypto.DecryptWithDomain(tPassEnc, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(tProv)))
 		if err != nil {
-			p.recordRecoveryFailure(id, ra.attempts)
+			p.recordRecoveryFailure(true, id, ra.attempts)
 			continue
 		}
 
 		userCtx := storage.WithLocalUserScope(ctx, userID)
 		sClient, err := storage.NewProvider(userCtx, sProv, sURL, sUser, sPass)
 		if err != nil {
-			p.recordRecoveryFailure(id, ra.attempts)
+			p.recordRecoveryFailure(true, id, ra.attempts)
 			continue
 		}
 		tClient, err := storage.NewProvider(userCtx, tProv, tURL, tUser, tPass)
 		if err != nil {
 			sClient.Close()
-			p.recordRecoveryFailure(id, ra.attempts)
+			p.recordRecoveryFailure(true, id, ra.attempts)
 			continue
 		}
 
@@ -766,9 +785,12 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 			if recovered {
 				processorLogf("[RecoveryScheduler] Connection restored for sync job %s; scheduled API retry\n", id)
 			}
-			p.recoveryAttempts.Delete(id)
+			p.recoveryAttempts.Delete(recoveryAttemptKey(true, id))
 		} else {
-			p.recordRecoveryFailure(id, ra.attempts)
+			p.recordRecoveryFailure(true, id, ra.attempts)
 		}
+	}
+	if lastExamined != "" {
+		p.setRecoveryCursor(true, lastExamined)
 	}
 }

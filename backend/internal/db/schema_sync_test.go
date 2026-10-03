@@ -69,6 +69,9 @@ func TestInitDBTaskCreateIncludesHashColumns(t *testing.T) {
 			t.Errorf("fresh InitDB tasks table is missing %s", column)
 		}
 	}
+	if !regexp.MustCompile(`(?i)\bprerequisite_task_id\s+UUID\s+REFERENCES\s+tasks\s*\(\s*id\s*\)`).MatchString(matches[1]) {
+		t.Error("fresh InitDB tasks table is missing restrictive prerequisite reference")
+	}
 }
 
 func initDBDDLForTable(source, tableName string) string {

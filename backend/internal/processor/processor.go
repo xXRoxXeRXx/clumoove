@@ -573,6 +573,7 @@ func (p *Processor) Start(ctx context.Context) {
 
 	// Spawn background schedulers
 	go p.RunWorkerLiveness(ctx)
+	go p.RunAbandonedWorkerCleanup(ctx)
 	go p.RunRetryScheduler(ctx)
 	go p.RunConnectionRecoveryScheduler(ctx)
 	go p.RunOrphanedRunningTasksRecovery(ctx)
@@ -1515,7 +1516,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		}
 		p.clearConnLoss(payload.MigrationID)
 		p.clearConnLossTask(task.ID)
-		p.recoveryAttempts.Delete(payload.MigrationID)
+		p.recoveryAttempts.Delete(recoveryAttemptKey(false, payload.MigrationID))
 		// Task is set back to PENDING so it can be retried immediately upon resume
 		task.Status = "PENDING"
 		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
@@ -1565,7 +1566,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		finalized, finalizeErr := db.FailMigrationForAuthentication(p.db, ctx, task, authErrMsg)
 		p.clearConnLoss(payload.MigrationID)
 		p.clearConnLossTask(payload.TaskID)
-		p.recoveryAttempts.Delete(payload.MigrationID)
+		p.recoveryAttempts.Delete(recoveryAttemptKey(false, payload.MigrationID))
 		if finalizeErr != nil || !finalized {
 			if finalizeErr != nil {
 				processorLogf("[Worker %s] atomically finalizing auth failure for migration %s: %v\n", p.workerID, payload.MigrationID, finalizeErr)

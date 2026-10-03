@@ -84,6 +84,43 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		return
 	}
 	discoveryGeneration = mig.DiscoveryGeneration
+	leaseDuration, leaseRenewal := indexingLeaseSettings(indexingTimeout())
+	leaseCtx, leaseCancel := context.WithTimeout(context.WithoutCancel(serverCtx), 5*time.Second)
+	owned, leaseErr := db.RenewMigrationIndexingLease(leaseCtx, idx.db, migID, discoveryGeneration, leaseDuration)
+	leaseCancel()
+	if leaseErr != nil || !owned {
+		logger.Info("indexing_claim_not_active")
+		return
+	}
+	leaseStop := make(chan struct{})
+	leaseDone := make(chan struct{})
+	defer func() { close(leaseStop); <-leaseDone }()
+	go func() {
+		defer close(leaseDone)
+		ticker := time.NewTicker(leaseRenewal)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-leaseStop:
+				return
+			case <-serverCtx.Done():
+				return
+			case <-ticker.C:
+				heartbeatCtx, heartbeatCancel := context.WithTimeout(context.WithoutCancel(serverCtx), 5*time.Second)
+				owned, err := db.RenewMigrationIndexingLease(heartbeatCtx, idx.db, migID, discoveryGeneration, leaseDuration)
+				heartbeatCancel()
+				if err != nil {
+					logger.Warn("indexing_lease_renew_failed", observability.Error(err))
+					continue
+				}
+				if !owned {
+					logger.Info("indexing_claim_lost")
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 	ctx = storage.WithLocalUserScope(ctx, mig.UserID.String)
 
 	// Decrypt source credentials at the last moment. The temporary GCM plaintext
@@ -815,6 +852,21 @@ func indexingTimeout() time.Duration {
 		}
 	}
 	return 20 * time.Minute
+}
+
+func indexingLeaseSettings(timeout time.Duration) (time.Duration, time.Duration) {
+	lease := timeout / 3
+	if lease < 2*time.Minute {
+		lease = 2 * time.Minute
+	}
+	if lease > 20*time.Minute {
+		lease = 20 * time.Minute
+	}
+	renewal := lease / 3
+	if renewal < 30*time.Second {
+		renewal = 30 * time.Second
+	}
+	return lease, renewal
 }
 
 // failMigration marks a migration as FAILED with the given error message.

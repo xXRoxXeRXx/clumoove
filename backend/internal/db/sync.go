@@ -1330,9 +1330,8 @@ func BulkCreateSyncTasks(ctx context.Context, db *sql.DB, tasks []*Task) error {
 		}
 		batch := tasks[start:end]
 
-		// Each row has 9 params: migration_id, sync_job_id, pass_generation,
-		// file_path, file_size, source_hash, status, resource_type, metadata.
-		const paramsPerRow = 9
+		// Each row has 11 params, including caller-generated task and prerequisite IDs.
+		const paramsPerRow = 11
 		args := make([]interface{}, 0, len(batch)*paramsPerRow)
 		valuesClauses := make([]string, 0, len(batch))
 
@@ -1345,16 +1344,18 @@ func BulkCreateSyncTasks(ctx context.Context, db *sql.DB, tasks []*Task) error {
 			if t.SyncJobID != "" {
 				syncID = sql.NullString{String: t.SyncJobID, Valid: true}
 			}
-			args = append(args,
-				migID, syncID, t.PassGeneration, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.ResourceType, t.Metadata,
-			)
+			var prerequisiteID sql.NullString
+			if t.PrerequisiteTaskID != "" {
+				prerequisiteID = sql.NullString{String: t.PrerequisiteTaskID, Valid: true}
+			}
+			args = append(args, t.ID, migID, syncID, prerequisiteID, t.PassGeneration, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.ResourceType, t.Metadata)
 			valuesClauses = append(valuesClauses,
-				fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-					base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9),
+				fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+					base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11),
 			)
 		}
 
-		query := "INSERT INTO tasks (migration_id, sync_job_id, pass_generation, file_path, file_size, source_hash, status, resource_type, metadata) VALUES " +
+		query := "INSERT INTO tasks (id, migration_id, sync_job_id, prerequisite_task_id, pass_generation, file_path, file_size, source_hash, status, resource_type, metadata) VALUES " +
 			strings.Join(valuesClauses, ",")
 
 		if _, err := tx.ExecContext(dbCtx, query, args...); err != nil {

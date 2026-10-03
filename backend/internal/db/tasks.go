@@ -13,10 +13,11 @@ import (
 )
 
 type Task struct {
-	ID           string `json:"id"`
-	MigrationID  string `json:"migration_id,omitempty"`
-	SyncJobID    string `json:"sync_job_id,omitempty"`
-	ResourceType string `json:"resource_type"` // files, calendars, contacts
+	ID                 string `json:"id"`
+	MigrationID        string `json:"migration_id,omitempty"`
+	SyncJobID          string `json:"sync_job_id,omitempty"`
+	PrerequisiteTaskID string `json:"prerequisite_task_id,omitempty"`
+	ResourceType       string `json:"resource_type"` // files, calendars, contacts
 	// FilePath is the immutable source-provider path. ResolvedTargetPath is the
 	// destination selected after sanitization and conflict resolution.
 	FilePath           string         `json:"file_path"`
@@ -97,14 +98,14 @@ func CreateTask(db *sql.DB, t *Task) (string, error) {
 
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
-		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), resource_type, file_path, COALESCE(resolved_target_path, ''), file_size, status,
+		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), COALESCE(prerequisite_task_id::text, ''), resource_type, file_path, COALESCE(resolved_target_path, ''), file_size, status,
 		       attempts, error_message, next_retry_at, worker_hash, claim_epoch, pass_generation, source_hash, target_hash,
 		       checksum_verified, COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM tasks WHERE id = $1
 	`
 	var t Task
 	err := db.QueryRow(query, id).Scan(
-		&t.ID, &t.MigrationID, &t.SyncJobID, &t.ResourceType, &t.FilePath, &t.ResolvedTargetPath, &t.FileSize, &t.Status,
+		&t.ID, &t.MigrationID, &t.SyncJobID, &t.PrerequisiteTaskID, &t.ResourceType, &t.FilePath, &t.ResolvedTargetPath, &t.FileSize, &t.Status,
 		&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.ClaimEpoch, &t.PassGeneration, &t.SourceHash, &t.TargetHash,
 		&t.ChecksumVerified, &t.Metadata, &t.CreatedAt, &t.UpdatedAt,
 	)

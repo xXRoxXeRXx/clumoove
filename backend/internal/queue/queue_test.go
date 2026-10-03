@@ -78,6 +78,7 @@ func setupDequeueTestDB(t *testing.T) *sql.DB {
 			worker_hash TEXT,
 			claim_epoch BIGINT NOT NULL DEFAULT 0,
 			pass_generation INTEGER NOT NULL DEFAULT 0,
+			prerequisite_task_id UUID REFERENCES tasks(id),
 			CONSTRAINT chk_task_job_type CHECK (
 				(migration_id IS NOT NULL AND sync_job_id IS NULL) OR
 				(migration_id IS NULL AND sync_job_id IS NOT NULL)
@@ -423,8 +424,8 @@ func TestDequeueSQLConflictCopyDependency(t *testing.T) {
 		INSERT INTO sync_jobs (id, status, threads) VALUES ('00000000-0000-0000-0000-000000000004', 'RUNNING', 1);
 		INSERT INTO tasks (id, sync_job_id, file_path, resource_type, status, metadata, created_at)
 		VALUES ('00000000-0000-0000-0000-000000000104', '00000000-0000-0000-0000-000000000004', '/file.txt', 'files', 'PENDING', '{"action":"conflict_copy"}', '2020-01-01');
-		INSERT INTO tasks (id, sync_job_id, file_path, resource_type, status, metadata, created_at)
-		VALUES ('00000000-0000-0000-0000-000000000105', '00000000-0000-0000-0000-000000000004', '/file.txt', 'files', 'PENDING', '{"action":"upload","wait_for_conflict_copy":true}', '2020-01-02');
+		INSERT INTO tasks (id, sync_job_id, prerequisite_task_id, file_path, resource_type, status, metadata, created_at)
+		VALUES ('00000000-0000-0000-0000-000000000105', '00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000104', '/file.txt', 'files', 'PENDING', '{"action":"upload"}', '2020-01-02');
 	`); err != nil {
 		t.Fatalf("insert conflict dependency tasks: %v", err)
 	}
@@ -464,8 +465,8 @@ func TestDequeueSQLSkipsUploadWhenConflictCopyFails(t *testing.T) {
 		INSERT INTO sync_jobs (id, status, threads) VALUES ('00000000-0000-0000-0000-000000000004', 'RUNNING', 1);
 		INSERT INTO tasks (id, sync_job_id, file_path, resource_type, status, metadata)
 		VALUES ('00000000-0000-0000-0000-000000000104', '00000000-0000-0000-0000-000000000004', '/file.txt', 'files', 'FAILED', '{"action":"conflict_copy"}');
-		INSERT INTO tasks (id, sync_job_id, file_path, resource_type, status, metadata)
-		VALUES ('00000000-0000-0000-0000-000000000105', '00000000-0000-0000-0000-000000000004', '/file.txt', 'files', 'PENDING', '{"action":"upload","wait_for_conflict_copy":true}');
+		INSERT INTO tasks (id, sync_job_id, prerequisite_task_id, file_path, resource_type, status, metadata)
+		VALUES ('00000000-0000-0000-0000-000000000105', '00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000104', '/file.txt', 'files', 'PENDING', '{"action":"upload"}');
 	`); err != nil {
 		t.Fatalf("insert failed conflict dependency tasks: %v", err)
 	}
@@ -485,6 +486,28 @@ func TestDequeueSQLSkipsUploadWhenConflictCopyFails(t *testing.T) {
 	}
 	if status != "SKIPPED" || errorMessage != "conflict_copy prerequisite failed; upload skipped" {
 		t.Fatalf("skipped upload = (%q, %q), want auditable skipped status", status, errorMessage)
+	}
+}
+
+func TestDequeueSQLUsesOnlyDirectPrerequisite(t *testing.T) {
+	database := setupDequeueTestDB(t)
+	if _, err := database.Exec(`
+		INSERT INTO sync_jobs (id, status, threads) VALUES ('00000000-0000-0000-0000-000000000004', 'RUNNING', 1);
+		INSERT INTO tasks (id, sync_job_id, file_path, resource_type, status, metadata) VALUES
+			('00000000-0000-0000-0000-000000000104', '00000000-0000-0000-0000-000000000004', '/file.txt', 'files', 'COMPLETED', '{"action":"conflict_copy"}'),
+			('00000000-0000-0000-0000-000000000106', '00000000-0000-0000-0000-000000000004', '/file.txt', 'files', 'PENDING', '{"action":"conflict_copy"}');
+		INSERT INTO tasks (id, sync_job_id, prerequisite_task_id, file_path, resource_type, status, metadata)
+		VALUES ('00000000-0000-0000-0000-000000000105', '00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000106', '/file.txt', 'files', 'PENDING', '{"action":"upload"}');
+	`); err != nil {
+		t.Fatalf("insert direct prerequisite tasks: %v", err)
+	}
+
+	payload, err := (&Queue{}).DequeueSQL(context.Background(), database, "worker-1")
+	if err != nil {
+		t.Fatalf("dequeue direct prerequisite: %v", err)
+	}
+	if payload == nil || payload.TaskID != "00000000-0000-0000-0000-000000000106" {
+		t.Fatalf("dequeue = %+v, want the pending direct prerequisite", payload)
 	}
 }
 
