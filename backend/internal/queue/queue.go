@@ -128,7 +128,10 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 			FROM tasks AS prerequisite
 			WHERE dependent.status = 'PENDING'
 			  AND dependent.prerequisite_task_id = prerequisite.id
-			  AND prerequisite.status IN ('FAILED', 'CANCELLED', 'SKIPPED')`); err != nil {
+			  AND (
+				prerequisite.status IN ('CANCELLED', 'SKIPPED')
+				OR (prerequisite.status = 'FAILED' AND prerequisite.next_retry_at IS NULL)
+			  )`); err != nil {
 		return nil, fmt.Errorf("skip failed conflict dependents: %w", err)
 	}
 

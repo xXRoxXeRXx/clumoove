@@ -489,6 +489,65 @@ func TestDequeueSQLSkipsUploadWhenConflictCopyFails(t *testing.T) {
 	}
 }
 
+func TestDequeueSQLWaitsForRetryableConflictCopy(t *testing.T) {
+	database := setupDequeueTestDB(t)
+	if _, err := database.Exec(`
+		INSERT INTO sync_jobs (id, status, threads) VALUES ('00000000-0000-0000-0000-000000000004', 'RUNNING', 1);
+		INSERT INTO tasks (id, sync_job_id, file_path, resource_type, status, metadata, next_retry_at)
+		VALUES ('00000000-0000-0000-0000-000000000104', '00000000-0000-0000-0000-000000000004', '/file.txt', 'files', 'FAILED', '{"action":"conflict_copy"}', CURRENT_TIMESTAMP + INTERVAL '1 hour');
+		INSERT INTO tasks (id, sync_job_id, prerequisite_task_id, file_path, resource_type, status, metadata)
+		VALUES ('00000000-0000-0000-0000-000000000105', '00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000104', '/file.txt', 'files', 'PENDING', '{"action":"upload"}');
+	`); err != nil {
+		t.Fatalf("insert retryable conflict dependency tasks: %v", err)
+	}
+
+	q := &Queue{}
+	payload, err := q.DequeueSQL(context.Background(), database, "worker-1")
+	if err != nil {
+		t.Fatalf("dequeue retryable conflict dependency: %v", err)
+	}
+	if payload != nil {
+		t.Fatalf("dequeue retryable conflict dependency = %+v, want nil", payload)
+	}
+
+	var status string
+	var errorMessage sql.NullString
+	if err := database.QueryRow(`SELECT status, error_message FROM tasks WHERE id = '00000000-0000-0000-0000-000000000105'`).Scan(&status, &errorMessage); err != nil {
+		t.Fatalf("read pending upload: %v", err)
+	}
+	if status != "PENDING" || errorMessage.Valid {
+		t.Fatalf("upload during prerequisite retry = (%q, %+v), want pending without skip error", status, errorMessage)
+	}
+
+	if _, err := database.Exec(`UPDATE tasks SET next_retry_at = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE id = '00000000-0000-0000-0000-000000000104'`); err != nil {
+		t.Fatalf("make conflict copy retry overdue: %v", err)
+	}
+	payload, err = q.DequeueSQL(context.Background(), database, "worker-1")
+	if err != nil {
+		t.Fatalf("dequeue overdue retryable conflict dependency: %v", err)
+	}
+	if payload != nil {
+		t.Fatalf("dequeue overdue retryable conflict dependency = %+v, want nil", payload)
+	}
+	if err := database.QueryRow(`SELECT status, error_message FROM tasks WHERE id = '00000000-0000-0000-0000-000000000105'`).Scan(&status, &errorMessage); err != nil {
+		t.Fatalf("read pending upload after retry is overdue: %v", err)
+	}
+	if status != "PENDING" || errorMessage.Valid {
+		t.Fatalf("upload after prerequisite retry is overdue = (%q, %+v), want pending without skip error", status, errorMessage)
+	}
+
+	if _, err := database.Exec(`UPDATE tasks SET status = 'COMPLETED', next_retry_at = NULL WHERE id = '00000000-0000-0000-0000-000000000104'`); err != nil {
+		t.Fatalf("complete retried conflict copy: %v", err)
+	}
+	payload, err = q.DequeueSQL(context.Background(), database, "worker-2")
+	if err != nil {
+		t.Fatalf("dequeue after retried conflict copy completion: %v", err)
+	}
+	if payload == nil || payload.TaskID != "00000000-0000-0000-0000-000000000105" {
+		t.Fatalf("dequeue after retried conflict copy completion = %+v, want upload", payload)
+	}
+}
+
 func TestDequeueSQLUsesOnlyDirectPrerequisite(t *testing.T) {
 	database := setupDequeueTestDB(t)
 	if _, err := database.Exec(`
