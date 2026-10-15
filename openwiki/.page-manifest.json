@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "pages": {
+    "/openwiki/architecture/persistence-and-queue.md": {
+      "pageVersion": "sha256:1d20638af28ce5c87def2f90a25bf7e515d3a9017cf2aa08ad203da35976f032",
+      "completedBy": "codex",
+      "completedRunId": "ab07ddaa-d4bb-4ee8-851e-26ca1cab6ce9",
+      "gitHead": "3032c2333db0d365822c708497b2446d31f85da8",
+      "sourceFingerprint": "sha256:fb3a96cd52c3b5e0da7b8c4f989cad51d216309ec810331873f9c0e492f40487"
+    },
+    "/openwiki/architecture/security-and-identity.md": {
+      "pageVersion": "sha256:b405283c97a3710c607d7da9e4a46d22a3483b510c791d9cb513b15114eff5b6",
+      "completedBy": "codex",
+      "completedRunId": "ab07ddaa-d4bb-4ee8-851e-26ca1cab6ce9",
+      "gitHead": "3032c2333db0d365822c708497b2446d31f85da8",
+      "sourceFingerprint": "sha256:fb3a96cd52c3b5e0da7b8c4f989cad51d216309ec810331873f9c0e492f40487"
+    },
+    "/openwiki/architecture/system-overview.md": {
+      "pageVersion": "sha256:b402e808250aaebc21799c01636fe7507f384cd6b71f8861d8746fce7abf48b1",
+      "completedBy": "codex",
+      "completedRunId": "ab07ddaa-d4bb-4ee8-851e-26ca1cab6ce9",
+      "gitHead": "3032c2333db0d365822c708497b2446d31f85da8",
+      "sourceFingerprint": "sha256:fb3a96cd52c3b5e0da7b8c4f989cad51d216309ec810331873f9c0e492f40487"
+    },
+    "/openwiki/frontend/application.md": {
+      "pageVersion": "sha256:d9343264af860d291e6d264bebdae6485c37d48be0349d458553c405690fd7c2",
+      "completedBy": "codex",
+      "completedRunId": "ab07ddaa-d4bb-4ee8-851e-26ca1cab6ce9",
+      "gitHead": "3032c2333db0d365822c708497b2446d31f85da8",
+      "sourceFingerprint": "sha256:fb3a96cd52c3b5e0da7b8c4f989cad51d216309ec810331873f9c0e492f40487"
+    },
+    "/openwiki/integrations/storage-providers.md": {
+      "pageVersion": "sha256:0092253d8342dc5b0f689963815a7ec3c0c00a545be9e0d826ae6ef504642797",
+      "completedBy": "codex",
+      "completedRunId": "ab07ddaa-d4bb-4ee8-851e-26ca1cab6ce9",
+      "gitHead": "3032c2333db0d365822c708497b2446d31f85da8",
+      "sourceFingerprint": "sha256:fb3a96cd52c3b5e0da7b8c4f989cad51d216309ec810331873f9c0e492f40487"
+    },
+    "/openwiki/operations/deployment.md": {
+      "pageVersion": "sha256:ac4144ad0a576f418e776de4e7aec622ed7369282ccef61835d73bffde0065f1",
+      "completedBy": "codex",
+      "completedRunId": "ab07ddaa-d4bb-4ee8-851e-26ca1cab6ce9",
+      "gitHead": "3032c2333db0d365822c708497b2446d31f85da8",
+      "sourceFingerprint": "sha256:fb3a96cd52c3b5e0da7b8c4f989cad51d216309ec810331873f9c0e492f40487"
+    },
+    "/openwiki/operations/development.md": {
+      "pageVersion": "sha256:4d5298a4e23ce1e9d883e5726dc5c72d43d8c02b8a635bd44965a51e46e3bbc4",
+      "completedBy": "codex",
+      "completedRunId": "ab07ddaa-d4bb-4ee8-851e-26ca1cab6ce9",
+      "gitHead": "3032c2333db0d365822c708497b2446d31f85da8",
+      "sourceFingerprint": "sha256:fb3a96cd52c3b5e0da7b8c4f989cad51d216309ec810331873f9c0e492f40487"
+    },
+    "/openwiki/quickstart.md": {
+      "pageVersion": "sha256:bec0a15e608a259d9d1b8558021d01ff45bdf3dde1e1ea62ec5a1c8efb7f2f20",
+      "completedBy": "codex",
+      "completedRunId": "ab07ddaa-d4bb-4ee8-851e-26ca1cab6ce9",
+      "gitHead": "3032c2333db0d365822c708497b2446d31f85da8",
+      "sourceFingerprint": "sha256:fb3a96cd52c3b5e0da7b8c4f989cad51d216309ec810331873f9c0e492f40487"
+    },
+    "/openwiki/workflows/backups-and-restore.md": {
+      "pageVersion": "sha256:c6ef7b528f0a50a200ec7cd55fbda400fd3f4b950117a7130899c4b85a946b29",
+      "completedBy": "codex",
+      "completedRunId": "ab07ddaa-d4bb-4ee8-851e-26ca1cab6ce9",
+      "gitHead": "3032c2333db0d365822c708497b2446d31f85da8",
+      "sourceFingerprint": "sha256:fb3a96cd52c3b5e0da7b8c4f989cad51d216309ec810331873f9c0e492f40487"
+    },
+    "/openwiki/workflows/migrations-and-sync.md": {
+      "pageVersion": "sha256:caafd78c8b858b8fa3281e70b265b09be88c39bcccf3f920ef12ff4509c65a16",
+      "completedBy": "codex",
+      "completedRunId": "ab07ddaa-d4bb-4ee8-851e-26ca1cab6ce9",
+      "gitHead": "3032c2333db0d365822c708497b2446d31f85da8",
+      "sourceFingerprint": "sha256:fb3a96cd52c3b5e0da7b8c4f989cad51d216309ec810331873f9c0e492f40487"
+    }
+  }
+}

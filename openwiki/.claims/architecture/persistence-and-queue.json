@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:1d20638af28ce5c87def2f90a25bf7e515d3a9017cf2aa08ad203da35976f032",
+  "claims": [
+    {
+      "id": "claim_587810eb2c994f5cb3ecca1236cc98c7",
+      "statement": "PostgreSQL is the durable store and transfer-claiming mechanism, with task selection using SKIP LOCKED so workers can claim work concurrently.",
+      "evidence": [
+        {
+          "resource": "repo://backend/internal/queue/queue.go#L106-L167",
+          "version": "repo-lines-v1:sha256:f24c907113bd19acc97fe9f1bd987464d62916fe2695c35182c3b408c1f1a24e:eyJzZWxlY3RlZExpbmVDb3VudCI6NjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA4YTBiNDU4ZTA4NTgwNTQ0YWQzMzE5ZjQ5ZTMyMjc3ZmVmZGUxNmIwMTBlN2RjZGIzOWVmMjQ3ZTg0NzVhMTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2OTY2NGEwZWZmN2VkMjJlZWMxN2NkNzcyNTNiY2RiY2VhYjE4OGNiNDI1ZGExNWE1ZWMxMDZlYTQyMWE1MWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2NGQ0OTU5NmE2MDc2NGI3ZjVhNmIzNmZkODA3ZDM4YzdhZDMyZmIyODM5OWQ0MWEyMmEyNDBjNDU5N2I5YmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNlOWE5ODIwZWY3M2M0NjdiMjU4MjMzNzcwY2JmMTM4ZTRjYzU4Y2VjYTlkMzFjNTBjYTBkMzYwMzQzN2U2ZDEifQ"
+        },
+        {
+          "resource": "repo://db/schema.sql#L1-L200",
+          "version": "repo-lines-v1:sha256:aca7558bda830a2d6f5cefe7980ca01133eea28f860d468320804e7886611920:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3MTc0YTllNzYxNDU3NWFhNDc5MmNmMzcyODhiMWIwMGQ5NDgyZDk0N2ZkNTdhMTAyNTRkYzE2MmJiNmYxZGNkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiYjM5YWRhZDEzY2U1YWQ2OWE1MmUzZGFkNzljYTIzMDRmYzE0MDk3Mjg5OGJlNGZlMGFjZDhkOGQ0ZjM3MDhiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJiODcwMTczODVjODc3NmNkMThhM2JhNDhhMGMyYjBjMjA5ODdiZTYwY2E1NTI1YWU3MWNhOGY0MjJkMzM3MDFlIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_37954337db2042609a6a8b6c3490b6e5",
+      "statement": "Redis provides expiring coordination locks and auxiliary short-lived state rather than serving as the transfer task broker.",
+      "evidence": [
+        {
+          "resource": "repo://README.md#L145-L152",
+          "version": "repo-lines-v1:sha256:626d7cf6cdfddd477feadec4daf704e73c9821432847f5b6ecd9fb477d06f347:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWYyNzY0YjgyNWI0Yjk0MTdkYmY2MzdhNzBiNGU5NWJlMDFlMGY0NTYyNjEzNDE4OWY0N2Q5YjBjMDQ2ZDBjNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjMwNDMxNzE4ODljM2M5ZjM3ZWQ1ODdkM2JiN2E2NzQwZDBjYTA3MzViMmI1Yjc0ZjkwNTYwYmVhMTI0MjlhYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiM2Q1YTE5MjQyOTVlNWRmMzJjMDM3ZTY5ZDRiOWI0YTNlYjI1NmEzMzVkNDg5NDVmNzA0YWU4MDA1ZTUxZGM2NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzQ2ZTA4MGEzZDA2ZGEzMTU2NDVkNDY1OTM0YWI3NGIyYjkyOWEyZWY4OWQxYTQ0Y2NjZTljYTRlODYwYzUxYSJ9"
+        },
+        {
+          "resource": "repo://backend/internal/queue/queue.go#L251-L342",
+          "version": "repo-lines-v1:sha256:98299560b47baee5b8dd6c9a121a267c2c6566779554a41d2a897006aec6d60d:eyJzZWxlY3RlZExpbmVDb3VudCI6OTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxOWRjZDhhNDZjZDAyZDVhODJkZmQ2OWNhM2FiZDdjZDcyOGEzY2UxNTM0ZWNlODViZTVjNTUwNjNhYTQ0MDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiZGMwMzI1OTU5MTVkYjA0ZmM3OWY2YjA3ZWJlNjJhM2ExNzQ3Y2M1Y2E5YWZlNWI5ZTA0ZGI0MzFlMmFiNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQzMzAwMmUyNjFkODlkYWNjMzUwYWY2ZTljM2IwOWI0MTAwZDY1ZjFhNzlhNjljYjZjZGY2N2QyMDkzMDQyYjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ4OTFiNGYzMTVkMGU2ZDNhOWFkYTk0ZGExYjJlN2JjMWZiMTZjMGMyYmQ2NWY5MGM5MThlNWQwNWUyMDc1ZjEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_aa70e9774b5a4087b11e57c72517431b",
+      "statement": "The scheduler treats sync schedules as interval-based while migrations and backups use scheduled runs, and includes orphan recovery routines.",
+      "evidence": [
+        {
+          "resource": "repo://backend/internal/scheduler/scheduler.go#L194-L238",
+          "version": "repo-lines-v1:sha256:fd4aa18859665c3a13db7e973b7b39f42fa07b4ca808e2417cecc764ed963d55:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3YmRkMGI1YjRhOTlkZjUwNTNkZGQyNmFhNmM5MmZhNzI5MWQwMGE4MmUxM2MwN2U5ZDAyNTFlZGVjZjhjMGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlNmNlMWRkNGNkZTI3ZjhjOWY3MDkxMjk4YzFlNjQzMGRiOWI2NDY5ODk4ODAwOWMwYzMxODRkOGRhYzY3MWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRmM2M5M2FlYzI2MDhlNmU3M2MxN2JhYTU0MmY3ZTcxY2JhMTYwZDQ5OGViMDg3MGFjNGNjM2ZiNDdmM2U1NGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJlMDJmOWJhNTk4ZmZmZGE0ZTg1MDIzNjZjN2Y2YzY5MTYyYTYyZGQ0ZGUxZDg2MWRjYjc4NzIwMzBjNDAzNzMifQ"
+        },
+        {
+          "resource": "repo://backend/internal/scheduler/scheduler.go#L400-L619",
+          "version": "repo-lines-v1:sha256:e3b748cb9aee870f5e520c9b318a24fae888525f526e131c7c1c763e27840ee0:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwZTQ5ZThlM2UyNGJlZjcwZTVjOTc0ZDdjZjZiOGIwMjYxZDJmN2MxNGRlNjQ2ZTBlYzFhNDY1MzcyZDIxM2NiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJkNGRhMjEyODBlZTQ1OTFlNzUxZmYxNzA5MDZkMzM5MDFlOTM1ZDAyYjBmYjkyNDg2MWZjNmRiZjhjMTk4NjFhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxN2RjYWJhMzE2YmUzNTg3MDllM2ZkYTcyNjM3ZmFkZmI4NGVkMTZhMzdiM2NmNmE2OWE1ZWVmZGQ2ZjEwYTFjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0ZGUwYWIyY2U4MDI1ZGE4MzM2NjBmNTQwYTc2ODYwOGNlZWQwM2RmOTU2ZjQyNzAxZmVjYmVjNzU1YzM3OGRjIn0"
+        },
+        {
+          "resource": "repo://backend/internal/scheduler/scheduler.go#L72-L104",
+          "version": "repo-lines-v1:sha256:3be69f5b8b6500db3225a20198792c968bdb863ea0c4ed3ca0885e699d543269:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY5ZjY3ZTE2YzgyY2Q0NWZiZWJhY2ExN2JlNDFhMDZmYjIzNjZhOGVhYTc0ZjU5MjcxODgyNDM2YmQyYTkwYTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0Y2UwNWE4ZTcwN2ZjYTQ1ZDczYzRjMTU5Mzg1Zjc3ZWFiNDAwOGE0MzczMzg0YjI2ZDgzOWFlZjJhMzg2MTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczNmNmN2Q3M2Y3N2RiZjhhMTYxOGZkMmE2MWNjYjFmMTZhMmVkNjU0NDU2MzkxNzM3M2QzMTI3NjI0MzM5YzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcwMDhkM2NhZGYxMzg1ODVlM2UxMTc3Mzg0NWQzOGFjNDM1MDY3MDEyNjBiMmM0ZDMwMjcwYzA4MTU2NDJkOGEifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.7.2",
+    "at": "2026-10-15T10:57:39.355Z"
+  }
+}

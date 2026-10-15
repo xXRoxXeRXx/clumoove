@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:caafd78c8b858b8fa3281e70b265b09be88c39bcccf3f920ef12ff4509c65a16",
+  "claims": [
+    {
+      "id": "claim_ea2a75f3f1ab49efa09cbca196eee951",
+      "statement": "The indexer records listed source resources into migration work and includes available source hashes while handling OAuth token refresh updates.",
+      "evidence": [
+        {
+          "resource": "repo://backend/internal/indexer/indexer.go#L447-L541",
+          "version": "repo-lines-v1:sha256:5c15be0cc971ff1cbc2aff9d02c9315964e8c8b7e37be16757245096de57f2b3:eyJzZWxlY3RlZExpbmVDb3VudCI6OTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU1ZTQ4MWNiNmE5NjVjYjEzOTdmYTY2YmZkMDIxZWNjMzc0NWY3MDg4NzEyYzBhYTk1ZjQ3YmZmZGM4OGJlYjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwMThiZDM3ZWFlZTU4MDMzOGFhYzE5NDI1YWY5Y2RhMzFlMTUyOTcxN2Y4ZWM2M2JjOGMxNjcwNTE2YzdiZmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg0MjBiNzViNDM0OWRlYzZmYmQ5NTIxNDRiMTk4YTM0NjU4MTZmMzI4Yzk5YThmYTAwMTI1MjMzMTk3ZTg1YWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY0MDRlYzg3M2VkY2UzNThmYjE0MjRiZDA5NGFlZGZiNDY1ZWE0MjI4ZTRhY2Y2Yjg2Yzg0OGM1ZDg5MDdhYTIifQ"
+        },
+        {
+          "resource": "repo://backend/internal/indexer/indexer.go#L49-L287",
+          "version": "repo-lines-v1:sha256:76dcc413daac922e14b2f73f6391f0537197eaa1a723783ad0476a08b149cce8:eyJzZWxlY3RlZExpbmVDb3VudCI6MjM5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkOTA3NzdlMmI1OTNmYWM2NDQ5YjAzNDkyZGJlZTU5ODVjZjhiNTNiZjEyYTk5M2YwMzBjODVmNTgyYTA4ZjNlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0NGZiY2Y5OWM1NjE4MTc5Y2I3ODIxNDhhMWM0ODZiY2FmMTU4YzAwYTUwNWRlNGY5MmQxZmRlOGQ5ZjFjN2I2IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIyMTliOTYyZDAwMzNkZDllOGZkZDc0NTJkMWFhMDk4NTQ5M2VhNjVhOGQ5OTJiN2Y5NDJhZjQ1ZjhhZWY5ZTJjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI2NTQwZWUzN2FiNDIzOGMwNjA4OTM0ZTIwMmU0YTA4MTIzOGVmYWM1MzMzNTA1ODhiMjMzNmU3ZGNiNWEzN2Y4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_590c5ecd427448f6b46b6b5828773c77",
+      "statement": "The processor allocates transfer and verification worker capacity and processes queued task payloads with connection-loss and target-lock controls.",
+      "evidence": [
+        {
+          "resource": "repo://backend/internal/processor/processor.go#L354-L443",
+          "version": "repo-lines-v1:sha256:d0d81242da71332ad88f50fd7de8cfe1b53d5b337dc1ea3bc791fa81983cbbdf:eyJzZWxlY3RlZExpbmVDb3VudCI6OTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI4OGVkNmQ5M2RiMTczOGQxMDI0ZGY1ZjRhNWM0MjUwNzA5YTZlODQ5NDk4YmI1MjE5MGRhYjVlYTE2OGU1MDciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxN2YwODNmMGFjNmJlNjZlNzE0NDhiZjNiMDRmZGVlYTE3NDE0YzVhNWM1MjI1MGE4NmMwZDkzZDFlOWFhMTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIyZjJmZjVmZWVjNjBmNTg3YzhmYWU0ZTg3ZjgwOWE2NjFjZmZlZDZiNDdhYWU1ZjZkNmEyNjUzYWE4OTUyZWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk5OWM5M2UyZWMyM2Q5ZDFkYTU0Y2VjM2QwMTZkYjUzNmQ2OWYwZWFlZjUzNjZiMDJlODU0NDg4NDAwZjUwNzkifQ"
+        },
+        {
+          "resource": "repo://backend/internal/processor/processor.go#L541-L727",
+          "version": "repo-lines-v1:sha256:1ad4332944a9caf7132302d9c3e6c2c1221ff1d7888ed42646c450ff1cd33b3b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTg3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2MTJkM2U5OWY0NzY5ZWQzNWMwYTFiNGUzYTIzZmJkNmRjNjk0NjcxMTdkYjU4YzI2MGU4OGQ3NjM1ZmIxZTljIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI3MTJhNDJiMGQzYjQ3M2NiZTM2OWRjODc4Y2Y1NmI3ZTk4M2NiOWIxNjA5ODU2NzgxZDRlYmUzZTdiNmE3OTE3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwYjgyY2NhYWMwNzdhZGQ3YjNjMmJiMjY2MjRmNmIzNWI4ZTU2YTliNjBiOGQyNGZhZmE1ODMwN2FjZjUzMDNmIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlMzJjNDM4NGZmMGY0OGY2N2Y4N2I0MzViYTU5ZmViZTE4OTExZDNmOTYwMTQ2ZTc4YzRmZjUxNTA5ZjE5YzA1In0"
+        },
+        {
+          "resource": "repo://backend/internal/processor/processor.go#L816-L913",
+          "version": "repo-lines-v1:sha256:9ef4e8e53907720047f7a167782c47c8ed1f2cee83e44ac3340f23ea1f30fb90:eyJzZWxlY3RlZExpbmVDb3VudCI6OTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3NTY3YjQwMmU0OGQ0N2ZkNjU1YWVmMDRlNzRlODViYTQ1NjA2MzVkNjU4NWJiYTRhY2Q3MDc5ZThjZTRlOGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3Y2RhODJkYTYwNjIzOGUwNWU2MjM5OTU2OWM1ZWUwMzk5MzQxOTY0OGFlNWQ0M2EyYmY4Y2Q2MzQ3ZjgyNjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE2MzFiNmUyY2EwN2Q4YmFmMGViNDRlNzQ5ZGJmNDkwYjM5MmUzYTUzNGVmNjEwMjI3NzExNDZjZGY5YWYxYTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBmNDk4ZDczMGM3OTVmMTBjZTIyOTE1YjliZWE2N2Q2NjMzN2YxY2EwNzE4NmQ2M2MzZjBkODU0YmQwZDFjMTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_52b36981a2b8487aa38d85b48cfdf976",
+      "statement": "Sync passes use advisory locks, create conflict-copy operations for applicable conflicts, and run a post-task verification phase.",
+      "evidence": [
+        {
+          "resource": "repo://backend/internal/sync/engine.go#L555-L666",
+          "version": "repo-lines-v1:sha256:6f57b42c6e01a1238cd7343844581c829491d30a17cd0ef5aa1bc660dfc6102c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmNDY1NmM0ZGEzYzBmNWZiNzIwN2YwZmE3Mzk0NjQyNzI5YzMyYzMwZjZhNDRhZWMzZWJlOWUxYWI4NGI0YmI4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzOTdmOTc3N2M4MzA1OTFiNDc5NzE1YmE0ZmY0MDQwYWEzNDI3OWQ4NGJhZGM2ZjZjNWJkMGZiMWJjZjM3ZDFjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwOTc2MjcwM2Q5NjdlMDg4ZDdhNTcyNmQ5ODFjMTU3MmUyN2MxYWQwNDAzZjYzNzNhMmRhNDBlYjczYzJiM2FjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhMGM2MzU5ZDNiMTcxNjkxYzdmMDVjY2M2ZGNhYjhmNTFjZWM1Mjc0YmM4MjM0ZDc0NTY0M2ExMzM4NTk0NTBlIn0"
+        },
+        {
+          "resource": "repo://backend/internal/sync/engine.go#L788-L883",
+          "version": "repo-lines-v1:sha256:e5c387af765a59b13d2db9630430545fadc0d3ac0f52a2b96b7395c36885f1e8:eyJzZWxlY3RlZExpbmVDb3VudCI6OTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjODUxZDgxYjQ0MmM1NTU5MmY0MzBlN2I2Y2NiODIxYzkxYTRjNGE1YjE0ZmNhY2Y4ODNmYTdhMzBkYTc2OTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwZTE3ZDk0NDYzMTFiY2I4ODU5ZmEzYzE4MTNhNmQ5ZDU0ZGE1MDEzNmU0NGI3NzlkZDhkYWE4OGI5Njk1NTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIyZjJmZjVmZWVjNjBmNTg3YzhmYWU0ZTg3ZjgwOWE2NjFjZmZlZDZiNDdhYWU1ZjZkNmEyNjUzYWE4OTUyZWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE1NWIxM2VmMWIyNDg1Mjc4YjAyZTMxOGIxYTdlY2I4NDg0MTAyNGE4MzA5NDU1NGMwOTliMWNhOTQxN2EyYWMifQ"
+        },
+        {
+          "resource": "repo://backend/internal/sync/engine.go#L95-L130",
+          "version": "repo-lines-v1:sha256:feb53e904a381a0d1439c3f8cfc0856c4a8ac8a5f64efe7405a82cf28c1ca554:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzYjMzMTk0NGJiODU2NmI1NDBiMWIwY2I1YmNkMmNiMDg1MTA5N2RmMDk0NjQyNjg1N2Y1M2EzMmI0MmNhZjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZkMzhjZTFjOGNiMzY0N2JjNDA4NmQ3ZDRlNmZhY2IyYzIzNDE5YzIxOTRiNmZjOTE0OWJiY2VhNGYxYzRiMDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJjOWM4OGEyOTI2MTVmNmVjNGQzYzk3NDY5Mjk5ZWVhMzFkYjdlYTY1ZjI3NGI1MGE4ODU0Mzc2OTdiYjJiNDYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZkMTJlNzM3MzdlMTEyMWVkMGI2NDZlMjM1OGRkYmJkZTAzMTlhZmFjZmI0MDAxMWQ4MTdjODE2YTc2NzA4MzQifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.7.2",
+    "at": "2026-10-15T10:57:39.355Z"
+  }
+}

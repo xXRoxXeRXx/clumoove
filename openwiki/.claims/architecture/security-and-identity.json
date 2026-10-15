@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:b405283c97a3710c607d7da9e4a46d22a3483b510c791d9cb513b15114eff5b6",
+  "claims": [
+    {
+      "id": "claim_2b70dfac30b045a28e73e4bc3587c7b5",
+      "statement": "Protected API requests use JWT validation plus refreshed authorization state, while refresh tokens use Secure, HttpOnly cookies scoped to the authentication path.",
+      "evidence": [
+        {
+          "resource": "repo://backend/internal/auth/auth.go#L56-L187",
+          "version": "repo-lines-v1:sha256:6b9426b0dc4e595bc2775b17113de0767ab0cb6ca8a87c5c8eafff58a008dcd6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3OTU3N2JhYjc5ZjUzMTRhYzUzZDE4ODljNzBlNDk4YTY0ZTY0ODEzOWI4MzI0MGVjY2UyZWY2Zjg0N2NmNGM2IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI3ZjlkMDc0MzY3NDM4MWZkMTk5MDQyMjliZDQ0ZWIyZjJiNWZiOTk2MGY5NGQ0MGFmNmFjMTc1ZTkyOGU5YTUwIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2M2E4ZTIyNzMwOGY5ZGE2NThkMWIxNDYyMmYwZWRmNjlkMzc5MmU5ZWIxODI5OGExMWUxZTZjODllYmFiODkwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwNDc1ZWNiMDZjMmE5ZGM3MGY5NjczNjg4ZjMxMTEwOWExMGE1ZmY5MGQ5MzE0YjljNDVkZjZlYzBmZWNlNzFkIn0"
+        },
+        {
+          "resource": "repo://backend/internal/auth/middleware.go#L67-L180",
+          "version": "repo-lines-v1:sha256:2905f30f8a507babded38a1f72a5bfb978d814adb93ddc7c85f6a3fbe6cb842e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5NWQxZWM3OGNiNmJiNDJjN2Q2MTc2YWE4Y2E0MThlZDQ0N2I4ZGM3MGJhNzNhOGViM2VlZDg5ZjI0YTFkMzBiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmMTMzYTcwMGExNjllNDRjMmZmYzMzZDNlNjc5Y2Q5YWI0NzEwNWM4ZmRlNzhmYmI1YzM4MGE1Zjc1MTU4OThhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJmYzk3ZmIzMGE1NzdhMjZkNThhODViOWJjNjRiMTBhMWI0ZmFkNjY2N2I4Y2VhMGE0MWIyNGQzYTkwNmM4NTQxIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI4ZDMxNjM3ZWQ1Y2FhOWQ2NmI3ZDBjNTg5MGFmZGVlMmQ2YWYyZTM5YWJkZTdiY2JmNTM2MzllZTNhZDdiMDMxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_2118f9aa2c6143bda659aff5ea84bea5",
+      "statement": "Stored credentials are encrypted with AES-256-GCM under a key separate from the JWT signing key, with domains for different credential purposes.",
+      "evidence": [
+        {
+          "resource": "repo://backend/cmd/api/main.go#L74-L111",
+          "version": "repo-lines-v1:sha256:0dcf3698ada6537f981ca3d6082caf09ced278a0b5efc5dab885839a42630f8f:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE3OTgxZGFkODA4MjNkYWVjOWJlMWQ4ZDYzZDczOTJkZGYwMDhlZWJhOTRjYTBlODg5ZWM3MGI4MDJkMTZjNjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3Y2RhODJkYTYwNjIzOGUwNWU2MjM5OTU2OWM1ZWUwMzk5MzQxOTY0OGFlNWQ0M2EyYmY4Y2Q2MzQ3ZjgyNjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyZjFhZTQ5YmQ1YTM1ZDAzNjc4NzhkOTZiNmYzMzNhM2Y1MjE3NjQwODA0MTQ0ZDMyNDY3ZTkzYmI3Y2I2YmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM5ZTdlYmY3NTU4NDMxMWMzY2M5YWE3MDU3YmRjZDYyZTA5MjRhOTRlMTkzMWUzYjVlM2U0OTQ4MTY0MmE5OWUifQ"
+        },
+        {
+          "resource": "repo://backend/internal/crypto/crypto.go#L19-L102",
+          "version": "repo-lines-v1:sha256:9386a5914df6b7c204993a3473495ef43ea55862f3a537c9d4b474e521c7e68e:eyJzZWxlY3RlZExpbmVDb3VudCI6ODQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc5NzVhMmU2OGIyZTQwZmE3ZmRmNmE3OTEzNzdkNjM3MzIzZTI1OGI5MzAyNWM5OTU4MmE3ZmQ4NTk1OTQwM2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUxMGM4YTMzMmY0NjUxOTI5ZDJkZjg3MmExYjcxNWViM2ZlNmM3MDVkMzBhZjIwNjMwZTFhNTc1MTE3NzcxYTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc0OGE2N2I3MDNkMGIzNDgwYWYwZDdiYjRlMjc3ZTU0OGZmYjAxNTE5MTQwODc2NjE2ZDNlZjgxODVmM2MyODYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIwYTQyMjI4MjUyYzNiMTc4ZDk2Njg2NzkxZjMwYmVmNzllYjVkYjU2MTc3NjhlZTAzZTFlNTA1ZDUxMmNlZDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_abc52ec952ec47549a6c18fc49387d50",
+      "statement": "Provider network egress is validated to block unsafe destinations and protect against DNS rebinding, while API clients receive typed error codes.",
+      "evidence": [
+        {
+          "resource": "repo://backend/cmd/api/response.go#L77-L270",
+          "version": "repo-lines-v1:sha256:c42e8de51db3913325d0cd3eaae586453b42c9cfb40660c0c1bef5437e4ae7be:eyJzZWxlY3RlZExpbmVDb3VudCI6MTk0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkZWIzMjE5MzQ0YTY3ZDE5NzI2YzA2NGNhMWQzZTkxNTJiMzc0OTJkNDE0NTg1YWQxOTU1YmI1YzA5MDkwYmViIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIyYjAzNzc4YWJmMDM1ZDMxMjI3YmFiYTQxYzUzMjhlZTk5NzAzMWM2M2I1YmM2N2ExODlhYjk5OTQ4NTljZWYzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3N2M0Njg0YWVjNjE0OWI1YzJmNmE2MDgyMGJiNjYwZTExMDE0Y2ZlZDQwNGYzYmVhNTk0YzdiOTM4MzkzOGI3In0"
+        },
+        {
+          "resource": "repo://backend/internal/storage/ssrf.go#L87-L159",
+          "version": "repo-lines-v1:sha256:f108e89ad6d18ea219146c447fe9cc607bb732b55f47387d85cd2e0640a7bc65:eyJzZWxlY3RlZExpbmVDb3VudCI6NzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkwMWJlNmEyYjBmMjkxYmRhMzA5MTUxMzZlNDcyNTJkZjk4NDNkN2ViMDUzN2MzODdhNjExZjc2YmQ3NTRjZmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYxMjUzYWI5ZDVkZTY3NDJmZjljMDMzNWVlNTAwNTA3YTI2M2Y2Y2Q5ZWJmYzkxZDFmZDlmOTBjMjU5ZDJkZDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdkZjY3ZTRmOTU3ZDI1YzcxOWE4ZGMxNDdkM2ViZTMyODI1MGIyZTczNGM4MjA1NmMxOGM2YzlkMzI3NjgxMzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNkZDYxMzUwMTA1MDhkMGFkNWFhY2RkZDNhMmMxYmZhOWQwZjM3MDEzYzc1MGFjMTNjMjMxNzQ4YjViM2U5NmEifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.7.2",
+    "at": "2026-10-15T10:57:39.355Z"
+  }
+}

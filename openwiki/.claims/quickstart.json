@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:bec0a15e608a259d9d1b8558021d01ff45bdf3dde1e1ea62ec5a1c8efb7f2f20",
+  "claims": [
+    {
+      "id": "claim_0d49f0f80d504ec1aac43521cc12546c",
+      "statement": "The documented local development stack runs frontend, API, worker, PostgreSQL, and Redis, with development Compose exposing frontend port 3001 and API port 8001.",
+      "evidence": [
+        {
+          "resource": "repo://README.md#L157-L180",
+          "version": "repo-lines-v1:sha256:5ac6db5575ff9b1cd5621f38a0b9e9224683f5a7ae990f6ccbaba14549170a9d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRmYmZjOWQ2NThkMTM3MjE4NDlhODU0NjUxZDdjYjZjYWVmNWMyOWM5YTI2YzMxNWY1MGZmZjhlNTViODY2ZWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkZTJmNTMyOGVlNmU4MDUwZThhYWZkOGRjODY5YTA2OWNkOTU4NGVkYWFmNTRmZTU4OWQ3M2MzYjdkY2Q3OTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVkNjEwMjJhNDRiNzFkMTEwM2JkNjI1OTI3ZmE5NTA4NWU1YjMzN2EzYTdlODg2MmQ4MWRmOThiNmUzZWFlYjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc5NmI3OTE3YWI5YWMxNTdiMWYyZDk4OTE1ZDYzZmVkMmZhYjA3OGMwNDEzNjRlZmJlOWUzOGZkZTkwNTZjNGMifQ"
+        },
+        {
+          "resource": "repo://docker-compose.dev.yml#L1-L147",
+          "version": "repo-lines-v1:sha256:bb91dd2205a8af4cd67a606a60fc3e3f1b079ed3dde937f2282137a3cfa76f81:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQ3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmYTczZmNjZGM5OWVhODM1OTY3YzdkZWU3ZWZiZWQxZjNjYTg3MjYwZDkyOTMxODUwZmRkNjZkYThjYjEyZjFkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJlMzE4ODBhZmU4ZTU3OTlmNzIwNTU5Njg4YzI3OWI4NWFhMmE3NjBkNGMzMWRlMGRiOGRkODM1Y2JkMzJiNjBlIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_974af1b820194a94939a75d080d13f14",
+      "statement": "The environment template requires distinct encryption and JWT secrets and a deployment-specific Redis password, while OAuth client credentials are administrator configured.",
+      "evidence": [
+        {
+          "resource": "repo://.env.example#L16-L48",
+          "version": "repo-lines-v1:sha256:d772b12c3efcfdc30c6af321fd2fdd0c58cb73ba80e7c1463b0b1390dfd38685:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3MmI4Mjc2M2UyODQ0Nzc0MDQ3OTc4NTYzMDJmZDMyZjNhMjlkMjYwNjAxYWU0MDQ1MzZlOWMwZDVhZWY2YzIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc3ZTZjOTRjOTYzZjNiM2IxZjQ5Y2E2Yzc3MjY3ZDU0Zjc0ODRhOWQ1YTBjNDE3ZTI1ODg1ZjhmYzJlZjZkNjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiZjBjYTk1ZTQ5MWM4ZjI2MzhlMWU3M2FjYjI1ZWNiOGQ4Y2NjYmJiNTdjNGJjNWNhMjE3NzhhMzg1MzY5MGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxNzFiZTE1NTljMWVhMWUzZGY2YWY4Mzg3ZmMwMzhkNGY1OWQ0MWJiYjViMzViYWVkMDE4ZTY4ZjllYTBkMTMifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.7.2",
+    "at": "2026-10-15T10:57:39.355Z"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:0092253d8342dc5b0f689963815a7ec3c0c00a545be9e0d826ae6ef504642797",
+  "claims": [
+    {
+      "id": "claim_130c39ec2bfd4538b2fc769892b5ca03",
+      "statement": "Every storage provider must implement streaming file operations and explicitly declare atomic-rename and verification capabilities.",
+      "evidence": [
+        {
+          "resource": "repo://backend/internal/storage/provider.go#L190-L252",
+          "version": "repo-lines-v1:sha256:db471aa13e6886be17cbacc678b33974702a91287d79c266b630e40e55a6af39:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1YmFlYzEwZjA3MTk5NDRhMzVkNzZhMjI1MTdjNDdlZGYwMzMwNGUwMzhkNjIxZTEzOTM1MmMwMjYyMjI1ZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmMmQ0YmIxODM3NTBiNDMwNGRkYzFjYTc3ZWFiM2U2MWY0M2NhNzk0ZjdmZGU1ZWNkZTYxZTM1MTIwNzJhYjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAzZWZhYTBkZThmYmRlYmRkMDAwOTM3ZWZlNDgzMTU1YzlhNDA3ZjgxNWZkNDU4ZTdiZjk2YzE1OWI1YjM3YzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNkMDRhOGY5MmI0M2Y5ZWYwNWRiMWU5NGRkNWYzZjc4MDRiMjQ2ZGQxNTUwNWJmNzczNjZjMmEyODlhMjllYTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1f106acd3fac4f9f9fc05c72a739eeca",
+      "statement": "The factory uses an explicit provider registry and dispatches known provider types, rejecting unsupported types.",
+      "evidence": [
+        {
+          "resource": "repo://backend/internal/storage/factory.go#L30-L163",
+          "version": "repo-lines-v1:sha256:3fdff683d2a76359337c25bfe7bcf379631929768629bd6e449d9a0e13ed20bb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTM0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjNWJlNGFmZjcwMjM1NTUzODJiNDRkMzc0YzJhM2Y2NzRlYzc2OTJmNmI4MWFiNmM4N2VlZGZiY2E0Y2Q4OTAzIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiNTEyN2Y3YTE0MDZmOTg1NjM0YTU4MWE5OTY1MzhlZDJkMGU5OTg4YzgyZjQ3YmU3Y2IwZjZhMThhOTNlNTA3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3NmVlNTU0MTFkMWYwMGU0MDg3OWY0ZmNkZDgwZGI5MmQ4NDY2MGEyZWI3ZDExYTU1OTU2M2QyYzRlMjc1OTcxIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIxNGUwNWRiMDlkMGVlNzgzMDg3NTZkMzMwYzA0YTk5MWM0MzMwNzMwZDFjYmQ0NzExNTY5ZDQwOThiZDQxZGZmIn0"
+        },
+        {
+          "resource": "repo://backend/internal/storage/factory.go#L337-L382",
+          "version": "repo-lines-v1:sha256:5f888fd91497715a9ebb68a6938db621f4fd7529895a567c0ceb8c03b5bd9351:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiYjBkMjMyNDRiNmNmMjJmMDU0YWI3MTdlOWYxNjViNjY5ZTJhOWI1YmZlNDRjNmRiZGUyNTUzZjc4NGY0MjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRiYTVhY2E5ZDgwZmMyNTA0NmRmMTRiNTJkYjRlMDgyYmM3ZGQzYmFlNTgwM2I5NWQ2Mjc1Mjc4ODM5OTcxMzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a5467d38f81a410a974654f4eae87941",
+      "statement": "Provider errors and upload contexts preserve typed retry semantics and target identity/metadata for transfer verification.",
+      "evidence": [
+        {
+          "resource": "repo://backend/internal/storage/hash.go#L1-L36",
+          "version": "repo-lines-v1:sha256:eb218ddaacc7b389ac8f7c55edb75b289bca56926829dbf547db355b267046fc:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZmNzNjY2VkOTA0Yjc5MWM2MDVhNmI0OWI2YjkxYzllZmQ0NzVhNzY5MTkzNDBmYmRjNGY0OTY1ZmNlY2IyOWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://backend/internal/storage/provider.go#L135-L189",
+          "version": "repo-lines-v1:sha256:e94c307a6ef26c887d21eb0ba98226e1b7ece6b9b481c7d76d5d384be52a4396:eyJzZWxlY3RlZExpbmVDb3VudCI6NTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY0OWJmMDg2ZmZmZDYxZDBhNDViNjI3YjEwMzdjNmQ3NGIwZGVlMmNiYzliNmUzYmIzY2E0MDVkYmVkZjgyNmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0MzA1ZDdmZmU2YjY0NmNhYTJmMzhkNGJlNGU5OTVhY2U2ZTk2M2FhNDEzNDVmOTQyNTRiMmM2NGY0MThiYTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNjMTJlZTAwZmQzNzcxNDViMTJiOTg2NmZjNzcyYjdiNmFiZTBiYWZkYTRmODU3ZmU2OTVhZmI0ZGY4ZmUzM2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA3ZmI0OGIxYTU1MjQ0ZDgyYWIyM2EyNDZlNTRjMDYwOTczYTQ4OTZmZDY2ZWExMTlmMjQyNGU3YmM3NTgyMDgifQ"
+        },
+        {
+          "resource": "repo://backend/internal/storage/provider.go#L20-L85",
+          "version": "repo-lines-v1:sha256:9f27417e2623cff4ed585db84572a751e38ad97aec43d565d04f7a613d2e29cb:eyJzZWxlY3RlZExpbmVDb3VudCI6NjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjljNGE0N2U4NjMyZDAzNDUxZmIzMDdlY2Q3ZmVhMzMxZjJkYTNmZjdkZWQ3MjA4OThlZGEzNjA5ZDhhYzQ1NzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjViMmNkYzViZGUyNWE4MzNlMzA1OTFjZjJlOGJmYzhmZTkwODZmMzMwZWU1ODQwYmIyYjg5OTY0NjFiODZhNmMifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.7.2",
+    "at": "2026-10-15T10:57:39.355Z"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:b402e808250aaebc21799c01636fe7507f384cd6b71f8861d8746fce7abf48b1",
+  "claims": [
+    {
+      "id": "claim_aeb6d01e0bbc4f0aaf7a24b89555269e",
+      "statement": "Clumoove separates its React SPA, Go API, Go worker, PostgreSQL, Redis, and remote storage-provider responsibilities.",
+      "evidence": [
+        {
+          "resource": "repo://README.md#L137-L156",
+          "version": "repo-lines-v1:sha256:db94dac66f4b6ad23d8417db5eb556236ae614388b03a02fb6732e4aa4be4797:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiZTFhOGQ2MzU0NTQ3OTBmYTg2YjkxMzQ2MTdjZDYyNzg1ZDQzZmM0NmE4OTI2NTgyMTVlNjE0OGVhY2QwZTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjExM2NjOGVlM2RmMzM3ZGU4YmE5NDEzOWZjMDkwNjU0YjRmYTg2MzBlYTBhMWRlZDU4ZjE4Yzk0NjQ3OTIyM2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJmZDQwZjMyYjUwZjVkNjg0YWVkODRmZjI5MDM4M2FhNDE5ZGQyZWNiNWM1YjlmN2YwNzJhMTc5M2ZhYmRhNjcifQ"
+        },
+        {
+          "resource": "repo://docker-compose.yml#L1-L142",
+          "version": "repo-lines-v1:sha256:ddec3b1a5a6d2fe5dfb5a2ca89ab5e567dce48caef0fae0c1edbb3d9cfc0e487:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmYTczZmNjZGM5OWVhODM1OTY3YzdkZWU3ZWZiZWQxZjNjYTg3MjYwZDkyOTMxODUwZmRkNjZkYThjYjEyZjFkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJlMzE4ODBhZmU4ZTU3OTlmNzIwNTU5Njg4YzI3OWI4NWFhMmE3NjBkNGMzMWRlMGRiOGRkODM1Y2JkMzJiNjBlIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_8d954c59e50c4a72bce6fa85c97da705",
+      "statement": "The API initializes database, queue, indexing, synchronization, and scheduler-related services, while the worker runs transfer processing plus backup and restore coordinators.",
+      "evidence": [
+        {
+          "resource": "repo://backend/cmd/api/main.go#L1-L220",
+          "version": "repo-lines-v1:sha256:0f07f9fdabf0919110d855d4f1591c31c496300547ce9248b550ebe06986f9c6:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkZjFkMDM2Y2JiZjNkZjQ2ZTIwNDUwNzFlMDgyMjQ1ZWNlMjA0YzdmNTNlY2YwYTRlMDIyYmZmOWJiMjI4ZjQ3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwMWJhNDcxOWM4MGI2ZmU5MTFiMDkxYTdjMDUxMjRiNjRlZWVjZTk2NGUwOWMwNThlZjhmOTgwNWRhY2E1NDZiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1ZGI3ZGJjNWMzYTgxZTkyNGZlZDY5YmU3YTAyMWZhNjgwYTc1OGFmMDMyZWQzODgyMjE1Yjg3M2QzODQwMGJhIn0"
+        },
+        {
+          "resource": "repo://backend/cmd/worker/main.go#L1-L169",
+          "version": "repo-lines-v1:sha256:4ab2533eb3cb805163474271fbbc4fcb23729e63b76bcade0f1227f77b55c9d7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTY5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkZjFkMDM2Y2JiZjNkZjQ2ZTIwNDUwNzFlMDgyMjQ1ZWNlMjA0YzdmNTNlY2YwYTRlMDIyYmZmOWJiMjI4ZjQ3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.7.2",
+    "at": "2026-10-15T10:57:39.355Z"
+  }
+}

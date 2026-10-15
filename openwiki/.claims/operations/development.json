@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:4d5298a4e23ce1e9d883e5726dc5c72d43d8c02b8a635bd44965a51e46e3bbc4",
+  "claims": [
+    {
+      "id": "claim_a7847072f3cf48c59dba844409abfdf0",
+      "statement": "Repository guidance defines backend build/vet and frontend type-check, lint, and test commands, plus SQL, key-segregation, SSRF, typed-error, provider, and locale invariants.",
+      "evidence": [
+        {
+          "resource": "repo://AGENTS.md#L1-L49",
+          "version": "repo-lines-v1:sha256:789e6f3ba0b702954cd587323d0b587994be60f5da56eb9b8690c9020144d698:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjllOWI4Y2NiNzI0M2ZmZTJlN2QxYjVlZTM0YzU0MzcxYzliZjYzNzdjOGVkNTFhM2IyYzIwNmI5NGEzNGU5ZDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA5Zjc4NzE0ODkzYWE3Nzk0MmNlYTFjNGEyZTAyMzFkYmI3ZmEyYTQxYTcwYzgxNDYwYTNjNjc1NjJkYTNhYWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b9e6b69cafa643f18ae2e5c4a3026e0d",
+      "statement": "The frontend test runner uses jsdom and discovers TypeScript and TSX test or spec files below src.",
+      "evidence": [
+        {
+          "resource": "repo://frontend/package.json#L1-L45",
+          "version": "repo-lines-v1:sha256:5b315448cf105909272ee51f787df1316609471b07a2b9b4d032ad13a82084bf:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgzZWFlN2U2YTRkM2M3MWJjYzk2MzI4YzUxOWZiYTI5NDFlZTQ4Njk2OGE2ZDYzMjJmYjA4Y2ViNDRlM2VmZDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyMmZhYTUzNWJkMmVhM2Q1MmU3NDFlZDQ1NDQzNWI3ZmU0OWU4MzU4NmU5NDNkOThkODJiYmZiMjRkMWY1YzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://frontend/vitest.config.ts#L1-L9",
+          "version": "repo-lines-v1:sha256:18eeb5d9db41f083b789e4823aafcde6a07d229170686ca793c41771fdd105e9:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOGZjMzYzZWFjZmUzNjk1NjFhMDI3MGMxMWIxZDE5YTZkOTA1N2Y0MTRhODYyYTdkZDM0N2U1YTJjYTIwMjQ0NSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTNkZGVmNzI0Nzg2YjRhZjQ1YWI3Y2FkODFkMzc3YWU1NDNiYjc4NDEyOTY1NjhmYjUyMjY5OThhZWMyMTYzNCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_dfd1f58273d44978af04c4bf50019848",
+      "statement": "The README documents running API and worker commands alongside Vite for non-Docker local development.",
+      "evidence": [
+        {
+          "resource": "repo://README.md#L181-L202",
+          "version": "repo-lines-v1:sha256:e34c6ae516e4446cc76368c7a030a293ab0205c8b1a9a8f0210e5c3330183aa9:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExZDI4YTdhZWFiZjA0ODlkNjIxYzMzYzBjNjM3YWZjZTFlY2Q0M2ZiM2NjZjE0YjZkYzk5OTBlNGEyOTI3ODYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1ZWRhZDU2ZGI2M2QwNDc0YjM3YWQyYWJmYWE3YzczMzBiMmJlYzNiODBiNzI2NTczODEzZTAzZTFlYTM3ZjUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBmNGQ5NjlhNzkwYjBhZTFhY2U3M2Y0MjljNDg0OTFhM2Y1NmFkZGRhYmJkNTA3OTJiODdiNTMzNmE1Y2Y3YTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRmNjY3MDkwODZlMTI1ODk1MjdkZjE2NGExYTczNjI5YTMxYzgwZTNhNTkwZWY1ZDg3YjJlMmI2NjRjM2Y5OTYifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.7.2",
+    "at": "2026-10-15T10:57:39.355Z"
+  }
+}

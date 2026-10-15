@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:d9343264af860d291e6d264bebdae6485c37d48be0349d458553c405690fd7c2",
+  "claims": [
+    {
+      "id": "claim_65182d61f96b49e2b22c52f54498518d",
+      "statement": "The React entrypoint initializes i18n, StrictMode, and an error boundary, while App composes the product dashboards and lazily loads the file manager.",
+      "evidence": [
+        {
+          "resource": "repo://frontend/src/App.tsx#L1-L45",
+          "version": "repo-lines-v1:sha256:675e775040e882ad966393542608ff487de3bc4f77e342ccafe2007fcf5b60b8:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2NTMzZjRlZjIxNDI5Yzg1NGJjY2EzMzc4OGJkZmYwN2M0ZGVkNzMwOGI0Y2M0Yjc1Y2Q3MTg3YzY2MDc2MmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc4MjMyNzBhZTYwYWVlZGMyNWFjYzA1Yzc3OTI3OGU0MWI2YWE0YWExYTVlOTkxMmE5OTJhM2M4NTg2OWIyMzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdmYWE3YTQxY2E1NjQ3YmFlNGNhYTYyNTc4NDE1MWJhNDg0NjEyZWYyMTJiODQ4NDExZmQ0OTk3YTJlNDE4ZGEifQ"
+        },
+        {
+          "resource": "repo://frontend/src/App.tsx#L600-L740",
+          "version": "repo-lines-v1:sha256:60a6b20da6c983d152989b13d6474a3867b2e1021cb33ac302a988fcf9d8bce2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1ZmI4NzAxYjJjZmY2OTdhMjgxODdmMmE1YTRiYTY1ODZlMWMzM2U1MjY0ODBjZjY0MjJiOTRlODkzNzgyZTgyIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1NmM0ZDMzMTFkNGJkMzVhMDc0NDY4ZTRiZDExZDcyMzc0MzgyNTg1ZjU0N2EwZTgxZWYzYjlmMjVhOWNiMTc5IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzZDE0YWIzYjMxYzA1ZDg1MjM4YWQ4MjI4MjFhZGJmMjM1YjI1MDliZjE1NmU3MDU3NTYwNjBlOTc1YWQ4M2JkIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmYzhmYTA4YzYyMDhkNDRiMjBmNzE5MzQxMzNmZTViYzhlYjAxYzViOWExYzJjNTlhNzBkMGE2ZGFhZWM2ZDE0In0"
+        },
+        {
+          "resource": "repo://frontend/src/main.tsx#L1-L34",
+          "version": "repo-lines-v1:sha256:d69bae13bd319d96cc306da0c1183466df97bb4244e29270581d6e5af2e9224b:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU1ZTk0MDcwYTg5M2E1YmEzMTc1YTg2M2ZiM2JhZWRlNThlYjQwMzhkNDEzMWE0NjIzNDRkMDg0MjUwZTBjNTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhZmJhMDUyN2MzOTUzYzRiNmUwZTViNTczOWJhODM2MTJmODA1M2JjZGM5NDY2NzMwMTkzY2QxZDU5MGI0MDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2894a139564a482582df6ed16a16de29",
+      "statement": "The scoped API client refreshes authentication only for the configured API origin and normalizes failed JSON responses into machine-readable error codes.",
+      "evidence": [
+        {
+          "resource": "repo://frontend/src/utils/apiClient.ts#L1-L160",
+          "version": "repo-lines-v1:sha256:aa94a934801ceba28bac12989fec9a32b2576f76b8eca656f62210fe3b2bb85b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiM2ZjN2NmM2Y2MWM5OGJmZTU4M2NmZWFlZTA3ZjdjZmVmMjI2MWExYWZlZjFlYWI1NDUwZjEzM2EwZjY2M2Y3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwNjk1YTk1NjU0NzBhMzdkNWM3MTJlYjU3ZGNiODdkNDYwMGMyZDZlMzdiZTMxMzE0NzJjMDQ4MTkxN2ZhYjk1IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJjZDk0ZGExMGQ3YWJhOWZjZGNjMDRmYWZjZTVhZTY2YjMwMjgzNTZlYjMwYWE4MmM0MjU5Y2E5NTY5MDM4NzU4In0"
+        },
+        {
+          "resource": "repo://frontend/src/utils/apiClient.ts#L161-L267",
+          "version": "repo-lines-v1:sha256:09551a0a93d7057b0956b3a0486395acce3fe53190a617b0f5fb079474137e00:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJiODU3MmQwYjUzYThmN2M2YjM2OThiODY2MDIxOGFkYTMxZGM2MmZkNDE5MzA4ZTBmYjU2ZGFhYmQ2YTNmZWZlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIwYTJmYzE1NGZjMzczYjc4ZjdmZDA1OTgwM2U0ZDdiN2UyMjE1YTg0ZjE1MjhkYTI1NDYyMmQxOGZiNWZmOWM0IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_0229fb31e04f44fe88256f03157fafe3",
+      "statement": "Localization loads German and English catalogs, uses English fallback, and detects a language from local storage or browser preferences.",
+      "evidence": [
+        {
+          "resource": "repo://frontend/src/i18n.ts#L1-L30",
+          "version": "repo-lines-v1:sha256:9fb350e8b4a2f388a1fc5ad1ee1cd8d1a5521cbb7bf0f0fe7babbf2f39eb208e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjZjc2NTUyMzkxMmU3MzJiNWQzN2E1YWRiNjU5ZGJjMWE0ZGVjZTRkOWVjZGJmMjA5OTU2YTNhNDFiZmM1NTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJiNTU0YmI2ZjljOTI2ZGFiYjUxNDdiYzYzODQxYWU2ZTBkZTBhMjliZWJjYTg3YzEyMDhkYjM0NzNiMmZjNmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.7.2",
+    "at": "2026-10-15T10:57:39.355Z"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:ac4144ad0a576f418e776de4e7aec622ed7369282ccef61835d73bffde0065f1",
+  "claims": [
+    {
+      "id": "claim_8aaa8ea38e0c471ea1bf5af6a0ecdc45",
+      "statement": "Production Compose defines PostgreSQL, Redis, API, migration worker, and frontend services, with database and Redis persistence on internal networking.",
+      "evidence": [
+        {
+          "resource": "repo://docker-compose.yml#L1-L142",
+          "version": "repo-lines-v1:sha256:ddec3b1a5a6d2fe5dfb5a2ca89ab5e567dce48caef0fae0c1edbb3d9cfc0e487:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmYTczZmNjZGM5OWVhODM1OTY3YzdkZWU3ZWZiZWQxZjNjYTg3MjYwZDkyOTMxODUwZmRkNjZkYThjYjEyZjFkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJlMzE4ODBhZmU4ZTU3OTlmNzIwNTU5Njg4YzI3OWI4NWFhMmE3NjBkNGMzMWRlMGRiOGRkODM1Y2JkMzJiNjBlIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_6399e8b9c04544b09dc3ca12bc71dcec",
+      "statement": "Deployment configuration requires distinct encryption and JWT keys plus a non-default Redis password, and documents proxy, private-egress, frontend-origin, and concurrency controls.",
+      "evidence": [
+        {
+          "resource": "repo://.env.example#L1-L115",
+          "version": "repo-lines-v1:sha256:c495425704339495bdf2bb1c8d716b43f592bd2f3501708bfc6a956a34a51291:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwM2E2MjE1M2I0MzIwM2E4ODU5NjQzNDhlODY2ZjM2ZjFkYzE2M2E1MmQzMjA1ZDMwMzNlMWRjZWMzNTFiM2E4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI3MzY4YmJkMTRiZmQzNDAzODUzODU4MTZhNzk0Y2ZiZGMyNDBlYzgyY2JjNDk3ZTNhYWM5YzRjN2EwNDU4YmIzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_2b9dc5c3bd5d4c059e24b6b3466934d7",
+      "statement": "Development Compose uses Air-based Go reload and Vite for the frontend, whereas the worker receives dedicated task and backup/restore concurrency limits.",
+      "evidence": [
+        {
+          "resource": "repo://docker-compose.dev.yml#L1-L147",
+          "version": "repo-lines-v1:sha256:bb91dd2205a8af4cd67a606a60fc3e3f1b079ed3dde937f2282137a3cfa76f81:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQ3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJmYTczZmNjZGM5OWVhODM1OTY3YzdkZWU3ZWZiZWQxZjNjYTg3MjYwZDkyOTMxODUwZmRkNjZkYThjYjEyZjFkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJlMzE4ODBhZmU4ZTU3OTlmNzIwNTU5Njg4YzI3OWI4NWFhMmE3NjBkNGMzMWRlMGRiOGRkODM1Y2JkMzJiNjBlIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MCwicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://docker-compose.yml#L70-L110",
+          "version": "repo-lines-v1:sha256:15f7ec0cd5eb69c0c92954bd669658b043d721baf622d5b8baefea882979af5f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg2YjEwZDlhMjBiMzI4NGIzNjQ5N2EyYTE5ZmVlNmY2ZDVjYTQxYTc4YjVlMWUyNDhjZGViNGM2YmRkYjY3OWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwZDk4ZTAwY2MyOTI5YmEyNWU3NzAyZTRmZjJlY2E0MGJmMGM4Zjg0ZTJlOGY4MDVjYzgyNDM2YjAxNmU0ZjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJhOTlhMDU4YTgwMWE5ODM0ZGU3MDUyNzEyYTdjNWIzM2Q3NTY1MzRjYjM1ZDJkMTkxYWU3NGQ0MWEzNzI2ODMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFjMzkwN2QyOWE1ZWUzNDZhNzgzMTNhMDU3MjkxODFjYjRjMTMwZWEzZDViNzBhMjQzOGYwMTU0YWVhYjFkMDcifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.7.2",
+    "at": "2026-10-15T10:57:39.355Z"
+  }
+}

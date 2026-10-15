@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:c6ef7b528f0a50a200ec7cd55fbda400fd3f4b950117a7130899c4b85a946b29",
+  "claims": [
+    {
+      "id": "claim_82bc1b95aa5242549853e49cb9e0521d",
+      "statement": "Backup handlers enforce ownership and expose backup runs, snapshots, verification, and restore-preview lifecycle endpoints.",
+      "evidence": [
+        {
+          "resource": "repo://backend/cmd/api/backup_handlers.go#L122-L399",
+          "version": "repo-lines-v1:sha256:08b525343e07b91fef956cb7ebcc1d0754187c33c9fbd4a711f06ad5ed790937:eyJzZWxlY3RlZExpbmVDb3VudCI6Mjc4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI4ZmU4YWRkOTEzNDJmYWY1NTA4MmE3ZDI1YWRmYmZhYjkxNjBlZjdmMGM2N2UxMmE1ZGQ0OGFkMzk5Y2FmNDE5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJmOTIyOGIxNTMzNjNmYjRhMmMzY2MyZWIwMGI4N2U5M2U3NWY5NmU1YTQyNTQwN2M0ZWIyNmM5N2EyZWIwM2I5IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiODA3MzA0M2FjMDcxODQzYzljNTE4MDYzNzFiMzdhZTIwMGVmOGY4ODczZjY1ODk4MmQ3ZDUyNjBhNzI2OTRiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhMjUzZDQwYzQ5YjAzNTFmOWVjNTk1NGVmYzQwZTA5MzBhMWZjNDExY2IwNTkwMzJlYWUwYzg2Zjc0NzNmODQzIn0"
+        },
+        {
+          "resource": "repo://backend/cmd/api/backup_handlers.go#L773-L1016",
+          "version": "repo-lines-v1:sha256:5b761608a9953eaca33d5d676e0b101fc74da6b29c3a102a374c13b8e8146f10:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQ0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyOGQ3ZjIyY2U5MzcyNjMyYThiNWVhZjg5ODM3NjZlYTMwN2I2ZWZmMTRlNTA0NjkyNWFjN2U1ZGZjZWRiODJkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI4YmQxYzI1Y2NhMGVjM2M3MzI3M2ZlMzdiZDUzMDQwNzI5M2VjODE4NDk2MmFmMzllYzZhMjUwZWFlZjE3MDUyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2ZWYyOTZjNDA5MWI5MmQ2ZTg1YjA0YjQ1YmYyMzhiYzVmYzllMTg3ZjkwYjMzYjkxZmY1OGRmMDI2OGIzZTYxIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhNTZkYTEwYWY4ZDM3MjJhZmI5ZTA4ZjBkN2Y5MzUyNjM5YmY2MzBhYTZjMTAxNjRkMmU2Nzc2YzBiYmE3NTliIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_5fb808af75a94c65a82d83127d4ee098",
+      "statement": "Restore processing claims previews and items, renews leases by heartbeat, and reconstructs files with range reads when supported.",
+      "evidence": [
+        {
+          "resource": "repo://backend/internal/restore/coordinator.go#L31-L83",
+          "version": "repo-lines-v1:sha256:483e5c5edabb7e34bf06f505672d61451a7638b163472d1d8d885e41eb223f0a:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNkNzdkM2EyMGU2Zjk4ODQwOTY5ZTc4N2IzNWM2NjU0MzQ5NDhhNjZjNzI3NmM2ODY2MTQ3NGFkZmNjOTMzOTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNlNjU1MmRlYjdkMTRlMmUxOGVkM2U4ZjcyNTg0Y2JjM2U4MmQzZTYyYjZkYzczMjBiYTQyNjI2YTI0NWJkMzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE0MmIxMmIyZjhlMWNmOTJjZmRiYmZkYWNmNzMwMzI2NTE0ZWU3ZTY2ZTA1Y2ZjZGQ1ODAwMTFkYjU4NjY1YzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZlNTgwNTllYjliYTRiODg4MDY5YzcyMWY5YWVkOWRkMjYyNjcwYmRlNmY5MTcxZWEyOTU3NGE4NWVhMmMxZjIifQ"
+        },
+        {
+          "resource": "repo://backend/internal/restore/coordinator.go#L316-L350",
+          "version": "repo-lines-v1:sha256:799c36380e45d306a3bc3beb631aab5355fe78bec06fc49a960f3aca3813dfa6:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0OTY0YjUwNWVlZTg2NDExZDU1MjdmNzljOTdkYTMzOTBkZGYxZTA2ZDg1MTU4ZjcwM2ViNjgwZGVhZjNjNjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM0YTkyMWQ5OTI4Y2FiNWM1NjBhNTZhMmIxNDJiNDFiMGFjY2Y1Mjc1YmIxNTBiYjJhNDUxMjc0YjBhOTY2MzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhmOGMxZDViZjYwYjU2YzE1NjdjOTlkN2YxMTlkM2Q5OWU0MjM1YzU1ZGVjZmE4MTRlZGMwNjc3MDM1ZTRmZGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFmNGJmZjc5NzY4ZmQxMzNmMGM2YzYzMzQ0M2E5ZDFlYzExNTY1MGVhZGE3MDJhMTg1NzMzNzk3MDEwNmRhNTUifQ"
+        },
+        {
+          "resource": "repo://backend/internal/restore/coordinator.go#L429-L628",
+          "version": "repo-lines-v1:sha256:642619b5626bd5629ac6eafa8df30814775f158f6636abbd892c904ccd7e3be0:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5NjMyY2ExNGE1NGRhMzMyYjRlYzU1ZTI3YjZhM2M4OWNkZjY0NmJmNjEzMzU0Nzg5NmZmNTg5NTc5YTEzMTA5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIxZWRmMzdjZWZlNmQyZDk0NGZjMmNlNGEyYzUwNWMxOTI1MzQ4MTM4NTZmNmQxNzQxMjYzNDA1M2RhYjlmNzM3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhNjc4NjAzZWRkYjBlYTYyNzQxNTkwMTQzNTdkYmYzOWNjNzEwOWQyNjNlZGVhMzg5MDYwOGQ4NzlkMGY2NmMzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3YTdmZjdhYmExYzY5MjQ2MWY0NTg2YjA2ZDc3MTVjNmZlMTU0MDEyZDI3MmNjNzRiNTMyZDM0NmRlNmJmNzRiIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_56df1f3c6d1e401180f046f163c78fb2",
+      "statement": "Backup coordinator tests verify that snapshot file catalogs reject incomplete packs and invalid block recipes.",
+      "evidence": [
+        {
+          "resource": "repo://backend/internal/backup/coordinator_test.go#L776-L838",
+          "version": "repo-lines-v1:sha256:a8f31f48278edfd462666468319597de769226f3cd9b7e54c3ae1c3114c2be97:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJhOGE4ZTJlNjQ5OWI5NGNkYzkzMjVlZGQzYWI0MTc3MjgxOTQxNmNlOWY3ZmI1OWViZDI0ZWMwYzdjYjQwOTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4NGJjZDc3MDIxNDBlYjk1NTQ2NDEwMWVmZjU3ODFjZWY0OTM3NDhiOGRjZDUxNzBjZjA5OTNiNDRhMTcyOTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI5NGQ4ZWYyOWEzNzZkNjA1ODY3NTEwZjY4ZWM0ZGMxMjgwNWU1MGE3NTk5ZmFjM2E3YjZkMmQ3OTY2YThjMDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ5NWM1YmJmMGNhZWIzMzk2NDczNjRjYzNlZWRkN2QwNzdhMTY5Zjg0OTg3YWRkODM4NDVjNzI1ZWQwYWZhY2YifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.7.2",
+    "at": "2026-10-15T10:57:39.355Z"
+  }
+}
