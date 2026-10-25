@@ -31,6 +31,12 @@ export function updateSyncBandwidth(request: SyncRequest & { limitMbps: number }
   });
 }
 
+export function updateSyncBandwidthResponse(request: SyncRequest & { limitMbps: number }): Promise<Response> {
+  return apiFetch(url(request, '/bandwidth'), {
+    method: 'PUT', headers: jsonAuth(request.token), body: JSON.stringify({ limit_mbps: request.limitMbps }),
+  });
+}
+
 export function updateSyncThreads(request: SyncRequest & { threads: number }): Promise<ApiJsonResult<void>> {
   return apiJson(url(request, '/threads'), {
     method: 'PUT', headers: jsonAuth(request.token), body: JSON.stringify({ threads: request.threads }),
@@ -54,4 +60,21 @@ export function syncStreamUrl(apiUrl: string): string {
 
 export function syncErrorsUrl(request: SyncRequest): string {
   return url(request, '/errors');
+}
+
+export function browseSyncDirectory(request: SyncRequest & { role: 'source' | 'target'; path: string }): Promise<Response> {
+  const params = new URLSearchParams({ role: request.role, path: request.path });
+  return apiFetch(`${url(request, '/browse')}?${params}`, { headers: auth(request.token) });
+}
+
+export function createSyncDirectory(request: SyncRequest & { role: 'target'; path: string; name: string }): Promise<Response> {
+  return apiFetch(url(request, '/mkdir'), { method: 'POST', headers: jsonAuth(request.token), body: JSON.stringify({ role: request.role, path: request.path, name: request.name }) });
+}
+
+export function updateSyncScope(request: SyncRequest & { scope: Record<string, unknown> }): Promise<Response> {
+  return apiFetch(url(request, '/scope'), { method: 'PUT', headers: jsonAuth(request.token), body: JSON.stringify(request.scope) });
+}
+
+export function updateSyncSchedule(request: SyncRequest & { intervalMinutes: number }): Promise<Response> {
+  return apiFetch(url(request, '/schedule'), { method: 'PUT', headers: jsonAuth(request.token), body: JSON.stringify({ interval_minutes: request.intervalMinutes }) });
 }

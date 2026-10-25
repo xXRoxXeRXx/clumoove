@@ -16,7 +16,7 @@ import type { CloudFile, SyncJob } from "../types";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useApiError } from "../utils/apiError";
 import { useFormat } from "../utils/format";
-import { apiFetch } from "../utils/apiClient";
+import { browseSyncDirectory, createSyncDirectory, updateSyncBandwidthResponse, updateSyncSchedule, updateSyncScope } from '../api/sync';
 import { logger } from "../utils/logger";
 import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { SyncOptionsForm } from "./SyncOptionsForm";
@@ -117,10 +117,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
 
       setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
       try {
-        const res = await apiFetch(
-          `${apiUrl}/api/sync/${job.id}/browse?role=source&path=${encodeURIComponent(folderPath)}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
+        const res = await browseSyncDirectory({ apiUrl, token, syncId: job.id, role: 'source', path: folderPath });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           throw new Error(body?.error_code ? translateApiError(body.error_code) : t("fileBrowser.errors.loadDir"));
@@ -147,10 +144,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
       setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
       setTargetError(null);
       try {
-        const res = await apiFetch(
-          `${apiUrl}/api/sync/${job.id}/browse?role=target&path=${encodeURIComponent(folderPath)}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
+        const res = await browseSyncDirectory({ apiUrl, token, syncId: job.id, role: 'target', path: folderPath });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           throw new Error(body?.error_code ? translateApiError(body.error_code) : t("fileBrowser.errors.loadTarget"));
@@ -203,11 +197,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
     if (!newFolderName.trim() || creatingFolder) return;
     setCreatingFolder(true);
     try {
-      const res = await apiFetch(`${apiUrl}/api/sync/${job.id}/mkdir`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ role: "target", path: parentPath, name: newFolderName.trim() }),
-      });
+      const res = await createSyncDirectory({ apiUrl, token, syncId: job.id, role: 'target', path: parentPath, name: newFolderName.trim() });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.success) {
         throw new Error(body?.error_code ? translateApiError(body.error_code) : t("fileBrowser.mkdirFailed"));
@@ -268,17 +258,13 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
     try {
       // Scope changes are committed independently by the API. Keep the parent in
       // sync if a later optional update fails so it never shows stale settings.
-      const scopeRes = await apiFetch(`${apiUrl}/api/sync/${job.id}/scope`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
+      const scopeRes = await updateSyncScope({ apiUrl, token, syncId: job.id, scope: {
           selected_paths: pathsToMigrate,
           target_dir: targetDir,
           conflict_strategy: conflictStrategy,
           direction: direction,
           delete_propagation: deletePropagation,
-        }),
-      });
+        } });
       if (!scopeRes.ok) {
         const body = await scopeRes.json().catch(() => ({}));
         throw new Error(body?.error_code ? translateApiError(body.error_code) : t("sync.createFailed"));
@@ -292,11 +278,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
       });
 
       if (intervalMinutes !== (job.interval_minutes ?? 15)) {
-        const schedRes = await apiFetch(`${apiUrl}/api/sync/${job.id}/schedule`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ interval_minutes: intervalMinutes }),
-        });
+        const schedRes = await updateSyncSchedule({ apiUrl, token, syncId: job.id, intervalMinutes });
         if (!schedRes.ok) {
           const body = await schedRes.json().catch(() => ({}));
           throw new Error(body?.error_code ? translateApiError(body.error_code) : t("sync.createFailed"));
@@ -305,11 +287,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
       }
 
       if (bandwidthLimit !== (job.bandwidth_limit_mbps ?? 0)) {
-        const bwRes = await apiFetch(`${apiUrl}/api/sync/${job.id}/bandwidth`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ limit_mbps: bandwidthLimit }),
-        });
+        const bwRes = await updateSyncBandwidthResponse({ apiUrl, token, syncId: job.id, limitMbps: bandwidthLimit });
         if (!bwRes.ok) {
           const body = await bwRes.json().catch(() => ({}));
           throw new Error(body?.error_code ? translateApiError(body.error_code) : t("sync.createFailed"));
