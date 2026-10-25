@@ -3,8 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { EyeIcon as Eye, EyeSlashIcon as EyeOff } from './icons';
 import type { User as UserType } from '../types';
 import { useApiError } from '../utils/apiError';
-import { apiFetch } from '../utils/apiClient';
-import { getAuthSettings, getPasswordResetAvailabilityResponse, requestPasswordResetResponse, submitTotpResponse } from '../api/auth';
+import { authenticate, changePasswordWithSession, getAuthSettings, getPasswordResetAvailabilityResponse, requestPasswordResetResponse, setupAdmin, submitTotpResponse } from '../api/auth';
 import { logger } from '../utils/logger';
 
 interface AuthFormProps {
@@ -180,15 +179,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       return;
     }
     try {
-      const response = await apiFetch(`${apiUrl}/api/auth/change-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${mustChangeSession}`,
-        },
-        credentials: 'include',
-        body: JSON.stringify({ new_password: newPassword, confirm_password: confirmNewPassword }),
-      });
+      const response = await changePasswordWithSession({ apiUrl, session: mustChangeSession, newPassword, confirmPassword: confirmNewPassword });
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as { error_code?: string };
         throw new Error(translateApiError(data.error_code));
@@ -478,19 +469,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
     }
 
     try {
-      const response = await apiFetch(`${apiUrl}/api/auth/setup-admin`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          email: trimmedEmail,
-          password,
-          display_name: trimmedName,
-			language,
-        }),
-      });
+      const response = await setupAdmin({ apiUrl, email: trimmedEmail, password, displayName: trimmedName, language });
 
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as { error_code?: string };
@@ -632,20 +611,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       return;
     }
 
-    const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
     const payload = isLogin
       ? { email: trimmedEmail, password }
 		: { email: trimmedEmail, password, display_name: displayName.trim(), language };
 
     try {
-      const response = await apiFetch(`${apiUrl}${endpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify(payload),
-      });
+      const response = await authenticate({ apiUrl, mode: isLogin ? 'login' : 'register', payload });
 
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as { error_code?: string };

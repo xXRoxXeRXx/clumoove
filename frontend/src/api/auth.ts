@@ -31,6 +31,26 @@ export function submitTotpResponse(request: AnonymousAuthRequest & { tempSession
   });
 }
 
+export function changePasswordWithSession(request: AnonymousAuthRequest & { session: string; newPassword: string; confirmPassword: string }): Promise<Response> {
+  return apiFetch(`${request.apiUrl}/api/auth/change-password`, {
+    method: 'POST', credentials: 'include', headers: { ...json, Authorization: `Bearer ${request.session}` },
+    body: JSON.stringify({ new_password: request.newPassword, confirm_password: request.confirmPassword }),
+  });
+}
+
+export function setupAdmin(request: AnonymousAuthRequest & { email: string; password: string; displayName: string; language: 'de' | 'en' }): Promise<Response> {
+  return apiFetch(`${request.apiUrl}/api/auth/setup-admin`, {
+    method: 'POST', credentials: 'include', headers: json,
+    body: JSON.stringify({ email: request.email, password: request.password, display_name: request.displayName, language: request.language }),
+  });
+}
+
+export function authenticate(request: AnonymousAuthRequest & { mode: 'login' | 'register'; payload: Record<string, string> }): Promise<Response> {
+  return apiFetch(`${request.apiUrl}/api/auth/${request.mode}`, {
+    method: 'POST', credentials: 'include', headers: json, body: JSON.stringify(request.payload),
+  });
+}
+
 export function requestPasswordReset(request: AnonymousAuthRequest & { email: string }): Promise<ApiJsonResult<void>> {
   return apiJson(`${request.apiUrl}/api/auth/forgot-password`, {
     method: 'POST', headers: json, body: JSON.stringify({ email: request.email }),
