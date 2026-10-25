@@ -38,6 +38,7 @@ import { useDestinationPicker } from './useDestinationPicker';
 import { useCrossProfileTransfers } from './useCrossProfileTransfers';
 import { useFileManagerNavigation } from './useFileManagerNavigation';
 import { useFileManagerEntryPresentation } from './useFileManagerEntryPresentation';
+import { useFileManagerSelection } from './useFileManagerSelection';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
 
@@ -70,10 +71,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const translateApiError = useApiError();
   const [error, setError] = useState('');
   const [downloadingRef, setDownloadingRef] = useState<string | null>(null);
-  const [selectedRefs, setSelectedRefs] = useState<Set<string>>(() => new Set());
-  const resetSelection = useCallback(() => setSelectedRefs(new Set()), []);
+  const resetSelectionRef = useRef<() => void>(() => {});
+  const resetSelection = useCallback(() => resetSelectionRef.current(), []);
   const navigation = useFileManagerNavigation({ apiUrl, token, profileId, initialBreadcrumbs, translateApiError, onError: setError, onResetSelection: resetSelection });
   const { profiles, profilesLoading, entries, entriesLoading, loadingMore, capabilities, breadcrumbs, nextCursor, selectedProfile, currentRef, setBreadcrumbs, loadEntries, loadMore, abort: abortNavigation } = navigation;
+  const selection = useFileManagerSelection(entries);
+  resetSelectionRef.current = selection.resetSelection;
+  const { selectedRefs, selectedEntries, allLoadedSelected, someLoadedSelected, isSelectionMode, toggleSelection, toggleAll: toggleSelectAll } = selection;
   const [batchOperation, setBatchOperation] = useState<'copy' | 'move' | null>(null);
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
@@ -274,11 +278,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     };
   }, [isBreadcrumbMenuOpen]);
 
-  const selectedEntries = entries.filter((entry) => selectedRefs.has(entry.ref));
-  const allLoadedSelected = entries.length > 0 && entries.every((entry) => selectedRefs.has(entry.ref));
-  const someLoadedSelected = entries.some((entry) => selectedRefs.has(entry.ref));
-  const isSelectionMode = selectedRefs.size > 0;
-
   const { viewMode, setView: handleViewModeChange, sortField, sortDirection, sortBy, sortedEntries } = useFileManagerEntryPresentation(entries);
 
   useEffect(() => {
@@ -306,7 +305,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     if (entry.kind !== 'directory' || !capabilities.browse) return;
     setIsBreadcrumbMenuOpen(false);
     setBreadcrumbs((current) => [...current, { ref: entry.ref, name: entry.name }]);
-    setSelectedRefs(new Set());
+    resetSelection();
     void loadEntries(entry.ref);
   };
 
@@ -324,7 +323,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     const parentBreadcrumbs = breadcrumbs.slice(0, -1);
     const parentRef = parentBreadcrumbs[parentBreadcrumbs.length - 1]?.ref ?? null;
     setBreadcrumbs(parentBreadcrumbs);
-    setSelectedRefs(new Set());
+    resetSelection();
     void loadEntries(parentRef);
   };
 
@@ -339,7 +338,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     const targetBreadcrumbs = breadcrumbs.slice(0, index + 1);
     const targetRef = targetBreadcrumbs[targetBreadcrumbs.length - 1]?.ref ?? null;
     setBreadcrumbs(targetBreadcrumbs);
-    setSelectedRefs(new Set());
+    resetSelection();
     void loadEntries(targetRef);
   };
 
@@ -357,14 +356,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     setDownloadingRef(null);
   };
 
-  const toggleSelection = (ref: string) => {
-    setSelectedRefs((current) => {
-      const next = new Set(current);
-      if (next.has(ref)) next.delete(ref); else next.add(ref);
-      return next;
-    });
-  };
-
   const handleEntryClick = (entry: FileEntry, event?: React.MouseEvent | React.KeyboardEvent) => {
     if (isSelectionMode || event?.ctrlKey || event?.metaKey) {
       toggleSelection(entry.ref);
@@ -374,15 +365,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     if (isInteractive) {
       openEntry(entry);
     }
-  };
-
-  const toggleSelectAll = () => {
-    setSelectedRefs((current) => {
-      const next = new Set(current);
-      if (allLoadedSelected) entries.forEach((entry) => next.delete(entry.ref));
-      else entries.forEach((entry) => next.add(entry.ref));
-      return next;
-    });
   };
 
   const selectedCan = (action: 'download' | 'delete' | 'copy' | 'move') => selectedEntries.length > 0 && selectedEntries.every((entry) => action === 'download'
@@ -406,7 +388,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     if (result.ok === false) setError(translateApiError(result.errorCode));
     else {
       setBatchResults(result.data.results);
-      setSelectedRefs(new Set());
+      resetSelection();
       void loadEntries(currentRef);
     }
   };
@@ -501,7 +483,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       const result = await startCrossProfileFileTransfer(apiUrl, token, profileId, refs, destinationPicker.profileId, destinationRef, batchOperation, strategy);
       setBatchBusy(false);
       if (result.ok === false) setMutationError(translateApiError(result.errorCode));
-      else { setBatchOperation(null); setBatchConflictRefs([]); setConflictStrategies(null); setSelectedRefs(new Set()); void loadEntries(currentRef); }
+      else { setBatchOperation(null); setBatchConflictRefs([]); setConflictStrategies(null); resetSelection(); void loadEntries(currentRef); }
       void loadTransfers();
       return;
     }
@@ -526,7 +508,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     setBatchOperation(null);
     setBatchConflictRefs([]);
     setConflictStrategies(null);
-    setSelectedRefs(new Set());
+    resetSelection();
     setBatchBusy(false);
     setMutationError('');
 
@@ -872,7 +854,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 relative z-10">
                     <button
                       type="button"
-                      onClick={() => setSelectedRefs(new Set())}
+                      onClick={resetSelection}
                       className="ui-icon-button p-1.5 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] shrink-0"
                       title={t('files.clearSelection')}
                       aria-label={t('files.clearSelection')}
