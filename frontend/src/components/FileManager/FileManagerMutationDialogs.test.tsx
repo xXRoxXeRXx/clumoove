@@ -23,6 +23,128 @@ describe('FileManagerMutationDialogs', () => {
     container.remove();
   });
 
+  function makeProps(overrides: Partial<FileManagerMutationDialogsProps> = {}): FileManagerMutationDialogsProps {
+    return {
+      t: (key) => key,
+      profiles: [],
+      selectedEntries: [],
+      renameEntry: null,
+      renameName: '',
+      mutationEntry: null,
+      mutationOperation: null,
+      batchOperation: null,
+      batchConflictRefs: [],
+      conflictStrategies: null,
+      mutationError: '',
+      mutationBusy: false,
+      batchBusy: false,
+      destinationPicker: {
+        profileId: 'profile-1',
+        breadcrumbs: [{ ref: null, name: 'Root' }],
+        entries: [],
+        loading: false,
+        onProfileChange: vi.fn(),
+        onBreadcrumbSelect: vi.fn(),
+        onDirectorySelect: vi.fn(),
+      },
+      dialogRefs: {
+        rename: { current: null },
+        renameCancel: { current: null },
+        picker: { current: null },
+        pickerCancel: { current: null },
+        conflict: { current: null },
+        conflictCancel: { current: null },
+      },
+      onRenameNameChange: vi.fn(),
+      onClose: vi.fn(),
+      onExecuteMutation: vi.fn(),
+      onExecuteBatchMutation: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it('submits and closes the rename dialog through its caller callbacks', () => {
+    const onExecuteMutation = vi.fn();
+    const onClose = vi.fn();
+    const props = makeProps({
+      renameEntry: {
+        ref: 'sealed:rename-me', name: 'old-name.txt', display_path: '/old-name.txt', kind: 'file', size: 1, allowed_actions: [],
+      },
+      renameName: 'new-name.txt',
+      onExecuteMutation,
+      onClose,
+    });
+
+    act(() => root.render(<FileManagerMutationDialogs {...props} />));
+
+    const dialog = document.body.querySelector('[aria-labelledby="rename-entry-title"]');
+    expect(dialog).not.toBeNull();
+    const buttons = Array.from(dialog!.querySelectorAll('button'));
+    act(() => buttons.find((button) => button.textContent === 'files.rename')?.click());
+    act(() => buttons.find((button) => button.textContent === 'common.cancel')?.click());
+
+    expect(onExecuteMutation).toHaveBeenCalledWith();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('filters selected entries and delegates picker navigation to its caller', () => {
+    const onProfileChange = vi.fn();
+    const onBreadcrumbSelect = vi.fn();
+    const onDirectorySelect = vi.fn();
+    const selectedDirectory = {
+      ref: 'sealed:selected', name: 'Selected', display_path: '/Selected', kind: 'directory' as const, size: 0, allowed_actions: [],
+    };
+    const destination = {
+      ref: 'sealed:destination', name: 'Destination', display_path: '/Destination', kind: 'directory' as const, size: 0, allowed_actions: [],
+    };
+    const props = makeProps({
+      mutationEntry: { ref: 'sealed:source', name: 'source.txt', display_path: '/source.txt', kind: 'file', size: 1, allowed_actions: [] },
+      mutationOperation: 'copy',
+      selectedEntries: [selectedDirectory],
+      destinationPicker: {
+        profileId: 'profile-1',
+        breadcrumbs: [{ ref: null, name: 'Root' }, { ref: 'sealed:current', name: 'Current' }],
+        entries: [selectedDirectory, destination],
+        loading: false,
+        onProfileChange,
+        onBreadcrumbSelect,
+        onDirectorySelect,
+      },
+    });
+
+    act(() => root.render(<FileManagerMutationDialogs {...props} />));
+
+    expect(Array.from(document.body.querySelectorAll('button')).some((button) => button.textContent === 'Selected')).toBe(false);
+    const destinationButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Destination');
+    expect(destinationButton).toBeDefined();
+    expect(document.body.textContent).not.toContain('files.conflictOverwrite');
+
+    act(() => destinationButton?.click());
+    act(() => Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent === 'Root /')?.click());
+
+    expect(onDirectorySelect).toHaveBeenCalledWith(destination);
+    expect(onBreadcrumbSelect).toHaveBeenCalledWith(0);
+  });
+
+  it('shows no valid destination when the current folder is selected', () => {
+    const currentDirectory = {
+      ref: 'sealed:current', name: 'Current', display_path: '/Current', kind: 'directory' as const, size: 0, allowed_actions: [],
+    };
+    const props = makeProps({
+      mutationEntry: { ref: 'sealed:source', name: 'source.txt', display_path: '/source.txt', kind: 'file', size: 1, allowed_actions: [] },
+      mutationOperation: 'move',
+      selectedEntries: [currentDirectory],
+      destinationPicker: {
+        ...makeProps().destinationPicker,
+        breadcrumbs: [{ ref: null, name: 'Root' }, { ref: currentDirectory.ref, name: currentDirectory.name }],
+      },
+    });
+
+    act(() => root.render(<FileManagerMutationDialogs {...props} />));
+
+    expect(document.body.textContent).toContain('files.noValidDestination');
+  });
+
   it('retries a mutation with the server-offered conflict strategy without exposing its sealed ref', () => {
     const onExecuteMutation = vi.fn();
     const sealedRef = 'sealed:provider-internal-reference';
