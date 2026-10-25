@@ -1,4 +1,4 @@
-import type { KeyboardEvent, RefObject } from 'react';
+import type { RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { FolderIcon } from '../icons';
@@ -55,21 +55,6 @@ export function FileManagerMutationDialogs({
   const { t } = useTranslation();
   const operation = mutationOperation ?? batchOperation;
   const isBusy = mutationBusy || batchBusy;
-  const pickerError = destinationPicker.error || mutationError;
-  const handlePickerKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-destination-directory]'));
-    if (!buttons.length) return;
-    const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    if (current < 0) return;
-    let next = current;
-    if (event.key === 'ArrowDown') next = (current + 1) % buttons.length;
-    if (event.key === 'ArrowUp') next = (current - 1 + buttons.length) % buttons.length;
-    if (event.key === 'Home') next = 0;
-    if (event.key === 'End') next = buttons.length - 1;
-    event.preventDefault();
-    buttons[next]?.focus();
-  };
 
   return <>
     {renameEntry && createPortal(
@@ -86,10 +71,10 @@ export function FileManagerMutationDialogs({
       </div>, document.body)}
     {((mutationEntry && mutationOperation) || batchOperation) && conflictStrategies === null && createPortal(
       <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-        <div ref={pickerDialogRef} role="dialog" aria-modal="true" aria-labelledby="destination-picker-title" tabIndex={-1} onKeyDown={handlePickerKeyDown} className="ui-card flex max-h-[85vh] w-full max-w-lg flex-col p-5">
+        <div ref={pickerDialogRef} role="dialog" aria-modal="true" aria-labelledby="destination-picker-title" tabIndex={-1} className="ui-card flex max-h-[85vh] w-full max-w-lg flex-col p-5">
           <h2 id="destination-picker-title" className="text-lg font-semibold">{operation === 'copy' ? t('files.copyTitle') : t('files.moveTitle')}</h2>
           <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{mutationEntry ? t('files.destinationPickerDescription', { name: mutationEntry.name }) : t('files.batchDestinationPickerDescription', { count: selectedEntries.length })}</p>
-          {pickerError && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{pickerError}</p>}
+          {mutationError && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{mutationError}</p>}
           <label className="mt-3 block text-sm font-medium" htmlFor="destination-profile">{t('files.destinationProfile')}</label>
           <select id="destination-profile" className="ui-input mt-1 w-full px-3 py-2" value={destinationPicker.profileId} disabled={destinationPicker.loading || isBusy} onChange={(event) => destinationPicker.onProfileChange(event.target.value)}>
             {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
@@ -98,13 +83,8 @@ export function FileManagerMutationDialogs({
             {destinationPicker.breadcrumbs.map((breadcrumb, index) => <button key={breadcrumb.ref ?? 'root'} type="button" className="rounded px-1 py-0.5 hover:bg-[var(--color-hover)]" disabled={destinationPicker.loading || index === destinationPicker.breadcrumbs.length - 1} onClick={() => destinationPicker.onBreadcrumbSelect(index)}>{breadcrumb.name}{index < destinationPicker.breadcrumbs.length - 1 ? ' /' : ''}</button>)}
           </nav>
           <div className="mt-3 min-h-36 overflow-y-auto rounded border border-[var(--color-border)]">
-            {destinationPicker.loading ? <div className="p-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div> : destinationPicker.breadcrumbs.some((breadcrumb) => selectedEntries.some((entry) => entry.kind === 'directory' && breadcrumb.ref === entry.ref)) ? <p className="p-3 text-sm text-[var(--color-text-secondary)]">{t('files.noValidDestination')}</p> : destinationPicker.entries.filter((entry) => !selectedEntries.some((selected) => selected.ref === entry.ref)).map((entry) => <button key={entry.ref} data-destination-directory type="button" className="flex w-full items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => destinationPicker.onDirectorySelect(entry)}><FolderIcon className="h-4 w-4 ui-file-folder" aria-hidden="true" />{entry.name}</button>)}
+            {destinationPicker.loading ? <div className="p-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div> : destinationPicker.breadcrumbs.some((breadcrumb) => selectedEntries.some((entry) => entry.kind === 'directory' && breadcrumb.ref === entry.ref)) ? <p className="p-3 text-sm text-[var(--color-text-secondary)]">{t('files.noValidDestination')}</p> : destinationPicker.entries.filter((entry) => !selectedEntries.some((selected) => selected.ref === entry.ref)).map((entry) => <button key={entry.ref} type="button" className="flex w-full items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => destinationPicker.onDirectorySelect(entry)}><FolderIcon className="h-4 w-4 ui-file-folder" aria-hidden="true" />{entry.name}</button>)}
           </div>
-          {destinationPicker.canCreateDirectory && <form className="mt-3 flex gap-2" onSubmit={(event) => { event.preventDefault(); destinationPicker.onCreateDirectory(); }}>
-            <label className="sr-only" htmlFor="destination-folder-name">{t('files.folderName')}</label>
-            <input id="destination-folder-name" className="ui-input min-w-0 flex-1 px-3 py-2 text-sm" value={destinationPicker.newDirectoryName} disabled={destinationPicker.creatingDirectory || isBusy} placeholder={t('files.folderNamePlaceholder')} onChange={(event) => destinationPicker.onNewDirectoryNameChange(event.target.value)} />
-            <button type="submit" className="ui-button-secondary px-3 py-2 text-sm" disabled={!destinationPicker.newDirectoryName.trim() || destinationPicker.creatingDirectory || isBusy}>{destinationPicker.creatingDirectory ? t('common.loading') : t('files.createFolder')}</button>
-          </form>}
           <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.destinationSelected', { name: destinationPicker.breadcrumbs[destinationPicker.breadcrumbs.length - 1]?.name })}</p>
           <div className="mt-5 flex justify-end gap-2"><button ref={pickerCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={isBusy} onClick={onClose}>{t('common.cancel')}</button><button type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={isBusy} onClick={() => batchOperation ? onExecuteBatchMutation() : onExecuteMutation()}>{isBusy ? t('files.mutating') : operation === 'copy' ? t('files.copy') : t('files.move')}</button></div>
         </div>

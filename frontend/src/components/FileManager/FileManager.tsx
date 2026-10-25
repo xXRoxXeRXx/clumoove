@@ -35,7 +35,7 @@ import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
 import { FileManagerMutationDialogs } from './FileManagerMutationDialogs';
 import type { FileManagerBreadcrumb, SortDirection, SortField } from './FileManagerTypes';
-import { useDestinationPicker, validateManagerEntryName } from './useDestinationPicker';
+import { useDestinationPicker } from './useDestinationPicker';
 import { sortFileManagerEntries } from './entryOrdering';
 import { useCrossProfileTransfers } from './useCrossProfileTransfers';
 
@@ -133,7 +133,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [mutationError, setMutationError] = useState('');
   const [conflictStrategies, setConflictStrategies] = useState<FileMutationConflictStrategy[] | null>(null);
   const { picker: destinationPicker, open: openDestinationPicker, abort: abortDestinationPicker } = useDestinationPicker({
-    apiUrl, token, profiles, translateApiError, onError: setMutationError, invalidNameMessage: t('files.invalidName'),
+    apiUrl, token, profiles, translateApiError, onError: setMutationError,
   });
   const { transfers, loadTransfers, cancelTransfer, dismissTransfer } = useCrossProfileTransfers({
     apiUrl, token, profileId, onError: (errorCode) => setError(translateApiError(errorCode)),
@@ -654,10 +654,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     e.preventDefault();
     const trimmed = newDirName.trim();
     if (!trimmed || creatingDir || !capabilities.mkdir) return;
-    if (!validateManagerEntryName(trimmed)) {
-      setCreateDirError(t('files.invalidName'));
-      return;
-    }
     setCreatingDir(true);
     setCreateDirError('');
     const result = await createDirectory(apiUrl, token, profileId, trimmed, currentRef);
