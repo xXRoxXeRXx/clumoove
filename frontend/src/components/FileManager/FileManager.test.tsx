@@ -277,6 +277,43 @@ describe('FileManager component', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
+  it('retries a rename conflict with the server-offered strategy and sealed reference', async () => {
+    vi.mocked(getFileCapabilities).mockResolvedValue({ ok: true, status: 200, data: { capabilities: { ...mockCapabilities, rename: true } } });
+    vi.mocked(listFileEntries).mockResolvedValue({ ok: true, status: 200, data: { entries: [{ ...rootEntries[1], allowed_actions: ['rename'] }], next_cursor: null } });
+    vi.mocked(renameFileEntry)
+      .mockResolvedValueOnce({ ok: false, status: 409, errorCode: 'FILES_CONFLICT', networkError: false, data: { conflict_strategies: ['RENAME'] } } as never)
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { success: true, status: 'renamed', name: 'report.txt', native: true } });
+
+    await act(async () => {
+      root.render(<FileManager apiUrl="https://api.example.test" token="jwt-token" profileId="profile-1" onProfileChange={onProfileChange} />);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const actions = container.querySelector<HTMLButtonElement>('button[aria-label="Actions for report.txt"]');
+    await act(async () => { actions?.click(); await Promise.resolve(); });
+    const rename = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((button) => button.textContent === 'Rename');
+    await act(async () => { rename?.click(); await Promise.resolve(); });
+
+    const renameDialog = document.querySelector('[role="dialog"]');
+    const submit = Array.from(renameDialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find((button) => button.textContent === 'Rename');
+    await act(async () => { submit?.click(); await Promise.resolve(); });
+
+    const retry = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((button) => button.textContent === i18n.t('files.conflictRename'));
+    await act(async () => { retry?.click(); await Promise.resolve(); });
+
+    expect(vi.mocked(renameFileEntry)).toHaveBeenNthCalledWith(
+      2,
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'ref-file-1',
+      'report.txt',
+      'RENAME',
+      expect.any(AbortSignal)
+    );
+  });
+
   it('runs same-profile copy asynchronously in transfer queue without blocking UI modal', async () => {
     vi.mocked(getFileCapabilities).mockResolvedValue({ ok: true, status: 200, data: { capabilities: { ...mockCapabilities, copy: true } } });
     vi.mocked(listFileEntries).mockResolvedValue({ ok: true, status: 200, data: { entries: [{ ...rootEntries[1], allowed_actions: ['copy'] }], next_cursor: null } });
