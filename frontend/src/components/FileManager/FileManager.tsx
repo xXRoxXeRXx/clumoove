@@ -25,8 +25,7 @@ import {
   XMarkIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
-import { batchDeleteFileEntries, batchMutateFileEntries, copyFileEntry, createArchiveTicket, createDirectory, deleteFileEntry, getFileCapabilities, listFileEntries, createDownloadTicket, moveFileEntry, renameFileEntry, startCrossProfileFileTransfer, type BatchItemResult, type FileBreadcrumb, type FileCapabilities, type FileEntry, type FileMutationConflictStrategy } from '../../api/files';
-import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/profiles';
+import { batchDeleteFileEntries, batchMutateFileEntries, copyFileEntry, createArchiveTicket, createDirectory, deleteFileEntry, createDownloadTicket, moveFileEntry, renameFileEntry, startCrossProfileFileTransfer, type BatchItemResult, type FileBreadcrumb, type FileEntry, type FileMutationConflictStrategy } from '../../api/files';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
@@ -34,10 +33,11 @@ import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
 import { FileManagerMutationDialogs } from './FileManagerMutationDialogs';
-import type { FileManagerBreadcrumb, SortDirection, SortField } from './FileManagerTypes';
+import type { SortDirection, SortField } from './FileManagerTypes';
 import { useDestinationPicker } from './useDestinationPicker';
 import { sortFileManagerEntries } from './entryOrdering';
 import { useCrossProfileTransfers } from './useCrossProfileTransfers';
+import { useFileManagerNavigation } from './useFileManagerNavigation';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
 
@@ -60,28 +60,6 @@ export type FileManagerProps = {
   onBack?: () => void;
 };
 
-const unavailableCapabilities: FileCapabilities = {
-  browse: false,
-  native_pagination: false,
-  download: false,
-  archive: false,
-  upload: false,
-  mkdir: false,
-  rename: false,
-  move: false,
-  copy: false,
-  delete_file: false,
-  delete_empty_directory: false,
-  delete_recursive_directory: false,
-  conflict_skip: false,
-  conflict_overwrite: false,
-  conflict_overwrite_atomic: false,
-  conflict_rename: false,
-  native_copy: false,
-  range_download: false,
-  thumbnails: false,
-};
-
 function nextTransferID(): string {
   return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 }
@@ -90,17 +68,12 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
   const translateApiError = useApiError();
-  const [profiles, setProfiles] = useState<ConnectionProfilePublic[]>([]);
-  const [profilesLoading, setProfilesLoading] = useState(true);
-  const [entries, setEntries] = useState<FileEntry[]>([]);
-  const [entriesLoading, setEntriesLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [capabilities, setCapabilities] = useState<FileCapabilities>(unavailableCapabilities);
-  const [breadcrumbs, setBreadcrumbs] = useState<FileManagerBreadcrumb[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [downloadingRef, setDownloadingRef] = useState<string | null>(null);
   const [selectedRefs, setSelectedRefs] = useState<Set<string>>(() => new Set());
+  const resetSelection = useCallback(() => setSelectedRefs(new Set()), []);
+  const navigation = useFileManagerNavigation({ apiUrl, token, profileId, initialBreadcrumbs, translateApiError, onError: setError, onResetSelection: resetSelection });
+  const { profiles, profilesLoading, entries, entriesLoading, loadingMore, capabilities, breadcrumbs, nextCursor, selectedProfile, currentRef, setBreadcrumbs, loadEntries, loadMore, abort: abortNavigation } = navigation;
   const [batchOperation, setBatchOperation] = useState<'copy' | 'move' | null>(null);
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
@@ -235,8 +208,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const batchDeleteDialogRef = useRef<HTMLDivElement>(null);
   const batchDeleteCancelRef = useRef<HTMLButtonElement>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
-  const profileRequestRef = useRef<AbortController | null>(null);
-  const entriesRequestRef = useRef<AbortController | null>(null);
   const deleteRequestRef = useRef<AbortController | null>(null);
   const mutationRequestRef = useRef<AbortController | null>(null);
   const renameDialogRef = useRef<HTMLDivElement>(null);
@@ -245,7 +216,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const pickerCancelRef = useRef<HTMLButtonElement>(null);
   const conflictDialogRef = useRef<HTMLDivElement>(null);
   const conflictCancelRef = useRef<HTMLButtonElement>(null);
-  const latestEntriesRequestRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const uploadRefreshTimeoutRef = useRef<number | null>(null);
 
@@ -275,6 +245,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   useFocusTrap(renameDialogRef, renameCancelRef, closeMutationDialogs, renameEntry !== null);
   useFocusTrap(pickerDialogRef, pickerCancelRef, closeMutationDialogs, ((mutationEntry !== null && mutationOperation !== null) || batchOperation !== null) && conflictStrategies === null);
   useFocusTrap(conflictDialogRef, conflictCancelRef, closeMutationDialogs, conflictStrategies !== null);
+
+  useEffect(() => () => {
+    abortNavigation();
+    deleteRequestRef.current?.abort();
+    mutationRequestRef.current?.abort();
+    abortDestinationPicker();
+  }, [abortDestinationPicker, abortNavigation]);
 
   useEffect(() => {
     const controllers = internalControllers.current;
@@ -355,9 +332,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     };
   }, [isBreadcrumbMenuOpen]);
 
-  const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
-  const currentBreadcrumb = breadcrumbs[breadcrumbs.length - 1];
-  const currentRef = currentBreadcrumb?.ref ?? null;
   const selectedEntries = entries.filter((entry) => selectedRefs.has(entry.ref));
   const allLoadedSelected = entries.length > 0 && entries.every((entry) => selectedRefs.has(entry.ref));
   const someLoadedSelected = entries.some((entry) => selectedRefs.has(entry.ref));
@@ -369,157 +343,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     if (selectAllRef.current) selectAllRef.current.indeterminate = someLoadedSelected && !allLoadedSelected;
   }, [allLoadedSelected, someLoadedSelected]);
 
-  const loadEntries = useCallback(async (parentRef: string | null) => {
-    if (!profileId || !capabilities.browse) return;
-    entriesRequestRef.current?.abort();
-    const controller = new AbortController();
-    entriesRequestRef.current = controller;
-    const request = ++latestEntriesRequestRef.current;
-    setEntriesLoading(true);
-    setError('');
-    const result = await listFileEntries(apiUrl, token, profileId, parentRef, undefined, controller.signal);
-    if (controller.signal.aborted || latestEntriesRequestRef.current !== request) return;
-    if (result.ok === false) {
-      setEntries([]);
-      setNextCursor(null);
-      setError(translateApiError(result.errorCode));
-    } else {
-      setEntries(result.data.entries ?? []);
-      setNextCursor(result.data.next_cursor ?? null);
-    }
-    setEntriesLoading(false);
-  }, [apiUrl, capabilities.browse, profileId, token, translateApiError]);
-
-  const loadMore = useCallback(async () => {
-    if (!profileId || !capabilities.browse || !nextCursor || entriesLoading || loadingMore) return;
-    setLoadingMore(true);
-    const controller = new AbortController();
-    const result = await listFileEntries(apiUrl, token, profileId, currentRef, nextCursor, controller.signal);
-    if (result.ok === false) {
-      setError(translateApiError(result.errorCode));
-    } else {
-      setEntries((current) => [...current, ...(result.data.entries ?? [])]);
-      setNextCursor(result.data.next_cursor ?? null);
-    }
-    setLoadingMore(false);
-  }, [apiUrl, capabilities.browse, currentRef, entriesLoading, loadingMore, nextCursor, profileId, token, translateApiError]);
-
-  const loadProfiles = useCallback(async () => {
-    profileRequestRef.current?.abort();
-    const controller = new AbortController();
-    profileRequestRef.current = controller;
-    setProfilesLoading(true);
-    const result = await listConnectionProfiles(apiUrl, token, controller.signal);
-    if (controller.signal.aborted) return;
-    if (result.ok === true) {
-      setProfiles(result.data.profiles ?? []);
-    } else {
-      setProfiles([]);
-      setError(translateApiError(result.errorCode));
-    }
-    setProfilesLoading(false);
-  }, [apiUrl, token, translateApiError]);
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => void loadProfiles(), 0);
-    return () => {
-      window.clearTimeout(timeoutId);
-      profileRequestRef.current?.abort();
-      entriesRequestRef.current?.abort();
-      deleteRequestRef.current?.abort();
-      mutationRequestRef.current?.abort();
-      abortDestinationPicker();
-    };
-  }, [abortDestinationPicker, loadProfiles]);
-
-  useEffect(() => {
-    let controller: AbortController | null = null;
-    const timeoutId = window.setTimeout(() => {
-      if (!selectedProfile) {
-        setCapabilities(unavailableCapabilities);
-        setBreadcrumbs([]);
-        setEntries([]);
-        setNextCursor(null);
-        setEntriesLoading(false);
-        return;
-      }
-
-      controller = new AbortController();
-      entriesRequestRef.current?.abort();
-      entriesRequestRef.current = controller;
-      const request = ++latestEntriesRequestRef.current;
-
-      const resolvedBreadcrumbs = initialBreadcrumbs?.length
-        ? initialBreadcrumbs.map((breadcrumb) => ({ ref: breadcrumb.ref || null, name: breadcrumb.name }))
-        : [{ ref: null, name: selectedProfile.name }];
-      setBreadcrumbs(resolvedBreadcrumbs);
-      setSelectedRefs(new Set());
-      setEntries([]);
-      setNextCursor(null);
-      setError('');
-      setEntriesLoading(true);
-
-      const targetRef = resolvedBreadcrumbs[resolvedBreadcrumbs.length - 1]?.ref ?? null;
-
-      async function initProfile() {
-        const capResult = await getFileCapabilities(apiUrl, token, selectedProfile!.id, controller!.signal);
-        if (controller!.signal.aborted || latestEntriesRequestRef.current !== request) return;
-
-        if (capResult.ok === false) {
-          setCapabilities(unavailableCapabilities);
-          setEntries([]);
-          setNextCursor(null);
-          setError(translateApiError(capResult.errorCode));
-          setEntriesLoading(false);
-          return;
-        }
-
-        setCapabilities(capResult.data.capabilities);
-
-        if (!capResult.data.capabilities.browse) {
-          setEntries([]);
-          setNextCursor(null);
-          setEntriesLoading(false);
-          return;
-        }
-
-        const listResult = await listFileEntries(apiUrl, token, selectedProfile!.id, targetRef, undefined, controller!.signal);
-        if (controller!.signal.aborted || latestEntriesRequestRef.current !== request) return;
-
-        if (listResult.ok === false) {
-          setEntries([]);
-          setNextCursor(null);
-          setError(translateApiError(listResult.errorCode));
-        } else {
-          setEntries(listResult.data.entries ?? []);
-          setNextCursor(listResult.data.next_cursor ?? null);
-        }
-        setEntriesLoading(false);
-      }
-
-      void initProfile();
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-      controller?.abort();
-    };
-  }, [apiUrl, initialBreadcrumbs, selectedProfile, token, translateApiError]);
-
   useEffect(() => {
     if (!nextCursor || entriesLoading || loadingMore || !capabilities.browse) return;
     const target = sentinelRef.current;
     if (!target || typeof IntersectionObserver === 'undefined') return;
-
-    const observer = new IntersectionObserver(
-      (observedEntries) => {
-        if (observedEntries[0]?.isIntersecting) {
-          void loadMore();
-        }
-      },
-      { rootMargin: '250px' }
-    );
-
+    const observer = new IntersectionObserver((observed) => {
+      if (observed[0]?.isIntersecting) void loadMore();
+    }, { rootMargin: '250px' });
     observer.observe(target);
     return () => observer.disconnect();
   }, [capabilities.browse, entriesLoading, loadMore, loadingMore, nextCursor]);
