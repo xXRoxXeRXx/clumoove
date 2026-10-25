@@ -21,6 +21,16 @@ type UseSessionOptions = {
   onLogout?: () => void;
 };
 
+type DeepLinkTarget = { path: string; id: string; step: AppStep };
+
+function deepLinkTarget({ initialMigrationId, initialSyncId, initialBackupId, initialProfileId }: SessionNavigation): DeepLinkTarget | null {
+  if (initialMigrationId) return { path: 'migration', id: initialMigrationId, step: 'dashboard' };
+  if (initialSyncId) return { path: 'sync', id: initialSyncId, step: 'syncdetail' };
+  if (initialBackupId) return { path: 'backup', id: initialBackupId, step: 'backupdetail' };
+  if (initialProfileId) return { path: 'profiles', id: initialProfileId, step: 'files' };
+  return null;
+}
+
 function usePreferredLanguage() {
   const { i18n } = useTranslation();
   return useCallback((user: User) => {
@@ -48,6 +58,13 @@ export function useSession({
     () => !resetToken && !emailChangeToken && hasStoredSession,
   );
   const applyPreferredLanguage = usePreferredLanguage();
+  const refreshAccessToken = useCallback(async () => {
+    const response = await fetch(`${apiUrl}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
+    if (!response.ok) throw new Error('Session refresh failed');
+    const data = await response.json() as { access_token?: string };
+    if (!data.access_token) throw new Error('Session refresh failed');
+    return data.access_token;
+  }, [apiUrl]);
 
   const logout = useCallback(async () => {
     try {
@@ -81,35 +98,22 @@ export function useSession({
 
     const restore = async () => {
       try {
-        const refreshResponse = await fetch(`${apiUrl}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
-        if (!refreshResponse.ok) throw new Error('Session refresh failed');
-        const refreshData = await refreshResponse.json() as { access_token?: string };
-        if (!refreshData.access_token) throw new Error('Session refresh failed');
+        const accessToken = await refreshAccessToken();
         if (cancelled) return;
-        tokenRef.current = refreshData.access_token;
-        setToken(refreshData.access_token);
+        tokenRef.current = accessToken;
+        setToken(accessToken);
 
-        const meResponse = await apiFetch(`${apiUrl}/api/auth/me`, {
-          headers: { Authorization: `Bearer ${refreshData.access_token}` },
-        });
+        const meResponse = await apiFetch(`${apiUrl}/api/auth/me`);
         if (!meResponse.ok) throw new Error('Profile fetch failed');
         const nextUser = await meResponse.json() as User;
         if (cancelled) return;
         setUser(nextUser);
         applyPreferredLanguage(nextUser);
 
-        if (initialMigrationId) {
-          const response = await apiFetch(`${apiUrl}/api/migration/${initialMigrationId}`, { headers: { Authorization: `Bearer ${refreshData.access_token}` } });
-          replaceNav(response.ok ? 'dashboard' : 'history', response.ok ? initialMigrationId : '');
-        } else if (initialSyncId) {
-          const response = await apiFetch(`${apiUrl}/api/sync/${initialSyncId}`, { headers: { Authorization: `Bearer ${refreshData.access_token}` } });
-          replaceNav(response.ok ? 'syncdetail' : 'history', response.ok ? initialSyncId : '');
-        } else if (initialBackupId) {
-          const response = await apiFetch(`${apiUrl}/api/backup/${initialBackupId}`, { headers: { Authorization: `Bearer ${refreshData.access_token}` } });
-          replaceNav(response.ok ? 'backupdetail' : 'history', response.ok ? initialBackupId : '');
-        } else if (initialProfileId) {
-          const response = await apiFetch(`${apiUrl}/api/profiles/${initialProfileId}`, { headers: { Authorization: `Bearer ${refreshData.access_token}` } });
-          replaceNav(response.ok ? 'files' : 'history', response.ok ? initialProfileId : '');
+        const target = deepLinkTarget({ initialMigrationId, initialSyncId, initialBackupId, initialProfileId });
+        if (target) {
+          const response = await apiFetch(`${apiUrl}/api/${target.path}/${target.id}`);
+          replaceNav(response.ok ? target.step : 'history', response.ok ? target.id : '');
         } else {
           replaceNav('history', '');
         }
@@ -126,24 +130,21 @@ export function useSession({
 
     void restore();
     return () => { cancelled = true; };
-  }, [apiUrl, applyPreferredLanguage, emailChangeToken, hasStoredSession, initialBackupId, initialMigrationId, initialProfileId, initialSyncId, replaceNav, resetToken]);
+  }, [apiUrl, applyPreferredLanguage, emailChangeToken, hasStoredSession, initialBackupId, initialMigrationId, initialProfileId, initialSyncId, refreshAccessToken, replaceNav, resetToken]);
 
   useEffect(() => {
     if (!token) return;
     const interval = window.setInterval(async () => {
       try {
-        const response = await fetch(`${apiUrl}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
-        if (!response.ok) throw new Error('Session refresh failed');
-        const data = await response.json() as { access_token?: string };
-        if (!data.access_token) throw new Error('Session refresh failed');
-        tokenRef.current = data.access_token;
-        setToken(data.access_token);
+        const accessToken = await refreshAccessToken();
+        tokenRef.current = accessToken;
+        setToken(accessToken);
       } catch {
         void logout();
       }
     }, 14 * 60 * 1000);
     return () => window.clearInterval(interval);
-  }, [apiUrl, logout, token]);
+  }, [logout, refreshAccessToken, token]);
 
   const authenticate = useCallback((accessToken: string, loggedUser: User) => {
     localStorage.setItem('has_session', 'true');

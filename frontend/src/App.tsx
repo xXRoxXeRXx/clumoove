@@ -275,8 +275,17 @@ function App() {
     resolveAbortControllerRef.current = controller;
     const reqId = ++resolveRequestIdRef.current;
     const result = await resolveFilePath(API_URL, token, nextProfileId, path, controller.signal);
-    if (resolveRequestIdRef.current !== reqId || controller.signal.aborted) return;
-    setFileStart(result.ok ? { profileId: nextProfileId, breadcrumbs: result.data.breadcrumbs, fallback: result.data.fallback } : null);
+    if (resolveRequestIdRef.current !== reqId || controller.signal.aborted) {
+      return;
+    }
+    if (result.ok) {
+      setFileStart({ profileId: nextProfileId, breadcrumbs: result.data.breadcrumbs, fallback: result.data.fallback });
+    } else {
+      // A deleted/moved quick-link target should not prevent opening the
+      // manager. The resolve handler normally returns the nearest ancestor;
+      // this path is only for a transient request failure.
+      setFileStart(null);
+    }
     navigate('files', nextProfileId);
   }, [navigate, token]);
 

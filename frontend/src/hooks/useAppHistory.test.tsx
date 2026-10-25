@@ -66,4 +66,20 @@ describe('useAppHistory', () => {
       hasStoredSession: true,
     })).toMatchObject({ step: 'settings', migrationId: '', syncId: '', profileId: '', settingsTab: 'connections' });
   });
+
+  it('updates the public navigation state when browser history moves', async () => {
+    window.history.replaceState({}, '', '/');
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<HistoryHarness options={{ resetToken: null, emailChangeToken: null, hasStoredSession: true }} />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      window.history.pushState({ step: 'settings', tab: 'connections' }, '', '/?view=settings&tab=connections');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }));
+    });
+    expect(container.querySelector('output')?.dataset).toMatchObject({ step: 'settings', settingsTab: 'connections' });
+  });
 });
