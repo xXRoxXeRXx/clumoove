@@ -38,8 +38,10 @@ import { BackupOptionsForm } from "./BackupOptionsForm";
 
 /**
  * Caller contract for the post-connection transfer setup screen. The browser
- * lets a user choose source paths and configuration, then reports the created
- * migration, sync, or backup ID through `onStartSuccess`.
+ * owns setup-time path-tree scope, location, selection, and recoverable errors,
+ * then reports the created migration, sync, or backup ID through `onStartSuccess`.
+ * Those concerns deliberately stay feature-local: FileManager uses a distinct,
+ * authenticated sealed-reference protocol for interactive file operations.
  */
 export interface FileBrowserProps {
   initialFiles: CloudFile[];

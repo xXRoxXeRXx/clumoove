@@ -34,13 +34,9 @@ import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
 import { FileManagerMutationDialogs } from './FileManagerMutationDialogs';
+import type { FileManagerBreadcrumb } from './FileManagerTypes';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
-
-type Breadcrumb = {
-  ref: string | null;
-  name: string;
-};
 
 export type SortField = 'name' | 'size' | 'modified';
 export type SortDirection = 'asc' | 'desc';
@@ -50,6 +46,8 @@ export type SortDirection = 'asc' | 'desc';
  *
  * Callers provide the active profile and navigation callbacks; FileManager keeps
  * provider paths opaque and uses the supplied session only for file operations.
+ * This remains feature-local rather than sharing FileBrowser's setup contract:
+ * its authenticated protocol owns sealed refs, breadcrumbs, capabilities, and API errors.
  */
 export type FileManagerProps = {
   apiUrl: string;
@@ -98,7 +96,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [capabilities, setCapabilities] = useState<FileCapabilities>(unavailableCapabilities);
-  const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([]);
+  const [breadcrumbs, setBreadcrumbs] = useState<FileManagerBreadcrumb[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [downloadingRef, setDownloadingRef] = useState<string | null>(null);
@@ -129,7 +127,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [renameName, setRenameName] = useState('');
   const [mutationEntry, setMutationEntry] = useState<FileEntry | null>(null);
   const [mutationOperation, setMutationOperation] = useState<'copy' | 'move' | null>(null);
-  const [pickerBreadcrumbs, setPickerBreadcrumbs] = useState<Breadcrumb[]>([]);
+  const [pickerBreadcrumbs, setPickerBreadcrumbs] = useState<FileManagerBreadcrumb[]>([]);
   const [pickerProfileId, setPickerProfileId] = useState(profileId);
   const [transfers, setTransfers] = useState<FileTransferSummary[]>([]);
   const [pickerEntries, setPickerEntries] = useState<FileEntry[]>([]);
@@ -1784,31 +1782,35 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
         mutationError={mutationError}
         mutationBusy={mutationBusy}
         batchBusy={batchBusy}
-        pickerProfileId={pickerProfileId}
-        pickerBreadcrumbs={pickerBreadcrumbs}
-        pickerEntries={pickerEntries}
-        pickerLoading={pickerLoading}
-        renameDialogRef={renameDialogRef}
-        renameCancelRef={renameCancelRef}
-        pickerDialogRef={pickerDialogRef}
-        pickerCancelRef={pickerCancelRef}
-        conflictDialogRef={conflictDialogRef}
-        conflictCancelRef={conflictCancelRef}
+        destinationPicker={{
+          profileId: pickerProfileId,
+          breadcrumbs: pickerBreadcrumbs,
+          entries: pickerEntries,
+          loading: pickerLoading,
+          onProfileChange: selectPickerProfile,
+          onBreadcrumbSelect: (index) => {
+            const next = pickerBreadcrumbs.slice(0, index + 1);
+            setPickerBreadcrumbs(next);
+            void loadPickerEntries(next[next.length - 1]?.ref ?? null, pickerProfileId);
+          },
+          onDirectorySelect: (entry) => {
+            const next = [...pickerBreadcrumbs, { ref: entry.ref, name: entry.name }];
+            setPickerBreadcrumbs(next);
+            void loadPickerEntries(entry.ref, pickerProfileId);
+          },
+        }}
+        dialogRefs={{
+          rename: renameDialogRef,
+          renameCancel: renameCancelRef,
+          picker: pickerDialogRef,
+          pickerCancel: pickerCancelRef,
+          conflict: conflictDialogRef,
+          conflictCancel: conflictCancelRef,
+        }}
         onRenameNameChange={setRenameName}
         onClose={closeMutationDialogs}
         onExecuteMutation={(strategy) => void executeMutation(strategy)}
         onExecuteBatchMutation={(strategy) => void executeBatchMutation(strategy)}
-        onPickerProfileChange={selectPickerProfile}
-        onPickerBreadcrumbSelect={(index) => {
-          const next = pickerBreadcrumbs.slice(0, index + 1);
-          setPickerBreadcrumbs(next);
-          void loadPickerEntries(next[next.length - 1]?.ref ?? null, pickerProfileId);
-        }}
-        onPickerDirectorySelect={(entry) => {
-          const next = [...pickerBreadcrumbs, { ref: entry.ref, name: entry.name }];
-          setPickerBreadcrumbs(next);
-          void loadPickerEntries(entry.ref, pickerProfileId);
-        }}
       />
       {previewEntry && (
         <Suspense fallback={null}>
