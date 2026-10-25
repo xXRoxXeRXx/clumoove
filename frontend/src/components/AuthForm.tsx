@@ -4,6 +4,7 @@ import { EyeIcon as Eye, EyeSlashIcon as EyeOff } from './icons';
 import type { User as UserType } from '../types';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
+import { getAuthSettings, getPasswordResetAvailabilityResponse, requestPasswordResetResponse, submitTotpResponse } from '../api/auth';
 import { logger } from '../utils/logger';
 
 interface AuthFormProps {
@@ -49,7 +50,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch(`${apiUrl}/api/settings`)
+    getAuthSettings({ apiUrl })
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
@@ -68,7 +69,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch(`${apiUrl}/api/auth/password-reset-available`)
+    getPasswordResetAvailabilityResponse({ apiUrl })
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
@@ -103,13 +104,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
     }
 
     try {
-      const response = await apiFetch(`${apiUrl}/api/auth/forgot-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email: trimmedEmail }),
-      });
+      const response = await requestPasswordResetResponse({ apiUrl, email: trimmedEmail });
 
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as { error_code?: string };
@@ -137,14 +132,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
     }
 
     try {
-      const response = await apiFetch(`${apiUrl}/api/auth/totp`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({ temp_session: totpSession, code }),
-      });
+      const response = await submitTotpResponse({ apiUrl, tempSession: totpSession, code });
 
       if (response.status === 429) {
         const retryAfter = Number(response.headers.get('Retry-After') || '900');

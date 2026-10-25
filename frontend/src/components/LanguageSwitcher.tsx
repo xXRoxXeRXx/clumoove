@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { apiFetch } from '../utils/apiClient';
+import { updateLanguage } from '../api/auth';
 
 const LANGUAGES: { code: 'de' | 'en'; label: string }[] = [
   { code: 'de', label: 'Deutsch' },
@@ -18,11 +18,7 @@ export function LanguageSwitcher({ authenticated = false }: { authenticated?: bo
     }
     void i18n.changeLanguage(code);
 	    if (authenticated) {
-      void apiFetch('/api/auth/me/language', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language: code }),
-      }).catch(() => undefined);
+      void updateLanguage(code).catch(() => undefined);
 	    }
   };
 

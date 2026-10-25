@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useId, useRef, useMemo } from 
 import { useTranslation } from 'react-i18next';
 import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
-import { apiFetch } from '../utils/apiClient';
+import { createConnectionProfile, deleteConnectionProfile, testConnectionProfile, updateConnectionProfile } from '../api/profiles';
 import { listConnectionProfiles, type ConnectionProfilePublic } from '../api/profiles';
 import { MessageBanner, type MessageState } from './MessageBanner';
 import { LoadingIndicator } from './LoadingIndicator';
@@ -108,11 +108,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     setMessage(null);
     const controller = createRequestController();
     try {
-      const res = await apiFetch(`${apiUrl}/api/profiles/${p.id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
-        signal: controller.signal,
-      });
+      const res = await deleteConnectionProfile({ apiUrl, token, profileId: p.id, signal: controller.signal });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}) as ApiErrBody);
         throw new Error(translateApiError(data.error_code));
@@ -134,11 +130,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     setMessage(null);
     const controller = createRequestController();
     try {
-      const res = await apiFetch(`${apiUrl}/api/profiles/${p.id}/test`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        signal: controller.signal,
-      });
+      const res = await testConnectionProfile({ apiUrl, token, profileId: p.id, signal: controller.signal });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(translateApiError(data.error_code));
@@ -318,17 +310,12 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
           return;
         }
         const controller = createRequestController();
-        apiFetch(`${apiUrl}/api/profiles/${profile.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          signal: controller.signal,
-          body: JSON.stringify({
+        updateConnectionProfile({ apiUrl, token, profileId: profile.id, signal: controller.signal, payload: {
             password: accessToken,
             refresh_token: refreshToken,
             refresh_token_expires_in: msg.expiresIn,
             oauth_user: msg.username || provider,
-          }),
-        })
+          } })
           .then(async (res) => {
             if (controller.signal.aborted) return;
             if (!res.ok) {
@@ -622,14 +609,9 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
 
     const controller = createRequestController();
     try {
-      const method = editing ? 'PUT' : 'POST';
-      const urlStr = editing ? `${apiUrl}/api/profiles/${editing.id}?url=1&username=1` : `${apiUrl}/api/profiles`;
-      const res = await apiFetch(urlStr, {
-        method,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
+      const res = editing
+        ? await updateConnectionProfile({ apiUrl, token, profileId: editing.id, payload, signal: controller.signal, includeUrlAndUsername: true })
+        : await createConnectionProfile({ apiUrl, token, payload, signal: controller.signal });
       if (controller.signal.aborted) return;
       if (!res.ok) {
         const data = await res.json().catch(() => ({}) as ApiErrBody);

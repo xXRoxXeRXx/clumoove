@@ -1,4 +1,4 @@
-import { apiJson, type ApiJsonResult } from '../utils/apiClient';
+import { apiFetch, apiJson, type ApiJsonResult } from '../utils/apiClient';
 
 export interface ConnectionProfilePublic {
   id: string;
@@ -25,5 +25,32 @@ export async function listConnectionProfiles(
   return apiJson<ProfilesResponse>(`${apiUrl}/api/profiles`, {
     headers: { Authorization: `Bearer ${token}` },
     signal,
+  });
+}
+
+type ProfileRequest = { apiUrl: string; token: string; profileId: string; signal?: AbortSignal };
+const profileUrl = ({ apiUrl, profileId }: ProfileRequest, suffix = '') => `${apiUrl}/api/profiles/${encodeURIComponent(profileId)}${suffix}`;
+const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+export function deleteConnectionProfile(request: ProfileRequest): Promise<Response> {
+  return apiFetch(profileUrl(request), { method: 'DELETE', headers: auth(request.token), signal: request.signal });
+}
+
+export function testConnectionProfile(request: ProfileRequest): Promise<Response> {
+  return apiFetch(profileUrl(request, '/test'), { method: 'POST', headers: auth(request.token), signal: request.signal });
+}
+
+export function updateConnectionProfile(request: ProfileRequest & { payload: Record<string, unknown>; includeUrlAndUsername?: boolean }): Promise<Response> {
+  const query = request.includeUrlAndUsername ? '?url=1&username=1' : '';
+  return apiFetch(`${profileUrl(request)}${query}`, {
+    method: 'PUT', headers: { ...auth(request.token), 'Content-Type': 'application/json' },
+    signal: request.signal, body: JSON.stringify(request.payload),
+  });
+}
+
+export function createConnectionProfile(request: { apiUrl: string; token: string; payload: Record<string, unknown>; signal?: AbortSignal }): Promise<Response> {
+  return apiFetch(`${request.apiUrl}/api/profiles`, {
+    method: 'POST', headers: { ...auth(request.token), 'Content-Type': 'application/json' },
+    signal: request.signal, body: JSON.stringify(request.payload),
   });
 }

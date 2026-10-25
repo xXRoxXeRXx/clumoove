@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { User } from '../types';
-import { apiFetch, configureApiClient } from '../utils/apiClient';
+import { configureApiClient } from '../utils/apiClient';
+import { getCurrentUser, getSessionTarget } from '../api/auth';
 import { logger } from '../utils/logger';
 import type { AppStep } from './useAppHistory';
 
@@ -103,7 +104,7 @@ export function useSession({
         tokenRef.current = accessToken;
         setToken(accessToken);
 
-        const meResponse = await apiFetch(`${apiUrl}/api/auth/me`);
+        const meResponse = await getCurrentUser(apiUrl);
         if (!meResponse.ok) throw new Error('Profile fetch failed');
         const nextUser = await meResponse.json() as User;
         if (cancelled) return;
@@ -112,7 +113,7 @@ export function useSession({
 
         const target = deepLinkTarget({ initialMigrationId, initialSyncId, initialBackupId, initialProfileId });
         if (target) {
-          const response = await apiFetch(`${apiUrl}/api/${target.path}/${target.id}`);
+          const response = await getSessionTarget(apiUrl, target.path as 'migration' | 'sync' | 'backup' | 'profiles', target.id);
           replaceNav(response.ok ? target.step : 'history', response.ok ? target.id : '');
         } else {
           replaceNav('history', '');
