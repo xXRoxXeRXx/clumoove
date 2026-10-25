@@ -4,15 +4,30 @@ import { FolderIcon } from '../icons';
 import { LoadingIndicator } from '../LoadingIndicator';
 import type { ConnectionProfilePublic } from '../../api/profiles';
 import type { FileEntry, FileMutationConflictStrategy } from '../../api/files';
-
-type Breadcrumb = {
-  ref: string | null;
-  name: string;
-};
+import type { FileManagerBreadcrumb } from './FileManagerTypes';
 
 type Translate = (key: string, values?: Record<string, unknown>) => string;
 
-type FileManagerMutationDialogsProps = {
+type DestinationPicker = {
+  profileId: string;
+  breadcrumbs: FileManagerBreadcrumb[];
+  entries: FileEntry[];
+  loading: boolean;
+  onProfileChange: (profileId: string) => void;
+  onBreadcrumbSelect: (index: number) => void;
+  onDirectorySelect: (entry: FileEntry) => void;
+};
+
+type DialogRefs = {
+  rename: RefObject<HTMLDivElement | null>;
+  renameCancel: RefObject<HTMLButtonElement | null>;
+  picker: RefObject<HTMLDivElement | null>;
+  pickerCancel: RefObject<HTMLButtonElement | null>;
+  conflict: RefObject<HTMLDivElement | null>;
+  conflictCancel: RefObject<HTMLButtonElement | null>;
+};
+
+export type FileManagerMutationDialogsProps = {
   t: Translate;
   profiles: ConnectionProfilePublic[];
   selectedEntries: FileEntry[];
@@ -26,33 +41,28 @@ type FileManagerMutationDialogsProps = {
   mutationError: string;
   mutationBusy: boolean;
   batchBusy: boolean;
-  pickerProfileId: string;
-  pickerBreadcrumbs: Breadcrumb[];
-  pickerEntries: FileEntry[];
-  pickerLoading: boolean;
-  renameDialogRef: RefObject<HTMLDivElement | null>;
-  renameCancelRef: RefObject<HTMLButtonElement | null>;
-  pickerDialogRef: RefObject<HTMLDivElement | null>;
-  pickerCancelRef: RefObject<HTMLButtonElement | null>;
-  conflictDialogRef: RefObject<HTMLDivElement | null>;
-  conflictCancelRef: RefObject<HTMLButtonElement | null>;
+  destinationPicker: DestinationPicker;
+  dialogRefs: DialogRefs;
   onRenameNameChange: (name: string) => void;
   onClose: () => void;
   onExecuteMutation: (strategy?: FileMutationConflictStrategy) => void;
   onExecuteBatchMutation: (strategy?: FileMutationConflictStrategy) => void;
-  onPickerProfileChange: (profileId: string) => void;
-  onPickerBreadcrumbSelect: (index: number) => void;
-  onPickerDirectorySelect: (entry: FileEntry) => void;
 };
 
 /** Keeps the rename, destination-picking, and conflict-resolution workflow local to FileManager. */
 export function FileManagerMutationDialogs({
   t, profiles, selectedEntries, renameEntry, renameName, mutationEntry, mutationOperation,
   batchOperation, batchConflictRefs, conflictStrategies, mutationError, mutationBusy, batchBusy,
-  pickerProfileId, pickerBreadcrumbs, pickerEntries, pickerLoading, renameDialogRef, renameCancelRef,
-  pickerDialogRef, pickerCancelRef, conflictDialogRef, conflictCancelRef, onRenameNameChange,
-  onClose, onExecuteMutation, onExecuteBatchMutation, onPickerProfileChange,
-  onPickerBreadcrumbSelect, onPickerDirectorySelect,
+  destinationPicker,
+  dialogRefs: {
+    rename: renameDialogRef,
+    renameCancel: renameCancelRef,
+    picker: pickerDialogRef,
+    pickerCancel: pickerCancelRef,
+    conflict: conflictDialogRef,
+    conflictCancel: conflictCancelRef,
+  },
+  onRenameNameChange, onClose, onExecuteMutation, onExecuteBatchMutation,
 }: FileManagerMutationDialogsProps) {
   const operation = mutationOperation ?? batchOperation;
   const isBusy = mutationBusy || batchBusy;
@@ -77,16 +87,16 @@ export function FileManagerMutationDialogs({
           <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{mutationEntry ? t('files.destinationPickerDescription', { name: mutationEntry.name }) : t('files.batchDestinationPickerDescription', { count: selectedEntries.length })}</p>
           {mutationError && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{mutationError}</p>}
           <label className="mt-3 block text-sm font-medium" htmlFor="destination-profile">{t('files.destinationProfile')}</label>
-          <select id="destination-profile" className="ui-input mt-1 w-full px-3 py-2" value={pickerProfileId} disabled={pickerLoading || isBusy} onChange={(event) => onPickerProfileChange(event.target.value)}>
+          <select id="destination-profile" className="ui-input mt-1 w-full px-3 py-2" value={destinationPicker.profileId} disabled={destinationPicker.loading || isBusy} onChange={(event) => destinationPicker.onProfileChange(event.target.value)}>
             {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
           </select>
           <nav className="mt-3 flex flex-wrap gap-1 text-sm" aria-label={t('files.destinationBreadcrumb')}>
-            {pickerBreadcrumbs.map((breadcrumb, index) => <button key={breadcrumb.ref ?? 'root'} type="button" className="rounded px-1 py-0.5 hover:bg-[var(--color-hover)]" disabled={pickerLoading || index === pickerBreadcrumbs.length - 1} onClick={() => onPickerBreadcrumbSelect(index)}>{breadcrumb.name}{index < pickerBreadcrumbs.length - 1 ? ' /' : ''}</button>)}
+            {destinationPicker.breadcrumbs.map((breadcrumb, index) => <button key={breadcrumb.ref ?? 'root'} type="button" className="rounded px-1 py-0.5 hover:bg-[var(--color-hover)]" disabled={destinationPicker.loading || index === destinationPicker.breadcrumbs.length - 1} onClick={() => destinationPicker.onBreadcrumbSelect(index)}>{breadcrumb.name}{index < destinationPicker.breadcrumbs.length - 1 ? ' /' : ''}</button>)}
           </nav>
           <div className="mt-3 min-h-36 overflow-y-auto rounded border border-[var(--color-border)]">
-            {pickerLoading ? <div className="p-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div> : pickerBreadcrumbs.some((breadcrumb) => selectedEntries.some((entry) => entry.kind === 'directory' && breadcrumb.ref === entry.ref)) ? <p className="p-3 text-sm text-[var(--color-text-secondary)]">{t('files.noValidDestination')}</p> : pickerEntries.filter((entry) => !selectedEntries.some((selected) => selected.ref === entry.ref)).map((entry) => <button key={entry.ref} type="button" className="flex w-full items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => onPickerDirectorySelect(entry)}><FolderIcon className="h-4 w-4 ui-file-folder" aria-hidden="true" />{entry.name}</button>)}
+            {destinationPicker.loading ? <div className="p-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div> : destinationPicker.breadcrumbs.some((breadcrumb) => selectedEntries.some((entry) => entry.kind === 'directory' && breadcrumb.ref === entry.ref)) ? <p className="p-3 text-sm text-[var(--color-text-secondary)]">{t('files.noValidDestination')}</p> : destinationPicker.entries.filter((entry) => !selectedEntries.some((selected) => selected.ref === entry.ref)).map((entry) => <button key={entry.ref} type="button" className="flex w-full items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => destinationPicker.onDirectorySelect(entry)}><FolderIcon className="h-4 w-4 ui-file-folder" aria-hidden="true" />{entry.name}</button>)}
           </div>
-          <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.destinationSelected', { name: pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.name })}</p>
+          <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.destinationSelected', { name: destinationPicker.breadcrumbs[destinationPicker.breadcrumbs.length - 1]?.name })}</p>
           <div className="mt-5 flex justify-end gap-2"><button ref={pickerCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={isBusy} onClick={onClose}>{t('common.cancel')}</button><button type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={isBusy} onClick={() => batchOperation ? onExecuteBatchMutation() : onExecuteMutation()}>{isBusy ? t('files.mutating') : operation === 'copy' ? t('files.copy') : t('files.move')}</button></div>
         </div>
       </div>, document.body)}
