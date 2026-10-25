@@ -1,6 +1,10 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
 import {
   FileManagerMutationDialogs,
   type FileManagerMutationDialogsProps,
@@ -25,7 +29,6 @@ describe('FileManagerMutationDialogs', () => {
 
   function makeProps(overrides: Partial<FileManagerMutationDialogsProps> = {}): FileManagerMutationDialogsProps {
     return {
-      t: (key) => key,
       profiles: [],
       selectedEntries: [],
       renameEntry: null,
@@ -149,7 +152,6 @@ describe('FileManagerMutationDialogs', () => {
     const onExecuteMutation = vi.fn();
     const sealedRef = 'sealed:provider-internal-reference';
     const props: FileManagerMutationDialogsProps = {
-      t: (key) => key,
       profiles: [],
       selectedEntries: [],
       renameEntry: null,

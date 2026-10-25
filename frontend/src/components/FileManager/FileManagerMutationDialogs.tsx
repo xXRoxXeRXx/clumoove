@@ -1,22 +1,11 @@
 import type { RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { FolderIcon } from '../icons';
 import { LoadingIndicator } from '../LoadingIndicator';
 import type { ConnectionProfilePublic } from '../../api/profiles';
 import type { FileEntry, FileMutationConflictStrategy } from '../../api/files';
-import type { FileManagerBreadcrumb } from './FileManagerTypes';
-
-type Translate = (key: string, values?: Record<string, unknown>) => string;
-
-type DestinationPicker = {
-  profileId: string;
-  breadcrumbs: FileManagerBreadcrumb[];
-  entries: FileEntry[];
-  loading: boolean;
-  onProfileChange: (profileId: string) => void;
-  onBreadcrumbSelect: (index: number) => void;
-  onDirectorySelect: (entry: FileEntry) => void;
-};
+import type { DestinationPicker } from './useDestinationPicker';
 
 type DialogRefs = {
   rename: RefObject<HTMLDivElement | null>;
@@ -28,7 +17,6 @@ type DialogRefs = {
 };
 
 export type FileManagerMutationDialogsProps = {
-  t: Translate;
   profiles: ConnectionProfilePublic[];
   selectedEntries: FileEntry[];
   renameEntry: FileEntry | null;
@@ -51,7 +39,7 @@ export type FileManagerMutationDialogsProps = {
 
 /** Keeps the rename, destination-picking, and conflict-resolution workflow local to FileManager. */
 export function FileManagerMutationDialogs({
-  t, profiles, selectedEntries, renameEntry, renameName, mutationEntry, mutationOperation,
+  profiles, selectedEntries, renameEntry, renameName, mutationEntry, mutationOperation,
   batchOperation, batchConflictRefs, conflictStrategies, mutationError, mutationBusy, batchBusy,
   destinationPicker,
   dialogRefs: {
@@ -64,6 +52,7 @@ export function FileManagerMutationDialogs({
   },
   onRenameNameChange, onClose, onExecuteMutation, onExecuteBatchMutation,
 }: FileManagerMutationDialogsProps) {
+  const { t } = useTranslation();
   const operation = mutationOperation ?? batchOperation;
   const isBusy = mutationBusy || batchBusy;
 

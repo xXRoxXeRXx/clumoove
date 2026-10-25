@@ -35,6 +35,7 @@ import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
 import { FileManagerMutationDialogs } from './FileManagerMutationDialogs';
 import type { FileManagerBreadcrumb } from './FileManagerTypes';
+import { useDestinationPicker } from './useDestinationPicker';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
 
@@ -127,16 +128,15 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [renameName, setRenameName] = useState('');
   const [mutationEntry, setMutationEntry] = useState<FileEntry | null>(null);
   const [mutationOperation, setMutationOperation] = useState<'copy' | 'move' | null>(null);
-  const [pickerBreadcrumbs, setPickerBreadcrumbs] = useState<FileManagerBreadcrumb[]>([]);
-  const [pickerProfileId, setPickerProfileId] = useState(profileId);
   const [transfers, setTransfers] = useState<FileTransferSummary[]>([]);
-  const [pickerEntries, setPickerEntries] = useState<FileEntry[]>([]);
-  const [pickerLoading, setPickerLoading] = useState(false);
   const [internalTransfers, setInternalTransfers] = useState<InternalTransfer[]>([]);
   const internalControllers = useRef(new Map<string, AbortController>());
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState('');
   const [conflictStrategies, setConflictStrategies] = useState<FileMutationConflictStrategy[] | null>(null);
+  const { picker: destinationPicker, open: openDestinationPicker, abort: abortDestinationPicker } = useDestinationPicker({
+    apiUrl, token, profiles, translateApiError, onError: setMutationError,
+  });
   const [isBreadcrumbMenuOpen, setIsBreadcrumbMenuOpen] = useState(false);
   const breadcrumbMenuRef = useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
@@ -238,7 +238,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const entriesRequestRef = useRef<AbortController | null>(null);
   const deleteRequestRef = useRef<AbortController | null>(null);
   const mutationRequestRef = useRef<AbortController | null>(null);
-  const pickerRequestRef = useRef<AbortController | null>(null);
   const renameDialogRef = useRef<HTMLDivElement>(null);
   const renameCancelRef = useRef<HTMLButtonElement>(null);
   const pickerDialogRef = useRef<HTMLDivElement>(null);
@@ -269,9 +268,9 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const closeMutationDialogs = useCallback(() => {
     if (mutationBusy) return;
     mutationRequestRef.current?.abort();
-    pickerRequestRef.current?.abort();
+    abortDestinationPicker();
     setRenameEntry(null); setMutationEntry(null); setMutationOperation(null); setBatchOperation(null); setBatchConflictRefs([]); setMutationError(''); setConflictStrategies(null);
-  }, [mutationBusy]);
+  }, [abortDestinationPicker, mutationBusy]);
   useFocusTrap(renameDialogRef, renameCancelRef, closeMutationDialogs, renameEntry !== null);
   useFocusTrap(pickerDialogRef, pickerCancelRef, closeMutationDialogs, ((mutationEntry !== null && mutationOperation !== null) || batchOperation !== null) && conflictStrategies === null);
   useFocusTrap(conflictDialogRef, conflictCancelRef, closeMutationDialogs, conflictStrategies !== null);
@@ -472,9 +471,9 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       entriesRequestRef.current?.abort();
       deleteRequestRef.current?.abort();
       mutationRequestRef.current?.abort();
-      pickerRequestRef.current?.abort();
+      abortDestinationPicker();
     };
-  }, [loadProfiles]);
+  }, [abortDestinationPicker, loadProfiles]);
 
   useEffect(() => {
     let controller: AbortController | null = null;
@@ -767,46 +766,19 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     void loadEntries(currentRef);
   };
 
-  const loadPickerEntries = useCallback(async (parentRef: string | null, targetProfileId: string) => {
-    pickerRequestRef.current?.abort();
-    const controller = new AbortController();
-    pickerRequestRef.current = controller;
-    setPickerLoading(true);
-    const result = await listFileEntries(apiUrl, token, targetProfileId, parentRef, undefined, controller.signal);
-    if (!controller.signal.aborted) {
-      setPickerEntries(result.ok ? result.data.entries.filter((entry) => entry.kind === 'directory') : []);
-      if (result.ok === false) setMutationError(translateApiError(result.errorCode));
-      setPickerLoading(false);
-    }
-  }, [apiUrl, token, translateApiError]);
-
-  const selectPickerProfile = (targetProfileId: string) => {
-    const target = profiles.find((profile) => profile.id === targetProfileId);
-    if (!target) return;
-    setPickerProfileId(targetProfileId);
-    setPickerBreadcrumbs([{ ref: null, name: target.name }]);
-    setPickerEntries([]);
-    setMutationError('');
-    void loadPickerEntries(null, targetProfileId);
-  };
-
   const startRename = (entry: FileEntry) => {
     setMenuState(null); setRenameEntry(entry); setRenameName(entry.name); setMutationError(''); setConflictStrategies(null);
   };
 
   const startDestinationPicker = (entry: FileEntry, operation: 'copy' | 'move') => {
     setMenuState(null); setMutationEntry(entry); setMutationOperation(operation); setMutationError(''); setConflictStrategies(null);
-    setPickerProfileId(profileId);
-    const initial = [{ ref: null, name: selectedProfile?.name ?? t('files.title') }];
-    setPickerBreadcrumbs(initial); setPickerEntries([]); void loadPickerEntries(null, profileId);
+    openDestinationPicker(profileId, selectedProfile?.name ?? t('files.title'));
   };
 
   const startBatchDestinationPicker = (operation: 'copy' | 'move') => {
     if (!selectedCan(operation) || batchBusy) return;
     setBatchOperation(operation); setBatchConflictRefs([]); setBatchResults([]); setMutationError(''); setConflictStrategies(null);
-    setPickerProfileId(profileId);
-    const initial = [{ ref: null, name: selectedProfile?.name ?? t('files.title') }];
-    setPickerBreadcrumbs(initial); setPickerEntries([]); void loadPickerEntries(null, profileId);
+    openDestinationPicker(profileId, selectedProfile?.name ?? t('files.title'));
   };
 
   const executeBatchMutation = async (strategy?: FileMutationConflictStrategy) => {
@@ -814,11 +786,11 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     const refs = strategy ? batchConflictRefs : selectedEntries.map((entry) => entry.ref);
     if (refs.length === 0) return;
     setBatchBusy(true); setMutationError('');
-    const destinationRef = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null;
-    const destinationName = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.name ?? t('files.title');
+    const destinationRef = destinationPicker.breadcrumbs[destinationPicker.breadcrumbs.length - 1]?.ref ?? null;
+    const destinationName = destinationPicker.breadcrumbs[destinationPicker.breadcrumbs.length - 1]?.name ?? t('files.title');
 
-    if (pickerProfileId !== profileId) {
-      const result = await startCrossProfileFileTransfer(apiUrl, token, profileId, refs, pickerProfileId, destinationRef, batchOperation, strategy);
+    if (destinationPicker.profileId !== profileId) {
+      const result = await startCrossProfileFileTransfer(apiUrl, token, profileId, refs, destinationPicker.profileId, destinationRef, batchOperation, strategy);
       setBatchBusy(false);
       if (result.ok === false) setMutationError(translateApiError(result.errorCode));
       else { setBatchOperation(null); setBatchConflictRefs([]); setConflictStrategies(null); setSelectedRefs(new Set()); void loadEntries(currentRef); }
@@ -899,11 +871,11 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     const controller = new AbortController();
     mutationRequestRef.current = controller;
     setMutationBusy(true); setMutationError('');
-    const destinationRef = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null;
-    const destinationName = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.name ?? t('files.title');
+    const destinationRef = destinationPicker.breadcrumbs[destinationPicker.breadcrumbs.length - 1]?.ref ?? null;
+    const destinationName = destinationPicker.breadcrumbs[destinationPicker.breadcrumbs.length - 1]?.name ?? t('files.title');
 
-    if (operation !== 'rename' && pickerProfileId !== profileId) {
-      const result = await startCrossProfileFileTransfer(apiUrl, token, profileId, [entry.ref], pickerProfileId, destinationRef, operation, strategy, controller.signal);
+    if (operation !== 'rename' && destinationPicker.profileId !== profileId) {
+      const result = await startCrossProfileFileTransfer(apiUrl, token, profileId, [entry.ref], destinationPicker.profileId, destinationRef, operation, strategy, controller.signal);
       if (controller.signal.aborted) return;
       setMutationBusy(false);
       if (result.ok === false) { setMutationError(translateApiError(result.errorCode)); return; }
@@ -1769,7 +1741,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
           </div>
         </div>, document.body)}
       <FileManagerMutationDialogs
-        t={t}
         profiles={profiles}
         selectedEntries={selectedEntries}
         renameEntry={renameEntry}
@@ -1782,23 +1753,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
         mutationError={mutationError}
         mutationBusy={mutationBusy}
         batchBusy={batchBusy}
-        destinationPicker={{
-          profileId: pickerProfileId,
-          breadcrumbs: pickerBreadcrumbs,
-          entries: pickerEntries,
-          loading: pickerLoading,
-          onProfileChange: selectPickerProfile,
-          onBreadcrumbSelect: (index) => {
-            const next = pickerBreadcrumbs.slice(0, index + 1);
-            setPickerBreadcrumbs(next);
-            void loadPickerEntries(next[next.length - 1]?.ref ?? null, pickerProfileId);
-          },
-          onDirectorySelect: (entry) => {
-            const next = [...pickerBreadcrumbs, { ref: entry.ref, name: entry.name }];
-            setPickerBreadcrumbs(next);
-            void loadPickerEntries(entry.ref, pickerProfileId);
-          },
-        }}
+        destinationPicker={destinationPicker}
         dialogRefs={{
           rename: renameDialogRef,
           renameCancel: renameCancelRef,
