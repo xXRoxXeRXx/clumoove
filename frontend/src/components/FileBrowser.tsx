@@ -37,6 +37,7 @@ import { SyncOptionsForm } from "./SyncOptionsForm";
 import { BackupOptionsForm } from "./BackupOptionsForm";
 import { canExpandSourceNode, isOneDrivePersonalVault, resolveHierarchicalSelectionState, resolveImmichSelectionState } from "./FileBrowser/sourceSelection";
 import { buildTargetTree } from "./FileBrowser/targetTree";
+import { sortFileBrowserEntries } from "./FileBrowser/entryOrdering";
 
 /**
  * Caller contract for the post-connection transfer setup screen. The browser
@@ -66,15 +67,6 @@ const toLocalInputValue = (date: Date): string => {
   );
 };
 
-// sortEntries returns a new array with folders first, then files, each group
-// sorted alphabetically (case-insensitive). Used for files, calendars and
-// contacts so the selection lists are consistently ordered.
-const sortEntries = (entries: CloudFile[]): CloudFile[] => {
-  return [...entries].sort((a, b) => {
-    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-  });
-};
 
 const isAbortError = (error: unknown) =>
   error instanceof DOMException && error.name === "AbortError";
@@ -284,7 +276,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [directoryContents, setDirectoryContents] = useState<
     Record<string, CloudFile[]>
   >(() => ({
-    "/": sortEntries(initialFiles),
+    "/": sortFileBrowserEntries(initialFiles),
   }));
   // All files/folders are selected by default. Pre-populate the top-level
   // entries so the selection checkboxes render checked on first paint.
@@ -429,7 +421,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   );
 
   const syncSelectedPaths = useMemo(() => {
-    const rootItems = directoryContents["/"] || sortEntries(initialFiles);
+    const rootItems = directoryContents["/"] || sortFileBrowserEntries(initialFiles);
     const selectableRootItems = rootItems.filter(
       (item) => !isOneDrivePersonalVault(item),
     );
@@ -500,7 +492,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       const data = await response.json();
       if (controller.signal.aborted) return;
       if (data.success) {
-        const foldersOnly = sortEntries(
+        const foldersOnly = sortFileBrowserEntries(
           (data.files || data.items || []).filter((f: CloudFile) => f.is_dir),
         );
         setTargetDirectoryContents((prev) => {
@@ -652,7 +644,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         const data = await response.json();
         if (controller.signal.aborted) return;
         if (data.success) {
-          const items = sortEntries(data.items || []);
+          const items = sortFileBrowserEntries(data.items || []);
           setCalendars(items);
           setSelectedCalendars((prev) => {
             const next = { ...prev };
@@ -708,7 +700,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         const data = await response.json();
         if (controller.signal.aborted) return;
         if (data.success) {
-          const items = sortEntries(data.items || []);
+          const items = sortFileBrowserEntries(data.items || []);
           setContacts(items);
           setSelectedContacts((prev) => {
             const next = { ...prev };
@@ -815,7 +807,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         const data = await response.json();
         if (controller.signal.aborted) return;
         if (data.success) {
-          const items = sortEntries(data.items || data.files || []);
+          const items = sortFileBrowserEntries(data.items || data.files || []);
           setDirectoryContents((prev) => ({ ...prev, [folderPath]: items }));
           setSelectedPaths((prev) => {
             const next = { ...prev };
