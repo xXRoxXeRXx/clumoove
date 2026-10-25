@@ -33,6 +33,7 @@ import { useFormat } from '../../utils/format';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
+import { FileManagerMutationDialogs } from './FileManagerMutationDialogs';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
 
@@ -44,7 +45,13 @@ type Breadcrumb = {
 export type SortField = 'name' | 'size' | 'modified';
 export type SortDirection = 'asc' | 'desc';
 
-type FileManagerProps = {
+/**
+ * Authenticated, profile-bound interactive cloud file management.
+ *
+ * Callers provide the active profile and navigation callbacks; FileManager keeps
+ * provider paths opaque and uses the supplied session only for file operations.
+ */
+export type FileManagerProps = {
   apiUrl: string;
   token: string;
   profileId: string;
@@ -1763,45 +1770,46 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <div className="mt-5 flex justify-end gap-2"><button ref={batchDeleteCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={batchDeleting} onClick={() => setBatchDeleteOpen(false)}>{t('common.cancel')}</button><button type="button" className="ui-button-danger px-3 py-2 text-sm" disabled={batchDeleting} onClick={() => void deleteSelected()}>{batchDeleting ? t('common.loading') : t('files.deleteRecursively')}</button></div>
           </div>
         </div>, document.body)}
-      {renameEntry && createPortal(
-        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-          <div ref={renameDialogRef} role="dialog" aria-modal="true" aria-labelledby="rename-entry-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
-            <h2 id="rename-entry-title" className="text-lg font-semibold">{t('files.renameTitle')}</h2>
-            {mutationError && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{mutationError}</p>}
-            <form className="mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void executeMutation(); }}>
-              <label className="block text-sm font-medium" htmlFor="rename-entry-name">{t('files.name')}</label>
-              <input id="rename-entry-name" className="ui-input w-full px-3 py-2" value={renameName} disabled={mutationBusy} onChange={(event) => setRenameName(event.target.value)} autoFocus />
-              <div className="flex justify-end gap-2"><button ref={renameCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={mutationBusy} onClick={closeMutationDialogs}>{t('common.cancel')}</button><button type="submit" className="ui-button-primary px-3 py-2 text-sm" disabled={!renameName.trim() || mutationBusy}>{mutationBusy ? t('files.mutating') : t('files.rename')}</button></div>
-            </form>
-          </div>
-        </div>, document.body)}
-      {((mutationEntry && mutationOperation) || batchOperation) && conflictStrategies === null && createPortal(
-        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-          <div ref={pickerDialogRef} role="dialog" aria-modal="true" aria-labelledby="destination-picker-title" tabIndex={-1} className="ui-card flex max-h-[85vh] w-full max-w-lg flex-col p-5">
-            <h2 id="destination-picker-title" className="text-lg font-semibold">{(mutationOperation ?? batchOperation) === 'copy' ? t('files.copyTitle') : t('files.moveTitle')}</h2>
-            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{mutationEntry ? t('files.destinationPickerDescription', { name: mutationEntry.name }) : t('files.batchDestinationPickerDescription', { count: selectedEntries.length })}</p>
-            {mutationError && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{mutationError}</p>}
-            <label className="mt-3 block text-sm font-medium" htmlFor="destination-profile">{t('files.destinationProfile')}</label>
-            <select id="destination-profile" className="ui-input mt-1 w-full px-3 py-2" value={pickerProfileId} disabled={pickerLoading || mutationBusy || batchBusy} onChange={(event) => selectPickerProfile(event.target.value)}>
-              {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-            </select>
-            <nav className="mt-3 flex flex-wrap gap-1 text-sm" aria-label={t('files.destinationBreadcrumb')}>
-              {pickerBreadcrumbs.map((breadcrumb, index) => <button key={breadcrumb.ref ?? 'root'} type="button" className="rounded px-1 py-0.5 hover:bg-[var(--color-hover)]" disabled={pickerLoading || index === pickerBreadcrumbs.length - 1} onClick={() => { const next = pickerBreadcrumbs.slice(0, index + 1); setPickerBreadcrumbs(next); void loadPickerEntries(next[next.length - 1]?.ref ?? null, pickerProfileId); }}>{breadcrumb.name}{index < pickerBreadcrumbs.length - 1 ? ' /' : ''}</button>)}
-            </nav>
-            <div className="mt-3 min-h-36 overflow-y-auto rounded border border-[var(--color-border)]">
-               {pickerLoading ? <div className="p-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div> : pickerBreadcrumbs.some((breadcrumb) => selectedEntries.some((entry) => entry.kind === 'directory' && breadcrumb.ref === entry.ref)) ? <p className="p-3 text-sm text-[var(--color-text-secondary)]">{t('files.noValidDestination')}</p> : pickerEntries.filter((entry) => !selectedEntries.some((selected) => selected.ref === entry.ref)).map((entry) => <button key={entry.ref} type="button" className="flex w-full items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => { const next = [...pickerBreadcrumbs, { ref: entry.ref, name: entry.name }]; setPickerBreadcrumbs(next); void loadPickerEntries(entry.ref, pickerProfileId); }}><FolderIcon className="h-4 w-4 ui-file-folder" aria-hidden="true" />{entry.name}</button>)}
-            </div>
-            <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.destinationSelected', { name: pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.name })}</p>
-            <div className="mt-5 flex justify-end gap-2"><button ref={pickerCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={mutationBusy || batchBusy} onClick={closeMutationDialogs}>{t('common.cancel')}</button><button type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={mutationBusy || batchBusy} onClick={() => batchOperation ? void executeBatchMutation() : void executeMutation()}>{mutationBusy || batchBusy ? t('files.mutating') : (mutationOperation ?? batchOperation) === 'copy' ? t('files.copy') : t('files.move')}</button></div>
-          </div>
-        </div>, document.body)}
-      {conflictStrategies && (renameEntry || mutationEntry || batchOperation) && createPortal(
-        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-          <div ref={conflictDialogRef} role="dialog" aria-modal="true" aria-labelledby="mutation-conflict-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
-            <h2 id="mutation-conflict-title" className="text-lg font-semibold">{t('files.conflictTitle')}</h2><p className="mt-2 text-sm text-[var(--color-text-secondary)]">{batchOperation ? t('files.batchConflictDescription', { count: batchConflictRefs.length }) : t('files.conflictDescription')}</p>
-            <div className="mt-4 flex flex-wrap justify-end gap-2"><button ref={conflictCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={mutationBusy || batchBusy} onClick={closeMutationDialogs}>{t('common.cancel')}</button>{conflictStrategies.map((strategy) => <button key={strategy} type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={mutationBusy || batchBusy} onClick={() => batchOperation ? void executeBatchMutation(strategy) : void executeMutation(strategy)}>{t(`files.conflict${strategy[0]}${strategy.slice(1).toLowerCase()}`)}</button>)}</div>
-          </div>
-        </div>, document.body)}
+      <FileManagerMutationDialogs
+        t={t}
+        profiles={profiles}
+        selectedEntries={selectedEntries}
+        renameEntry={renameEntry}
+        renameName={renameName}
+        mutationEntry={mutationEntry}
+        mutationOperation={mutationOperation}
+        batchOperation={batchOperation}
+        batchConflictRefs={batchConflictRefs}
+        conflictStrategies={conflictStrategies}
+        mutationError={mutationError}
+        mutationBusy={mutationBusy}
+        batchBusy={batchBusy}
+        pickerProfileId={pickerProfileId}
+        pickerBreadcrumbs={pickerBreadcrumbs}
+        pickerEntries={pickerEntries}
+        pickerLoading={pickerLoading}
+        renameDialogRef={renameDialogRef}
+        renameCancelRef={renameCancelRef}
+        pickerDialogRef={pickerDialogRef}
+        pickerCancelRef={pickerCancelRef}
+        conflictDialogRef={conflictDialogRef}
+        conflictCancelRef={conflictCancelRef}
+        onRenameNameChange={setRenameName}
+        onClose={closeMutationDialogs}
+        onExecuteMutation={(strategy) => void executeMutation(strategy)}
+        onExecuteBatchMutation={(strategy) => void executeBatchMutation(strategy)}
+        onPickerProfileChange={selectPickerProfile}
+        onPickerBreadcrumbSelect={(index) => {
+          const next = pickerBreadcrumbs.slice(0, index + 1);
+          setPickerBreadcrumbs(next);
+          void loadPickerEntries(next[next.length - 1]?.ref ?? null, pickerProfileId);
+        }}
+        onPickerDirectorySelect={(entry) => {
+          const next = [...pickerBreadcrumbs, { ref: entry.ref, name: entry.name }];
+          setPickerBreadcrumbs(next);
+          void loadPickerEntries(entry.ref, pickerProfileId);
+        }}
+      />
       {previewEntry && (
         <Suspense fallback={null}>
           <FilePreviewDialog
