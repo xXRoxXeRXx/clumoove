@@ -36,6 +36,7 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { SyncOptionsForm } from "./SyncOptionsForm";
 import { BackupOptionsForm } from "./BackupOptionsForm";
 import { canExpandSourceNode, isOneDrivePersonalVault, resolveHierarchicalSelectionState, resolveImmichSelectionState } from "./FileBrowser/sourceSelection";
+import { buildTargetTree } from "./FileBrowser/targetTree";
 
 /**
  * Caller contract for the post-connection transfer setup screen. The browser
@@ -990,21 +991,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     if (nextExpanded) void fetchTargetChildren(folderPath);
   };
 
-  const targetVisibleNodes = useMemo(() => {
-    const nodes: Array<{ path: string; name: string; depth: number }> = [{
-      path: "/",
-      name: t("fileBrowser.mainDir"),
-      depth: 0,
-    }];
-    const addChildren = (entries: CloudFile[], depth: number) => {
-      entries.forEach((file) => {
-        nodes.push({ path: file.path, name: file.name, depth });
-        if (targetExpandedPaths[file.path]) addChildren(targetDirectoryContents[file.path] || [], depth + 1);
-      });
-    };
-    if (targetExpandedPaths["/"]) addChildren(targetDirectoryContents["/"] || [], 1);
-    return nodes;
-  }, [t, targetDirectoryContents, targetExpandedPaths]);
+  const targetVisibleNodes = useMemo(
+    () => buildTargetTree(targetExpandedPaths, targetDirectoryContents, t("fileBrowser.mainDir")),
+    [t, targetDirectoryContents, targetExpandedPaths],
+  );
 
   const resolvedFocusedTargetPath = isTargetBrowserOpen && focusedTargetPath && targetVisibleNodes.some((node) => node.path === focusedTargetPath)
     ? focusedTargetPath
