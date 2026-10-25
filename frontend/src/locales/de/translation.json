@@ -670,6 +670,7 @@
     "copyTitle": "Eintrag kopieren",
     "moveTitle": "Eintrag verschieben",
     "nameRequired": "Gib einen Namen ein.",
+    "invalidName": "Gib einen sicheren einzelnen Ordnernamen ein.",
     "mutating": "Wird ausgeführt...",
     "destinationPickerDescription": "Wähle einen Zielordner für {{name}}.",
     "destinationProfile": "Zielverbindung",

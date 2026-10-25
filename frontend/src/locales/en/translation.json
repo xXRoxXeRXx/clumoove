@@ -670,6 +670,7 @@
     "copyTitle": "Copy item",
     "moveTitle": "Move item",
     "nameRequired": "Enter a name.",
+    "invalidName": "Enter a safe single folder name.",
     "mutating": "Working...",
     "destinationPickerDescription": "Choose a destination folder for {{name}}.",
     "destinationProfile": "Destination connection",

@@ -46,9 +46,15 @@ describe('FileManagerMutationDialogs', () => {
         breadcrumbs: [{ ref: null, name: 'Root' }],
         entries: [],
         loading: false,
+        error: '',
+        canCreateDirectory: false,
+        creatingDirectory: false,
+        newDirectoryName: '',
         onProfileChange: vi.fn(),
         onBreadcrumbSelect: vi.fn(),
         onDirectorySelect: vi.fn(),
+        onNewDirectoryNameChange: vi.fn(),
+        onCreateDirectory: vi.fn(),
       },
       dialogRefs: {
         rename: { current: null },
@@ -109,9 +115,15 @@ describe('FileManagerMutationDialogs', () => {
         breadcrumbs: [{ ref: null, name: 'Root' }, { ref: 'sealed:current', name: 'Current' }],
         entries: [selectedDirectory, destination],
         loading: false,
+        error: '',
+        canCreateDirectory: false,
+        creatingDirectory: false,
+        newDirectoryName: '',
         onProfileChange,
         onBreadcrumbSelect,
         onDirectorySelect,
+        onNewDirectoryNameChange: vi.fn(),
+        onCreateDirectory: vi.fn(),
       },
     });
 
@@ -148,6 +160,43 @@ describe('FileManagerMutationDialogs', () => {
     expect(document.body.textContent).toContain('files.noValidDestination');
   });
 
+  it('supports keyboard directory navigation and delegates safe folder creation to the picker workflow', () => {
+    const onDirectorySelect = vi.fn();
+    const onNewDirectoryNameChange = vi.fn();
+    const onCreateDirectory = vi.fn();
+    const first = { ref: 'sealed:first', name: 'First', display_path: '/First', kind: 'directory' as const, size: 0, allowed_actions: [] };
+    const second = { ref: 'sealed:second', name: 'Second', display_path: '/Second', kind: 'directory' as const, size: 0, allowed_actions: [] };
+    const props = makeProps({
+      mutationEntry: { ref: 'sealed:source', name: 'source.txt', display_path: '/source.txt', kind: 'file', size: 1, allowed_actions: [] },
+      mutationOperation: 'copy',
+      destinationPicker: {
+        ...makeProps().destinationPicker,
+        entries: [first, second],
+        canCreateDirectory: true,
+        onDirectorySelect,
+        onNewDirectoryNameChange,
+        onCreateDirectory,
+      },
+    });
+
+    act(() => root.render(<FileManagerMutationDialogs {...props} />));
+
+    const directories = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[data-destination-directory]'));
+    act(() => directories[0]?.focus());
+    act(() => directories[0]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })));
+    expect(document.activeElement).toBe(directories[1]);
+
+    const input = document.body.querySelector<HTMLInputElement>('#destination-folder-name');
+    expect(input).not.toBeNull();
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, 'New destination');
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(onNewDirectoryNameChange).toHaveBeenCalled();
+    act(() => input!.form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    expect(onCreateDirectory).toHaveBeenCalledOnce();
+  });
+
   it('retries a mutation with the server-offered conflict strategy without exposing its sealed ref', () => {
     const onExecuteMutation = vi.fn();
     const sealedRef = 'sealed:provider-internal-reference';
@@ -176,9 +225,15 @@ describe('FileManagerMutationDialogs', () => {
         breadcrumbs: [],
         entries: [],
         loading: false,
+        error: '',
+        canCreateDirectory: false,
+        creatingDirectory: false,
+        newDirectoryName: '',
         onProfileChange: vi.fn(),
         onBreadcrumbSelect: vi.fn(),
         onDirectorySelect: vi.fn(),
+        onNewDirectoryNameChange: vi.fn(),
+        onCreateDirectory: vi.fn(),
       },
       dialogRefs: {
         rename: { current: null },
