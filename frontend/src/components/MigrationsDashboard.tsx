@@ -8,6 +8,9 @@ import { useToast } from '../contexts/useToast';
 import { StatusBadge } from './StatusBadge';
 import { LoadingIndicator } from './LoadingIndicator';
 import { apiErrorMessage, apiFetch, apiJson } from '../utils/apiClient';
+import { controlMigration, deleteMigration } from '../api/migrations';
+import { deleteSync, pauseSync, resumeSync } from '../api/sync';
+import { controlBackup, deleteBackup } from '../api/backups';
 import { connectSseLoop } from '../utils/sse';
 import {
   ArrowPathIcon,
@@ -334,12 +337,7 @@ export function MigrationsDashboard({
 
     setDeleteLoading(id);
     try {
-      const result = await apiJson(`${apiUrl}/api/migration/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+      const result = await deleteMigration({ apiUrl, token, migrationId: id });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('migrations.deleteFailed')));
       setMigrations((prev) => prev.filter((m) => m.id !== id));
     } catch (err: unknown) {
@@ -383,12 +381,7 @@ export function MigrationsDashboard({
 
     for (const id of ids) {
       try {
-        const result = await apiJson(`${apiUrl}/api/migration/${id}`, {
-          method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        const result = await deleteMigration({ apiUrl, token, migrationId: id });
         if (result.ok === true) {
           successIds.add(id);
         } else {
@@ -423,10 +416,7 @@ export function MigrationsDashboard({
     const action = ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(migration.status) ? 'resume' : 'pause';
     setControlLoading(migration.id);
     try {
-      const result = await apiJson(`${apiUrl}/api/migration/${migration.id}/${action}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const result = await controlMigration({ apiUrl, token, migrationId: migration.id, action });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('dashboard.actionFailedMsg', { action })));
       setMigrations((current) => current.map((item) => item.id === migration.id
         ? { ...item, status: action === 'pause' ? 'PAUSED' : 'RUNNING' }
@@ -1005,10 +995,7 @@ function SyncList({
 
     setDeleteLoading(id);
     try {
-      const result = await apiJson(`${apiUrl}/api/sync/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const result = await deleteSync({ apiUrl, token, syncId: id });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('sync.deleteFailed')));
       setSyncJobs((prev) => prev.filter((j) => j.id !== id));
     } catch (err: unknown) {
@@ -1053,10 +1040,7 @@ function SyncList({
 
     for (const id of ids) {
       try {
-        const result = await apiJson(`${apiUrl}/api/sync/${id}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const result = await deleteSync({ apiUrl, token, syncId: id });
         if (result.ok === true) {
           successIds.add(id);
         } else {
@@ -1091,10 +1075,9 @@ function SyncList({
     const action = job.status === 'PAUSED' ? 'resume' : 'pause';
     setControlLoading(job.id);
     try {
-      const result = await apiJson(`${apiUrl}/api/sync/${job.id}/${action}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const result = action === 'pause'
+        ? await pauseSync({ apiUrl, token, syncId: job.id })
+        : await resumeSync({ apiUrl, token, syncId: job.id });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('dashboard.actionFailedMsg', { action })));
       if (action === 'pause') {
         setSyncJobs((current) => current.map((item) => item.id === job.id
@@ -1333,10 +1316,7 @@ function BackupList({
   const handleAction = async (job: BackupJob, action: 'run' | 'pause' | 'resume') => {
     setControlLoading(`${job.id}:${action}`);
     try {
-      const result = await apiJson(`${apiUrl}/api/backup/${job.id}/${action}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const result = await controlBackup({ apiUrl, token, backupId: job.id, action });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('backup.actionFailed')));
       setBackupJobs((current) => current.map((item) => item.id === job.id
         ? { ...item, status: action === 'pause' ? 'PAUSED' : action === 'resume' ? 'IDLE' : 'QUEUED' }
@@ -1353,7 +1333,7 @@ function BackupList({
     if (!accepted) return;
     setControlLoading(`${job.id}:delete`);
     try {
-      const result = await apiJson(`${apiUrl}/api/backup/${job.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      const result = await deleteBackup({ apiUrl, token, backupId: job.id });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('backup.actionFailed')));
       setBackupJobs((current) => current.map((item) => item.id === job.id ? { ...item, status: 'DELETING' } : item));
     } catch (err: unknown) {

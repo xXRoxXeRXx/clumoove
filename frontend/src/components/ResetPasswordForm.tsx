@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useApiError } from '../utils/apiError';
-import { apiFetch } from '../utils/apiClient';
+import { apiErrorMessage } from '../utils/apiClient';
+import { resetPassword } from '../api/auth';
 import { ProgressBar } from './ProgressBar';
 
 interface ResetPasswordFormProps {
@@ -63,18 +64,8 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
     setLoading(true);
 
     try {
-      const response = await apiFetch(`${apiUrl}/api/auth/reset-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ token, new_password: password }),
-      });
-
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { error_code?: string };
-        throw new Error(translateApiError(data.error_code));
-      }
+      const result = await resetPassword({ apiUrl, token, newPassword: password });
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('reset.networkError')));
 
       setSuccess(true);
       redirectTimerRef.current = window.setTimeout(onSuccess, 1500);

@@ -23,7 +23,8 @@ import { ConnectionManager } from './ConnectionManager';
 import { useThemeContext } from '../contexts/useThemeContext';
 import { useConfirm } from '../contexts/useConfirm';
 import { useApiError } from '../utils/apiError';
-import { apiFetch } from '../utils/apiClient';
+import { apiErrorMessage, apiFetch } from '../utils/apiClient';
+import { getNotificationSettings, testNotificationSetting, updateNotificationSetting } from '../api/settings';
 import { safeAvatarUrl } from '../utils/avatar';
 import { MessageBanner, type MessageState } from './MessageBanner';
 import { Toggle } from './Toggle';
@@ -261,9 +262,10 @@ export function SettingsPage({
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch(`${apiUrl}/api/settings/notifications`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((res) => (res.ok ? res.json() : Promise.reject()))
-      .then((data) => {
+    getNotificationSettings<{ email_available?: boolean; channels?: Array<{ type: string; enabled: boolean; config?: Record<string, string> }> }>({ apiUrl, token })
+      .then((result) => {
+        if (result.ok === false) throw result;
+        const data = result.data;
         if (cancelled) return;
         setEmailAvailable(Boolean(data.email_available));
         const email = (data.channels || []).find((channel: { type: string }) => channel.type === 'email');
@@ -283,8 +285,8 @@ export function SettingsPage({
   const handleEmailNotificationToggle = async (enabled: boolean) => {
     setSmtpLoading(true);
     try {
-      const res = await apiFetch(`${apiUrl}/api/settings/notifications`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'email', enabled }) });
-      if (!res.ok) { const body = await res.json().catch(() => ({})) as ApiErrBody; throw new Error(translateApiError(body.error_code)); }
+      const result = await updateNotificationSetting({ apiUrl, token, type: 'email', enabled });
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('common.error')));
       setSmtpNotify(enabled);
     } catch (err) { setSmtpMessage({ text: (err as Error).message, type: 'error' }); } finally { setSmtpLoading(false); }
   };
@@ -294,14 +296,9 @@ export function SettingsPage({
     setPushMessage(null);
     setPushLoading(type);
     try {
-      const endpoint = test ? '/api/settings/notifications/test' : '/api/settings/notifications';
-      const res = await apiFetch(`${apiUrl}${endpoint}`, {
-        method: test ? 'POST' : 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ type, enabled: pushEnabled[type], config: pushConfigs[type] }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.success === false) throw new Error(translateApiError(data.error_code));
+      const request = { apiUrl, token, type, enabled: pushEnabled[type], config: pushConfigs[type] };
+      const result = test ? await testNotificationSetting(request) : await updateNotificationSetting(request);
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('common.error')));
       setPushMessage({ text: test ? t('settings.notificationTestSent') : t('settings.notificationSaved'), type: 'success' });
       if (!test) {
         setPushConfigs((current) => ({ ...current, [type]: { ...current[type], token: '', bot_token: '', webhook_url: '' } }));

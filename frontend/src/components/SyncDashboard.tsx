@@ -145,7 +145,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
     const streamController = new AbortController();
     void connectSseLoop({
-      url: syncStreamUrl({ apiUrl, token, syncId }),
+      url: syncStreamUrl(apiUrl),
       signal: streamController.signal,
       fetchImpl: apiFetch,
       handlers: {

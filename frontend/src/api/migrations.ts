@@ -16,6 +16,10 @@ export function controlMigration(request: MigrationRequest & { action: Migration
   return apiJson(url(request, `/${request.action}`), { method: 'POST', headers: auth(request.token) });
 }
 
+export function deleteMigration(request: MigrationRequest): Promise<ApiJsonResult<void>> {
+  return apiJson(url(request), { method: 'DELETE', headers: auth(request.token) });
+}
+
 export function updateMigrationBandwidth(request: MigrationRequest & { limitMbps: number }): Promise<ApiJsonResult<void>> {
   return apiJson(url(request, '/bandwidth'), { method: 'PUT', headers: jsonAuth(request.token), body: JSON.stringify({ limit_mbps: request.limitMbps }) });
 }

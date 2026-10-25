@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiJson } from '../utils/apiClient';
 import { updateMigrationBandwidth } from './migrations';
 import { startSync } from './sync';
@@ -9,6 +9,10 @@ import { updateNotificationSetting } from './settings';
 vi.mock('../utils/apiClient', () => ({ apiJson: vi.fn() }));
 
 describe('feature API clients', () => {
+  beforeEach(() => {
+    vi.mocked(apiJson).mockReset();
+  });
+
   it('sends typed migration updates to their feature endpoint', async () => {
     await updateMigrationBandwidth({ apiUrl: 'https://api.example.test', token: 'token', migrationId: 'migration 1', limitMbps: 25 });
 
