@@ -25,7 +25,7 @@ import {
   XMarkIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
-import { batchDeleteFileEntries, batchMutateFileEntries, cancelCrossProfileFileTransfer, copyFileEntry, createArchiveTicket, createDirectory, deleteFileEntry, getFileCapabilities, listCrossProfileFileTransfers, listFileEntries, createDownloadTicket, moveFileEntry, renameFileEntry, startCrossProfileFileTransfer, type BatchItemResult, type FileBreadcrumb, type FileCapabilities, type FileEntry, type FileMutationConflictStrategy, type FileTransferSummary } from '../../api/files';
+import { batchDeleteFileEntries, batchMutateFileEntries, copyFileEntry, createArchiveTicket, createDirectory, deleteFileEntry, getFileCapabilities, listFileEntries, createDownloadTicket, moveFileEntry, renameFileEntry, startCrossProfileFileTransfer, type BatchItemResult, type FileBreadcrumb, type FileCapabilities, type FileEntry, type FileMutationConflictStrategy } from '../../api/files';
 import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/profiles';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
@@ -34,13 +34,12 @@ import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
 import { FileManagerMutationDialogs } from './FileManagerMutationDialogs';
-import type { FileManagerBreadcrumb } from './FileManagerTypes';
+import type { FileManagerBreadcrumb, SortDirection, SortField } from './FileManagerTypes';
 import { useDestinationPicker } from './useDestinationPicker';
+import { sortFileManagerEntries } from './entryOrdering';
+import { useCrossProfileTransfers } from './useCrossProfileTransfers';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
-
-export type SortField = 'name' | 'size' | 'modified';
-export type SortDirection = 'asc' | 'desc';
 
 /**
  * Authenticated, profile-bound interactive cloud file management.
@@ -128,7 +127,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [renameName, setRenameName] = useState('');
   const [mutationEntry, setMutationEntry] = useState<FileEntry | null>(null);
   const [mutationOperation, setMutationOperation] = useState<'copy' | 'move' | null>(null);
-  const [transfers, setTransfers] = useState<FileTransferSummary[]>([]);
   const [internalTransfers, setInternalTransfers] = useState<InternalTransfer[]>([]);
   const internalControllers = useRef(new Map<string, AbortController>());
   const [mutationBusy, setMutationBusy] = useState(false);
@@ -136,6 +134,9 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [conflictStrategies, setConflictStrategies] = useState<FileMutationConflictStrategy[] | null>(null);
   const { picker: destinationPicker, open: openDestinationPicker, abort: abortDestinationPicker } = useDestinationPicker({
     apiUrl, token, profiles, translateApiError, onError: setMutationError,
+  });
+  const { transfers, loadTransfers, cancelTransfer, dismissTransfer } = useCrossProfileTransfers({
+    apiUrl, token, profileId, onError: (errorCode) => setError(translateApiError(errorCode)),
   });
   const [isBreadcrumbMenuOpen, setIsBreadcrumbMenuOpen] = useState(false);
   const breadcrumbMenuRef = useRef<HTMLDivElement>(null);
@@ -362,51 +363,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const someLoadedSelected = entries.some((entry) => selectedRefs.has(entry.ref));
   const isSelectionMode = selectedRefs.size > 0;
 
-  const sortedEntries = useMemo(() => {
-    return [...entries].sort((a, b) => {
-      // Directories always appear first
-      if (a.kind !== b.kind) {
-        return a.kind === 'directory' ? -1 : 1;
-      }
-
-      if (sortField === 'name') {
-        const cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-        return sortDirection === 'asc' ? cmp : -cmp;
-      }
-
-      if (sortField === 'size') {
-        if (a.kind === 'directory') {
-          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-        }
-        const sizeA = a.size ?? 0;
-        const sizeB = b.size ?? 0;
-        if (sizeA !== sizeB) {
-          return sortDirection === 'asc' ? sizeA - sizeB : sizeB - sizeA;
-        }
-        return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-      }
-
-      if (sortField === 'modified') {
-        const hasA = Boolean(a.modified_at);
-        const hasB = Boolean(b.modified_at);
-        if (!hasA && !hasB) {
-          const cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-          return sortDirection === 'asc' ? cmp : -cmp;
-        }
-        if (!hasA) return 1;
-        if (!hasB) return -1;
-
-        const timeA = new Date(a.modified_at!).getTime();
-        const timeB = new Date(b.modified_at!).getTime();
-        if (timeA !== timeB) {
-          return sortDirection === 'asc' ? timeA - timeB : timeB - timeA;
-        }
-        return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-      }
-
-      return 0;
-    });
-  }, [entries, sortField, sortDirection]);
+  const sortedEntries = useMemo(() => sortFileManagerEntries(entries, sortField, sortDirection), [entries, sortField, sortDirection]);
 
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = someLoadedSelected && !allLoadedSelected;
@@ -548,27 +505,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       controller?.abort();
     };
   }, [apiUrl, initialBreadcrumbs, selectedProfile, token, translateApiError]);
-
-  const loadTransfers = useCallback(async () => {
-    if (!profileId) return;
-    const result = await listCrossProfileFileTransfers(apiUrl, token, profileId);
-    if (result.ok) setTransfers(result.data.transfers ?? []);
-  }, [apiUrl, profileId, token]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => void loadTransfers(), 5000);
-    const initialLoad = window.setTimeout(() => void loadTransfers(), 0);
-    return () => {
-      window.clearInterval(timer);
-      window.clearTimeout(initialLoad);
-    };
-  }, [loadTransfers]);
-
-  const cancelTransfer = async (transferId: string) => {
-    const result = await cancelCrossProfileFileTransfer(apiUrl, token, transferId);
-    if (result.ok === false) setError(translateApiError(result.errorCode));
-    else void loadTransfers();
-  };
 
   useEffect(() => {
     if (!nextCursor || entriesLoading || loadingMore || !capabilities.browse) return;
@@ -1354,7 +1290,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                       onCompleted={uploadCompleted}
                       backgroundTransfers={transfers}
                       onCancelBackgroundTransfer={(transferId) => void cancelTransfer(transferId)}
-                      onDismissBackgroundTransfer={(transferId) => setTransfers((prev) => prev.filter((t) => t.id !== transferId))}
+                      onDismissBackgroundTransfer={dismissTransfer}
                       internalTransfers={internalTransfers}
                       onCancelInternalTransfer={cancelInternalTransfer}
                       onDismissInternalTransfer={dismissInternalTransfer}
