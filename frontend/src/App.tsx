@@ -18,11 +18,11 @@ import { ConfirmationProvider } from './contexts/ConfirmationContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { useDismissConfirm } from './contexts/useConfirm';
 import { useTranslation } from 'react-i18next';
-import type { User, MigrationConfig, CloudFile } from './types';
-import { configureApiClient, apiFetch } from './utils/apiClient';
 import { logger } from './utils/logger';
 import { configuredApiOrigin } from './utils/runtimeConfig';
 import { useAppHistory } from './hooks/useAppHistory';
+import { useSession } from './hooks/useSession';
+import type { MigrationConfig, CloudFile } from './types';
 import { safeAvatarUrl } from './utils/avatar';
 import { resolveFilePath, type FileBreadcrumb } from './api/files';
 
@@ -84,7 +84,7 @@ if (API_URL.startsWith('http://') && !['localhost', '127.0.0.1'].includes(new UR
 }
 
 function App() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const dismissConfirm = useDismissConfirm();
   const mainRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -122,14 +122,11 @@ function App() {
     : null;
 
   const hasStoredSession = localStorage.getItem('has_session') === 'true';
-  const [token, setToken] = useState<string>('');
-  const tokenRef = useRef<string>('');
-  const [user, setUser] = useState<User | null>(null);
-  const [credentials, setCredentials] = useState<MigrationConfig | null>(null);
-  const [initialFiles, setInitialFiles] = useState<CloudFile[]>([]);
   const [fileStart, setFileStart] = useState<{ profileId: string; breadcrumbs: FileBreadcrumb[]; fallback: boolean } | null>(null);
   const resolveAbortControllerRef = useRef<AbortController | null>(null);
   const resolveRequestIdRef = useRef<number>(0);
+  const [credentials, setCredentials] = useState<MigrationConfig | null>(null);
+  const [initialFiles, setInitialFiles] = useState<CloudFile[]>([]);
   const clearCreationState = useCallback(() => {
     setCredentials(null);
     setInitialFiles([]);
@@ -155,9 +152,6 @@ function App() {
     hasStoredSession,
     onLeaveCreationFlow: clearCreationState,
   });
-  const [isValidating, setIsValidating] = useState<boolean>(
-    () => !resetTokenFromUrl && !emailChangeTokenFromUrl && hasStoredSession
-  );
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [resetToken, setResetToken] = useState<string>(resetTokenFromUrl || '');
   const [emailChangeToken, setEmailChangeToken] = useState<string>(emailChangeTokenFromUrl || '');
@@ -187,37 +181,21 @@ function App() {
   }, []);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  const handleLogout = useCallback(async () => {
-    try {
-      await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
-    } catch (e) {
-      logger.error('Logout request failed', e);
-    }
-    localStorage.removeItem('has_session');
-    setToken('');
-    setUser(null);
-    clearCreationState();
-    replaceNav('login', '');
-  }, [clearCreationState, replaceNav]);
-
-  useEffect(() => {
-    tokenRef.current = token;
-  }, [token]);
-
-  // Scoped API client: single-flight 401 refresh without patching window.fetch.
-  useEffect(() => {
-    configureApiClient({
-      apiUrl: API_URL,
-      getAccessToken: () => tokenRef.current,
-      setAccessToken: (tkn) => {
-        tokenRef.current = tkn;
-        setToken(tkn);
-      },
-      onAuthFailure: () => {
-        void handleLogout();
-      },
-    });
-  }, [handleLogout]);
+  const {
+    token,
+    user,
+    isValidating,
+    authenticate: handleAuthSuccess,
+    logout: handleLogout,
+    updateUser: setUser,
+  } = useSession({
+    apiUrl: API_URL,
+    resetToken: resetTokenFromUrl,
+    emailChangeToken: emailChangeTokenFromUrl,
+    initialNavigation: { initialMigrationId, initialSyncId, initialBackupId, initialProfileId },
+    replaceNav,
+    onLogout: clearCreationState,
+  });
 
   // Click outside / Escape to close user menu
   useEffect(() => {
@@ -242,126 +220,6 @@ function App() {
       document.removeEventListener('keydown', handleKey);
     };
   }, [showUserMenu]);
-
-  // 1. Silent login / Refresh Token check on load
-  useEffect(() => {
-    // If we arrived via a password reset link or email change link, skip auth validation entirely.
-    if (resetTokenFromUrl || emailChangeTokenFromUrl) {
-      return;
-    }
-
-    // No session stored -> stay on login (initial state already covers this).
-    if (localStorage.getItem('has_session') !== 'true') {
-      return;
-    }
-
-    fetch(`${API_URL}/api/auth/refresh`, { method: 'POST', credentials: 'include' })
-      .then(async (res) => {
-        if (res.ok) {
-          const data = await res.json();
-          setToken(data.access_token);
-
-          // Fetch user profile
-          const meRes = await apiFetch(`${API_URL}/api/auth/me`, {
-            headers: { 'Authorization': `Bearer ${data.access_token}` },
-          });
-
-          if (meRes.ok) {
-            const userData = await meRes.json();
-            setUser(userData);
-            if (userData.language === 'de' || userData.language === 'en') {
-              localStorage.setItem('i18nextLng', userData.language);
-              void i18n.changeLanguage(userData.language);
-            }
-
-            // Confirm the authenticated deep link captured before history seeding.
-            if (initialMigrationId) {
-              // Verify active migration status
-              const migRes = await apiFetch(`${API_URL}/api/migration/${initialMigrationId}`, {
-                headers: { 'Authorization': `Bearer ${data.access_token}` },
-              });
-              if (migRes.ok) {
-                replaceNav('dashboard', initialMigrationId);
-              } else {
-                replaceNav('history', '');
-              }
-            } else if (initialSyncId) {
-              // Verify active sync status
-              const syncRes = await apiFetch(`${API_URL}/api/sync/${initialSyncId}`, {
-                headers: { 'Authorization': `Bearer ${data.access_token}` },
-              });
-              if (syncRes.ok) {
-                replaceNav('syncdetail', initialSyncId);
-              } else {
-                replaceNav('history', '');
-              }
-            } else if (initialBackupId) {
-              // Verify active backup status
-              const backupRes = await apiFetch(`${API_URL}/api/backup/${initialBackupId}`, {
-                headers: { 'Authorization': `Bearer ${data.access_token}` },
-              });
-              if (backupRes.ok) {
-                replaceNav('backupdetail', initialBackupId);
-              } else {
-                replaceNav('history', '');
-              }
-            } else if (initialProfileId) {
-              const profileRes = await apiFetch(`${API_URL}/api/profiles/${initialProfileId}`, {
-                headers: { 'Authorization': `Bearer ${data.access_token}` },
-              });
-              replaceNav(profileRes.ok ? 'files' : 'history', profileRes.ok ? initialProfileId : '');
-            } else {
-              replaceNav('history', '');
-            }
-          } else {
-            localStorage.removeItem('has_session');
-            replaceNav('login', '');
-          }
-        } else {
-          localStorage.removeItem('has_session');
-          replaceNav('login', '');
-        }
-      })
-      .catch((err) => {
-        logger.error('Silent login error', err);
-        localStorage.removeItem('has_session');
-        replaceNav('login', '');
-      })
-      .finally(() => {
-        setIsValidating(false);
-      });
-  }, [emailChangeTokenFromUrl, i18n, initialBackupId, initialMigrationId, initialProfileId, initialSyncId, replaceNav, resetTokenFromUrl]);
-
-  // 2. Silent JWT refresh (every 14 minutes)
-  useEffect(() => {
-    if (!token) return;
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
-        if (res.ok) {
-          const data = await res.json();
-          setToken(data.access_token);
-        } else {
-          void handleLogout();
-        }
-      } catch {
-        void handleLogout();
-      }
-    }, 14 * 60 * 1000); // 14 minutes
-
-    return () => clearInterval(interval);
-  }, [token, handleLogout]);
-
-  const handleAuthSuccess = (accessToken: string, loggedUser: User) => {
-    localStorage.setItem('has_session', 'true');
-    setToken(accessToken);
-    setUser(loggedUser);
-    if (loggedUser.language === 'de' || loggedUser.language === 'en') {
-      localStorage.setItem('i18nextLng', loggedUser.language);
-      void i18n.changeLanguage(loggedUser.language);
-    }
-    replaceNav('history', '');
-  };
 
   const handleConnectSuccess = (config: MigrationConfig, files: CloudFile[]) => {
     setCredentials(config);
@@ -400,10 +258,8 @@ function App() {
     void handleLogout();
   };
 
-  useEffect(() => {
-    return () => {
-      resolveAbortControllerRef.current?.abort();
-    };
+  useEffect(() => () => {
+    resolveAbortControllerRef.current?.abort();
   }, []);
 
   const handleReset = () => {
@@ -418,19 +274,9 @@ function App() {
     const controller = new AbortController();
     resolveAbortControllerRef.current = controller;
     const reqId = ++resolveRequestIdRef.current;
-
     const result = await resolveFilePath(API_URL, token, nextProfileId, path, controller.signal);
-    if (resolveRequestIdRef.current !== reqId || controller.signal.aborted) {
-      return;
-    }
-    if (result.ok) {
-      setFileStart({ profileId: nextProfileId, breadcrumbs: result.data.breadcrumbs, fallback: result.data.fallback });
-    } else {
-      // A deleted/moved quick-link target should not prevent opening the
-      // manager. The resolve handler normally returns the nearest ancestor;
-      // this path is only for a transient request failure.
-      setFileStart(null);
-    }
+    if (resolveRequestIdRef.current !== reqId || controller.signal.aborted) return;
+    setFileStart(result.ok ? { profileId: nextProfileId, breadcrumbs: result.data.breadcrumbs, fallback: result.data.fallback } : null);
     navigate('files', nextProfileId);
   }, [navigate, token]);
 

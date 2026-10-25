@@ -240,7 +240,7 @@ describe('App openFileManagerAtPath race condition', () => {
     });
 
     // Flush async lazy loading and profile resolution
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 20; i++) {
       await act(async () => {
         await new Promise((r) => setTimeout(r, 25));
       });
@@ -265,7 +265,7 @@ describe('App openFileManagerAtPath race condition', () => {
       await Promise.resolve();
     });
 
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 20; i++) {
       await act(async () => {
         await new Promise((r) => setTimeout(r, 25));
       });
