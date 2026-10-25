@@ -37,6 +37,16 @@ export function updateSyncBandwidthResponse(request: SyncRequest & { limitMbps: 
   });
 }
 
+export function createSync(request: { apiUrl: string; token: string; payload: Record<string, unknown>; signal?: AbortSignal }): Promise<Response> {
+  return apiFetch(`${request.apiUrl}/api/sync`, {
+    method: 'POST', headers: jsonAuth(request.token), body: JSON.stringify(request.payload), signal: request.signal,
+  });
+}
+
+export function startSyncResponse(request: SyncRequest & { signal?: AbortSignal }): Promise<Response> {
+  return apiFetch(url(request, '/start'), { method: 'POST', headers: auth(request.token), signal: request.signal });
+}
+
 export function updateSyncThreads(request: SyncRequest & { threads: number }): Promise<ApiJsonResult<void>> {
   return apiJson(url(request, '/threads'), {
     method: 'PUT', headers: jsonAuth(request.token), body: JSON.stringify({ threads: request.threads }),

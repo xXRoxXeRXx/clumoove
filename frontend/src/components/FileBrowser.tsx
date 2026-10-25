@@ -26,7 +26,9 @@ import type { CloudFile, MigrationConfig } from "../types";
 import { useTranslation } from "react-i18next";
 import { useFormat } from "../utils/format";
 import { useApiError } from "../utils/apiError";
-import { apiFetch } from "../utils/apiClient";
+import { createMigrationTargetDirectory, browseMigrationSource, browseMigrationTarget, startMigration } from '../api/migrations';
+import { createSync, startSyncResponse } from '../api/sync';
+import { createBackup } from '../api/backups';
 import { logger } from "../utils/logger";
 import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { Button } from "./Button";
@@ -562,22 +564,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
     setTargetError(null);
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/target/browse`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
+      const response = await browseMigrationTarget({ apiUrl, token, signal: controller.signal, payload: {
           target_url: credentials.target_url,
           target_username: credentials.target_username,
           target_password: credentials.target_password,
           target_provider: credentials.target_provider,
           target_profile_id: credentials.target_profile_id,
           path: folderPath,
-        }),
-        signal: controller.signal,
-      });
+        } });
 
       if (!response.ok) {
         const b = await response
@@ -653,22 +647,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     setTargetLoadingPaths((prev) => ({ ...prev, [parentPath]: true }));
     setTargetError(null);
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/target/mkdir`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
+      const response = await createMigrationTargetDirectory({ apiUrl, token, signal: controller.signal, payload: {
           target_url: credentials.target_url,
           target_username: credentials.target_username,
           target_password: credentials.target_password,
           target_provider: credentials.target_provider,
           target_profile_id: credentials.target_profile_id,
           path: fullNewPath,
-        }),
-        signal: controller.signal,
-      });
+        } });
 
       if (!response.ok) {
         const b = await response
@@ -732,22 +718,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       const controller = createRequestController();
       setLoadingCalendars(true);
       try {
-        const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
+        const response = await browseMigrationSource({ apiUrl, token, signal: controller.signal, payload: {
             source_url: credentials.source_url,
             source_username: credentials.source_username,
             source_password: credentials.source_password,
             source_provider: credentials.source_provider,
             source_profile_id: credentials.source_profile_id,
             resource_type: "calendars",
-          }),
-          signal: controller.signal,
-        });
+          } });
         if (!response.ok) {
           const b = await response
             .json()
@@ -796,22 +774,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       const controller = createRequestController();
       setLoadingContacts(true);
       try {
-        const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
+        const response = await browseMigrationSource({ apiUrl, token, signal: controller.signal, payload: {
             source_url: credentials.source_url,
             source_username: credentials.source_username,
             source_password: credentials.source_password,
             source_provider: credentials.source_provider,
             source_profile_id: credentials.source_profile_id,
             resource_type: "contacts",
-          }),
-          signal: controller.signal,
-        });
+          } });
         if (!response.ok) {
           const b = await response
             .json()
@@ -908,13 +878,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       const controller = createRequestController();
       setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
       try {
-        const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
+        const response = await browseMigrationSource({ apiUrl, token, signal: controller.signal, payload: {
             source_url: credentials.source_url,
             source_username: credentials.source_username,
             source_password: credentials.source_password,
@@ -922,9 +886,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             source_profile_id: credentials.source_profile_id,
             resource_type: "files",
             path: folderPath,
-          }),
-          signal: controller.signal,
-        });
+          } });
 
         if (!response.ok) {
           const b = await response
@@ -1246,13 +1208,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
     try {
       if (effectiveJobType === "backup") {
-        const response = await apiFetch(`${apiUrl}/api/backup`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
+        const response = await createBackup({ apiUrl, token, signal: controller.signal, payload: {
             source_profile_id: credentials.source_profile_id,
             target_profile_id: credentials.target_profile_id,
             selected_paths: backupSelectedPaths,
@@ -1261,9 +1217,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             timezone: backupTimezone,
             retention_count: backupRetentionCount,
             threads,
-          }),
-          signal: controller.signal,
-        });
+          } });
         if (!response.ok) {
           const body = await response.json().catch(() => ({})) as { error_code?: string };
           throw new Error(body.error_code ? translateApiError(body.error_code) : t("backup.createFailed"));
@@ -1279,13 +1233,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           : null;
 
         if (!syncId) {
-          const response = await apiFetch(`${apiUrl}/api/sync`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
+          const response = await createSync({ apiUrl, token, signal: controller.signal, payload: {
               source_profile_id: credentials.source_profile_id,
               target_profile_id: credentials.target_profile_id,
               source_url: credentials.source_url,
@@ -1306,9 +1254,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               bandwidth_limit_mbps: bandwidthLimit,
               target_dir: targetDir,
               selected_paths: syncSelectedPaths,
-            }),
-            signal: controller.signal,
-          });
+            } });
 
           if (!response.ok) {
             const b = await response
@@ -1344,14 +1290,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
         // Trigger the first pass immediately. If this fails, pendingSync is
         // intentionally retained so the next click retries this request only.
-        const startResponse = await apiFetch(
-          `${apiUrl}/api/sync/${resolvedSyncId}/start`,
-          {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
-            signal: controller.signal,
-          },
-        );
+        const startResponse = await startSyncResponse({ apiUrl, token, syncId: resolvedSyncId, signal: controller.signal });
         if (!startResponse.ok) {
           const body = await startResponse
             .json()
@@ -1381,15 +1320,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           requestBody.scheduled_time = scheduledTimeISO;
         }
 
-        const response = await apiFetch(`${apiUrl}/api/migration/start`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(requestBody),
-          signal: controller.signal,
-        });
+        const response = await startMigration({ apiUrl, token, payload: requestBody, signal: controller.signal });
 
         if (!response.ok) {
           const b = await response

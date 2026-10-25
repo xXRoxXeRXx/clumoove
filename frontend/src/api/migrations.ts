@@ -47,3 +47,33 @@ export function migrationStreamUrl(request: MigrationRequest): string {
 export function migrationErrorsUrl(request: MigrationRequest): string {
   return url(request, '/errors');
 }
+
+type FeatureRequest = { apiUrl: string; token: string; payload: Record<string, unknown>; signal?: AbortSignal };
+
+export function browseMigrationSource(request: FeatureRequest): Promise<Response> {
+  return apiFetch(`${request.apiUrl}/api/migration/browse`, {
+    method: 'POST', headers: { ...auth(request.token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(request.payload), signal: request.signal,
+  });
+}
+
+export function browseMigrationTarget(request: FeatureRequest): Promise<Response> {
+  return apiFetch(`${request.apiUrl}/api/migration/target/browse`, {
+    method: 'POST', headers: { ...auth(request.token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(request.payload), signal: request.signal,
+  });
+}
+
+export function createMigrationTargetDirectory(request: FeatureRequest): Promise<Response> {
+  return apiFetch(`${request.apiUrl}/api/migration/target/mkdir`, {
+    method: 'POST', headers: { ...auth(request.token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(request.payload), signal: request.signal,
+  });
+}
+
+export function startMigration(request: FeatureRequest): Promise<Response> {
+  return apiFetch(`${request.apiUrl}/api/migration/start`, {
+    method: 'POST', headers: { ...auth(request.token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(request.payload), signal: request.signal,
+  });
+}
