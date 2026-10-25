@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
+import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowDownTrayIcon,
@@ -33,11 +33,11 @@ import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
 import { FileManagerMutationDialogs } from './FileManagerMutationDialogs';
-import type { SortDirection, SortField } from './FileManagerTypes';
+import type { SortField } from './FileManagerTypes';
 import { useDestinationPicker } from './useDestinationPicker';
-import { sortFileManagerEntries } from './entryOrdering';
 import { useCrossProfileTransfers } from './useCrossProfileTransfers';
 import { useFileManagerNavigation } from './useFileManagerNavigation';
+import { useFileManagerEntryPresentation } from './useFileManagerEntryPresentation';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
 
@@ -113,70 +113,12 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   });
   const [isBreadcrumbMenuOpen, setIsBreadcrumbMenuOpen] = useState(false);
   const breadcrumbMenuRef = useRef<HTMLDivElement>(null);
-  const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
-    try {
-      const stored = localStorage.getItem('clumoove_file_manager_view_mode');
-      return stored === 'grid' ? 'grid' : 'list';
-    } catch {
-      return 'list';
-    }
-  });
-
-  const handleViewModeChange = (mode: 'list' | 'grid') => {
-    setViewMode(mode);
-    try {
-      localStorage.setItem('clumoove_file_manager_view_mode', mode);
-    } catch {
-      // ignore storage errors
-    }
-  };
-
-  const [sortField, setSortField] = useState<SortField>(() => {
-    try {
-      const stored = localStorage.getItem('clumoove_file_manager_sort_field');
-      if (stored === 'name' || stored === 'size' || stored === 'modified') return stored;
-    } catch {
-      // ignore storage errors
-    }
-    return 'name';
-  });
-
-  const [sortDirection, setSortDirection] = useState<SortDirection>(() => {
-    try {
-      const stored = localStorage.getItem('clumoove_file_manager_sort_dir');
-      if (stored === 'asc' || stored === 'desc') return stored;
-    } catch {
-      // ignore storage errors
-    }
-    return 'asc';
-  });
-
-  const handleSort = (field: SortField) => {
-    let nextField = field;
-    let nextDir: SortDirection;
-    if (sortField === field) {
-      nextDir = sortDirection === 'asc' ? 'desc' : 'asc';
-    } else {
-      nextField = field;
-      // Start size/modified columns descending (largest/newest first)
-      nextDir = field === 'name' ? 'asc' : 'desc';
-    }
-    setSortField(nextField);
-    setSortDirection(nextDir);
-    try {
-      localStorage.setItem('clumoove_file_manager_sort_field', nextField);
-      localStorage.setItem('clumoove_file_manager_sort_dir', nextDir);
-    } catch {
-      // ignore storage errors
-    }
-  };
-
   const renderSortHeader = (field: SortField, label: string, sortLabel: string) => {
     const isActive = sortField === field;
     return (
       <button
         type="button"
-        onClick={() => handleSort(field)}
+        onClick={() => sortBy(field)}
         className="group -mx-1 -my-1 px-1 py-1 inline-flex items-center gap-1.5 font-medium hover:text-[var(--color-text-primary)] transition-colors select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)] rounded text-left"
         title={isActive ? (sortDirection === 'asc' ? t('files.sortDescending') : t('files.sortAscending')) : sortLabel}
         aria-label={`${label}: ${isActive ? (sortDirection === 'asc' ? t('files.sortAscending') : t('files.sortDescending')) : sortLabel}`}
@@ -337,7 +279,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const someLoadedSelected = entries.some((entry) => selectedRefs.has(entry.ref));
   const isSelectionMode = selectedRefs.size > 0;
 
-  const sortedEntries = useMemo(() => sortFileManagerEntries(entries, sortField, sortDirection), [entries, sortField, sortDirection]);
+  const { viewMode, setView: handleViewModeChange, sortField, sortDirection, sortBy, sortedEntries } = useFileManagerEntryPresentation(entries);
 
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = someLoadedSelected && !allLoadedSelected;
