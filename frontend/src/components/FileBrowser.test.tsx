@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../i18n";
 import type { CloudFile, MigrationConfig } from "../types";
 import { apiFetch } from "../utils/apiClient";
-import { FileBrowser } from "./FileBrowser";
+import { FileBrowser, type FileBrowserProps } from "./FileBrowser";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,6 +36,15 @@ const initialFiles: CloudFile[] = [{
   hash: "",
   last_modified: "2026-01-01T00:00:00Z",
 }];
+
+const fileBrowserProps: FileBrowserProps = {
+  initialFiles,
+  credentials,
+  apiUrl: "https://api.example.test",
+  onBack: vi.fn(),
+  onStartSuccess: vi.fn(),
+  token: "token",
+};
 
 const jsonResponse = (data: unknown, status = 200): Response => new Response(
   JSON.stringify(data),
@@ -81,12 +90,8 @@ describe("FileBrowser sync start retry", () => {
     await act(async () => {
       root.render(
         <FileBrowser
-          initialFiles={initialFiles}
-          credentials={credentials}
-          apiUrl="https://api.example.test"
-          onBack={vi.fn()}
+          {...fileBrowserProps}
           onStartSuccess={onStartSuccess}
-          token="token"
         />,
       );
       await flush();
