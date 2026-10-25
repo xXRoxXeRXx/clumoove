@@ -36,7 +36,12 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { SyncOptionsForm } from "./SyncOptionsForm";
 import { BackupOptionsForm } from "./BackupOptionsForm";
 
-interface FileBrowserProps {
+/**
+ * Caller contract for the post-connection transfer setup screen. The browser
+ * lets a user choose source paths and configuration, then reports the created
+ * migration, sync, or backup ID through `onStartSuccess`.
+ */
+export interface FileBrowserProps {
   initialFiles: CloudFile[];
   credentials: MigrationConfig;
   apiUrl: string;
