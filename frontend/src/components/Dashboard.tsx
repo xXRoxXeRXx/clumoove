@@ -8,7 +8,8 @@ import { useTransferMetrics } from '../hooks/useTransferMetrics';
 import { Badge } from './Badge';
 import { StatusBadge } from './StatusBadge';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
-import { apiFetch } from '../utils/apiClient';
+import { apiErrorMessage, apiFetch, apiResponseError } from '../utils/apiClient';
+import { controlMigration, downloadMigrationReport, getMigration, migrationErrorsUrl, migrationStreamUrl, reauthenticateMigration, retryFailedMigration, updateMigrationBandwidth, updateMigrationThreads } from '../api/migrations';
 import { ErrorOverview } from './ErrorOverview';
 import { LoadingIndicator } from './LoadingIndicator';
 import { TransferDetailHeader } from './TransferDetailHeader';
@@ -123,15 +124,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const handleDownloadReport = async (e?: React.MouseEvent) => {
     e?.preventDefault();
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/report`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error_code?: string };
-        throw new Error(translateApiError(body.error_code));
-      }
+      const response = await downloadMigrationReport({ apiUrl, token, migrationId });
+      const responseError = await apiResponseError(response);
+      if (responseError) throw new Error(apiErrorMessage(responseError, translateApiError, t('dashboard.downloadFailed')));
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -155,16 +150,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
     setControlLoading(action);
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/${action}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error_code?: string };
-        throw new Error(translateApiError(body.error_code));
-      }
+      const result = await controlMigration({ apiUrl, token, migrationId, action });
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('dashboard.actionFailed')));
       // Status is reflected by the migration SSE stream.
     } catch (err) {
       logger.error(`Failed to ${action} migration`, err);
@@ -177,18 +164,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const commitBandwidthChange = async (value: number) => {
     setBandwidthLoading(true);
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/bandwidth`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ limit_mbps: value }),
-      });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error_code?: string };
-        throw new Error(translateApiError(body.error_code));
-      }
+      const result = await updateMigrationBandwidth({ apiUrl, token, migrationId, limitMbps: value });
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('dashboard.actionFailed')));
     } catch (err) {
       logger.error('Failed to update migration bandwidth limit', err);
       toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }), 'error');
@@ -200,18 +177,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const commitThreadsChange = async (value: number) => {
     setThreadsLoading(true);
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/threads`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ threads: value }),
-      });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error_code?: string };
-        throw new Error(translateApiError(body.error_code));
-      }
+      const result = await updateMigrationThreads({ apiUrl, token, migrationId, threads: value });
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('dashboard.actionFailed')));
     } catch (err) {
       logger.error('Failed to update migration thread count', err);
       toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }), 'error');
@@ -238,8 +205,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       openOAuthPopup(provider, `migration-reauth-${migrationId}-${role}`, {
         onSuccess: async (msg) => {
           try {
-            const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/reauth`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ role, access_token: msg.token, refresh_token: msg.refreshToken, expires_in: msg.expiresIn }) });
-            if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(translateApiError(body.error_code)); }
+            const result = await reauthenticateMigration({ apiUrl, token, migrationId, role, accessToken: msg.token, refreshToken: msg.refreshToken, expiresIn: msg.expiresIn });
+            if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('dashboard.actionFailedMsg', { action: 'reauth' })));
             setReauthRole('');
             setReconnectNonce((n) => n + 1);
           } catch (err) { toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action: 'reauth' }), 'error'); } finally { setControlLoading(null); }
@@ -252,17 +219,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
     setControlLoading('retry');
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/retry-failed`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error_code?: string };
-        throw new Error(translateApiError(body.error_code));
-      }
-      const resData = await response.json();
+      const result = await retryFailedMigration({ apiUrl, token, migrationId });
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('dashboard.actionFailed')));
+      const resData = result.data;
       if (resData.success && resData.retried > 0) {
         setReconnectNonce((n) => n + 1);
       } else {
@@ -292,13 +251,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       return '';
     };
 
-    // Keep the direct fetch so details are visible while the SSE connection opens.
-    apiFetch(`${apiUrl}/api/migration/${migrationId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((initialData) => {
-        if (isMounted && initialData) {
+    getMigration<ProgressData>({ apiUrl, token, migrationId, signal: controller.signal })
+      .then((result) => {
+        if (isMounted && result.ok) {
+          const initialData = result.data;
           initialData.error_message = sanitizeErrorMsg(initialData.error_message);
           setData((prev) => (prev ? { ...initialData, ...prev } : initialData));
         }
@@ -306,7 +262,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       .catch((err) => logger.error('Initial migration fetch error', err));
 
     void connectSseLoop({
-      url: `${apiUrl}/api/migration/${migrationId}/stream`,
+      url: migrationStreamUrl({ apiUrl, token, migrationId }),
       signal: controller.signal,
       fetchImpl: apiFetch,
       handlers: {
@@ -641,7 +597,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         </div>
 
         <ErrorOverview
-          endpoint={`${apiUrl}/api/migration/${migrationId}/errors`}
+          endpoint={migrationErrorsUrl({ apiUrl, token, migrationId })}
           token={token}
           refreshKey={`${data.failed_files}-${data.status}`}
           onDownloadReport={data.failed_files > 0 ? handleDownloadReport : undefined}

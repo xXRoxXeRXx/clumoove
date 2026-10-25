@@ -7,7 +7,8 @@ import { useToast } from '../contexts/useToast';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
 import { Badge } from './Badge';
 import { StatusBadge } from './StatusBadge';
-import { ApiDisplayError, apiErrorMessage, apiFetch, apiJson, apiResponseError } from '../utils/apiClient';
+import { ApiDisplayError, apiErrorMessage, apiFetch, apiResponseError } from '../utils/apiClient';
+import { downloadSyncReport, getSync, pauseSync, reauthenticateSync, resumeSync, startSync, syncErrorsUrl, syncStreamUrl, updateSyncBandwidth, updateSyncThreads } from '../api/sync';
 import { connectSseLoop } from '../utils/sse';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import { logger } from '../utils/logger';
@@ -85,14 +86,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const commitThreadsChange = async (value: number) => {
     setThreadsLoading(true);
     try {
-      const result = await apiJson(`${apiUrl}/api/sync/${syncId}/threads`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ threads: value }),
-      });
+      const result = await updateSyncThreads({ apiUrl, token, syncId, threads: value });
       if (result.ok === false) {
         toast(apiErrorMessage(result, translateApiError, t('dashboard.threadsFailed')), 'error');
         if (job?.threads !== undefined) setThreads(job.threads);
@@ -109,11 +103,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const commitBandwidthChange = async (value: number) => {
     setBandwidthLoading(true);
     try {
-      const result = await apiJson(`${apiUrl}/api/sync/${syncId}/bandwidth`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ limit_mbps: value }),
-      });
+      const result = await updateSyncBandwidth({ apiUrl, token, syncId, limitMbps: value });
       if (result.ok === false) {
         toast(apiErrorMessage(result, translateApiError, t('dashboard.bandwidthFailed')), 'error');
         setBandwidthLimit(job?.bandwidth_limit_mbps ?? 0);
@@ -133,10 +123,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
     const snapshotController = new AbortController();
     async function fetchJob(): Promise<void> {
       try {
-        const result = await apiJson<SyncJob>(`${apiUrl}/api/sync/${syncId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: snapshotController.signal,
-        });
+        const result = await getSync<SyncJob>({ apiUrl, token, syncId, signal: snapshotController.signal });
         if (result.ok === false) {
           throw new Error(apiErrorMessage(result, translateApiErrorRef.current, tRef.current('sync.loadFailed')));
         }
@@ -158,7 +145,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
     const streamController = new AbortController();
     void connectSseLoop({
-      url: `${apiUrl}/api/sync/stream`,
+      url: syncStreamUrl({ apiUrl, token, syncId }),
       signal: streamController.signal,
       fetchImpl: apiFetch,
       handlers: {
@@ -204,10 +191,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const handleTriggerStart = async () => {
     setActionLoading(true);
     try {
-      const result = await apiJson(`${apiUrl}/api/sync/${syncId}/start`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const result = await startSync({ apiUrl, token, syncId });
       if (result.ok === false) {
         throw new Error(apiErrorMessage(result, translateApiError, t('sync.startFailed')));
       }
@@ -226,19 +210,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
     openOAuthPopup(provider, `sync-reauth-${syncId}-${role}`, {
       onSuccess: async (msg) => {
         try {
-          const result = await apiJson(`${apiUrl}/api/sync/${syncId}/reauth`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              role,
-              access_token: msg.token,
-              refresh_token: msg.refreshToken,
-              expires_in: msg.expiresIn,
-            }),
-          });
+          const result = await reauthenticateSync({ apiUrl, token, syncId, role, accessToken: msg.token, refreshToken: msg.refreshToken, expiresIn: msg.expiresIn });
           if (result.ok === false) {
             throw new Error(apiErrorMessage(result, translateApiError, t('sync.startFailed')));
           }
@@ -257,10 +229,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const handlePause = async () => {
     setActionLoading(true);
     try {
-      const result = await apiJson(`${apiUrl}/api/sync/${syncId}/pause`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const result = await pauseSync({ apiUrl, token, syncId });
       if (result.ok === false) {
         throw new Error(apiErrorMessage(result, translateApiError, t('sync.pauseFailed')));
       }
@@ -276,10 +245,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const handleResume = async () => {
     setActionLoading(true);
     try {
-      const result = await apiJson(`${apiUrl}/api/sync/${syncId}/resume`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const result = await resumeSync({ apiUrl, token, syncId });
       if (result.ok === false) {
         throw new Error(apiErrorMessage(result, translateApiError, t('sync.resumeFailed')));
       }
@@ -294,11 +260,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const handleDownloadReport = async (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
     try {
-      const response = await apiFetch(`${apiUrl}/api/sync/${syncId}/report`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await downloadSyncReport({ apiUrl, token, syncId });
       const responseError = await apiResponseError(response);
       if (responseError) {
         throw new ApiDisplayError(apiErrorMessage(responseError, translateApiError, t('dashboard.downloadFailed')));
@@ -655,7 +617,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         </div>
 
         <ErrorOverview
-          endpoint={`${apiUrl}/api/sync/${syncId}/errors`}
+          endpoint={syncErrorsUrl({ apiUrl, token, syncId })}
           token={token}
           refreshKey={`${job.failed_files}-${job.last_run_at}-${job.status}`}
           onDownloadReport={job.failed_files > 0 || job.last_run_status === 'PARTIAL' || job.last_run_status === 'FAILED' ? handleDownloadReport : undefined}

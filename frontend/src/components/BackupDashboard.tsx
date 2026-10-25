@@ -7,7 +7,8 @@ import { useToast } from '../contexts/useToast';
 import { useConfirm } from '../contexts/useConfirm';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
 import { StatusBadge } from './StatusBadge';
-import { apiErrorMessage, apiFetch, apiJson } from '../utils/apiClient';
+import { apiErrorMessage, apiFetch } from '../utils/apiClient';
+import { backupStreamUrl, controlBackup, deleteBackup, getBackup, listBackupRuns } from '../api/backups';
 import { connectSseLoop } from '../utils/sse';
 import { logger } from '../utils/logger';
 import { TransferDetailHeader } from './TransferDetailHeader';
@@ -66,9 +67,7 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
   const fetchRuns = useCallback(async () => {
     setRunsLoading(true);
     try {
-      const result = await apiJson<BackupRun[]>(`${apiUrl}/api/backup/${backupId}/runs`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const result = await listBackupRuns<BackupRun>({ apiUrl, token, backupId });
       if (result.ok === false) {
         throw new Error(apiErrorMessage(result, translateApiErrorRef.current, tRef.current('backup.loadFailed')));
       }
@@ -87,10 +86,7 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
 
     async function fetchJob(): Promise<void> {
       try {
-        const result = await apiJson<BackupJob>(`${apiUrl}/api/backup/${backupId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: snapshotController.signal,
-        });
+        const result = await getBackup<BackupJob>({ apiUrl, token, backupId, signal: snapshotController.signal });
         if (result.ok === false) {
           throw new Error(apiErrorMessage(result, translateApiErrorRef.current, tRef.current('backup.loadFailed')));
         }
@@ -114,9 +110,7 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
 
     async function loadInitialRuns(): Promise<void> {
       try {
-        const result = await apiJson<BackupRun[]>(`${apiUrl}/api/backup/${backupId}/runs`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const result = await listBackupRuns<BackupRun>({ apiUrl, token, backupId });
         if (!cancelled && result.ok !== false) {
           setRuns(result.data || []);
         }
@@ -130,7 +124,7 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
 
     const streamController = new AbortController();
     void connectSseLoop({
-      url: `${apiUrl}/api/backup/stream`,
+      url: backupStreamUrl(apiUrl),
       signal: streamController.signal,
       fetchImpl: apiFetch,
       handlers: {
@@ -179,10 +173,7 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
   const handleAction = async (action: 'run' | 'pause' | 'resume') => {
     setActionLoading(action);
     try {
-      const result = await apiJson(`${apiUrl}/api/backup/${backupId}/${action}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const result = await controlBackup({ apiUrl, token, backupId, action });
       if (result.ok === false) {
         throw new Error(apiErrorMessage(result, translateApiError, t('backup.actionFailed')));
       }
@@ -208,10 +199,7 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
 
     setActionLoading('delete');
     try {
-      const result = await apiJson(`${apiUrl}/api/backup/${backupId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const result = await deleteBackup({ apiUrl, token, backupId });
       if (result.ok === false) {
         throw new Error(apiErrorMessage(result, translateApiError, t('backup.actionFailed')));
       }
