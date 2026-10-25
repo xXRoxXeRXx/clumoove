@@ -35,6 +35,7 @@ import { Button } from "./Button";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { SyncOptionsForm } from "./SyncOptionsForm";
 import { BackupOptionsForm } from "./BackupOptionsForm";
+import { canExpandSourceNode, isOneDrivePersonalVault, resolveHierarchicalSelectionState, resolveImmichSelectionState } from "./FileBrowser/sourceSelection";
 
 /**
  * Caller contract for the post-connection transfer setup screen. The browser
@@ -74,104 +75,8 @@ const sortEntries = (entries: CloudFile[]): CloudFile[] => {
   });
 };
 
-const isOneDrivePersonalVault = (file: CloudFile) =>
-  file.metadata?.custom_props?.onedrive_special_folder === "vault";
-
 const isAbortError = (error: unknown) =>
   error instanceof DOMException && error.name === "AbortError";
-
-const canExpandNode = (file: CloudFile, isImmich: boolean): boolean => {
-  if (!file.is_dir) return false;
-  if (isImmich) {
-    return file.path === "/Albums";
-  }
-  return true;
-};
-
-const resolveImmichSelectionState = (
-  prev: Record<string, boolean>,
-  filePath: string,
-): Record<string, boolean> => {
-  const willBeSelected = !prev[filePath];
-  const next = { ...prev, [filePath]: willBeSelected };
-
-  if (filePath === "/Library" && willBeSelected) {
-    next["/Albums"] = false;
-    for (const key of Object.keys(next)) {
-      if (key.startsWith("/Albums/")) {
-        next[key] = false;
-      }
-    }
-  } else if (filePath === "/Albums") {
-    if (willBeSelected) {
-      next["/Library"] = false;
-    }
-    for (const key of Object.keys(next)) {
-      if (key.startsWith("/Albums/")) {
-        next[key] = willBeSelected;
-      }
-    }
-  } else if (filePath.startsWith("/Albums/")) {
-    if (willBeSelected) {
-      next["/Library"] = false;
-    } else {
-      next["/Albums"] = false;
-    }
-  }
-
-  return next;
-};
-
-const parentPath = (path: string): string | null => {
-  const separator = path.lastIndexOf("/");
-  return separator <= 0 ? null : path.slice(0, separator);
-};
-
-// A selected directory represents its complete recursive contents to the API.
-// Keep the checkbox state compatible with that contract: excluding a descendant
-// replaces every selected ancestor with its selected siblings.
-const resolveHierarchicalSelectionState = (
-  prev: Record<string, boolean>,
-  filePath: string,
-  directoryContents: Record<string, CloudFile[]>,
-): Record<string, boolean> => {
-  const next = { ...prev };
-  const setLoadedSubtree = (path: string, selected: boolean) => {
-    next[path] = selected;
-    for (const child of directoryContents[path] || []) {
-      if (isOneDrivePersonalVault(child)) {
-        next[child.path] = false;
-        continue;
-      }
-      setLoadedSubtree(child.path, selected);
-    }
-  };
-
-  if (!prev[filePath]) {
-    setLoadedSubtree(filePath, true);
-    return next;
-  }
-
-  setLoadedSubtree(filePath, false);
-  let excludedPath = filePath;
-  let ancestorPath = parentPath(filePath);
-  while (ancestorPath !== null) {
-    // If this ancestor was the inclusive scope, replace it with all of its
-    // other children. If it was already excluded, its existing child scopes
-    // may contain earlier exclusions and must be preserved unchanged.
-    if (prev[ancestorPath]) {
-      for (const sibling of directoryContents[ancestorPath] || []) {
-        if (sibling.path !== excludedPath && !isOneDrivePersonalVault(sibling)) {
-          setLoadedSubtree(sibling.path, true);
-        }
-      }
-    }
-    next[ancestorPath] = false;
-    excludedPath = ancestorPath;
-    ancestorPath = parentPath(ancestorPath);
-  }
-  return next;
-};
 
 interface SourceTreeRowProps {
   file: CloudFile;
@@ -996,7 +901,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         nodes.push({ file, depth });
         if (
           file.is_dir &&
-          canExpandNode(file, isImmichSource) &&
+          canExpandSourceNode(file, isImmichSource) &&
           expandedPaths[file.path]
         ) {
           addChildren(directoryContents[file.path] || [], depth + 1);
@@ -1034,7 +939,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       case "ArrowRight":
         event.preventDefault();
         if (
-          canExpandNode(current.file, isImmichSource) &&
+          canExpandSourceNode(current.file, isImmichSource) &&
           !expandedPaths[current.file.path] &&
           !isOneDrivePersonalVault(current.file)
         ) {
@@ -1049,7 +954,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       case "ArrowLeft": {
         event.preventDefault();
         if (
-          canExpandNode(current.file, isImmichSource) &&
+          canExpandSourceNode(current.file, isImmichSource) &&
           expandedPaths[current.file.path]
         ) {
           toggleExpand(current.file.path);
@@ -1366,7 +1271,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   };
 
   const renderNode = (file: CloudFile, depth: number = 0) => {
-    const canExpand = canExpandNode(file, isImmichSource);
+    const canExpand = canExpandSourceNode(file, isImmichSource);
     const isExpanded = canExpand && !!expandedPaths[file.path];
     const isSelected = !!selectedPaths[file.path];
     const isLoading = !!loadingPaths[file.path];
