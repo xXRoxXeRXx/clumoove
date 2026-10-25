@@ -47,6 +47,7 @@ describe('useSession', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     act(() => root.unmount());
     container.remove();
     localStorage.clear();
