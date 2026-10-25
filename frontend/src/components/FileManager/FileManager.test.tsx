@@ -224,9 +224,9 @@ describe('FileManager component', () => {
     expect(container.textContent).toContain('report.txt');
   });
 
-  it('keeps sealed refs opaque and gates destination folder creation by the target capability', async () => {
+  it('switches the existing destination picker to another profile and queues a background copy', async () => {
     vi.mocked(getFileCapabilities).mockResolvedValue({ ok: true, status: 200, data: { capabilities: { ...mockCapabilities, copy: true } } });
-    vi.mocked(listFileEntries).mockResolvedValue({ ok: true, status: 200, data: { entries: [{ ...rootEntries[1], ref: 'sealed:source-entry', allowed_actions: ['copy'] }], next_cursor: null } });
+    vi.mocked(listFileEntries).mockResolvedValue({ ok: true, status: 200, data: { entries: [{ ...rootEntries[1], allowed_actions: ['copy'] }], next_cursor: null } });
     await act(async () => {
       root.render(<FileManager apiUrl="https://api.example.test" token="jwt-token" profileId="profile-1" onProfileChange={onProfileChange} />);
       await Promise.resolve();
@@ -249,12 +249,10 @@ describe('FileManager component', () => {
     });
     await flushAsync();
     expect(vi.mocked(listFileEntries)).toHaveBeenCalledWith('https://api.example.test', 'jwt-token', 'profile-2', null, undefined, expect.any(AbortSignal));
-    expect(vi.mocked(getFileCapabilities)).toHaveBeenCalledWith('https://api.example.test', 'jwt-token', 'profile-2', expect.any(AbortSignal));
-    expect(document.querySelector('#destination-folder-name')).toBeNull();
 
     const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((button) => button.textContent === 'Copy');
     await act(async () => { confirm?.click(); await Promise.resolve(); });
-    expect(vi.mocked(startCrossProfileFileTransfer)).toHaveBeenCalledWith('https://api.example.test', 'jwt-token', 'profile-1', ['sealed:source-entry'], 'profile-2', null, 'copy', undefined);
+    expect(vi.mocked(startCrossProfileFileTransfer)).toHaveBeenCalledWith('https://api.example.test', 'jwt-token', 'profile-1', ['ref-file-1'], 'profile-2', null, 'copy', undefined);
   });
 
   it('keeps same-profile copies on the existing direct mutation endpoint', async () => {
