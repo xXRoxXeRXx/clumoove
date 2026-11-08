@@ -143,6 +143,27 @@ func TestVerifyTargetSizeStopsWhenContextCancelled(t *testing.T) {
 	}
 }
 
+// The processor-facing progress stage must always stop cleanly, including a
+// task that is fenced or cancelled before any bytes are transferred.
+func TestMigrationProgressReporterStopsWithoutTransfer(t *testing.T) {
+	p := &Processor{workerID: "test-worker"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, stop := p.startMigrationProgressReporter(ctx, cancel, "migration-1", "task-1", 1)
+
+	done := make(chan struct{})
+	go func() {
+		stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("progress reporter did not stop without a transfer")
+	}
+}
+
 // fakeProvider is a minimal StorageProvider used to exercise transfer-decision
 // helpers without any network. Only SupportsAtomicRename is meaningful here;
 // the other methods panic if accidentally called by the tested code.
