@@ -417,8 +417,7 @@ func (s *APIServer) handleAdminSuspendUser(w http.ResponseWriter, r *http.Reques
 	}
 	var failedSyncCancelEvents []string
 	for _, syncJobID := range syncJobIDs {
-		s.syncEngine.CancelPass(syncJobID)
-		if err := s.queue.PublishSyncCancelEvent(r.Context(), syncJobID); err != nil {
+		if err := s.syncPass.Cancel(r.Context(), syncJobID); err != nil {
 			s.logf(r, "Warning: failed to publish cancel event for suspended user's sync job %s: %v", syncJobID, err)
 			failedSyncCancelEvents = append(failedSyncCancelEvents, syncJobID)
 		}

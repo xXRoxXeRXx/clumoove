@@ -433,19 +433,18 @@ func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claimed, err := s.syncEngine.StartSyncPass(s.backgroundCtx, id)
+	result, err := s.syncPass.Start(s.backgroundCtx, id)
 	if err != nil {
 		s.logf(r, "[Sync] Failed to claim sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if !claimed {
-		job, getErr := db.GetSyncJobContext(r.Context(), s.db, id)
-		if getErr != nil {
+	if !result.Started {
+		if result.Status == "" {
 			writeError(w, http.StatusNotFound, ErrSyncNotFound)
 			return
 		}
-		if job.Status == "RUNNING" || job.Status == "INDEXING" || job.Status == "VERIFYING" {
+		if result.Status == "RUNNING" || result.Status == "INDEXING" || result.Status == "VERIFYING" {
 			writeError(w, http.StatusConflict, ErrSyncAlreadyRunning)
 			return
 		}
@@ -472,8 +471,7 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 
 	// A paused sync abandons the current pass. Resume starts a freshly indexed
 	// pass; it never attempts to continue a coordinator that was cancelled.
-	emptyErr := ""
-	pausedGeneration, paused, err := db.PauseSyncJobAndDeactivateSchedules(r.Context(), s.db, id, &emptyErr)
+	paused, err := s.syncPass.Pause(r.Context(), id)
 	if err != nil {
 		s.logf(r, "Failed to pause sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -483,14 +481,6 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, ErrSyncInvalidState)
 		return
 	}
-	// The database transition, schedule deactivation, and pending-task
-	// cancellation committed together. Fence the asynchronous signal so a late
-	// pause cannot cancel a successor pass created by a concurrent resume.
-	s.syncEngine.CancelPassForGeneration(id, pausedGeneration)
-	if err := s.queue.PublishSyncCancelEventForGeneration(r.Context(), id, pausedGeneration); err != nil {
-		s.logf(r, "Warning: failed to publish cancel event for sync job %s: %v", id, err)
-	}
-
 	s.writeAudit(r, db.AuditSyncPaused, id, userID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
@@ -508,40 +498,27 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resume starts a new full pass. The pass cancelled by pause cannot be
-	// continued because its in-memory indexing state was intentionally dropped.
-	// Wait for the cancelled coordinator on any API instance to exit before
-	// publishing a new INDEXING claim; otherwise it could finish stale writes.
-	if err := s.syncEngine.WaitForPassDrain(r.Context(), id); err != nil {
-		s.logf(r, "Failed waiting for sync job %s to drain: %v", id, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	emptyErr := ""
-	nextRun := time.Now()
-	resumed, err := db.ResumeSyncJobAndReactivateSchedules(r.Context(), s.db, id, &emptyErr, nextRun)
+	result, err := s.syncPass.Resume(r.Context(), s.backgroundCtx, id)
 	if err != nil {
 		s.logf(r, "Failed to resume sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if !resumed {
+	if !result.Resumed {
 		writeError(w, http.StatusConflict, ErrSyncInvalidState)
 		return
 	}
-	claimed, startErr := s.syncEngine.StartSyncPass(s.backgroundCtx, id)
-	// The transaction above also reactivated the schedule. If the immediate
-	// claim was lost to an instance race or a transient DB error, the next
-	// scheduler tick safely starts the already-resumed IDLE job.
-	if startErr != nil {
-		s.warnf(r, "Deferred resumed sync job %s after immediate start error: %v", id, startErr)
-	} else if !claimed {
-		s.warnf(r, "Deferred resumed sync job %s because another instance claimed it", id)
+	if result.Deferred {
+		if result.StartError != nil {
+			s.warnf(r, "Deferred resumed sync job %s after immediate start error: %v", id, result.StartError)
+		} else {
+			s.warnf(r, "Deferred resumed sync job %s because another instance claimed it", id)
+		}
 	}
 
 	s.writeAudit(r, db.AuditSyncResumed, id, userID, nil)
 
-	writeJSON(w, http.StatusOK, map[string]bool{"success": true, "deferred": startErr != nil || !claimed})
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true, "deferred": result.Deferred})
 }
 
 func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
@@ -556,14 +533,7 @@ func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cancel any in-flight sync-pass goroutine before deleting the DB rows so
-	// the goroutine does not keep operating against a deleted job.
-	s.syncEngine.CancelPass(id)
-	if err := s.queue.PublishSyncCancelEvent(r.Context(), id); err != nil {
-		s.logf(r, "Warning: failed to publish cancel event for sync job %s: %v", id, err)
-	}
-
-	err := db.DeleteSyncJobCascade(s.db, id)
+	err := s.syncPass.Delete(r.Context(), id)
 	if err != nil {
 		s.logf(r, "Failed to delete sync job: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

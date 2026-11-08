@@ -33,7 +33,7 @@ type APIServer struct {
 	db            *sql.DB
 	queue         *queue.Queue
 	indexer       *indexer.Indexer
-	syncEngine    *appSync.Engine
+	syncPass      appSync.Pass
 	encryptionKey string // AES key for credential encryption
 	jwtSecret     string // HMAC key for JWT signing (separate from encryptionKey)
 	// backgroundCtx owns long-running work started after a request returns.
@@ -177,7 +177,7 @@ func main() {
 		db:                database,
 		queue:             q,
 		indexer:           indexer.NewIndexer(database, encryptionKey, q),
-		syncEngine:        syncEng,
+		syncPass:          syncEng.Pass(),
 		encryptionKey:     encryptionKey,
 		jwtSecret:         jwtSecret,
 		backgroundCtx:     ctx,

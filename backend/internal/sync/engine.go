@@ -25,6 +25,9 @@ type Engine struct {
 	db            *sql.DB
 	queue         *queue.Queue
 	encryptionKey string
+	passStore     passStore
+	passRunner    passRunner
+	passSignals   passSignals
 
 	// cancelMu guards the activePassCancels map which tracks in-progress
 	// sync-pass goroutines. Entries are added just before the goroutine body
@@ -39,13 +42,21 @@ type activePassCancel struct {
 }
 
 func NewEngine(database *sql.DB, q *queue.Queue, encryptionKey string) *Engine {
-	return &Engine{
+	engine := &Engine{
 		db:                database,
 		queue:             q,
 		encryptionKey:     encryptionKey,
 		activePassCancels: make(map[string]activePassCancel),
 	}
+	engine.passStore = postgresPassStore{db: database}
+	engine.passRunner = engine
+	engine.passSignals = enginePassSignals{engine: engine, queue: q}
+	return engine
 }
+
+// Pass exposes the deep Sync Job lifecycle module. HTTP and scheduler callers
+// use this interface instead of coordinating pass ordering themselves.
+func (e *Engine) Pass() Pass { return e }
 
 // CancelPass cancels any in-progress sync pass for the given sync job.
 // It is a no-op if no pass is running for the job.
@@ -89,10 +100,10 @@ type fileState struct {
 	ETag         string
 }
 
-// StartSyncPass claims a manually runnable sync job and, if successful, starts
-// exactly one asynchronous pass. The boolean is false when another pass owns
-// the job or its status is not runnable.
-func (e *Engine) StartSyncPass(serverCtx context.Context, syncJobID string) (bool, error) {
+// startSyncPass claims a runnable sync job and, if successful, starts exactly
+// one asynchronous pass. The public Pass interface owns callers' lifecycle
+// semantics; this is an internal runner adapter.
+func (e *Engine) startSyncPass(serverCtx context.Context, syncJobID string) (bool, error) {
 	generation, claimed, err := db.ClaimSyncJobPass(e.db, syncJobID)
 	if err != nil || !claimed {
 		return claimed, err
@@ -101,10 +112,10 @@ func (e *Engine) StartSyncPass(serverCtx context.Context, syncJobID string) (boo
 	return true, nil
 }
 
-// WaitForPassDrain serializes a manual resume with a cancelled predecessor on
-// every API instance. A PostgreSQL advisory lock is used rather than a local
-// mutex because the predecessor may be running in another process.
-func (e *Engine) WaitForPassDrain(ctx context.Context, syncJobID string) error {
+// waitForPassDrain serializes a resume with a cancelled predecessor on every
+// API instance. A PostgreSQL advisory lock is used rather than a local mutex
+// because the predecessor may be running in another process.
+func (e *Engine) waitForPassDrain(ctx context.Context, syncJobID string) error {
 	conn, err := e.db.Conn(ctx)
 	if err != nil {
 		return err
@@ -665,7 +676,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		// The baseline and lifecycle result must commit together. Otherwise a
 		// successful empty pass can lose deletion/conflict history.
 		upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, srcRelTargetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirs, prevTargetDirs, nil)
-		finalized, err := db.FinalizeEmptySyncJobPassWithStates(e.db, job.ID, generation, "SUCCESS", nil, 0, 0, 0, 0, 0, upserts, deletes)
+		finalized, err := e.Finalize(Finalization{JobID: job.ID, Generation: generation, Status: "SUCCESS", StateUpserts: upserts, StateDeletes: deletes, Empty: true})
 		if err != nil {
 			slog.Error("failed to finalize empty sync pass", "sync_job_id", syncJobID, "error", err)
 			e.failSync(syncJobID, generation, "Failed to persist sync state")
@@ -892,7 +903,7 @@ SyncTaskPoll:
 	// The predicate excludes FAILED/PAUSED_*, so a concurrent task-worker
 	// failure is not overwritten.
 	upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, srcRelTargetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirs, prevTargetDirs, stats.protectedPaths)
-	finalized, err := db.FinalizeSyncJobPassWithStates(e.db, job.ID, generation, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed, upserts, deletes)
+	finalized, err := e.Finalize(Finalization{JobID: job.ID, Generation: generation, Status: finalRunStatus, Error: finalErr, Total: total, Processed: completed + skipped, Changed: changedCount, Deleted: deletedCount, Failed: failed, StateUpserts: upserts, StateDeletes: deletes})
 	if err != nil {
 		slog.Error("failed to finalize sync pass", "sync_job_id", syncJobID, "outcome", finalRunStatus, "total", total, "processed", completed+skipped, "changed", changedCount, "deleted", deletedCount, "failed", failed, "error", err)
 		e.failSync(syncJobID, generation, "Failed to persist sync state")
