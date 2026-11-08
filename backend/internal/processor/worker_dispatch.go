@@ -19,8 +19,13 @@ func (p *Processor) runTransferWorkers(ctx context.Context, notifyTasksCh <-chan
 			defer wg.Done()
 			pool := newProviderPool()
 			defer pool.Close()
+			// fallbackInterval is the maximum time an idle thread waits before
+			// re-polling even without a notify signal. 5s is fine because
+			// pg_notify delivers the wake-up immediately in the common case.
 			fallbackInterval := 5 * time.Second
 			if notifyTasksCh == nil {
+				// LISTEN unavailable: use the original 2s poll to maintain
+				// latency parity with the pre-optimisation behaviour.
 				fallbackInterval = 2 * time.Second
 			}
 			for {

@@ -6,6 +6,9 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -161,6 +164,25 @@ func TestMigrationProgressReporterStopsWithoutTransfer(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("progress reporter did not stop without a transfer")
+	}
+}
+
+// Moving code between files must not corrupt non-ASCII text (for example the
+// em dash in the persisted authentication-failure message) into mojibake.
+func TestProcessorSourcesHaveNoMojibake(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := string([]rune{0xE2, 0x20AC})
+	for _, name := range files {
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(src), bad) {
+			t.Errorf("%s contains mojibake sequence; save the file as UTF-8", name)
+		}
 	}
 }
 
