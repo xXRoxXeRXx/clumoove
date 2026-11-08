@@ -261,9 +261,16 @@ func (server *APIServer) setupRoutes() *http.ServeMux {
 	mux.Handle("POST /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleSetAvatar)))
 	mux.Handle("DELETE /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleDeleteAvatar)))
 	mux.Handle("PUT /api/settings", adminRouteMiddleware(http.HandlerFunc(server.handleUpdateSetting)))
-	mux.Handle("GET /api/settings/notifications", jwtMiddleware(http.HandlerFunc(server.handleGetNotificationSettings)))
-	mux.Handle("PUT /api/settings/notifications", jwtMiddleware(http.HandlerFunc(server.handleUpdateNotificationSettings)))
-	mux.Handle("POST /api/settings/notifications/test", jwtMiddleware(http.HandlerFunc(server.handleTestNotification)))
+	notifications := newNotificationAPI(notificationDependencies{
+		db:            server.db,
+		encryptionKey: server.encryptionKey,
+		rateLimiter:   server.rateLimiter,
+		requireUserID: server.requireUserID,
+		clientIP:      server.clientIP,
+		writeAudit:    server.writeAudit,
+		logf:          server.logf,
+	})
+	notifications.registerRoutes(mux, jwtMiddleware)
 
 	mux.HandleFunc("GET /api/auth/password-reset-available", server.handlePasswordResetAvailable)
 	mux.HandleFunc("POST /api/auth/forgot-password", server.handleForgotPassword)
