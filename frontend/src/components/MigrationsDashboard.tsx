@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type { User, Migration, SyncJob, BackupJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
@@ -7,11 +7,11 @@ import { useConfirm } from '../contexts/useConfirm';
 import { useToast } from '../contexts/useToast';
 import { StatusBadge } from './StatusBadge';
 import { LoadingIndicator } from './LoadingIndicator';
-import { apiErrorMessage, apiFetch, apiJson } from '../utils/apiClient';
+import { apiErrorMessage } from '../utils/apiClient';
 import { controlMigration, deleteMigration } from '../api/migrations';
 import { deleteSync, pauseSync, resumeSync } from '../api/sync';
 import { controlBackup, deleteBackup } from '../api/backups';
-import { connectSseLoop } from '../utils/sse';
+import { useTransferOverview } from '../hooks/useTransferOverview';
 import {
   ArrowPathIcon,
   ArrowsRightLeftIcon,
@@ -66,20 +66,9 @@ export function MigrationsDashboard({
   onOpenFilemanagerRoot,
 }: MigrationsDashboardProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('migrations');
-  const [migrations, setMigrations] = useState<Migration[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>('');
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
   const [deleteAllLoading, setDeleteAllLoading] = useState<boolean>(false);
   const [controlLoading, setControlLoading] = useState<string | null>(null);
-
-  const [syncJobs, setSyncJobs] = useState<SyncJob[]>([]);
-  const [syncLoading, setSyncLoading] = useState<boolean>(true);
-  const [syncError, setSyncError] = useState<string>('');
-  const [backupJobs, setBackupJobs] = useState<BackupJob[]>([]);
-  const [backupLoading, setBackupLoading] = useState<boolean>(true);
-  const [backupError, setBackupError] = useState<string>('');
-
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const tabRefs = useRef<Record<DashboardTab, HTMLButtonElement | null>>({
@@ -88,246 +77,29 @@ export function MigrationsDashboard({
     backup: null,
     fileManager: null,
   });
-  // A live stream frame is newer than the initial HTTP snapshot, regardless of
-  // which response happens to arrive first.
-  const hasMigrationStreamDataRef = useRef(false);
-  const hasSyncStreamDataRef = useRef(false);
-  const snapshotGenerationRef = useRef(0);
-  const migrationSnapshotAbortRef = useRef<AbortController | null>(null);
-  const syncSnapshotAbortRef = useRef<AbortController | null>(null);
-  const backupSnapshotAbortRef = useRef<AbortController | null>(null);
-
   const { t } = useTranslation();
   const { formatBytes, formatDateTime, formatPercent } = useFormat();
   const translateApiError = useApiError();
   const confirm = useConfirm();
   const toast = useToast();
-  const tRef = useRef(t);
-
-  useEffect(() => {
-    tRef.current = t;
-  }, [t]);
-
-  const fetchSyncJobs = useCallback(async function fetchSyncJobs(signal: AbortSignal, snapshotGeneration: number): Promise<void> {
-    function acceptsSnapshot(): boolean {
-      return !signal.aborted
-        && snapshotGenerationRef.current === snapshotGeneration
-        && !hasSyncStreamDataRef.current;
-    }
-
-    try {
-      const result = await apiJson<SyncJob[]>(`${apiUrl}/api/sync`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal,
-      });
-      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('sync.loadFailed')));
-      if (acceptsSnapshot()) {
-        setSyncJobs(result.data || []);
-      }
-    } catch (err: unknown) {
-      if (acceptsSnapshot()) {
-        setSyncError(err instanceof Error ? err.message : t('sync.loadFailed'));
-      }
-    } finally {
-      if (acceptsSnapshot()) {
-        setSyncLoading(false);
-      }
-    }
-  }, [apiUrl, token, t, translateApiError]);
-
-  const fetchMigrations = useCallback(async function fetchMigrations(signal: AbortSignal, snapshotGeneration: number): Promise<void> {
-    function acceptsSnapshot(): boolean {
-      return !signal.aborted
-        && snapshotGenerationRef.current === snapshotGeneration
-        && !hasMigrationStreamDataRef.current;
-    }
-
-    try {
-      const result = await apiJson<Migration[]>(`${apiUrl}/api/migration`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-        signal,
-      });
-      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('migrations.loadFailed')));
-      if (acceptsSnapshot()) {
-        setMigrations(result.data || []);
-      }
-    } catch (err: unknown) {
-      if (acceptsSnapshot()) {
-        setError(err instanceof Error ? err.message : t('migrations.connectionError'));
-      }
-    } finally {
-      if (acceptsSnapshot()) {
-        setLoading(false);
-      }
-    }
-  }, [apiUrl, token, t, translateApiError]);
-
-  const fetchBackupJobs = useCallback(async function fetchBackupJobs(signal: AbortSignal, snapshotGeneration?: number): Promise<void> {
-    function acceptsSnapshot(): boolean {
-      return !signal.aborted
-        && (snapshotGeneration === undefined || snapshotGenerationRef.current === snapshotGeneration);
-    }
-
-    try {
-      const result = await apiJson<BackupJob[]>(`${apiUrl}/api/backup`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal,
-      });
-      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('backup.loadFailed')));
-      if (acceptsSnapshot()) {
-        setBackupJobs(result.data || []);
-        setBackupError('');
-      }
-    } catch (err: unknown) {
-      if (acceptsSnapshot()) {
-        setBackupError(err instanceof Error ? err.message : t('backup.loadFailed'));
-      }
-    } finally {
-      if (acceptsSnapshot()) {
-        setBackupLoading(false);
-      }
-    }
-  }, [apiUrl, token, t, translateApiError]);
-
-  // Load initial lists immediately instead of waiting for the initial SSE frames.
-  // The streams remain responsible for live updates after this first snapshot.
-  useEffect(() => {
-    const isInitialLoad = snapshotGenerationRef.current === 0;
-    snapshotGenerationRef.current += 1;
-    migrationSnapshotAbortRef.current?.abort();
-    syncSnapshotAbortRef.current?.abort();
-    backupSnapshotAbortRef.current?.abort();
-    migrationSnapshotAbortRef.current = null;
-    syncSnapshotAbortRef.current = null;
-    backupSnapshotAbortRef.current = null;
-    hasMigrationStreamDataRef.current = false;
-    hasSyncStreamDataRef.current = false;
-    if (isInitialLoad) return;
-
-    const resetTimeoutId = window.setTimeout(() => {
-      setLoading(true);
-      setSyncLoading(true);
-      setBackupLoading(true);
-      setError('');
-      setSyncError('');
-      setBackupError('');
-    }, 0);
-    return () => window.clearTimeout(resetTimeoutId);
-  }, [apiUrl, token]);
-
-  useEffect(() => {
-    const migrationController = new AbortController();
-    const syncController = new AbortController();
-    const backupController = new AbortController();
-    const snapshotGeneration = snapshotGenerationRef.current;
-    migrationSnapshotAbortRef.current = migrationController;
-    syncSnapshotAbortRef.current = syncController;
-    backupSnapshotAbortRef.current = backupController;
-    function loadInitialSnapshot(): void {
-      void fetchMigrations(migrationController.signal, snapshotGeneration);
-      void fetchSyncJobs(syncController.signal, snapshotGeneration);
-      void fetchBackupJobs(backupController.signal, snapshotGeneration);
-    }
-    const timeoutId = window.setTimeout(loadInitialSnapshot, 0);
-    return () => {
-      window.clearTimeout(timeoutId);
-      migrationController.abort();
-      syncController.abort();
-      backupController.abort();
-      if (migrationSnapshotAbortRef.current === migrationController) {
-        migrationSnapshotAbortRef.current = null;
-      }
-      if (syncSnapshotAbortRef.current === syncController) {
-        syncSnapshotAbortRef.current = null;
-      }
-      if (backupSnapshotAbortRef.current === backupController) {
-        backupSnapshotAbortRef.current = null;
-      }
-    };
-  }, [fetchMigrations, fetchSyncJobs, fetchBackupJobs]);
-
-  useEffect(() => {
-    if (activeTab !== 'backup') return;
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => {
-      void fetchBackupJobs(controller.signal);
-    }, 0);
-    return () => {
-      window.clearTimeout(timeoutId);
-      controller.abort();
-    };
-  }, [activeTab, fetchBackupJobs]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const snapshotGeneration = snapshotGenerationRef.current;
-    void connectSseLoop({
-      url: `${apiUrl}/api/migration/stream`,
-      signal: controller.signal,
-      fetchImpl: apiFetch,
-      handlers: {
-        onEvent: (event, data) => {
-          if (snapshotGeneration !== snapshotGenerationRef.current) return;
-          if (event === 'migrations' && data) {
-            try {
-              const migrations = JSON.parse(data) || [];
-              hasMigrationStreamDataRef.current = true;
-              migrationSnapshotAbortRef.current?.abort();
-              setMigrations(migrations);
-              setError('');
-              setLoading(false);
-            } catch {
-              /* ignore malformed frame */
-            }
-          } else if (event === 'error') {
-            setError(tRef.current('migrations.connectionError'));
-            setLoading(false);
-          }
-        },
-        onError: () => {
-          if (snapshotGeneration !== snapshotGenerationRef.current) return;
-          setError(tRef.current('migrations.connectionError'));
-          setLoading(false);
-        },
-      },
-    });
-    return () => controller.abort();
-  }, [apiUrl, token]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const snapshotGeneration = snapshotGenerationRef.current;
-    void connectSseLoop({
-      url: `${apiUrl}/api/sync/stream`,
-      signal: controller.signal,
-      fetchImpl: apiFetch,
-      handlers: {
-        onEvent: (event, data) => {
-          if (snapshotGeneration !== snapshotGenerationRef.current) return;
-          if (event === 'sync_jobs' && data) {
-            try {
-              const jobs = JSON.parse(data) || [];
-              hasSyncStreamDataRef.current = true;
-              syncSnapshotAbortRef.current?.abort();
-              setSyncJobs(jobs);
-              setSyncError('');
-              setSyncLoading(false);
-            } catch {
-              /* ignore */
-            }
-          }
-        },
-        onError: () => {
-          if (snapshotGeneration !== snapshotGenerationRef.current) return;
-          setSyncError(tRef.current('sync.loadFailed'));
-          setSyncLoading(false);
-        },
-      },
-    });
-    return () => controller.abort();
-  }, [apiUrl, token]);
+  const {
+    migrations,
+    migrationLoading: loading,
+    migrationError: error,
+    syncJobs,
+    syncLoading,
+    syncError,
+    backupJobs,
+    backupLoading,
+    backupError,
+    removeMigration,
+    removeMigrations,
+    setMigrationStatus,
+    removeSyncJob,
+    removeSyncJobs,
+    setSyncJobStatus,
+    setBackupJobStatus,
+  } = useTransferOverview({ apiUrl, token });
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -339,7 +111,7 @@ export function MigrationsDashboard({
     try {
       const result = await deleteMigration({ apiUrl, token, migrationId: id });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('migrations.deleteFailed')));
-      setMigrations((prev) => prev.filter((m) => m.id !== id));
+      removeMigration(id);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : t('migrations.deleteError'), 'error');
     } finally {
@@ -401,7 +173,7 @@ export function MigrationsDashboard({
     }
 
     if (successIds.size > 0) {
-      setMigrations((prev) => prev.filter((m) => !successIds.has(m.id)));
+      removeMigrations(successIds);
     }
 
     if (failCount > 0) {
@@ -418,9 +190,7 @@ export function MigrationsDashboard({
     try {
       const result = await controlMigration({ apiUrl, token, migrationId: migration.id, action });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('dashboard.actionFailedMsg', { action })));
-      setMigrations((current) => current.map((item) => item.id === migration.id
-        ? { ...item, status: action === 'pause' ? 'PAUSED' : 'RUNNING' }
-        : item));
+      setMigrationStatus(migration.id, action === 'pause' ? 'PAUSED' : 'RUNNING');
     } catch (err) {
       toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action }), 'error');
     } finally {
@@ -703,7 +473,9 @@ export function MigrationsDashboard({
                 statusFilter={statusFilter}
                 loading={syncLoading}
                 error={syncError}
-                setSyncJobs={setSyncJobs}
+                removeSyncJob={removeSyncJob}
+                removeSyncJobs={removeSyncJobs}
+                setSyncJobStatus={setSyncJobStatus}
                 onSelectActiveSync={onSelectActiveSync}
                 onStartNewSync={onStartNewMigration}
                 onOpenFileManager={onOpenFileManager}
@@ -719,7 +491,7 @@ export function MigrationsDashboard({
                 backupJobs={backupJobs}
                 loading={backupLoading}
                 error={backupError}
-                setBackupJobs={setBackupJobs}
+                setBackupJobStatus={setBackupJobStatus}
                 onSelectActiveBackup={onSelectActiveBackup}
                 onOpenFileManager={onOpenFileManager}
               />
@@ -961,7 +733,9 @@ function SyncList({
   statusFilter = 'all',
   loading,
   error,
-  setSyncJobs,
+  removeSyncJob,
+  removeSyncJobs,
+  setSyncJobStatus,
   onSelectActiveSync,
   onStartNewSync,
   onOpenFileManager,
@@ -973,7 +747,9 @@ function SyncList({
   statusFilter?: string;
   loading: boolean;
   error: string;
-  setSyncJobs: React.Dispatch<React.SetStateAction<SyncJob[]>>;
+  removeSyncJob: (id: string) => void;
+  removeSyncJobs: (ids: Iterable<string>) => void;
+  setSyncJobStatus: (id: string, status: SyncJob['status']) => void;
   onSelectActiveSync?: (id: string) => void;
   onStartNewSync: () => void;
   onOpenFileManager?: (profileId: string, path: string) => void;
@@ -997,7 +773,7 @@ function SyncList({
     try {
       const result = await deleteSync({ apiUrl, token, syncId: id });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('sync.deleteFailed')));
-      setSyncJobs((prev) => prev.filter((j) => j.id !== id));
+      removeSyncJob(id);
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : t('sync.deleteFailed'), 'error');
     } finally {
@@ -1060,7 +836,7 @@ function SyncList({
     }
 
     if (successIds.size > 0) {
-      setSyncJobs((prev) => prev.filter((j) => !successIds.has(j.id)));
+      removeSyncJobs(successIds);
     }
 
     if (failCount > 0) {
@@ -1080,9 +856,7 @@ function SyncList({
         : await resumeSync({ apiUrl, token, syncId: job.id });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('dashboard.actionFailedMsg', { action })));
       if (action === 'pause') {
-        setSyncJobs((current) => current.map((item) => item.id === job.id
-          ? { ...item, status: 'PAUSED' }
-          : item));
+        setSyncJobStatus(job.id, 'PAUSED');
       }
     } catch (err) {
       toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action }), 'error');
@@ -1292,7 +1066,7 @@ function BackupList({
   backupJobs,
   loading,
   error,
-  setBackupJobs,
+  setBackupJobStatus,
   onSelectActiveBackup,
   onOpenFileManager,
 }: {
@@ -1301,7 +1075,7 @@ function BackupList({
   backupJobs: BackupJob[];
   loading: boolean;
   error: string;
-  setBackupJobs: React.Dispatch<React.SetStateAction<BackupJob[]>>;
+  setBackupJobStatus: (id: string, status: BackupJob['status']) => void;
   onSelectActiveBackup?: (id: string) => void;
   onOpenFileManager?: (profileId: string, path: string) => void;
 }) {
@@ -1318,9 +1092,7 @@ function BackupList({
     try {
       const result = await controlBackup({ apiUrl, token, backupId: job.id, action });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('backup.actionFailed')));
-      setBackupJobs((current) => current.map((item) => item.id === job.id
-        ? { ...item, status: action === 'pause' ? 'PAUSED' : action === 'resume' ? 'IDLE' : 'QUEUED' }
-        : item));
+      setBackupJobStatus(job.id, action === 'pause' ? 'PAUSED' : action === 'resume' ? 'IDLE' : 'QUEUED');
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : t('backup.actionFailed'), 'error');
     } finally {
@@ -1335,7 +1107,7 @@ function BackupList({
     try {
       const result = await deleteBackup({ apiUrl, token, backupId: job.id });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('backup.actionFailed')));
-      setBackupJobs((current) => current.map((item) => item.id === job.id ? { ...item, status: 'DELETING' } : item));
+      setBackupJobStatus(job.id, 'DELETING');
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : t('backup.actionFailed'), 'error');
     } finally {
