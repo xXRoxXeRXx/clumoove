@@ -61,8 +61,8 @@ function backupJob(sourceUrl: string): BackupJob {
   };
 }
 
-function OverviewProbe({ apiUrl = 'https://api.example.test' }: { apiUrl?: string }) {
-  const overview = useTransferOverview({ apiUrl, token: 'token' });
+function OverviewProbe({ apiUrl = 'https://api.example.test', token = 'token', backupActive = false }: { apiUrl?: string; token?: string; backupActive?: boolean }) {
+  const overview = useTransferOverview({ apiUrl, token, backupActive });
   return <output>{JSON.stringify({ migrations: overview.migrations, syncJobs: overview.syncJobs, backupJobs: overview.backupJobs })}</output>;
 }
 
@@ -199,6 +199,114 @@ describe('useTransferOverview', () => {
 
     expect(container.textContent).toContain('https://live-sync.example.test');
     expect(container.textContent).toContain('https://live-backup.example.test');
+  });
+
+  it('refreshes the backup snapshot when the backup tab becomes active', async () => {
+    vi.mocked(apiJson).mockResolvedValue(jsonResponse([]));
+
+    await act(async () => {
+      root.render(<OverviewProbe />);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    vi.mocked(apiJson).mockClear();
+
+    await act(async () => {
+      root.render(<OverviewProbe backupActive />);
+      await Promise.resolve();
+    });
+
+    expect(apiJson).toHaveBeenCalledOnce();
+    expect(apiJson).toHaveBeenCalledWith(
+      'https://api.example.test/api/backup',
+      expect.objectContaining({ headers: { Authorization: 'Bearer token' } }),
+    );
+  });
+
+  it('applies a refresh snapshot after an earlier backup stream frame', async () => {
+    const refreshSnapshot = deferred<ReturnType<typeof jsonResponse<BackupJob[]>>>();
+    const streams = new Map<string, SseHandlers>();
+    let backupRequests = 0;
+    vi.mocked(apiJson).mockImplementation((url) => {
+      if (String(url).endsWith('/api/backup')) {
+        backupRequests += 1;
+        return backupRequests === 1 ? Promise.resolve(jsonResponse([])) : refreshSnapshot.promise;
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+    vi.mocked(connectSseLoop).mockImplementation((options) => {
+      streams.set(options.url, options.handlers);
+      return new Promise<void>(() => {});
+    });
+
+    await act(async () => {
+      root.render(<OverviewProbe />);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      streams.get('https://api.example.test/api/backup/stream')?.onEvent('backup_jobs', JSON.stringify([backupJob('https://live-backup.example.test')]));
+      root.render(<OverviewProbe backupActive />);
+      refreshSnapshot.resolve(jsonResponse([backupJob('https://stale-backup.example.test')]));
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('https://stale-backup.example.test');
+    expect(container.textContent).not.toContain('https://live-backup.example.test');
+  });
+
+  it('applies a backup stream frame delivered after a refresh', async () => {
+    const streams = new Map<string, SseHandlers>();
+    vi.mocked(apiJson).mockResolvedValue(jsonResponse([]));
+    vi.mocked(connectSseLoop).mockImplementation((options) => {
+      streams.set(options.url, options.handlers);
+      return new Promise<void>(() => {});
+    });
+
+    await act(async () => {
+      root.render(<OverviewProbe />);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      root.render(<OverviewProbe backupActive />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      streams.get('https://api.example.test/api/backup/stream')?.onEvent('backup_jobs', JSON.stringify([backupJob('https://stream-after-refresh.example.test')]));
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('https://stream-after-refresh.example.test');
+  });
+
+  it('clears prior data and reconnects streams when the token changes', async () => {
+    const secondMigrationSnapshot = deferred<ReturnType<typeof jsonResponse<Migration[]>>>();
+    let migrationRequests = 0;
+    vi.mocked(apiJson).mockImplementation((url) => {
+      if (String(url).endsWith('/api/migration')) {
+        migrationRequests += 1;
+        return migrationRequests === 1
+          ? Promise.resolve(jsonResponse([migration('https://first-account.example.test')]))
+          : secondMigrationSnapshot.promise;
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+
+    await act(async () => {
+      root.render(<OverviewProbe token="first-token" />);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    expect(container.textContent).toContain('https://first-account.example.test');
+
+    await act(async () => {
+      root.render(<OverviewProbe token="second-token" />);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain('https://first-account.example.test');
+    expect(connectSseLoop).toHaveBeenCalledTimes(6);
+    expect(apiJson).toHaveBeenCalledWith(
+      'https://api.example.test/api/migration',
+      expect.objectContaining({ headers: { Authorization: 'Bearer second-token' } }),
+    );
   });
 
   it('ignores a stream frame delivered after its generation is cleaned up', async () => {

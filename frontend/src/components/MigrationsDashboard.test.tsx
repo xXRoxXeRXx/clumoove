@@ -9,7 +9,7 @@ import { connectSseLoop, type SseHandlers } from '../utils/sse';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-type DashboardTab = 'migrations' | 'sync';
+type DashboardTab = 'migrations' | 'sync' | 'backup';
 
 interface TabNavigationCase {
   from: DashboardTab;
@@ -430,5 +430,31 @@ describe('MigrationsDashboard tabs', () => {
     expect(backupTab).not.toBeNull();
     // The backup tab should display the badge with count 2 immediately
     expect(backupTab.textContent).toContain('2');
+  });
+
+  it('refreshes backup jobs when the user enters the backup tab after initial load', async () => {
+    let backupRequests = 0;
+    vi.mocked(apiJson).mockImplementation((url) => {
+      if (String(url).endsWith('/api/backup')) {
+        backupRequests += 1;
+        return Promise.resolve(jsonResponse([]));
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<MigrationsDashboard apiUrl="https://api.example.test" token="token" user={null} onStartNewMigration={vi.fn()} onSelectActiveMigration={vi.fn()} />);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    expect(backupRequests).toBe(1);
+
+    await act(async () => {
+      getTab('backup')?.click();
+      await Promise.resolve();
+    });
+    expect(backupRequests).toBe(2);
   });
 });

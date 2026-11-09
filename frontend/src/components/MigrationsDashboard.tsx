@@ -99,7 +99,7 @@ export function MigrationsDashboard({
     removeSyncJobs,
     setSyncJobStatus,
     setBackupJobStatus,
-  } = useTransferOverview({ apiUrl, token });
+  } = useTransferOverview({ apiUrl, token, backupActive: activeTab === 'backup' });
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
