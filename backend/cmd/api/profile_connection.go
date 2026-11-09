@@ -214,6 +214,14 @@ func (s *APIServer) openOwnedProfileConnection(ctx context.Context, userID, prof
 
 type profileProviderFactory func(context.Context, string, string, string, string) (storage.StorageProvider, error)
 
+func (s *APIServer) newRequestProvider(ctx context.Context, provider, url, username, password string) (storage.StorageProvider, error) {
+	factory := s.providerFactory
+	if factory == nil {
+		factory = storage.NewProvider
+	}
+	return factory(ctx, provider, url, username, password)
+}
+
 func newProfileConnection(ctx context.Context, userID string, profile *db.ConnectionProfile, creds profileCreds, factory profileProviderFactory) (*profileConnection, error) {
 	creds.MegaSession.MasterKey = append([]byte(nil), creds.MegaSession.MasterKey...)
 	providerCtx := storage.WithLocalUserScope(ctx, userID)

@@ -51,7 +51,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 
 	sourceCreds := profileCreds{Provider: req.SourceProvider, URL: req.SourceURL, Username: req.SourceUsername, Password: req.SourcePassword}
 	if req.SourceProfileID != "" {
-		src, err := s.loadProfile(r, req.SourceProfileID, sourceCreds)
+		src, err := s.resolveRequestProfileCredentials(r, req.SourceProfileID, sourceCreds)
 		if err == nil {
 			req.SourceProvider = src.Provider
 			req.SourceURL = src.URL
@@ -70,7 +70,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceClient, err := storage.NewProvider(withMegaProfileSession(r.Context(), sourceCreds), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
+	sourceClient, err := s.newRequestProvider(withMegaProfileSession(r.Context(), sourceCreds), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 		return
@@ -146,7 +146,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 
 	targetCreds := profileCreds{Provider: req.TargetProvider, URL: req.TargetURL, Username: req.TargetUsername, Password: req.TargetPassword}
 	if req.TargetProfileID != "" {
-		tgt, err := s.loadProfile(r, req.TargetProfileID, targetCreds)
+		tgt, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, targetCreds)
 		if err != nil {
 			s.logf(r, "handleTargetBrowse: failed to load target profile: %v", err)
 			writeError(w, http.StatusNotFound, ErrProfileNotFound)
@@ -161,7 +161,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 		targetCreds = tgt
 	}
 
-	targetClient, err := storage.NewProvider(withMegaProfileSession(r.Context(), targetCreds), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := s.newRequestProvider(withMegaProfileSession(r.Context(), targetCreds), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
@@ -230,7 +230,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 
 	targetCreds := profileCreds{Provider: req.TargetProvider, URL: req.TargetURL, Username: req.TargetUsername, Password: req.TargetPassword}
 	if req.TargetProfileID != "" {
-		tgt, err := s.loadProfile(r, req.TargetProfileID, targetCreds)
+		tgt, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, targetCreds)
 		if err != nil {
 			s.logf(r, "handleTargetMkdir: failed to load target profile: %v", err)
 			writeError(w, http.StatusNotFound, ErrProfileNotFound)
@@ -245,7 +245,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		targetCreds = tgt
 	}
 
-	targetClient, err := storage.NewProvider(withMegaProfileSession(r.Context(), targetCreds), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := s.newRequestProvider(withMegaProfileSession(r.Context(), targetCreds), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
@@ -627,7 +627,7 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 		profileID = req.TargetProfileID
 	}
 
-	creds, err := s.loadProfile(r, profileID, profileCreds{
+	creds, err := s.resolveRequestProfileCredentials(r, profileID, profileCreds{
 		Provider:     provider,
 		URL:          url,
 		Username:     username,
@@ -657,7 +657,7 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	providerCtx := withMegaProfileSession(r.Context(), creds)
-	client, err := storage.NewProvider(providerCtx, provider, url, username, password)
+	client, err := s.newRequestProvider(providerCtx, provider, url, username, password)
 	if err != nil {
 		code := ErrSourceUrlInvalid
 		if role == "target" {
@@ -698,7 +698,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	src, err := s.loadProfile(r, req.SourceProfileID, profileCreds{
+	src, err := s.resolveRequestProfileCredentials(r, req.SourceProfileID, profileCreds{
 		Provider:     req.SourceProvider,
 		URL:          req.SourceURL,
 		Username:     req.SourceUsername,
@@ -720,7 +720,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		req.SourceRefreshToken = src.RefreshToken
 	}
 
-	tgt, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
+	tgt, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, profileCreds{
 		Provider:     req.TargetProvider,
 		URL:          req.TargetURL,
 		Username:     req.TargetUsername,
@@ -759,7 +759,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceClient, err := storage.NewProvider(withMegaProfileSession(r.Context(), src), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
+	sourceClient, err := s.newRequestProvider(withMegaProfileSession(r.Context(), src), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 		return
@@ -778,7 +778,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetClient, err := storage.NewProvider(withMegaProfileSession(r.Context(), tgt), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := s.newRequestProvider(withMegaProfileSession(r.Context(), tgt), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
@@ -839,7 +839,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	src, err := s.loadProfile(r, req.SourceProfileID, profileCreds{
+	src, err := s.resolveRequestProfileCredentials(r, req.SourceProfileID, profileCreds{
 		Provider:     req.SourceProvider,
 		URL:          req.SourceURL,
 		Username:     req.SourceUsername,
@@ -861,7 +861,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		req.SourceRefreshToken = src.RefreshToken
 	}
 
-	tgt, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
+	tgt, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, profileCreds{
 		Provider:     req.TargetProvider,
 		URL:          req.TargetURL,
 		Username:     req.TargetUsername,

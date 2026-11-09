@@ -51,6 +51,9 @@ type APIServer struct {
 	// when a trusted reverse proxy (that strips client-supplied copies of these
 	// headers) sits in front of the API — otherwise clients can spoof them.
 	trustedProxy bool
+	// providerFactory is nil in production, where storage.NewProvider is used.
+	// It lets handler tests exercise provider behavior without external egress.
+	providerFactory profileProviderFactory
 }
 
 // Rate-limit and quota configuration for the public / sensitive endpoints.

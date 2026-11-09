@@ -42,6 +42,32 @@ func TestProfileCredentialResolverPropagatesOwnershipFailure(t *testing.T) {
 	}
 }
 
+func TestProfileCredentialResolverSelectedProfilePrecedence(t *testing.T) {
+	profile := &db.ConnectionProfile{
+		Provider:              "nextcloud",
+		URL:                   "https://profile.example.test",
+		Username:              "profile-user",
+		PasswordEncrypted:     "profile-password",
+		RefreshTokenEncrypted: "profile-refresh",
+	}
+	resolver := testProfileCredentialResolver(profile)
+	base := profileCreds{
+		Provider:     "webdav",
+		URL:          "https://request.example.test",
+		Username:     "request-user",
+		Password:     "request-password",
+		RefreshToken: "request-refresh",
+	}
+
+	creds, _, err := resolver.resolve(context.Background(), "user-1", "profile-1", base, refreshOAuthAlways, fallbackOnProfileSecretError)
+	if err != nil {
+		t.Fatalf("resolve() error = %v", err)
+	}
+	if creds.Provider != profile.Provider || creds.URL != profile.URL || creds.Username != profile.Username || creds.Password != "profile-password" || creds.RefreshToken != "profile-refresh" {
+		t.Fatal("selected profile did not retain precedence over request credentials")
+	}
+}
+
 func TestProfileConnectionCloseClearsSecrets(t *testing.T) {
 	masterKey := []byte{1, 2, 3, 4}
 	connection := &profileConnection{creds: profileCreds{

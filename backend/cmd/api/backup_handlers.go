@@ -181,7 +181,7 @@ func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var targetProfileID sql.NullString
-	targetCreds, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
+	targetCreds, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, profileCreds{
 		Provider: req.TargetProvider, URL: req.TargetURL, Username: req.TargetUsername,
 		Password: req.TargetPassword, RefreshToken: req.TargetRefreshToken,
 	})

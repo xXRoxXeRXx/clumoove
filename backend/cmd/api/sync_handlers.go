@@ -158,7 +158,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Merge any referenced reusable connection profiles into the request.
-	src, err := s.loadProfile(r, req.SourceProfileID, profileCreds{
+	src, err := s.resolveRequestProfileCredentials(r, req.SourceProfileID, profileCreds{
 		Provider:     req.SourceProvider,
 		URL:          req.SourceURL,
 		Username:     req.SourceUsername,
@@ -180,7 +180,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		req.SourceRefreshToken = src.RefreshToken
 	}
 
-	tgt, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
+	tgt, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, profileCreds{
 		Provider:     req.TargetProvider,
 		URL:          req.TargetURL,
 		Username:     req.TargetUsername,

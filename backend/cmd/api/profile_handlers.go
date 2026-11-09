@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/megasecret"
@@ -17,19 +16,6 @@ import (
 )
 
 const profileRateLimit = 60
-
-func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileCreds) (profileCreds, error) {
-	if profileID == "" {
-		return base, nil
-	}
-
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		return base, errors.New("missing authenticated user")
-	}
-	creds, _, err := s.resolveProfileCredentials(r.Context(), userID, profileID, base, refreshOAuthAlways, fallbackOnProfileSecretError)
-	return creds, err
-}
 
 type ConnectionProfileRequest struct {
 	Name                  string `json:"name"`
