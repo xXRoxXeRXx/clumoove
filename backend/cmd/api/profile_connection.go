@@ -246,12 +246,12 @@ func (s *APIServer) openOwnedProfileConnection(ctx context.Context, userID, prof
 	if err != nil {
 		return nil, err
 	}
-	return newProfileConnection(ctx, userID, profile, creds, storage.NewProvider)
+	return newProfileConnection(ctx, userID, profile, creds, s.newProvider)
 }
 
 type profileProviderFactory func(context.Context, string, string, string, string) (storage.StorageProvider, error)
 
-func (s *APIServer) newRequestProvider(ctx context.Context, provider, url, username, password string) (storage.StorageProvider, error) {
+func (s *APIServer) newProvider(ctx context.Context, provider, url, username, password string) (storage.StorageProvider, error) {
 	factory := s.providerFactory
 	if factory == nil {
 		factory = storage.NewProvider
