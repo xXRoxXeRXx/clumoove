@@ -158,6 +158,28 @@ func (s *APIServer) handleFileTransferCreate(w http.ResponseWriter, r *http.Requ
 		s.writeFileProfileError(w, err)
 		return
 	}
+	sourceCreds, _, err := s.resolveProfileCredentials(r.Context(), userID, source.ID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+	if err != nil {
+		s.writeFileProfileError(w, mapFileProfileError(err))
+		return
+	}
+	defer sourceCreds.clear()
+	targetCreds, _, err := s.resolveProfileCredentials(r.Context(), userID, target.ID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+	if err != nil {
+		s.writeFileProfileError(w, mapFileProfileError(err))
+		return
+	}
+	defer targetCreds.clear()
+	sourcePersisted, err := s.encryptProfileCreds(sourceCreds)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
+	}
+	targetPersisted, err := s.encryptProfileCreds(targetCreds)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
+	}
 	if !storage.ManagerCapabilitiesFor(source.Provider).Browse || !storage.ManagerCapabilitiesFor(target.Provider).Browse {
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
@@ -178,12 +200,12 @@ func (s *APIServer) handleFileTransferCreate(w http.ResponseWriter, r *http.Requ
 	migration := &db.Migration{
 		UserID:          sql.NullString{String: userID, Valid: true},
 		SourceProfileID: sql.NullString{String: source.ID, Valid: true}, TargetProfileID: sql.NullString{String: target.ID, Valid: true},
-		SourceURL: source.URL, SourceUsername: source.Username, SourcePasswordEncrypted: source.PasswordEncrypted, SourceProvider: source.Provider,
-		SourceRefreshTokenEncrypted: sql.NullString{String: source.RefreshTokenEncrypted, Valid: source.RefreshTokenEncrypted != ""}, SourceTokenExpiresAt: source.TokenExpiresAt,
-		SourceMegaSessionIDEncrypted: source.MegaSessionIDEncrypted, SourceMegaMasterKeyEncrypted: source.MegaMasterKeyEncrypted,
-		TargetURL: target.URL, TargetUsername: target.Username, TargetPasswordEncrypted: target.PasswordEncrypted, TargetProvider: target.Provider,
-		TargetRefreshTokenEncrypted: sql.NullString{String: target.RefreshTokenEncrypted, Valid: target.RefreshTokenEncrypted != ""}, TargetTokenExpiresAt: target.TokenExpiresAt,
-		TargetMegaSessionIDEncrypted: target.MegaSessionIDEncrypted, TargetMegaMasterKeyEncrypted: target.MegaMasterKeyEncrypted,
+		SourceURL: source.URL, SourceUsername: source.Username, SourcePasswordEncrypted: sourcePersisted.PasswordEncrypted, SourceProvider: source.Provider,
+		SourceRefreshTokenEncrypted: sourcePersisted.RefreshTokenEncrypted, SourceTokenExpiresAt: source.TokenExpiresAt,
+		SourceMegaSessionIDEncrypted: sourcePersisted.MegaSessionIDEncrypted, SourceMegaMasterKeyEncrypted: sourcePersisted.MegaMasterKeyEncrypted,
+		TargetURL: target.URL, TargetUsername: target.Username, TargetPasswordEncrypted: targetPersisted.PasswordEncrypted, TargetProvider: target.Provider,
+		TargetRefreshTokenEncrypted: targetPersisted.RefreshTokenEncrypted, TargetTokenExpiresAt: target.TokenExpiresAt,
+		TargetMegaSessionIDEncrypted: targetPersisted.MegaSessionIDEncrypted, TargetMegaMasterKeyEncrypted: targetPersisted.MegaMasterKeyEncrypted,
 		Status: "INDEXING", ConflictStrategy: strategy, TargetDir: targetDir, SelectedPaths: db.StringArray(selectedPaths), Threads: 4,
 		PickerSessionID: fileManagerTransferMarker + strings.ToLower(operation),
 	}

@@ -642,16 +642,18 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrMissingRequiredFields)
 		return
 	}
-	source, err := db.GetConnectionProfile(r.Context(), s.db, req.SourceProfileID)
-	if err != nil || source.UserID != userID {
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+	sourceCreds, source, err := s.resolveProfileCredentials(r.Context(), userID, req.SourceProfileID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+	if err != nil {
+		s.writeBackupProfileResolutionError(w, err)
 		return
 	}
-	target, err := db.GetConnectionProfile(r.Context(), s.db, req.TargetProfileID)
-	if err != nil || target.UserID != userID {
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+	defer sourceCreds.clear()
+	targetCreds, target, err := s.resolveProfileCredentials(r.Context(), userID, req.TargetProfileID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+	if err != nil {
+		s.writeBackupProfileResolutionError(w, err)
 		return
 	}
+	defer targetCreds.clear()
 	if source.Provider == "immich" || target.Provider == "immich" {
 		writeValidationError(w, ErrImmichBackupUnsupported)
 		return
@@ -667,6 +669,16 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := storage.ValidateProviderURL(target.Provider, target.URL); err != nil {
 		writeValidationError(w, ErrProfileURLRequired)
+		return
+	}
+	sourcePersisted, err := s.encryptProfileCreds(sourceCreds)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
+	}
+	targetPersisted, err := s.encryptProfileCreds(targetCreds)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
 	paths, valid := normalizeBackupPaths(req.SelectedPaths)
@@ -717,8 +729,8 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 				cron_expression, timezone, retention_count, threads)
 			SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, repository.id,
 				$21 || '/.clumoove-backup/' || repository.id::text, $22, $23, $24, $25 FROM repository RETURNING id`,
-			userID, req.SourceProfileID, req.TargetProfileID, source.URL, source.Username, source.PasswordEncrypted, nullableEncrypted(source.RefreshTokenEncrypted), source.TokenExpiresAt, nullableEncrypted(source.MegaSessionIDEncrypted), nullableEncrypted(source.MegaMasterKeyEncrypted),
-			target.URL, target.Username, target.PasswordEncrypted, nullableEncrypted(target.RefreshTokenEncrypted), target.TokenExpiresAt, nullableEncrypted(target.MegaSessionIDEncrypted), nullableEncrypted(target.MegaMasterKeyEncrypted), source.Provider, target.Provider, db.StringArray(paths), targetDir,
+			userID, req.SourceProfileID, req.TargetProfileID, source.URL, source.Username, sourcePersisted.PasswordEncrypted, sourcePersisted.RefreshTokenEncrypted, source.TokenExpiresAt, nullableEncrypted(sourcePersisted.MegaSessionIDEncrypted), nullableEncrypted(sourcePersisted.MegaMasterKeyEncrypted),
+			target.URL, target.Username, targetPersisted.PasswordEncrypted, targetPersisted.RefreshTokenEncrypted, target.TokenExpiresAt, nullableEncrypted(targetPersisted.MegaSessionIDEncrypted), nullableEncrypted(targetPersisted.MegaMasterKeyEncrypted), source.Provider, target.Provider, db.StringArray(paths), targetDir,
 			req.CronExpression, req.Timezone, req.RetentionCount, req.Threads).Scan(&id)
 	}
 	if err == nil {
@@ -736,6 +748,14 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	s.writeAudit(r, db.AuditBackupCreated, id, userID, map[string]interface{}{"source_provider": source.Provider, "target_provider": target.Provider})
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
+func (s *APIServer) writeBackupProfileResolutionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errProfileNotFound) || errors.Is(err, errProfileNotOwned) {
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	writeError(w, http.StatusInternalServerError, ErrBackupConnectionFailed)
 }
 
 func nullableEncrypted(value string) sql.NullString {

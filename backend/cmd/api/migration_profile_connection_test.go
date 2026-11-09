@@ -139,6 +139,31 @@ func TestMigrationBrowseAndStartProfileFailures(t *testing.T) {
 	})
 }
 
+func TestSyncAndBackupProfileFailuresRemainMachineReadable(t *testing.T) {
+	server := &APIServer{rateLimiter: allowAllFileRateLimiter{}}
+	requestContext := func(request *http.Request) *http.Request {
+		return request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
+	}
+
+	t.Run("sync source profile is not found", func(t *testing.T) {
+		request := requestContext(httptest.NewRequest(http.MethodPost, "/api/sync", bytes.NewBufferString(`{"source_profile_id":"missing-profile"}`)))
+		recorder := httptest.NewRecorder()
+
+		server.handleCreateSync(recorder, request)
+
+		assertAPIError(t, recorder, http.StatusNotFound, ErrProfileNotFound)
+	})
+
+	t.Run("backup source profile is not found", func(t *testing.T) {
+		request := requestContext(httptest.NewRequest(http.MethodPost, "/api/backups", bytes.NewBufferString(`{"source_profile_id":"missing-profile","target_profile_id":"target-profile"}`)))
+		recorder := httptest.NewRecorder()
+
+		server.handleCreateBackup(recorder, request)
+
+		assertAPIError(t, recorder, http.StatusNotFound, ErrProfileNotFound)
+	})
+}
+
 func assertAPIError(t *testing.T, recorder *httptest.ResponseRecorder, wantStatus int, wantCode APIErrorCode) {
 	t.Helper()
 	if recorder.Code != wantStatus {

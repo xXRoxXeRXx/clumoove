@@ -37,15 +37,56 @@ func (s *APIServer) requireSyncOwnership(w http.ResponseWriter, r *http.Request,
 }
 
 type syncBrowseCredentials struct {
-	provider string
-	url      string
-	username string
-	password string
+	provider    string
+	url         string
+	username    string
+	password    string
+	megaSession storage.MegaSession
+}
+
+func (c *syncBrowseCredentials) clear() {
+	crypto.ZeroString(&c.password)
+	clear(c.megaSession.MasterKey)
 }
 
 // syncJobBrowseCredentials decrypts only the credentials needed for a browse
 // request and refreshes an expiring OAuth access token before it is used.
 func (s *APIServer) syncJobBrowseCredentials(ctx context.Context, id, role string, job *db.SyncJob) (syncBrowseCredentials, error) {
+	profileID := job.SourceProfileID
+	if role == "target" {
+		profileID = job.TargetProfileID
+	}
+	if profileID.Valid {
+		resolved, profile, err := s.resolveProfileCredentials(ctx, job.UserID, profileID.String, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+		if err != nil {
+			return syncBrowseCredentials{}, err
+		}
+		if oauth.IsProvider(resolved.Provider) && resolved.RefreshToken != "" {
+			accessEncrypted, encryptErr := crypto.EncryptWithDomain(resolved.Password, s.encryptionKey, crypto.DomainOAuthAccessToken)
+			if encryptErr != nil {
+				resolved.clear()
+				return syncBrowseCredentials{}, encryptErr
+			}
+			refreshEncrypted, encryptErr := crypto.EncryptWithDomain(resolved.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+			if encryptErr != nil {
+				resolved.clear()
+				return syncBrowseCredentials{}, encryptErr
+			}
+			expiresAt := profile.TokenExpiresAt.Time
+			if !profile.TokenExpiresAt.Valid {
+				expiresAt = time.Now().Add(time.Hour)
+			}
+			if err := db.UpdateSyncJobOAuthTokens(s.db, id, role, accessEncrypted, refreshEncrypted, expiresAt, syncJobRefreshTokenEncrypted(role, job)); err != nil && !errors.Is(err, db.ErrOAuthTokenConflict) {
+				resolved.clear()
+				return syncBrowseCredentials{}, err
+			}
+		}
+		crypto.ZeroString(&resolved.RefreshToken)
+		return syncBrowseCredentials{provider: resolved.Provider, url: resolved.URL, username: resolved.Username, password: resolved.Password, megaSession: resolved.MegaSession}, nil
+	}
+
+	// Profile-less jobs predate reusable profiles and retain their encrypted
+	// credential snapshot for compatibility.
 	creds := syncBrowseCredentials{
 		provider: job.SourceProvider,
 		url:      job.SourceURL,
@@ -95,6 +136,13 @@ func (s *APIServer) syncJobBrowseCredentials(ctx context.Context, id, role strin
 		creds.password = password
 	}
 	return creds, nil
+}
+
+func syncJobRefreshTokenEncrypted(role string, job *db.SyncJob) string {
+	if role == "target" {
+		return job.TargetRefreshTokenEncrypted.String
+	}
+	return job.SourceRefreshTokenEncrypted.String
 }
 
 type createSyncRequest struct {
@@ -935,6 +983,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
 		return
 	}
+	defer creds.clear()
 
 	if !storage.IsValidProvider(creds.provider) {
 		errCode := ErrSourceUrlInvalid
@@ -946,6 +995,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 	}
 
 	browseCtx := storage.WithLocalUserScope(r.Context(), userID)
+	browseCtx = storage.WithMegaSession(browseCtx, creds.megaSession)
 	client, err := storage.NewProvider(browseCtx, creds.provider, creds.url, creds.username, creds.password)
 	if err != nil {
 		s.logf(r, "handleBrowseSyncJob: NewProvider failed for provider %s: %v", creds.provider, err)
@@ -1052,12 +1102,14 @@ func (s *APIServer) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetConnectionFailed})
 		return
 	}
+	defer creds.clear()
 	if !storage.IsValidProvider(creds.provider) {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
 	}
 
 	providerCtx := storage.WithLocalUserScope(r.Context(), userID)
+	providerCtx = storage.WithMegaSession(providerCtx, creds.megaSession)
 	client, err := storage.NewProvider(providerCtx, creds.provider, creds.url, creds.username, creds.password)
 	if err != nil {
 		s.logf(r, "handleSyncMkdir: failed to initialize target provider for job %s: %v", id, err)

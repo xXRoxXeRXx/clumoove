@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"time"
@@ -42,6 +43,35 @@ type profileConnection struct {
 	provider storage.StorageProvider
 	ctx      context.Context
 	creds    profileCreds
+}
+
+// persistedProfileCreds is the encrypted task snapshot of a resolved profile.
+// It contains no plaintext and is safe to persist with a long-running job.
+type persistedProfileCreds struct {
+	PasswordEncrypted      string
+	RefreshTokenEncrypted  sql.NullString
+	MegaSessionIDEncrypted string
+	MegaMasterKeyEncrypted string
+}
+
+func (s *APIServer) encryptProfileCreds(creds profileCreds) (persistedProfileCreds, error) {
+	password, err := crypto.EncryptWithDomain(creds.Password, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(creds.Provider)))
+	if err != nil {
+		return persistedProfileCreds{}, err
+	}
+	persisted := persistedProfileCreds{PasswordEncrypted: password}
+	if creds.RefreshToken != "" {
+		refresh, err := crypto.EncryptWithDomain(creds.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+		if err != nil {
+			return persistedProfileCreds{}, err
+		}
+		persisted.RefreshTokenEncrypted = sql.NullString{String: refresh, Valid: true}
+	}
+	persisted.MegaSessionIDEncrypted, persisted.MegaMasterKeyEncrypted, err = s.encryptMegaSession(creds.MegaSession)
+	if err != nil {
+		return persistedProfileCreds{}, err
+	}
+	return persisted, nil
 }
 
 func (c *profileConnection) close() {
@@ -201,7 +231,14 @@ func (s *APIServer) persistProfileOAuthTokens(profile *db.ConnectionProfile, tok
 	if expiresIn <= 0 {
 		expiresIn = 3600
 	}
-	return db.UpdateConnectionProfileOAuthTokens(s.db, profile.ID, accessEncrypted, refreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), profile.RefreshTokenEncrypted)
+	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
+	if err := db.UpdateConnectionProfileOAuthTokens(s.db, profile.ID, accessEncrypted, refreshEncrypted, expiresAt, profile.RefreshTokenEncrypted); err != nil {
+		return err
+	}
+	profile.PasswordEncrypted = accessEncrypted
+	profile.RefreshTokenEncrypted = refreshEncrypted
+	profile.TokenExpiresAt = sql.NullTime{Time: expiresAt, Valid: true}
+	return nil
 }
 
 func (s *APIServer) openOwnedProfileConnection(ctx context.Context, userID, profileID string) (*profileConnection, error) {
