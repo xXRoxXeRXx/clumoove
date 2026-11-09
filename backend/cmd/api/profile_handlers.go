@@ -18,42 +18,6 @@ import (
 
 const profileRateLimit = 60
 
-type profileCreds struct {
-	Provider     string
-	URL          string
-	Username     string
-	Password     string
-	RefreshToken string
-	MegaSession  storage.MegaSession
-}
-
-func (s *APIServer) encryptMegaSession(session storage.MegaSession) (string, string, error) {
-	if session.ID == "" || len(session.MasterKey) == 0 {
-		return "", "", nil
-	}
-	defer func() {
-		for i := range session.MasterKey {
-			session.MasterKey[i] = 0
-		}
-	}()
-	sessionID, err := crypto.EncryptWithDomain(session.ID, s.encryptionKey, crypto.DomainMegaSessionID)
-	if err != nil {
-		return "", "", err
-	}
-	masterKey, err := crypto.EncryptWithDomain(base64.StdEncoding.EncodeToString(session.MasterKey), s.encryptionKey, crypto.DomainMegaMasterKey)
-	if err != nil {
-		return "", "", err
-	}
-	return sessionID, masterKey, nil
-}
-
-func withMegaProfileSession(ctx context.Context, creds profileCreds) context.Context {
-	if creds.Provider == "mega" && creds.MegaSession.ID != "" {
-		return storage.WithMegaSession(ctx, creds.MegaSession)
-	}
-	return ctx
-}
-
 func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileCreds) (profileCreds, error) {
 	if profileID == "" {
 		return base, nil
@@ -63,91 +27,8 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 	if userID == "" {
 		return base, errors.New("missing authenticated user")
 	}
-	owned, err := db.VerifyProfileOwnershipContext(r.Context(), s.db, profileID, userID)
-	if err != nil {
-		return base, err
-	}
-	if !owned {
-		return base, errors.New("profile not owned")
-	}
-	p, err := db.GetConnectionProfile(r.Context(), s.db, profileID)
-	if err != nil {
-		return base, errors.New("profile not found")
-	}
-
-	provider := p.Provider
-	if provider == "" {
-		provider = base.Provider
-	}
-	urlStr := p.URL
-	if urlStr == "" {
-		urlStr = base.URL
-	}
-	username := p.Username
-	if username == "" {
-		username = base.Username
-	}
-	password := base.Password
-	if p.PasswordEncrypted != "" {
-		if dec, derr := crypto.DecryptWithDomain(p.PasswordEncrypted, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(provider))); derr == nil {
-			password = dec
-		}
-	}
-	refreshToken := base.RefreshToken
-	if p.RefreshTokenEncrypted != "" {
-		if dec, derr := crypto.DecryptWithDomain(p.RefreshTokenEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken); derr == nil {
-			refreshToken = dec
-		}
-	}
-	megaSession := base.MegaSession
-	if provider == "mega" && (p.MegaSessionIDEncrypted != "" || p.MegaMasterKeyEncrypted != "") {
-		decoded, err := megasecret.DecodeMegaSession(p.MegaSessionIDEncrypted, p.MegaMasterKeyEncrypted, s.encryptionKey)
-		if err != nil {
-			return base, err
-		}
-		megaSession = decoded
-	}
-
-	isOAuth := oauth.IsProvider(p.Provider)
-	if isOAuth && refreshToken != "" {
-		tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken)
-		if terr != nil || tok.AccessToken == "" {
-			return base, errors.New("profile OAuth token refresh failed")
-		}
-		if err := s.persistProfileOAuthTokens(p, tok); err != nil {
-			return base, err
-		}
-		password = tok.AccessToken
-		refreshToken = tok.RefreshToken
-	}
-
-	return profileCreds{
-		Provider:     provider,
-		URL:          urlStr,
-		Username:     username,
-		Password:     password,
-		RefreshToken: refreshToken,
-		MegaSession:  megaSession,
-	}, nil
-}
-
-func (s *APIServer) persistProfileOAuthTokens(p *db.ConnectionProfile, token *oauth.TokenResponse) error {
-	accessEncrypted, err := crypto.EncryptWithDomain(token.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
-	if err != nil {
-		return err
-	}
-	refreshEncrypted, err := crypto.EncryptWithDomain(token.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil {
-		return err
-	}
-	expiresIn := token.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 3600
-	}
-	if err := db.UpdateConnectionProfileOAuthTokens(s.db, p.ID, accessEncrypted, refreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), p.RefreshTokenEncrypted); err != nil {
-		return err
-	}
-	return nil
+	creds, _, err := s.resolveProfileCredentials(r.Context(), userID, profileID, base, refreshOAuthAlways, fallbackOnProfileSecretError)
+	return creds, err
 }
 
 type ConnectionProfileRequest struct {
