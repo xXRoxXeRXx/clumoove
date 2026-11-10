@@ -63,7 +63,41 @@ function backupJob(sourceUrl: string): BackupJob {
 
 function OverviewProbe({ apiUrl = 'https://api.example.test', token = 'token', backupActive = false }: { apiUrl?: string; token?: string; backupActive?: boolean }) {
   const overview = useTransferOverview({ apiUrl, token, backupActive });
-  return <output>{JSON.stringify({ migrations: overview.migrations, syncJobs: overview.syncJobs, backupJobs: overview.backupJobs })}</output>;
+  return <output>{JSON.stringify({ migrations: overview.migrations.items, syncJobs: overview.syncJobs.items, backupJobs: overview.backups.items })}</output>;
+}
+
+function CollectionProbe() {
+  const overview = useTransferOverview({ apiUrl: 'https://api.example.test', token: 'token' });
+  return <>
+    <button onClick={() => {
+      overview.migrations.setStatus('https://migration.example.test', 'PAUSED');
+      overview.syncJobs.remove('sync-1');
+      overview.backups.setStatus('backup-1', 'QUEUED');
+    }}>Update</button>
+    <output>{JSON.stringify({
+      migrations: overview.migrations.items,
+      syncJobs: overview.syncJobs.items,
+      backupJobs: overview.backups.items,
+    })}</output>
+  </>;
+}
+
+type OverviewCallbacks = {
+  removeMigration: (id: string) => void;
+  removeSyncJob: (id: string) => void;
+  setSyncJobStatus: (id: string, status: SyncJob['status']) => void;
+  setBackupJobStatus: (id: string, status: BackupJob['status']) => void;
+};
+
+function CallbackProbe({ onRender }: { onRender: (callbacks: OverviewCallbacks) => void }) {
+  const overview = useTransferOverview({ apiUrl: 'https://api.example.test', token: 'token' });
+  onRender({
+    removeMigration: overview.migrations.remove,
+    removeSyncJob: overview.syncJobs.remove,
+    setSyncJobStatus: overview.syncJobs.setStatus,
+    setBackupJobStatus: overview.backups.setStatus,
+  });
+  return null;
 }
 
 describe('useTransferOverview', () => {
@@ -84,6 +118,52 @@ describe('useTransferOverview', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it('groups every transfer kind behind its collection interface', async () => {
+    vi.mocked(apiJson).mockImplementation((url) => {
+      if (String(url).endsWith('/api/migration')) return Promise.resolve(jsonResponse([migration('https://migration.example.test')]));
+      if (String(url).endsWith('/api/sync')) return Promise.resolve(jsonResponse([syncJob('https://sync.example.test')]));
+      return Promise.resolve(jsonResponse([backupJob('https://backup.example.test')]));
+    });
+
+    await act(async () => {
+      root.render(<CollectionProbe />);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(container.textContent).toContain('https://migration.example.test');
+    expect(container.textContent).toContain('https://sync.example.test');
+    expect(container.textContent).toContain('https://backup.example.test');
+
+    await act(async () => {
+      container.querySelector('button')?.click();
+    });
+
+    expect(container.textContent).toContain('"status":"PAUSED"');
+    expect(container.textContent).not.toContain('https://sync.example.test');
+    expect(container.textContent).toContain('"status":"QUEUED"');
+  });
+
+  it('keeps optimistic update callbacks stable across rerenders', async () => {
+    const renders: OverviewCallbacks[] = [];
+    vi.mocked(apiJson).mockResolvedValue(jsonResponse([]));
+
+    await act(async () => {
+      root.render(<CallbackProbe onRender={(callbacks) => renders.push(callbacks)} />);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    const previous = renders.at(-1)!;
+
+    await act(async () => {
+      root.render(<CallbackProbe onRender={(callbacks) => renders.push(callbacks)} />);
+    });
+    const current = renders.at(-1)!;
+
+    expect(current.removeMigration).toBe(previous.removeMigration);
+    expect(current.removeSyncJob).toBe(previous.removeSyncJob);
+    expect(current.setSyncJobStatus).toBe(previous.setSyncJobStatus);
+    expect(current.setBackupJobStatus).toBe(previous.setBackupJobStatus);
   });
 
   it('suppresses a stale migration snapshot after a newer stream frame', async () => {
@@ -199,6 +279,33 @@ describe('useTransferOverview', () => {
 
     expect(container.textContent).toContain('https://live-sync.example.test');
     expect(container.textContent).toContain('https://live-backup.example.test');
+  });
+
+  it('retains all transfer collections after malformed stream frames', async () => {
+    const streams = new Map<string, SseHandlers>();
+    vi.mocked(apiJson).mockImplementation((url) => {
+      if (String(url).endsWith('/api/migration')) return Promise.resolve(jsonResponse([migration('https://migration.example.test')]));
+      if (String(url).endsWith('/api/sync')) return Promise.resolve(jsonResponse([syncJob('https://sync.example.test')]));
+      return Promise.resolve(jsonResponse([backupJob('https://backup.example.test')]));
+    });
+    vi.mocked(connectSseLoop).mockImplementation((options) => {
+      streams.set(options.url, options.handlers);
+      return new Promise<void>(() => {});
+    });
+
+    await act(async () => {
+      root.render(<OverviewProbe />);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      streams.get('https://api.example.test/api/migration/stream')?.onEvent('migrations', 'not json');
+      streams.get('https://api.example.test/api/sync/stream')?.onEvent('sync_jobs', 'not json');
+      streams.get('https://api.example.test/api/backup/stream')?.onEvent('backup_jobs', 'not json');
+    });
+
+    expect(container.textContent).toContain('https://migration.example.test');
+    expect(container.textContent).toContain('https://sync.example.test');
+    expect(container.textContent).toContain('https://backup.example.test');
   });
 
   it('refreshes the backup snapshot when the backup tab becomes active', async () => {

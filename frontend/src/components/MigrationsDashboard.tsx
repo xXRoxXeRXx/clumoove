@@ -82,24 +82,19 @@ export function MigrationsDashboard({
   const translateApiError = useApiError();
   const confirm = useConfirm();
   const toast = useToast();
+  const { migrations: migrationOverview, syncJobs: syncOverview, backups: backupOverview } = useTransferOverview({ apiUrl, token, backupActive: activeTab === 'backup' });
   const {
-    migrations,
-    migrationLoading: loading,
-    migrationError: error,
-    syncJobs,
-    syncLoading,
-    syncError,
-    backupJobs,
-    backupLoading,
-    backupError,
-    removeMigration,
-    removeMigrations,
-    setMigrationStatus,
-    removeSyncJob,
-    removeSyncJobs,
-    setSyncJobStatus,
-    setBackupJobStatus,
-  } = useTransferOverview({ apiUrl, token, backupActive: activeTab === 'backup' });
+    items: migrations, loading, error, remove: removeMigration,
+    removeMany: removeMigrations, setStatus: setMigrationStatus,
+  } = migrationOverview;
+  const {
+    items: syncJobs, loading: syncLoading, error: syncError, remove: removeSyncJob,
+    removeMany: removeSyncJobs, setStatus: setSyncJobStatus,
+  } = syncOverview;
+  const {
+    items: backupJobs, loading: backupLoading, error: backupError,
+    setStatus: setBackupJobStatus,
+  } = backupOverview;
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();

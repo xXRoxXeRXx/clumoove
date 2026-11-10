@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { BackupJob, Migration, SyncJob } from '../types';
-import { backupStreamUrl } from '../api/backups';
-import { syncStreamUrl } from '../api/sync';
 import { useLiveTransferCollection } from './useLiveTransferCollection';
+import { backupOverviewAdapter, migrationOverviewAdapter, syncOverviewAdapter } from './transferOverviewAdapters';
 
 interface UseTransferOverviewOptions {
   apiUrl: string;
@@ -10,43 +9,33 @@ interface UseTransferOverviewOptions {
   backupActive?: boolean;
 }
 
+interface TransferOverviewCollection<T extends { id: string; status: string }> {
+  items: T[];
+  loading: boolean;
+  error: string;
+  setStatus: (id: string, status: T['status']) => void;
+}
+
+interface RemovableTransferOverviewCollection<T extends { id: string; status: string }> extends TransferOverviewCollection<T> {
+  remove: (id: string) => void;
+  removeMany: (ids: Iterable<string>) => void;
+}
+
 interface TransferOverview {
-  migrations: Migration[];
-  migrationLoading: boolean;
-  migrationError: string;
-  syncJobs: SyncJob[];
-  syncLoading: boolean;
-  syncError: string;
-  backupJobs: BackupJob[];
-  backupLoading: boolean;
-  backupError: string;
-  removeMigration: (id: string) => void;
-  removeMigrations: (ids: Iterable<string>) => void;
-  setMigrationStatus: (id: string, status: Migration['status']) => void;
-  removeSyncJob: (id: string) => void;
-  removeSyncJobs: (ids: Iterable<string>) => void;
-  setSyncJobStatus: (id: string, status: SyncJob['status']) => void;
-  setBackupJobStatus: (id: string, status: BackupJob['status']) => void;
+  migrations: RemovableTransferOverviewCollection<Migration>;
+  syncJobs: RemovableTransferOverviewCollection<SyncJob>;
+  backups: TransferOverviewCollection<BackupJob>;
 }
 
 /** Stable overview data for every transfer kind. */
 export function useTransferOverview({ apiUrl, token, backupActive = false }: UseTransferOverviewOptions): TransferOverview {
-  const migrations = useLiveTransferCollection<Migration>({
-    apiUrl, token, snapshotPath: '/api/migration', streamUrl: `${apiUrl}/api/migration/stream`,
-    eventName: 'migrations', snapshotFailureKey: 'migrations.loadFailed', unknownSnapshotFailureKey: 'migrations.connectionError', streamFailureKey: 'migrations.connectionError', includeNamedStreamErrors: true,
-  });
-  const syncJobs = useLiveTransferCollection<SyncJob>({
-    apiUrl, token, snapshotPath: '/api/sync', streamUrl: syncStreamUrl(apiUrl),
-    eventName: 'sync_jobs', snapshotFailureKey: 'sync.loadFailed', streamFailureKey: 'sync.loadFailed',
-  });
-  const backupJobs = useLiveTransferCollection<BackupJob>({
-    apiUrl, token, snapshotPath: '/api/backup', streamUrl: backupStreamUrl(apiUrl),
-    eventName: 'backup_jobs', snapshotFailureKey: 'backup.loadFailed', streamFailureKey: 'backup.loadFailed', includeNamedStreamErrors: true,
-  });
-  const { refresh: refreshBackupJobs } = backupJobs;
-  const { updateItems: updateMigrations } = migrations;
-  const { updateItems: updateSyncJobs } = syncJobs;
-  const { updateItems: updateBackupJobs } = backupJobs;
+  const migrationCollection = useLiveTransferCollection({ apiUrl, token, adapter: migrationOverviewAdapter });
+  const syncCollection = useLiveTransferCollection({ apiUrl, token, adapter: syncOverviewAdapter });
+  const backupCollection = useLiveTransferCollection({ apiUrl, token, adapter: backupOverviewAdapter });
+  const { refresh: refreshBackupJobs } = backupCollection;
+  const { updateItems: updateMigrations } = migrationCollection;
+  const { updateItems: updateSyncJobs } = syncCollection;
+  const { updateItems: updateBackupJobs } = backupCollection;
   const previousBackupActiveRef = useRef(backupActive);
 
   useEffect(() => {
@@ -68,11 +57,9 @@ export function useTransferOverview({ apiUrl, token, backupActive = false }: Use
   const setSyncJobStatus = useCallback((id: string, status: SyncJob['status']) => updateSyncJobs((current) => current.map((item) => item.id === id ? { ...item, status } : item)), [updateSyncJobs]);
   const setBackupJobStatus = useCallback((id: string, status: BackupJob['status']) => updateBackupJobs((current) => current.map((item) => item.id === id ? { ...item, status } : item)), [updateBackupJobs]);
 
-  return {
-    migrations: migrations.items, migrationLoading: migrations.loading, migrationError: migrations.error,
-    syncJobs: syncJobs.items, syncLoading: syncJobs.loading, syncError: syncJobs.error,
-    backupJobs: backupJobs.items, backupLoading: backupJobs.loading, backupError: backupJobs.error,
-    removeMigration, removeMigrations, setMigrationStatus,
-    removeSyncJob, removeSyncJobs, setSyncJobStatus, setBackupJobStatus,
-  };
+  return useMemo(() => ({
+    migrations: { items: migrationCollection.items, loading: migrationCollection.loading, error: migrationCollection.error, remove: removeMigration, removeMany: removeMigrations, setStatus: setMigrationStatus },
+    syncJobs: { items: syncCollection.items, loading: syncCollection.loading, error: syncCollection.error, remove: removeSyncJob, removeMany: removeSyncJobs, setStatus: setSyncJobStatus },
+    backups: { items: backupCollection.items, loading: backupCollection.loading, error: backupCollection.error, setStatus: setBackupJobStatus },
+  }), [migrationCollection.items, migrationCollection.loading, migrationCollection.error, removeMigration, removeMigrations, setMigrationStatus, syncCollection.items, syncCollection.loading, syncCollection.error, removeSyncJob, removeSyncJobs, setSyncJobStatus, backupCollection.items, backupCollection.loading, backupCollection.error, setBackupJobStatus]);
 }

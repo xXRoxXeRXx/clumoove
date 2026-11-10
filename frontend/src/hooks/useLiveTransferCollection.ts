@@ -4,16 +4,22 @@ import { useApiError } from '../utils/apiError';
 import { apiErrorMessage, apiFetch, apiJson } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 
-interface UseLiveTransferCollectionOptions {
-  apiUrl: string;
-  token: string;
+export interface LiveTransferAdapter<T> {
+  /** Keep adapters module-level or memoized so stream effects do not reconnect on every render. */
   snapshotPath: string;
-  streamUrl: string;
+  streamUrl: (apiUrl: string) => string;
   eventName: string;
   snapshotFailureKey: string;
   unknownSnapshotFailureKey?: string;
   streamFailureKey: string;
   includeNamedStreamErrors?: boolean;
+  decodeFrame: (data: string) => T[] | null;
+}
+
+interface UseLiveTransferCollectionOptions<T> {
+  apiUrl: string;
+  token: string;
+  adapter: LiveTransferAdapter<T>;
 }
 
 interface LiveTransferCollection<T> {
@@ -29,17 +35,11 @@ interface LiveTransferCollection<T> {
  * ordering epoch: its snapshot may replace an older stream frame, but any
  * stream frame received afterwards wins over that snapshot.
  */
-export function useLiveTransferCollection<T>({
-  apiUrl,
-  token,
-  snapshotPath,
-  streamUrl,
-  eventName,
-  snapshotFailureKey,
-  unknownSnapshotFailureKey = snapshotFailureKey,
-  streamFailureKey,
-  includeNamedStreamErrors = false,
-}: UseLiveTransferCollectionOptions): LiveTransferCollection<T> {
+export function useLiveTransferCollection<T>({ apiUrl, token, adapter }: UseLiveTransferCollectionOptions<T>): LiveTransferCollection<T> {
+  const { snapshotPath, eventName, snapshotFailureKey, streamFailureKey, decodeFrame } = adapter;
+  const unknownSnapshotFailureKey = adapter.unknownSnapshotFailureKey ?? snapshotFailureKey;
+  const includeNamedStreamErrors = adapter.includeNamedStreamErrors ?? false;
+  const streamUrl = adapter.streamUrl(apiUrl);
   const { t } = useTranslation();
   const translateApiError = useApiError();
   const [items, setItems] = useState<T[]>([]);
@@ -122,8 +122,8 @@ export function useLiveTransferCollection<T>({
           if (streamController.signal.aborted || connectionGenerationRef.current !== generation) return;
           if (event === eventName && data) {
             try {
-              const updatedItems = JSON.parse(data) as T[];
-              if (!Array.isArray(updatedItems)) return;
+              const updatedItems = decodeFrame(data);
+              if (updatedItems === null) return;
               updateEpochRef.current += 1;
               snapshotControllerRef.current?.abort();
               hasDataRef.current = true;
@@ -147,7 +147,7 @@ export function useLiveTransferCollection<T>({
     });
 
     return () => streamController.abort();
-  }, [eventName, includeNamedStreamErrors, streamFailureKey, streamUrl, token]);
+  }, [decodeFrame, eventName, includeNamedStreamErrors, streamFailureKey, streamUrl, token]);
 
   const refresh = useCallback(() => setRefreshEpoch((epoch) => epoch + 1), []);
   const updateItems = useCallback((update: SetStateAction<T[]>) => setItems(update), []);
