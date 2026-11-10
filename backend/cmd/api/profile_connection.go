@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"time"
 
 	"backend/internal/crypto"
@@ -15,8 +16,11 @@ import (
 )
 
 var (
-	errProfileNotFound = errors.New("profile not found")
-	errProfileNotOwned = errors.New("profile not owned")
+	errProfileNotFound  = errors.New("profile not found")
+	errProfileNotOwned  = errors.New("profile not owned")
+	errProfileOwnership = errors.New("profile ownership unavailable")
+	errProfileSecret    = errors.New("profile secret unavailable")
+	errProfileProvider  = errors.New("profile provider unavailable")
 )
 
 // profileCreds is task-scoped plaintext connection material. Callers that keep
@@ -87,7 +91,7 @@ func (s *APIServer) resolveOwnedProfile(ctx context.Context, userID, profileID s
 	}
 	owned, err := db.VerifyProfileOwnershipContext(ctx, s.db, profileID, userID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errProfileOwnership, err)
 	}
 	if !owned {
 		return nil, errProfileNotOwned
@@ -175,7 +179,7 @@ func (r profileCredentialResolver) resolve(ctx context.Context, userID, profileI
 		if decryptErr != nil {
 			if secretFailurePolicy == failOnProfileSecretError {
 				creds.clear()
-				return base, nil, decryptErr
+				return base, nil, fmt.Errorf("%w: %w", errProfileSecret, decryptErr)
 			}
 		} else {
 			creds.Password = string(plain)
@@ -187,7 +191,7 @@ func (r profileCredentialResolver) resolve(ctx context.Context, userID, profileI
 		if decryptErr != nil {
 			if secretFailurePolicy == failOnProfileSecretError {
 				creds.clear()
-				return base, nil, decryptErr
+				return base, nil, fmt.Errorf("%w: %w", errProfileSecret, decryptErr)
 			}
 		} else {
 			creds.RefreshToken = string(plain)
@@ -198,7 +202,7 @@ func (r profileCredentialResolver) resolve(ctx context.Context, userID, profileI
 		session, decodeErr := r.decodeMega(profile.MegaSessionIDEncrypted, profile.MegaMasterKeyEncrypted)
 		if decodeErr != nil {
 			creds.clear()
-			return base, nil, decodeErr
+			return base, nil, fmt.Errorf("%w: %w", errProfileSecret, decodeErr)
 		}
 		creds.MegaSession = session
 	}
@@ -241,8 +245,8 @@ func (s *APIServer) persistProfileOAuthTokens(profile *db.ConnectionProfile, tok
 	return nil
 }
 
-func (s *APIServer) openOwnedProfileConnection(ctx context.Context, userID, profileID string) (*profileConnection, error) {
-	creds, profile, err := s.resolveProfileCredentials(ctx, userID, profileID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+func (s *APIServer) openOwnedProfileConnection(ctx context.Context, userID, profileID string, refreshPolicy profileOAuthRefreshPolicy) (*profileConnection, error) {
+	creds, profile, err := s.resolveProfileCredentials(ctx, userID, profileID, profileCreds{}, refreshPolicy, failOnProfileSecretError)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +270,7 @@ func newProfileConnection(ctx context.Context, userID string, profile *db.Connec
 	provider, err := factory(providerCtx, creds.Provider, creds.URL, creds.Username, creds.Password)
 	if err != nil {
 		creds.clear()
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errProfileProvider, err)
 	}
 	return &profileConnection{profile: profile, provider: provider, ctx: providerCtx, creds: creds}, nil
 }

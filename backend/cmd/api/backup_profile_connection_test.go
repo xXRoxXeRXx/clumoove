@@ -127,6 +127,7 @@ type backupProfileConnectionState struct {
 	profiles         map[string][]driver.Value
 	backupInsertArgs []driver.Value
 	syncInsertArgs   []driver.Value
+	ownershipErr     error
 }
 
 func newBackupProfileConnectionTestDB(t *testing.T, profiles map[string][]driver.Value) (*sql.DB, *backupProfileConnectionState) {
@@ -186,6 +187,9 @@ func (c backupProfileConnectionConn) query(query string, args []driver.NamedValu
 		return &backupProfileConnectionRows{rows: [][]driver.Value{{"schedule-1", now, now}}, columns: 3}, nil
 	}
 	if strings.Contains(query, "SELECT EXISTS") && strings.Contains(query, "connection_profiles") {
+		if c.state.ownershipErr != nil {
+			return nil, c.state.ownershipErr
+		}
 		_, ok := c.state.profiles[args[0].Value.(string)]
 		return &backupProfileConnectionRows{rows: [][]driver.Value{{ok}}, columns: 1}, nil
 	}

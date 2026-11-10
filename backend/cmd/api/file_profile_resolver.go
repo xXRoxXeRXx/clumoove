@@ -43,7 +43,7 @@ func (s *APIServer) loadOwnedFileProfile(ctx context.Context, userID, profileID 
 // owns profile ownership, credential lifecycles, provider construction, and
 // plaintext cleanup; this adapter only adds file-manager connection semantics.
 func (s *APIServer) resolveFileProfile(ctx context.Context, userID, profileID string) (*resolvedFileProfile, error) {
-	connection, err := s.openOwnedProfileConnection(ctx, userID, profileID)
+	connection, err := s.openOwnedProfileConnection(ctx, userID, profileID, refreshOAuthWhenExpiring)
 	if err != nil {
 		return nil, mapFileProfileError(err)
 	}

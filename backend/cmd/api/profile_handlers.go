@@ -3,14 +3,12 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"net/http"
 	"time"
 
 	"backend/internal/crypto"
 	"backend/internal/db"
-	"backend/internal/megasecret"
 	"backend/internal/oauth"
 	"backend/internal/storage"
 )
@@ -325,66 +323,35 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
 		return
 	}
-	owned, err := db.VerifyProfileOwnershipContext(r.Context(), s.db, id, userID)
+	connection, err := s.openOwnedProfileConnection(r.Context(), userID, id, refreshOAuthAlways)
 	if err != nil {
-		s.logf(r, "handleTestProfile: ownership check failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
-		return
-	}
-	p, err := db.GetConnectionProfile(r.Context(), s.db, id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
-		return
-	}
-
-	var password, refreshToken string
-	if p.PasswordEncrypted != "" {
-		dec, derr := crypto.DecryptWithDomain(p.PasswordEncrypted, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(p.Provider)))
-		if derr != nil {
+		if errors.Is(err, errProfileNotFound) || errors.Is(err, errProfileNotOwned) {
+			writeError(w, http.StatusNotFound, ErrProfileNotFound)
+			return
+		}
+		if errors.Is(err, errProfileOwnership) {
+			s.logf(r, "handleTestProfile: ownership check failed for profile %s: %v", id, err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		if errors.Is(err, errProfileSecret) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
 			return
 		}
-		password = dec
-	}
-	if p.RefreshTokenEncrypted != "" {
-		dec, derr := crypto.DecryptWithDomain(p.RefreshTokenEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken)
-		if derr != nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
+		if errors.Is(err, errProfileProvider) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 			return
 		}
-		refreshToken = dec
-	}
-	isOAuth := oauth.IsProvider(p.Provider)
-	if isOAuth && refreshToken != "" {
-		tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken)
-		if terr != nil || tok.AccessToken == "" || s.persistProfileOAuthTokens(p, tok) != nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
-			return
-		}
-		password = tok.AccessToken
-	}
-
-	providerCtx, sessionErr := megasecret.WithMegaSession(r.Context(), p.Provider, p.MegaSessionIDEncrypted, p.MegaMasterKeyEncrypted, s.encryptionKey)
-	if sessionErr != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
 		return
 	}
-	client, err := storage.NewProvider(providerCtx, p.Provider, p.URL, p.Username, password)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
-		return
-	}
-	defer client.Close()
+	defer connection.close()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	ok, cerr := client.Connect(ctx)
+	ok, cerr := connection.provider.Connect(ctx)
 	if !ok {
-		s.logf(r, "handleTestProfile: connection failed for profile %s (provider %s): %v", id, p.Provider, cerr)
+		s.logf(r, "handleTestProfile: connection failed for profile %s (provider %s): %v", id, connection.profile.Provider, cerr)
 		if errors.Is(cerr, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -392,23 +359,9 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
 		return
 	}
-	if megaClient, isMega := client.(*storage.MegaProvider); isMega {
-		session := megaClient.Session()
-		defer func() {
-			for i := range session.MasterKey {
-				session.MasterKey[i] = 0
-			}
-		}()
-		sessionIDEncrypted, encErr := crypto.EncryptWithDomain(session.ID, s.encryptionKey, crypto.DomainMegaSessionID)
-		if encErr != nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
-			return
-		}
-		masterKeyEncrypted, encErr := crypto.EncryptWithDomain(base64.StdEncoding.EncodeToString(session.MasterKey), s.encryptionKey, crypto.DomainMegaMasterKey)
-		if encErr != nil || db.UpdateConnectionProfileMegaSession(r.Context(), s.db, p.ID, sessionIDEncrypted, masterKeyEncrypted, p.MegaSessionIDEncrypted) != nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
-			return
-		}
+	if err := s.persistMegaProfileSession(r.Context(), connection); err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
