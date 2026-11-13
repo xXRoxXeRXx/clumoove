@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"backend/internal/observability"
 )
 
 const (
@@ -673,9 +676,25 @@ func (m *fileManagerAdapter) uploadAtomicOverwrite(ctx context.Context, finalPat
 	if delErr := m.runCleanup(ctx, func(c context.Context) error {
 		return m.provider.DeleteFile(c, "files", backupPath)
 	}); delErr != nil {
-		slog.WarnContext(context.WithoutCancel(ctx), "failed to remove atomic overwrite backup", "provider", m.providerType, "error", delErr)
+		slog.WarnContext(context.WithoutCancel(ctx), "failed to remove atomic overwrite backup",
+			"provider", m.providerType,
+			"error_kind", classifyManagerBackupCleanupError(delErr),
+		)
 	}
 	return nil
+}
+
+func classifyManagerBackupCleanupError(err error) string {
+	switch {
+	case errors.Is(err, ErrAuth):
+		return "authentication"
+	case errors.Is(err, ErrPermission):
+		return "authorization"
+	case errors.Is(err, ErrNotFound):
+		return "not_found"
+	default:
+		return observability.ErrorKind(err)
+	}
 }
 
 func (m *fileManagerAdapter) runCleanup(ctx context.Context, op func(context.Context) error) error {

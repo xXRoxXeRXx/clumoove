@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/url"
 	"path"
 	"runtime"
 	"strings"
@@ -744,7 +745,7 @@ func TestFileManagerInspectDownloadUploadAndMkdir(t *testing.T) {
 			}
 		}
 
-		// Backup-delete error after promote is non-fatal and WARN logs omit file paths.
+		// Backup-delete error after promote is non-fatal and WARN logs only emit a safe error classification (never raw URLs/paths).
 		var logBuf bytes.Buffer
 		prevLogger := slog.Default()
 		slog.SetDefault(slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
@@ -756,20 +757,28 @@ func TestFileManagerInspectDownloadUploadAndMkdir(t *testing.T) {
 		backupErrStub.files["/secret-note.txt"] = []byte("v1")
 		backupErrStub.deleteFileFn = func(_ context.Context, _ string, filePath string) error {
 			if strings.Contains(filePath, ".bak.") {
-				return errors.New("transient backup delete error")
+				return &url.Error{
+					Op:  "DELETE",
+					URL: "https://dav.example.test/remote.php/dav/files/alice" + filePath,
+					Err: context.DeadlineExceeded,
+				}
 			}
 			delete(backupErrStub.files, filePath)
 			return nil
 		}
-		backupErrFM, err := NewFileManager("ftp", backupErrStub)
+		backupErrFM, err := NewFileManager("webdav", backupErrStub)
 		if err != nil {
-			t.Fatalf("NewFileManager(ftp) error = %v", err)
+			t.Fatalf("NewFileManager(webdav) error = %v", err)
 		}
 		if _, err := backupErrFM.UploadManager(context.Background(), ManagerLocator{Path: "/"}, "secret-note.txt", strings.NewReader("v2"), 2, ManagerUploadOptions{ConflictStrategy: "OVERWRITE"}); err != nil || string(backupErrStub.files["/secret-note.txt"]) != "v2" {
 			t.Fatalf("expected committed overwrite despite backup delete failure, got err=%v content=%q", err, string(backupErrStub.files["/secret-note.txt"]))
 		}
-		if strings.Contains(logBuf.String(), "secret-note.txt") {
-			t.Fatalf("expected WARN log to omit file path, got: %s", logBuf.String())
+		logOut := logBuf.String()
+		if !strings.Contains(logOut, `"error_kind":"timeout"`) {
+			t.Fatalf("expected WARN log to include safe error_kind classification, got: %s", logOut)
+		}
+		if strings.Contains(logOut, "secret-note.txt") || strings.Contains(logOut, ".bak.") || strings.Contains(logOut, "dav.example.test") {
+			t.Fatalf("expected WARN log to omit file path and URL, got: %s", logOut)
 		}
 
 		// RENAME exhaustion (>100 existing suffixed siblings) -> ErrManagerConflict.
