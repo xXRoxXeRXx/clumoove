@@ -23,6 +23,7 @@ desktop.ini
 # Agent-specific files
 .kilo/
 .agent/
+.agents/
 openspec/
 .specify/
 specs/
