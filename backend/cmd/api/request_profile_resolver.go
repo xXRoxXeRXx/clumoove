@@ -32,5 +32,5 @@ func (s *APIServer) writeRequestProviderBrowseError(w http.ResponseWriter, r *ht
 		return
 	}
 	s.logf(r, "%s: %v", contextLabel, err)
-	writeError(w, http.StatusNotFound, ErrProfileNotFound)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrProfileNotFound})
 }

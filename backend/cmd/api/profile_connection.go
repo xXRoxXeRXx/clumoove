@@ -536,7 +536,7 @@ func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, pro
 	if profile.Username != "" {
 		creds.Username = profile.Username
 	}
-	if profile.PasswordEncrypted != "" {
+	if profile.PasswordEncrypted != "" && base.Password == "" {
 		plain, decryptErr := crypto.DecryptBytesWithDomain(profile.PasswordEncrypted, a.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(creds.Provider)))
 		if decryptErr != nil {
 			if secretFailurePolicy == failOnProfileSecretError {
@@ -548,7 +548,7 @@ func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, pro
 			clear(plain)
 		}
 	}
-	if profile.RefreshTokenEncrypted != "" {
+	if profile.RefreshTokenEncrypted != "" && base.RefreshToken == "" {
 		plain, decryptErr := crypto.DecryptBytesWithDomain(profile.RefreshTokenEncrypted, a.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if decryptErr != nil {
 			if secretFailurePolicy == failOnProfileSecretError {
@@ -568,7 +568,7 @@ func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, pro
 		}
 		creds.MegaSession = session
 	}
-	if creds.RefreshToken != "" && oauth.IsProvider(profile.Provider) && (refreshPolicy == refreshOAuthAlways || profileOAuthAccessNeedsRefresh(profile, creds.Password, a.currentTime())) {
+	if creds.RefreshToken != "" && oauth.IsProvider(profile.Provider) && !(base.Password != "" && base.RefreshToken != "") && (refreshPolicy == refreshOAuthAlways || profileOAuthAccessNeedsRefresh(profile, creds.Password, a.currentTime())) {
 		token, refreshErr := a.refreshToken(ctx, creds.Provider, creds.RefreshToken)
 		if refreshErr != nil || token == nil || token.AccessToken == "" {
 			creds.clear()
@@ -578,8 +578,12 @@ func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, pro
 			creds.clear()
 			return base, nil, err
 		}
-		creds.Password = token.AccessToken
-		creds.RefreshToken = token.RefreshToken
+		if base.Password == "" {
+			creds.Password = token.AccessToken
+		}
+		if base.RefreshToken == "" {
+			creds.RefreshToken = token.RefreshToken
+		}
 	}
 	return creds, profile, nil
 }

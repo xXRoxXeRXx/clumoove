@@ -428,14 +428,13 @@ func TestOwnedProfileAccessRequestProviderAndSnapshot(t *testing.T) {
 		},
 	}
 
-	// 1. Selected profile overrides inline fields, normalizes URL, and enforces provider capability.
+	// 1. Selected profile overrides inline endpoint metadata, normalizes URL, and falls back to saved secret when request password is empty.
 	conn, err := openRequestProviderFor[migrationBrowser](access, context.Background(), "user-1", requestConnectionInput{
 		ProfileID:    "profile-1",
 		NormalizeURL: true,
 		Provider:     "nextcloud",
 		URL:          "https://request.example.test",
 		Username:     "request-user",
-		Password:     "request-secret",
 	})
 	if err != nil {
 		t.Fatalf("openRequestProviderFor(profile) error = %v", err)
@@ -443,6 +442,34 @@ func TestOwnedProfileAccessRequestProviderAndSnapshot(t *testing.T) {
 	conn.Close()
 	if gotProvider != "magentacloud" || gotURL != "https://magentacloud.de/remote.php/webdav" || gotUsername != "saved-user" || gotPassword != "saved-secret" {
 		t.Fatalf("opened args = (%q, %q, %q, %q)", gotProvider, gotURL, gotUsername, gotPassword)
+	}
+
+	// 1b. Non-empty request secrets take precedence over saved profile secrets for both opening and snapshotting.
+	connOverride, err := openRequestProviderFor[migrationBrowser](access, context.Background(), "user-1", requestConnectionInput{
+		ProfileID:    "profile-1",
+		NormalizeURL: true,
+		Password:     "request-override",
+	})
+	if err != nil {
+		t.Fatalf("openRequestProviderFor(profile+override) error = %v", err)
+	}
+	connOverride.Close()
+	if gotPassword != "request-override" {
+		t.Fatalf("override password = %q, want request-override", gotPassword)
+	}
+	overrideSnap, err := access.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+		ProfileID:    "profile-1",
+		Password:     "request-override",
+		RefreshToken: "refresh-override",
+	})
+	if err != nil {
+		t.Fatalf("SnapshotRequest(profile+override) error = %v", err)
+	}
+	if dec, _ := crypto.DecryptWithDomain(overrideSnap.Creds.PasswordEncrypted, key, crypto.ConnectionCredentialDomain(false)); dec != "request-override" {
+		t.Fatalf("override snapshot password = %q, want request-override", dec)
+	}
+	if dec, _ := crypto.DecryptWithDomain(overrideSnap.Creds.RefreshTokenEncrypted.String, key, crypto.DomainOAuthRefreshToken); dec != "refresh-override" {
+		t.Fatalf("override snapshot refresh = %q, want refresh-override", dec)
 	}
 
 	// 2. Unconditionally rejects invalid provider without calling factory.

@@ -139,14 +139,14 @@ func TestMigrationBrowseAndStartProfileFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("browse rejects an unavailable source profile", func(t *testing.T) {
+	t.Run("browse rejects an unavailable source profile with 200 logical failure", func(t *testing.T) {
 		request := httptest.NewRequest(http.MethodPost, "/api/migration/browse", bytes.NewBufferString(`{"source_profile_id":"missing-profile","resource_type":"files"}`))
 		request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
 		recorder := httptest.NewRecorder()
 
 		server.handleBrowse(recorder, request)
 
-		assertAPIError(t, recorder, http.StatusNotFound, ErrProfileNotFound)
+		assertAPIError(t, recorder, http.StatusOK, ErrProfileNotFound)
 	})
 
 	t.Run("start rejects an unavailable source profile", func(t *testing.T) {
