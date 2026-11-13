@@ -85,7 +85,7 @@ func newProviderPool() *providerPool {
 		entityEpochs:  make(map[providerPoolKey]uint64),
 		syncJobEpochs: make(map[string]uint64),
 		factory: func(ctx context.Context, providerType, urlStr, username, password string, opts ...storage.ProviderOption) (PooledProvider, error) {
-			return newProvider(ctx, providerType, urlStr, username, password, opts...)
+			return storage.NewProvider(ctx, providerType, urlStr, username, password, opts...)
 		},
 	}
 }

@@ -183,7 +183,7 @@ func TestNewProfileConnectionCreatesProviderFromResolvedCredentials(t *testing.T
 	creds := profileCreds{Provider: "nextcloud", URL: "https://cloud.example.test", Username: "alice", Password: "secret"}
 	var gotProvider, gotURL, gotUsername, gotPassword string
 	connection, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{ID: "profile-1"}, creds,
-		func(_ context.Context, provider, url, username, password string, _ ...storage.ProviderOption) (storage.StorageProvider, error) {
+		func(_ context.Context, provider, url, username, password string, _ ...storage.ProviderOption) (profileProvider, error) {
 			gotProvider, gotURL, gotUsername, gotPassword = provider, url, username, password
 			return nil, nil
 		})
@@ -201,7 +201,7 @@ func TestNewProfileConnectionCreatesProviderFromResolvedCredentials(t *testing.T
 func TestNewProfileConnectionClearsCopiedSecretsWhenFactoryFails(t *testing.T) {
 	masterKey := []byte{1, 2, 3}
 	creds := profileCreds{Provider: "mega", Password: "secret", RefreshToken: "refresh", MegaSession: storage.MegaSession{MasterKey: masterKey}}
-	_, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{}, creds, func(context.Context, string, string, string, string, ...storage.ProviderOption) (storage.StorageProvider, error) {
+	_, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{}, creds, func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
 		return nil, errors.New("factory failed")
 	})
 	if err == nil {
@@ -223,7 +223,9 @@ func TestProfileConnectionForwardsMegaSessionOption(t *testing.T) {
 		MegaSession: storage.MegaSession{ID: "session", MasterKey: masterKey},
 	}
 
-	connection, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{ID: "profile-mega"}, creds, storage.NewProvider)
+	connection, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{ID: "profile-mega"}, creds, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (profileProvider, error) {
+		return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
+	})
 	if err != nil {
 		t.Fatalf("newProfileConnection() error = %v", err)
 	}

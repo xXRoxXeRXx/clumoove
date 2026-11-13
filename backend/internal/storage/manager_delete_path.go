@@ -5,9 +5,15 @@ import (
 	"fmt"
 )
 
+type managerPathDeleter interface {
+	InspectResource(context.Context, string, string) (CloudResource, error)
+	GetDirectoryListing(context.Context, string, string) ([]CloudResource, error)
+	DeleteFile(context.Context, string, string) error
+}
+
 // deleteManagerFileOnly adapts providers whose manager locators are sealed,
 // canonical paths where directory deletion is unsupported or requires specialized logic.
-func deleteManagerFileOnly(ctx context.Context, provider StorageProvider, locator ManagerLocator, _ bool) error {
+func deleteManagerFileOnly(ctx context.Context, provider managerPathDeleter, locator ManagerLocator, _ bool) error {
 	if locator.Path == "" || locator.Path == "/" {
 		return ErrManagerUnsupported
 	}
@@ -25,7 +31,7 @@ func deleteManagerFileOnly(ctx context.Context, provider StorageProvider, locato
 // DeleteFile primitive for both files and directories. Deleting a directory
 // without recursive=true verifies that the directory is empty; non-empty
 // directories return ErrManagerDirectoryNotEmpty.
-func deleteManagerPathItem(ctx context.Context, provider StorageProvider, locator ManagerLocator, recursive bool) error {
+func deleteManagerPathItem(ctx context.Context, provider managerPathDeleter, locator ManagerLocator, recursive bool) error {
 	return deleteManagerPathItemWithDirectoryDeleter(ctx, provider, locator, recursive, func(ctx context.Context, path string, _ bool) error {
 		return provider.DeleteFile(ctx, "files", path)
 	})
@@ -35,7 +41,7 @@ func deleteManagerPathItem(ctx context.Context, provider StorageProvider, locato
 // safety checks to a path-backed provider while allowing providers whose file
 // deletion primitive cannot recursively remove directories to supply their
 // native directory operation.
-func deleteManagerPathItemWithDirectoryDeleter(ctx context.Context, provider StorageProvider, locator ManagerLocator, recursive bool, deleteDirectory func(context.Context, string, bool) error) error {
+func deleteManagerPathItemWithDirectoryDeleter(ctx context.Context, provider managerPathDeleter, locator ManagerLocator, recursive bool, deleteDirectory func(context.Context, string, bool) error) error {
 	if locator.Path == "" || locator.Path == "/" {
 		return ErrManagerUnsupported
 	}

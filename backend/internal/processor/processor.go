@@ -342,13 +342,6 @@ func immichYearMonthFromMetadata(metadata []byte) (string, string) {
 	return "", ""
 }
 
-// newProvider creates a provider scoped to a single operation. Providers retain
-// their credentials internally, so retaining them in a shared cache would keep
-// decrypted credentials alive beyond the task that needs them.
-func newProvider(ctx context.Context, providerType, urlStr, username, password string, opts ...storage.ProviderOption) (storage.StorageProvider, error) {
-	return storage.NewProvider(ctx, providerType, urlStr, username, password, opts...)
-}
-
 // SetDBConnStr sets the PostgreSQL DSN used to open a dedicated LISTEN
 // connection for immediate wake-up when new tasks are inserted.
 // Must be called before Start(). Falls back to polling if not set.

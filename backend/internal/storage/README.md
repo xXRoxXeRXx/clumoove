@@ -2,31 +2,19 @@
 
 ## Overview
 
-The `backend/internal/storage` package defines the unified `StorageProvider` interface and contains concrete client implementations for all supported storage backends (Nextcloud, OpenCloud, WebDAV, Dropbox, Google Drive, OneDrive, HiDrive, SMB, S3, SFTP, FTPS, MagentaCLOUD, Koofr, Local, Immich, Seafile, and MEGA). Koofr uses only the public fixed endpoint, its primary mount, and an email/application-password credential pair; it is files-only, case-insensitive, and provides MD5 hashes for verification.
+The `backend/internal/storage` package defines focused workflow interfaces and a composed `StorageProvider` registration contract and contains concrete client implementations for all supported storage backends (Nextcloud, OpenCloud, WebDAV, Dropbox, Google Drive, OneDrive, HiDrive, SMB, S3, SFTP, FTPS, MagentaCLOUD, Koofr, Local, Immich, Seafile, and MEGA). Koofr uses only the public fixed endpoint, its primary mount, and an email/application-password credential pair; it is files-only, case-insensitive, and provides MD5 hashes for verification.
 
 ---
 
 ## The `StorageProvider` Interface
 
-Every storage backend MUST implement all methods of `StorageProvider` defined in `provider.go`:
+Every registered storage backend implements the composed `StorageProvider` contract. Consumers depend on the narrower operations they use; in particular, the file manager accepts `ManagerProvider`:
 
 ```go
 type StorageProvider interface {
-	Close() error
-	Connect(ctx context.Context) (bool, error)
-	GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error)
-	InspectResource(ctx context.Context, resourceType, path string) (CloudResource, error)
-	StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error)
-	StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error
-	StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error
-	FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error)
-	DeleteFile(ctx context.Context, resourceType, filePath string) error
-	GetFileHash(ctx context.Context, resourceType, filePath string) (string, error)
-	CreateParentDirectories(ctx context.Context, resourceType, filePath string) error
-	CreateDirectory(ctx context.Context, resourceType, dirPath string) error
-	RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error
-	SupportsAtomicRename() bool
-	VerificationMode() VerificationMode
+	ManagerProvider
+	ProviderLifecycle
+	TransferCapabilities
 }
 ```
 
@@ -34,7 +22,7 @@ type StorageProvider interface {
 
 ## Architecture Rules & Guidelines
 
-1. **Required Interface**: `StorageProvider` is non-optional. All methods must be implemented by concrete provider structs and unit test mocks.
+1. **Required Interface**: `StorageProvider` is non-optional. Concrete registered providers implement the composition; workflow test doubles need only their workflow interface.
 2. **SSRF Guarding**: The `RequiresEgressValidation` flag on the provider's entry in `providerCatalogueEntries` (`factory.go`) is the source of truth for user-configured providers that require egress validation. Those providers MUST validate URLs using `validateEgressURL` and execute HTTP requests via `NewEgressHTTPClient` or custom transports with `egressDialer`.
 3. **Data Integrity & Hashes**:
    - Return native cryptographic hashes (`SHA-1`, `MD5`, `SHA-256`, `QuickXor`, etc.) via `GetFileHash`.

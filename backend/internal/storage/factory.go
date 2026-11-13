@@ -303,7 +303,7 @@ func (c *providerCatalogue) singleOpClassifier(entry providerRegistration) func(
 	return func(ManagerLocator, ManagerLocator, string) bool { return true }
 }
 
-func selectManagerMutator[T any](c *providerCatalogue, providerType string, provider StorageProvider, build func(providerRegistration) T) (T, bool) {
+func selectManagerMutator[T any](c *providerCatalogue, providerType string, provider ManagerProvider, build func(providerRegistration) T) (T, bool) {
 	if dedicated, ok := provider.(T); ok {
 		return dedicated, true
 	}
@@ -315,25 +315,25 @@ func selectManagerMutator[T any](c *providerCatalogue, providerType string, prov
 	return build(entry), true
 }
 
-func (c *providerCatalogue) newManagerRenamer(providerType string, provider StorageProvider) (ManagerRenamer, bool) {
+func (c *providerCatalogue) newManagerRenamer(providerType string, provider ManagerProvider) (ManagerRenamer, bool) {
 	return selectManagerMutator(c, providerType, provider, func(entry providerRegistration) ManagerRenamer {
 		return newPathManagerMutatorWithClassifier(provider, c.singleOpClassifier(entry))
 	})
 }
 
-func (c *providerCatalogue) newManagerMover(providerType string, provider StorageProvider) (ManagerMover, bool) {
+func (c *providerCatalogue) newManagerMover(providerType string, provider ManagerProvider) (ManagerMover, bool) {
 	return selectManagerMutator(c, providerType, provider, func(entry providerRegistration) ManagerMover {
 		return newPathManagerMutatorWithClassifier(provider, c.singleOpClassifier(entry))
 	})
 }
 
-func (c *providerCatalogue) newManagerCopier(providerType string, provider StorageProvider) (ManagerCopier, bool) {
+func (c *providerCatalogue) newManagerCopier(providerType string, provider ManagerProvider) (ManagerCopier, bool) {
 	return selectManagerMutator(c, providerType, provider, func(providerRegistration) ManagerCopier {
 		return newPathManagerMutator(provider, false)
 	})
 }
 
-func (c *providerCatalogue) newFileManager(providerType string, provider StorageProvider) (FileManager, error) {
+func (c *providerCatalogue) newFileManager(providerType string, provider ManagerProvider) (FileManager, error) {
 	entry, ok := c.lookup(providerType)
 	if provider == nil || !ok {
 		return nil, ErrManagerUnsupported
@@ -602,20 +602,20 @@ var providerCatalogueEntries = []providerRegistration{
 
 // NewManagerRenamer selects a provider's dedicated manager implementation
 // before falling back to the path adapter for explicitly path-safe providers.
-func NewManagerRenamer(providerType string, provider StorageProvider) (ManagerRenamer, bool) {
+func NewManagerRenamer(providerType string, provider ManagerProvider) (ManagerRenamer, bool) {
 	return defaultProviderCatalogue.newManagerRenamer(providerType, provider)
 }
 
 // NewManagerMover selects a provider's dedicated manager implementation
 // before falling back to the path adapter for explicitly path-safe providers.
-func NewManagerMover(providerType string, provider StorageProvider) (ManagerMover, bool) {
+func NewManagerMover(providerType string, provider ManagerProvider) (ManagerMover, bool) {
 	return defaultProviderCatalogue.newManagerMover(providerType, provider)
 }
 
 // NewManagerCopier selects a provider's dedicated native manager implementation
 // before falling back to the exact-size streaming adapter for path-safe
 // providers that have no portable server-side copy operation.
-func NewManagerCopier(providerType string, provider StorageProvider) (ManagerCopier, bool) {
+func NewManagerCopier(providerType string, provider ManagerProvider) (ManagerCopier, bool) {
 	return defaultProviderCatalogue.newManagerCopier(providerType, provider)
 }
 

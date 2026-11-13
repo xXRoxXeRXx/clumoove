@@ -339,7 +339,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				}
 			} else {
 				newTargetProvider = func(ctx context.Context, providerType, urlStr, username, password string) (connectableVerificationTarget, error) {
-					return newProvider(ctx, providerType, urlStr, username, password, storage.WithProviderMegaSession(cfg.MegaSession))
+					return storage.NewProvider(ctx, providerType, urlStr, username, password, storage.WithProviderMegaSession(cfg.MegaSession))
 				}
 			}
 		}

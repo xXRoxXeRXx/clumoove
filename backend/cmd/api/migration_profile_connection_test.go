@@ -31,7 +31,7 @@ func TestResolveRequestProfileCredentialsKeepsRequestCredentialsWithoutProfile(t
 func TestHandleConnectTestConnectionResults(t *testing.T) {
 	server := &APIServer{
 		rateLimiter: allowAllFileRateLimiter{},
-		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (storage.StorageProvider, error) {
+		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
 			return &legacyFileManagerTestProvider{}, nil
 		},
 	}
@@ -71,11 +71,11 @@ func TestHandleConnectTestConnectionResults(t *testing.T) {
 	})
 
 	t.Run("provider creation failure stays machine readable", func(t *testing.T) {
-		server.providerFactory = func(context.Context, string, string, string, string, ...storage.ProviderOption) (storage.StorageProvider, error) {
+		server.providerFactory = func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
 			return nil, errors.New("provider unavailable")
 		}
 		defer func() {
-			server.providerFactory = func(context.Context, string, string, string, string, ...storage.ProviderOption) (storage.StorageProvider, error) {
+			server.providerFactory = func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
 				return &legacyFileManagerTestProvider{}, nil
 			}
 		}()
@@ -102,7 +102,7 @@ func TestHandleConnectTestConnectionResults(t *testing.T) {
 func TestMigrationBrowseAndStartProfileFailures(t *testing.T) {
 	server := &APIServer{
 		rateLimiter: allowAllFileRateLimiter{},
-		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (storage.StorageProvider, error) {
+		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
 			return &legacyFileManagerTestProvider{listings: map[string][]storage.CloudResource{"/": {{Name: "document", Path: "document"}}}}, nil
 		},
 	}

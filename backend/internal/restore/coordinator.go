@@ -471,7 +471,9 @@ func (c *Coordinator) ensureFreshRestoreTargetOAuthToken(ctx context.Context, ru
 
 func (c *Coordinator) ensureFreshRepositoryOAuthToken(ctx context.Context, connection *db.BackupRepositoryConnection) (string, error) {
 	if connection == nil || !oauth.IsProvider(connection.Provider) {
-		if connection == nil { return "", errors.New("restore repository connection is unavailable") }
+		if connection == nil {
+			return "", errors.New("restore repository connection is unavailable")
+		}
 		return connection.PasswordEncrypted, nil
 	}
 	if !connection.RefreshTokenEncrypted.Valid || connection.RefreshTokenEncrypted.String == "" {
@@ -481,22 +483,36 @@ func (c *Coordinator) ensureFreshRepositoryOAuthToken(ctx context.Context, conne
 		return connection.PasswordEncrypted, nil
 	}
 	refresh, err := crypto.DecryptWithDomain(connection.RefreshTokenEncrypted.String, c.encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	defer crypto.ZeroString(&refresh)
 	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	token, err := oauth.RefreshToken(refreshCtx, connection.Provider, refresh)
 	cancel()
-	if err != nil { return "", fmt.Errorf("refresh backup repository OAuth token: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("refresh backup repository OAuth token: %w", err)
+	}
 	accessEncrypted, err := crypto.EncryptWithDomain(token.AccessToken, c.encryptionKey, crypto.DomainOAuthAccessToken)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	refreshEncrypted, err := crypto.EncryptWithDomain(token.RefreshToken, c.encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	expiresIn := token.ExpiresIn
-	if expiresIn <= 0 { expiresIn = 3600 }
+	if expiresIn <= 0 {
+		expiresIn = 3600
+	}
 	if err := db.UpdateBackupRepositoryOAuthTokens(ctx, c.db, connection.BackupJobID, accessEncrypted, refreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), connection.RefreshTokenEncrypted.String); err != nil {
-		if !errors.Is(err, db.ErrOAuthTokenConflict) { return "", err }
+		if !errors.Is(err, db.ErrOAuthTokenConflict) {
+			return "", err
+		}
 		latest, loadErr := db.GetBackupRepositoryConnectionContext(ctx, c.db, connection.BackupJobID)
-		if loadErr != nil || latest.PasswordEncrypted == "" { return "", fmt.Errorf("adopt concurrent backup repository OAuth token: %w", loadErr) }
+		if loadErr != nil || latest.PasswordEncrypted == "" {
+			return "", fmt.Errorf("adopt concurrent backup repository OAuth token: %w", loadErr)
+		}
 		return latest.PasswordEncrypted, nil
 	}
 	return accessEncrypted, nil
@@ -526,7 +542,9 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 		return fmt.Errorf("load restore connections: %w", err)
 	}
 	repository, err := db.GetBackupRepositoryConnectionContext(ctx, c.db, backupJobID)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	repository.PasswordEncrypted, err = c.ensureFreshRepositoryOAuthToken(ctx, repository)
 	if err != nil {
 		return err
@@ -565,11 +583,19 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 		if session.ID != "" && len(session.MasterKey) > 0 {
 			sessionIDEncrypted, encryptErr := crypto.EncryptWithDomain(session.ID, c.encryptionKey, crypto.DomainMegaSessionID)
 			masterKeyEncrypted := ""
-			if encryptErr == nil { masterKeyEncrypted, encryptErr = crypto.EncryptWithDomain(base64.StdEncoding.EncodeToString(session.MasterKey), c.encryptionKey, crypto.DomainMegaMasterKey) }
-			for i := range session.MasterKey { session.MasterKey[i] = 0 }
+			if encryptErr == nil {
+				masterKeyEncrypted, encryptErr = crypto.EncryptWithDomain(base64.StdEncoding.EncodeToString(session.MasterKey), c.encryptionKey, crypto.DomainMegaMasterKey)
+			}
+			for i := range session.MasterKey {
+				session.MasterKey[i] = 0
+			}
 			crypto.ZeroString(&session.ID)
-			if encryptErr != nil { return fmt.Errorf("encrypt backup repository mega session: %w", encryptErr) }
-			if err := db.UpdateBackupRepositoryMegaSessionContext(ctx, c.db, repository.BackupJobID, sessionIDEncrypted, masterKeyEncrypted); err != nil { return fmt.Errorf("persist backup repository mega session: %w", err) }
+			if encryptErr != nil {
+				return fmt.Errorf("encrypt backup repository mega session: %w", encryptErr)
+			}
+			if err := db.UpdateBackupRepositoryMegaSessionContext(ctx, c.db, repository.BackupJobID, sessionIDEncrypted, masterKeyEncrypted); err != nil {
+				return fmt.Errorf("persist backup repository mega session: %w", err)
+			}
 		}
 	}
 	if ok, err := targetProvider.Connect(ctx); err != nil || !ok {
@@ -972,34 +998,33 @@ type encryptedMegaSession struct {
 
 func defaultProviderAdapter[T any](
 	custom func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error),
-	wrap func(storage.StorageProvider) T,
+	fallback func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error),
 ) func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error) {
 	if custom != nil {
 		return custom
 	}
-	return func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error) {
-		providerClient, err := storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
-		if err != nil {
-			var zero T
-			return zero, err
-		}
-		return wrap(providerClient), nil
-	}
+	return fallback
 }
 
 func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (RepositorySource, error) {
 	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
-		defaultProviderAdapter(c.repositorySourceFactory, func(p storage.StorageProvider) RepositorySource { return p }))
+		defaultProviderAdapter(c.repositorySourceFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RepositorySource, error) {
+			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
+		}))
 }
 
 func (c *Coordinator) newPreviewTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (PreviewTargetClient, error) {
 	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
-		defaultProviderAdapter(c.previewTargetFactory, func(p storage.StorageProvider) PreviewTargetClient { return p }))
+		defaultProviderAdapter(c.previewTargetFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (PreviewTargetClient, error) {
+			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
+		}))
 }
 
 func (c *Coordinator) newRestoreTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (RestoreTarget, error) {
 	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
-		defaultProviderAdapter(c.restoreTargetFactory, func(p storage.StorageProvider) RestoreTarget { return p }))
+		defaultProviderAdapter(c.restoreTargetFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RestoreTarget, error) {
+			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
+		}))
 }
 
 func openWithDecryptedCredentials[T any](

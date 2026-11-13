@@ -32,7 +32,7 @@ type emulatedManagerCursor struct {
 type fileManagerAdapter struct {
 	catalogue            *providerCatalogue
 	providerType         string
-	provider             StorageProvider
+	provider             ManagerProvider
 	capabilities         ManagerCapabilities
 	pathSafe             bool
 	supportsAtomicRename bool
@@ -41,10 +41,10 @@ type fileManagerAdapter struct {
 	cleanupTimeout       time.Duration
 }
 
-// NewFileManager wraps a constructed StorageProvider in a unified, storage-owned
+// NewFileManager wraps a constructed ManagerProvider in a unified, storage-owned
 // file-manager adapter that enforces provider capabilities, locator safety, and
 // consistent fallback behavior.
-func NewFileManager(providerType string, provider StorageProvider) (FileManager, error) {
+func NewFileManager(providerType string, provider ManagerProvider) (FileManager, error) {
 	return defaultProviderCatalogue.newFileManager(providerType, provider)
 }
 

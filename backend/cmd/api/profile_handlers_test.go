@@ -27,7 +27,7 @@ func TestTestProfileMapsProviderSetupFailureToSourceURLInvalid(t *testing.T) {
 		db:            database,
 		encryptionKey: key,
 		rateLimiter:   allowAllFileRateLimiter{},
-		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (storage.StorageProvider, error) {
+		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
 			return nil, errors.New("provider setup failed")
 		},
 	}

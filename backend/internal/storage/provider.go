@@ -204,31 +204,38 @@ func SetImmichTargetAssetID(meta *FileMetadata, assetID string) {
 	meta.CustomProps["immich_target_asset_id"] = assetID
 }
 
-// StorageProvider is the contract every storage backend must satisfy. It is a
-// required (non-optional) interface: adding or removing a method changes the
-// signature for ALL implementers at once, so any new provider — and any test
-// mock — must implement every method, including SupportsAtomicRename. Forgetting
-// a method fails the build with "does not implement storage.StorageProvider
-// (missing method <Name>)"; there is no default implementation.
-type StorageProvider interface {
-	// Close releases any idle connections held by the provider's HTTP client.
-	// It must be called when the provider is no longer needed.
-	Close() error
-	Connect(ctx context.Context) (bool, error)
+// PathManagerProvider supplies operations used for path-based mutations.
+type PathManagerProvider interface {
 	GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error)
 	InspectResource(ctx context.Context, resourceType, path string) (CloudResource, error)
 	StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error)
 	StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error
+	CreateDirectory(ctx context.Context, resourceType, dirPath string) error
+	RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error
+}
+
+// ManagerProvider contains the legacy operations used by the file manager.
+// Native manager capabilities are discovered separately by the adapter.
+type ManagerProvider interface {
+	PathManagerProvider
+	Connect(ctx context.Context) (bool, error)
 	// StreamUploadChunked reports best-effort progress through progressChan
 	// (which may be nil) but must not close it; the caller owns the channel
 	// lifecycle. A full channel must never stall the transfer.
 	StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error
-	FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error)
 	DeleteFile(ctx context.Context, resourceType, filePath string) error
+}
+
+// ProviderLifecycle owns resources held by a constructed provider.
+type ProviderLifecycle interface {
+	Close() error
+}
+
+// TransferCapabilities are the additional operations required for transfers.
+type TransferCapabilities interface {
+	FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error)
 	GetFileHash(ctx context.Context, resourceType, filePath string) (string, error)
 	CreateParentDirectories(ctx context.Context, resourceType, filePath string) error
-	CreateDirectory(ctx context.Context, resourceType, dirPath string) error
-	RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error
 	// SupportsAtomicRename reports whether the provider honours the
 	// processor's "upload to <path>.tmp then atomically rename" overwrite
 	// pattern. Providers that cannot rename (e.g. Google Photos, which has no
@@ -239,6 +246,14 @@ type StorageProvider interface {
 	// VerificationMode reports how post-transfer integrity can be checked for
 	// this target. ETags alone are not cryptographic hashes and use size_only.
 	VerificationMode() VerificationMode
+}
+
+// StorageProvider composes the operations required of registered providers.
+// Workflows should depend on their own focused interfaces instead.
+type StorageProvider interface {
+	ManagerProvider
+	ProviderLifecycle
+	TransferCapabilities
 }
 
 // ProgressReader wraps an io.Reader and emits best-effort byte counts to
