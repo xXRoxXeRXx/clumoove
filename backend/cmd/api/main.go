@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -54,6 +53,9 @@ type APIServer struct {
 	// providerFactory is nil in production, where storage.NewProvider is used.
 	// It lets handler tests exercise provider behavior without external egress.
 	providerFactory profileProviderFactory
+	// authStateLookup is nil in production, where AuthMiddleware queries PostgreSQL.
+	// Tests may inject an in-memory lookup to exercise route access contracts.
+	authStateLookup auth.AuthStateLookup
 }
 
 // Rate-limit and quota configuration for the public / sensitive endpoints.
@@ -108,24 +110,12 @@ func main() {
 	redisURL, _ := config.RedisURL(os.Getenv("REDIS_URL"))
 
 	encryptionKey := os.Getenv("ENCRYPTION_SECRET_KEY")
-	if encryptionKey == "" {
-		slog.Error("startup_failed", slog.String("component", "api"), slog.String("error_kind", "configuration"), slog.String("reason", "encryption_key_missing"))
-		os.Exit(1)
-	}
-
 	jwtSecret := os.Getenv("JWT_SECRET_KEY")
-	if jwtSecret == "" {
-		slog.Error("startup_failed", slog.String("component", "api"), slog.String("error_kind", "configuration"), slog.String("reason", "jwt_key_missing"))
-		os.Exit(1)
-	}
-
-	if subtle.ConstantTimeCompare([]byte(encryptionKey), []byte(jwtSecret)) == 1 {
-		slog.Error("startup_failed", slog.String("component", "api"), slog.String("error_kind", "configuration"), slog.String("reason", "keys_equal"))
-		os.Exit(1)
-	}
-
-	if len(jwtSecret) < 32 {
-		slog.Error("startup_failed", slog.String("component", "api"), slog.String("error_kind", "configuration"), slog.String("reason", "jwt_key_too_short"))
+	if err := validateGatewayConfig(gatewayConfig{
+		EncryptionKey: encryptionKey,
+		JWTSecret:     jwtSecret,
+	}); err != nil {
+		slog.Error("startup_failed", slog.String("component", "api"), slog.String("error_kind", "configuration"), slog.String("reason", err.Error()))
 		os.Exit(1)
 	}
 
@@ -176,23 +166,23 @@ func main() {
 
 	syncEng := appSync.NewEngine(database, q, encryptionKey)
 	go syncEng.SubscribeToCancelEvents(ctx)
-	server := &APIServer{
-		db:                database,
-		queue:             q,
-		indexer:           indexer.NewIndexer(database, encryptionKey, q),
-		syncPass:          syncEng.Pass(),
-		encryptionKey:     encryptionKey,
-		jwtSecret:         jwtSecret,
-		backgroundCtx:     ctx,
-		rateLimiter:       &distributedRateLimiter{client: q.RedisClient()},
-		dummyPasswordHash: dummyPasswordHash,
-		activeStreams:     make(map[string]int),
-		trustedProxy:      trustedProxy,
+	server, err := newAPIGateway(gatewayConfig{
+		DB:                database,
+		Queue:             q,
+		Indexer:           indexer.NewIndexer(database, encryptionKey, q),
+		SyncPass:          syncEng.Pass(),
+		EncryptionKey:     encryptionKey,
+		JWTSecret:         jwtSecret,
+		BackgroundCtx:     ctx,
+		RateLimiter:       &distributedRateLimiter{client: q.RedisClient()},
+		DummyPasswordHash: dummyPasswordHash,
+		TrustedProxy:      trustedProxy,
+	})
+	if err != nil {
+		slog.Error("startup_failed", slog.String("component", "api"), slog.String("error_kind", "configuration"), slog.String("reason", err.Error()))
+		os.Exit(1)
 	}
-
-	mux := server.setupRoutes()
-
-	handler := server.requestLogMiddleware(server.securityHeadersMiddleware(corsMiddleware(mux)))
+	handler := server.Handler()
 
 	srv := &http.Server{
 		Addr:         ":" + port,
@@ -233,187 +223,4 @@ func main() {
 		return
 	}
 	slog.Info("service_stopped", slog.String("component", "api"))
-}
-
-func (server *APIServer) setupRoutes() *http.ServeMux {
-	mux := http.NewServeMux()
-
-	// Auth Routes (Public)
-	mux.HandleFunc("GET /api/auth/setup-status", server.handleGetSetupStatus)
-	mux.HandleFunc("POST /api/auth/setup-admin", server.handleSetupAdmin)
-	mux.HandleFunc("POST /api/auth/register", server.handleRegister)
-	mux.HandleFunc("POST /api/auth/login", server.handleLogin)
-	mux.HandleFunc("POST /api/auth/totp", server.handleTOTP)
-	mux.HandleFunc("POST /api/auth/refresh", server.handleRefresh)
-	mux.HandleFunc("POST /api/auth/logout", server.handleLogout)
-	mux.HandleFunc("GET /api/settings", server.handleGetSettings)
-
-	// Protected Auth Routes
-	jwtMiddleware := auth.AuthMiddleware(server.db, server.jwtSecret)
-	adminRouteMiddleware := adminMiddleware(jwtMiddleware)
-	mux.Handle("GET /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleMe)))
-	mux.Handle("GET /api/auth/sessions", jwtMiddleware(http.HandlerFunc(server.handleListSessions)))
-	mux.Handle("DELETE /api/auth/sessions/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteSession)))
-	mux.Handle("PUT /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleUpdateProfile)))
-	mux.Handle("PUT /api/auth/me/language", jwtMiddleware(http.HandlerFunc(server.handleUpdateLanguage)))
-	mux.Handle("POST /api/auth/change-password", auth.AuthMiddlewareAllowMustChange(server.db, server.jwtSecret)(http.HandlerFunc(server.handleChangePassword)))
-	mux.Handle("GET /api/auth/2fa/setup", jwtMiddleware(http.HandlerFunc(server.handle2FASetup)))
-	mux.Handle("POST /api/auth/2fa/enable", jwtMiddleware(http.HandlerFunc(server.handle2FAEnable)))
-	mux.Handle("POST /api/auth/2fa/disable", jwtMiddleware(http.HandlerFunc(server.handle2FADisable)))
-	mux.Handle("GET /api/auth/2fa/status", jwtMiddleware(http.HandlerFunc(server.handle2FAStatus)))
-	mux.Handle("POST /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleSetAvatar)))
-	mux.Handle("DELETE /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleDeleteAvatar)))
-	mux.Handle("PUT /api/settings", adminRouteMiddleware(http.HandlerFunc(server.handleUpdateSetting)))
-	notifications := newNotificationAPI(notificationDependencies{
-		db:            server.db,
-		encryptionKey: server.encryptionKey,
-		rateLimiter:   server.rateLimiter,
-		requireUserID: server.requireUserID,
-		clientIP:      server.clientIP,
-		writeAudit:    server.writeAudit,
-		logf:          server.logf,
-	})
-	notifications.registerRoutes(mux, jwtMiddleware)
-
-	mux.HandleFunc("GET /api/auth/password-reset-available", server.handlePasswordResetAvailable)
-	mux.HandleFunc("POST /api/auth/forgot-password", server.handleForgotPassword)
-	mux.HandleFunc("POST /api/auth/reset-password", server.handleResetPassword)
-
-	mux.HandleFunc("GET /api/auth/email-change-available", server.handleEmailChangeAvailable)
-	mux.Handle("POST /api/auth/change-email", jwtMiddleware(http.HandlerFunc(server.handleChangeEmail)))
-	mux.HandleFunc("POST /api/auth/confirm-email-change", server.handleConfirmEmailChange)
-
-	mux.Handle("GET /api/migration", jwtMiddleware(http.HandlerFunc(server.handleListMigrations)))
-	mux.Handle("GET /api/migration/stream", jwtMiddleware(http.HandlerFunc(server.handleMigrationStream)))
-	mux.Handle("POST /api/migration/connect", jwtMiddleware(http.HandlerFunc(server.handleConnect)))
-	mux.Handle("POST /api/migration/connect/test", jwtMiddleware(http.HandlerFunc(server.handleConnectTest)))
-	mux.Handle("POST /api/migration/browse", jwtMiddleware(http.HandlerFunc(server.handleBrowse)))
-	mux.Handle("POST /api/migration/target/browse", jwtMiddleware(http.HandlerFunc(server.handleTargetBrowse)))
-	mux.Handle("POST /api/migration/target/mkdir", jwtMiddleware(http.HandlerFunc(server.handleTargetMkdir)))
-	mux.Handle("POST /api/migration/start", jwtMiddleware(http.HandlerFunc(server.handleStart)))
-	mux.Handle("GET /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetStatus)))
-	mux.Handle("GET /api/migration/{id}/stream", jwtMiddleware(http.HandlerFunc(server.handleMigrationDetailStream)))
-	mux.Handle("POST /api/migration/{id}/pause", jwtMiddleware(http.HandlerFunc(server.handlePause)))
-	mux.Handle("POST /api/migration/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResume)))
-	mux.Handle("POST /api/migration/{id}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancel)))
-	mux.Handle("DELETE /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteMigration)))
-	mux.Handle("GET /api/migration/{id}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadReport)))
-	mux.Handle("GET /api/migration/{id}/errors", jwtMiddleware(http.HandlerFunc(server.handleMigrationErrors)))
-	mux.Handle("POST /api/migration/{id}/retry-failed", jwtMiddleware(http.HandlerFunc(server.handleRetryFailed)))
-	mux.Handle("POST /api/migration/{id}/reauth", jwtMiddleware(http.HandlerFunc(server.handleMigrationReauth)))
-	mux.Handle("POST /api/migration/{id}/reindex", jwtMiddleware(http.HandlerFunc(server.handleReindex)))
-	mux.Handle("PUT /api/migration/{id}/bandwidth", jwtMiddleware(http.HandlerFunc(server.handleSetBandwidth)))
-	mux.Handle("PUT /api/migration/{id}/threads", jwtMiddleware(http.HandlerFunc(server.handleSetThreads)))
-
-	// Sync Engine Routes
-	mux.Handle("GET /api/sync", jwtMiddleware(http.HandlerFunc(server.handleListSyncs)))
-	mux.Handle("GET /api/sync/stream", jwtMiddleware(http.HandlerFunc(server.handleSyncStream)))
-	mux.Handle("POST /api/sync", jwtMiddleware(http.HandlerFunc(server.handleCreateSync)))
-	mux.Handle("GET /api/sync/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetSyncStatus)))
-	mux.Handle("POST /api/sync/{id}/start", jwtMiddleware(http.HandlerFunc(server.handleStartSync)))
-	mux.Handle("POST /api/sync/{id}/pause", jwtMiddleware(http.HandlerFunc(server.handlePauseSync)))
-	mux.Handle("POST /api/sync/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResumeSync)))
-	mux.Handle("POST /api/sync/{id}/reauth", jwtMiddleware(http.HandlerFunc(server.handleSyncReauth)))
-	mux.Handle("DELETE /api/sync/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteSync)))
-	mux.Handle("GET /api/sync/{id}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadSyncReport)))
-	mux.Handle("GET /api/sync/{id}/errors", jwtMiddleware(http.HandlerFunc(server.handleSyncErrors)))
-	mux.Handle("PUT /api/sync/{id}/threads", jwtMiddleware(http.HandlerFunc(server.handleSetSyncThreads)))
-	mux.Handle("PUT /api/sync/{id}/bandwidth", jwtMiddleware(http.HandlerFunc(server.handleSetSyncBandwidth)))
-	mux.Handle("GET /api/sync/{id}/browse", jwtMiddleware(http.HandlerFunc(server.handleBrowseSyncJob)))
-	mux.Handle("POST /api/sync/{id}/mkdir", jwtMiddleware(http.HandlerFunc(server.handleSyncMkdir)))
-	mux.Handle("PUT /api/sync/{id}/schedule", jwtMiddleware(http.HandlerFunc(server.handleUpdateSyncSchedule)))
-	mux.Handle("PUT /api/sync/{id}/scope", jwtMiddleware(http.HandlerFunc(server.handleUpdateSyncScope)))
-
-	// Backup Routes
-	mux.Handle("GET /api/backup", jwtMiddleware(http.HandlerFunc(server.handleListBackups)))
-	mux.Handle("GET /api/backup/stream", jwtMiddleware(http.HandlerFunc(server.handleBackupStream)))
-	mux.Handle("POST /api/backup", jwtMiddleware(http.HandlerFunc(server.handleCreateBackup)))
-	mux.Handle("GET /api/backup/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetBackup)))
-	mux.Handle("PUT /api/backup/{id}", jwtMiddleware(http.HandlerFunc(server.handleUpdateBackup)))
-	mux.Handle("GET /api/backup/{id}/runs", jwtMiddleware(http.HandlerFunc(server.handleListBackupRuns)))
-	mux.Handle("POST /api/backup/{id}/run", jwtMiddleware(http.HandlerFunc(server.handleRunBackup)))
-	mux.Handle("POST /api/backup/{id}/verify", jwtMiddleware(http.HandlerFunc(server.handleCreateBackupVerify)))
-	mux.Handle("GET /api/backup/{id}/verify", jwtMiddleware(http.HandlerFunc(server.handleListBackupVerifies)))
-	mux.Handle("GET /api/backup/{id}/verify/{verifyID}/stream", jwtMiddleware(http.HandlerFunc(server.handleBackupVerifyStream)))
-	mux.Handle("GET /api/backup/{id}/verify/{verifyID}", jwtMiddleware(http.HandlerFunc(server.handleGetBackupVerify)))
-	mux.Handle("POST /api/backup/{id}/verify/{verifyID}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancelBackupVerify)))
-	mux.Handle("POST /api/backup/{id}/pause", jwtMiddleware(http.HandlerFunc(server.handlePauseBackup)))
-	mux.Handle("POST /api/backup/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResumeBackup)))
-	mux.Handle("DELETE /api/backup/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteBackup)))
-	mux.Handle("GET /api/backup/{id}/snapshots", jwtMiddleware(http.HandlerFunc(server.handleListBackupSnapshots)))
-	mux.Handle("GET /api/backup/{id}/snapshots/{snapshotID}/items", jwtMiddleware(http.HandlerFunc(server.handleListBackupSnapshotItems)))
-	mux.Handle("POST /api/backup/{id}/snapshots/{snapshotID}/restore/previews", jwtMiddleware(http.HandlerFunc(server.handleCreateRestorePreview)))
-	mux.Handle("GET /api/restore/previews/{previewID}", jwtMiddleware(http.HandlerFunc(server.handleGetRestorePreview)))
-	mux.Handle("POST /api/restore/previews/{previewID}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancelRestorePreview)))
-	mux.Handle("POST /api/restore/previews/{previewID}/consume", jwtMiddleware(http.HandlerFunc(server.handleConsumeRestorePreview)))
-	mux.Handle("GET /api/restore", jwtMiddleware(http.HandlerFunc(server.handleListRestoreRuns)))
-	mux.Handle("GET /api/restore/runs", jwtMiddleware(http.HandlerFunc(server.handleListRestoreRuns)))
-	mux.Handle("GET /api/restore/runs/{runID}/stream", jwtMiddleware(http.HandlerFunc(server.handleRestoreRunStream)))
-	mux.Handle("GET /api/restore/runs/{runID}", jwtMiddleware(http.HandlerFunc(server.handleGetRestoreRun)))
-	mux.Handle("GET /api/restore/runs/{runID}/items", jwtMiddleware(http.HandlerFunc(server.handleListRestoreRunItems)))
-	mux.Handle("POST /api/restore/runs/{runID}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancelRestoreRun)))
-	mux.Handle("GET /api/restore/runs/{runID}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadRestoreReport)))
-	mux.Handle("DELETE /api/restore/jobs/{jobID}", jwtMiddleware(http.HandlerFunc(server.handleDeleteRestoreJob)))
-
-	// Schedule Management Routes (Protected)
-	mux.Handle("GET /api/schedule", jwtMiddleware(http.HandlerFunc(server.handleListSchedules)))
-	mux.Handle("GET /api/schedule/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetSchedule)))
-	mux.Handle("DELETE /api/schedule/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteSchedule)))
-
-	// Connection Profiles (Protected)
-	mux.Handle("GET /api/profiles", jwtMiddleware(http.HandlerFunc(server.handleListProfiles)))
-	mux.Handle("POST /api/profiles", jwtMiddleware(http.HandlerFunc(server.handleCreateProfile)))
-	mux.Handle("GET /api/profiles/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetProfile)))
-	mux.Handle("PUT /api/profiles/{id}", jwtMiddleware(http.HandlerFunc(server.handleUpdateConnectionProfile)))
-	mux.Handle("DELETE /api/profiles/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteProfile)))
-	mux.Handle("POST /api/profiles/{id}/test", jwtMiddleware(http.HandlerFunc(server.handleTestProfile)))
-
-	// Profile-bound cloud file manager. All management endpoints use saved
-	// profile IDs only; the ticket consumer authenticates with a short-lived,
-	// single-use Redis ticket rather than a JWT in the download URL.
-	mux.Handle("GET /api/files/profiles/{profileID}/capabilities", jwtMiddleware(http.HandlerFunc(server.handleFileCapabilities)))
-	mux.Handle("POST /api/files/profiles/{profileID}/entries:list", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesList)))
-	mux.Handle("POST /api/files/profiles/{profileID}/entries:resolve", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesResolve)))
-	mux.Handle("DELETE /api/files/profiles/{profileID}/entries", jwtMiddleware(http.HandlerFunc(server.handleFileEntryDelete)))
-	mux.Handle("POST /api/files/profiles/{profileID}/entries:rename", jwtMiddleware(http.HandlerFunc(server.handleFileEntryRename)))
-	mux.Handle("POST /api/files/profiles/{profileID}/entries:copy", jwtMiddleware(http.HandlerFunc(server.handleFileEntryCopy)))
-	mux.Handle("POST /api/files/profiles/{profileID}/entries:move", jwtMiddleware(http.HandlerFunc(server.handleFileEntryMove)))
-	mux.Handle("PUT /api/files/profiles/{profileID}/content", jwtMiddleware(http.HandlerFunc(server.handleFileUpload)))
-	mux.Handle("POST /api/files/profiles/{profileID}/directories", jwtMiddleware(http.HandlerFunc(server.handleFileDirectoryCreate)))
-	mux.Handle("POST /api/files/profiles/{profileID}/download-tickets", jwtMiddleware(http.HandlerFunc(server.handleFileDownloadTicket)))
-	mux.Handle("POST /api/files/profiles/{profileID}/archive-tickets", jwtMiddleware(http.HandlerFunc(server.handleFileArchiveTicket)))
-	mux.Handle("POST /api/files/profiles/{profileID}/entries:batch-delete", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesBatchDelete)))
-	mux.Handle("POST /api/files/profiles/{profileID}/entries:batch-copy", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesBatchCopy)))
-	mux.Handle("POST /api/files/profiles/{profileID}/entries:batch-move", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesBatchMove)))
-	mux.Handle("POST /api/files/profiles/{profileID}/transfers", jwtMiddleware(http.HandlerFunc(server.handleFileTransferCreate)))
-	mux.Handle("GET /api/files/profiles/{profileID}/transfers", jwtMiddleware(http.HandlerFunc(server.handleFileTransfersList)))
-	mux.Handle("POST /api/files/transfers/{id}/cancel", jwtMiddleware(http.HandlerFunc(server.handleFileTransferCancel)))
-	mux.Handle("POST /api/files/profiles/{profileID}/thumbnail", jwtMiddleware(http.HandlerFunc(server.handleFileThumbnail)))
-	mux.HandleFunc("GET /api/files/download/{ticket}", server.handleFileDownload)
-	mux.HandleFunc("GET /api/files/archive/{ticket}", server.handleFileArchive)
-
-	// Administrative routes require both a current JWT and the ADMIN role.
-	mux.Handle("POST /api/admin/users", adminRouteMiddleware(http.HandlerFunc(server.handleAdminCreateUser)))
-	mux.Handle("POST /api/admin/users/{id}/suspend", adminRouteMiddleware(http.HandlerFunc(server.handleAdminSuspendUser)))
-	mux.Handle("POST /api/admin/users/{id}/reactivate", adminRouteMiddleware(http.HandlerFunc(server.handleAdminReactivateUser)))
-	mux.Handle("DELETE /api/admin/users/{id}", adminRouteMiddleware(http.HandlerFunc(server.handleAdminDeleteUser)))
-	mux.Handle("PUT /api/admin/users/{id}/role", adminRouteMiddleware(http.HandlerFunc(server.handleAdminUpdateRole)))
-	mux.Handle("GET /api/admin/users", adminRouteMiddleware(http.HandlerFunc(server.handleAdminListUsers)))
-	mux.Handle("GET /api/admin/stats", adminRouteMiddleware(http.HandlerFunc(server.handleAdminStats)))
-	mux.Handle("GET /api/admin/migrations", adminRouteMiddleware(http.HandlerFunc(server.handleAdminListMigrations)))
-	mux.Handle("GET /api/admin/syncs", adminRouteMiddleware(http.HandlerFunc(server.handleAdminListSyncs)))
-	mux.Handle("GET /api/admin/settings/smtp", adminRouteMiddleware(http.HandlerFunc(server.handleAdminGetSMTP)))
-	mux.Handle("PUT /api/admin/settings/smtp", adminRouteMiddleware(http.HandlerFunc(server.handleAdminPutSMTP)))
-	mux.Handle("POST /api/admin/settings/smtp/test", adminRouteMiddleware(http.HandlerFunc(server.handleAdminTestSMTP)))
-	mux.Handle("DELETE /api/admin/settings/smtp", adminRouteMiddleware(http.HandlerFunc(server.handleAdminDeleteSMTP)))
-	mux.Handle("GET /api/admin/settings/oauth", adminRouteMiddleware(http.HandlerFunc(server.handleAdminGetOAuth)))
-	mux.Handle("PUT /api/admin/settings/oauth/{provider}", adminRouteMiddleware(http.HandlerFunc(server.handleAdminPutOAuth)))
-	mux.Handle("DELETE /api/admin/settings/oauth/{provider}", adminRouteMiddleware(http.HandlerFunc(server.handleAdminDeleteOAuth)))
-	mux.Handle("GET /api/audit/log", adminRouteMiddleware(http.HandlerFunc(server.handleAdminAuditLog)))
-
-	// OAuth callbacks use their own state validation.
-	mux.HandleFunc("GET /api/oauth/auth", server.handleOAuthAuth)
-	mux.HandleFunc("GET /api/oauth/callback", server.handleOAuthCallback)
-
-	return mux
 }

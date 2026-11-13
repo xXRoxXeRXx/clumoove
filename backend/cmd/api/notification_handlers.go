@@ -39,12 +39,24 @@ func newNotificationAPI(deps notificationDependencies) *notificationAPI {
 	return &notificationAPI{notificationDependencies: deps}
 }
 
+// routes returns the notification feature's route definitions for gateway wiring.
+func (api *notificationAPI) routes() []routeSpec {
+	return []routeSpec{
+		{pattern: "GET /api/settings/notifications", access: routeAuthenticated, handler: api.handleGetSettings},
+		{pattern: "PUT /api/settings/notifications", access: routeAuthenticated, handler: api.handleUpdateSettings},
+		{pattern: "POST /api/settings/notifications/test", access: routeAuthenticated, handler: api.handleTest},
+	}
+}
+
 // registerRoutes keeps notification route wiring with its feature handlers.
 // The root server supplies the already-composed authentication middleware.
 func (api *notificationAPI) registerRoutes(mux *http.ServeMux, authenticated func(http.Handler) http.Handler) {
-	mux.Handle("GET /api/settings/notifications", authenticated(http.HandlerFunc(api.handleGetSettings)))
-	mux.Handle("PUT /api/settings/notifications", authenticated(http.HandlerFunc(api.handleUpdateSettings)))
-	mux.Handle("POST /api/settings/notifications/test", authenticated(http.HandlerFunc(api.handleTest)))
+	for _, r := range api.routes() {
+		if r.access != routeAuthenticated {
+			panic("notification routes must require authentication")
+		}
+		mux.Handle(r.pattern, authenticated(http.HandlerFunc(r.handler)))
+	}
 }
 
 func secretKeys(typ string) map[string]bool {
