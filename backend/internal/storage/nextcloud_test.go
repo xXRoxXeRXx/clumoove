@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -420,5 +422,38 @@ func TestNextcloudApplyMetadataReportsPROPPATCHFailures(t *testing.T) {
 	p.HTTPClient = &http.Client{Transport: failingRoundTripper{}}
 	if err := p.ApplyMetadata(context.Background(), "files", "/file.txt", FileMetadata{ModifiedTime: time.Now()}); err == nil {
 		t.Fatal("ApplyMetadata() succeeded after transport failure")
+	}
+}
+
+func TestNextcloudStreamUploadWithOptionsSendsChecksumHeader(t *testing.T) {
+	var gotChecksum string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "MKCOL":
+			w.WriteHeader(http.StatusCreated)
+		case "PUT":
+			gotChecksum = r.Header.Get("OC-Checksum")
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	p, err := NewNextcloudProvider("https://nextcloud.example.test", "user", "pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.BaseURL = server.URL + "/remote.php/dav"
+	p.HTTPClient = server.Client()
+
+	if _, err := p.StreamUploadWithOptions(context.Background(), "files", "/file.txt", strings.NewReader("hello"), 5, UploadOptions{
+		Checksum: "SHA1:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d",
+	}); err != nil {
+		t.Fatalf("StreamUploadWithOptions() error = %v", err)
+	}
+	if gotChecksum != "SHA1:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d" {
+		t.Fatalf("OC-Checksum = %q, want SHA1 checksum", gotChecksum)
 	}
 }

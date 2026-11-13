@@ -514,15 +514,15 @@ func TestRestoreCoordinatorFactoriesAcceptMinimalAdapters(t *testing.T) {
 		},
 	}
 	var gotPreviewPassword, gotRepoPassword, gotTargetPassword string
-	c.SetPreviewTargetFactory(func(_ context.Context, _, _, _, password string) (PreviewTargetClient, error) {
+	c.SetPreviewTargetFactory(func(_ context.Context, _, _, _, password string, _ ...storage.ProviderOption) (PreviewTargetClient, error) {
 		gotPreviewPassword = password
 		return previewClient, nil
 	})
-	c.SetRepositorySourceFactory(func(_ context.Context, _, _, _, password string) (RepositorySource, error) {
+	c.SetRepositorySourceFactory(func(_ context.Context, _, _, _, password string, _ ...storage.ProviderOption) (RepositorySource, error) {
 		gotRepoPassword = password
 		return &minimalRepositorySource{}, nil
 	})
-	c.SetRestoreTargetFactory(func(_ context.Context, _, _, _, password string) (RestoreTarget, error) {
+	c.SetRestoreTargetFactory(func(_ context.Context, _, _, _, password string, _ ...storage.ProviderOption) (RestoreTarget, error) {
 		gotTargetPassword = password
 		return &minimalWorkflowRestoreTarget{}, nil
 	})

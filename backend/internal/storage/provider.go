@@ -10,21 +10,6 @@ import (
 	"time"
 )
 
-type checksumContextKey struct{}
-
-// WithUploadChecksum stores a provider-native checksum for a single upload.
-// Keeping the key private prevents collisions with values owned by callers.
-func WithUploadChecksum(ctx context.Context, checksum string) context.Context {
-	return context.WithValue(ctx, checksumContextKey{}, checksum)
-}
-
-// UploadChecksum returns the optional provider-native checksum attached to an
-// upload context.
-func UploadChecksum(ctx context.Context) string {
-	checksum, _ := ctx.Value(checksumContextKey{}).(string)
-	return checksum
-}
-
 var ErrDuplicateUID = errors.New("sabredav: duplicate UID index violation")
 
 // ErrAuth is returned by any provider when the server rejects credentials (HTTP 401).
@@ -172,75 +157,42 @@ const (
 	VerificationNone VerificationMode = "none"
 )
 
-type transferMetadataContextKey struct{}
-
 // UploadReceipt carries target identity created by a provider upload. The
 // caller owns the receipt and persists it before completing the task.
 type UploadReceipt struct {
 	TargetResourceID string
 }
 
-type uploadReceiptContextKey struct{}
-type targetResourceIDContextKey struct{}
-type megaSessionContextKey struct{}
+// UploadOptions supplies explicit transfer-specific inputs for an upload.
+type UploadOptions struct {
+	Metadata FileMetadata
+	Checksum string
+}
+
+// UploadResult carries provider-created outputs from a single upload.
+type UploadResult struct {
+	Receipt UploadReceipt
+}
+
+// TransferUploader is an optional capability for providers that accept typed
+// upload options or return a provider-created UploadReceipt.
+type TransferUploader interface {
+	StreamUploadWithOptions(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, opts UploadOptions) (UploadResult, error)
+	StreamUploadChunkedWithOptions(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64, opts UploadOptions) (UploadResult, error)
+}
+
+// TargetResourceVerifier is an optional capability for providers whose uploaded
+// objects are verified by provider-assigned target resource ID rather than path.
+type TargetResourceVerifier interface {
+	FileExistsByResourceID(ctx context.Context, resourceType, resourceID string) (bool, int64, error)
+	GetFileHashByResourceID(ctx context.Context, resourceType, resourceID string) (string, error)
+}
 
 // MegaSession holds the short-lived MEGA login material. Callers must persist
 // it only after encrypting both fields and must clear MasterKey when finished.
 type MegaSession struct {
 	ID        string
 	MasterKey []byte
-}
-
-// WithMegaSession attaches task-scoped MEGA session material without widening
-// NewProvider or placing secrets into URLs or generic credentials.
-func WithMegaSession(ctx context.Context, session MegaSession) context.Context {
-	key := append([]byte(nil), session.MasterKey...)
-	return context.WithValue(ctx, megaSessionContextKey{}, MegaSession{ID: session.ID, MasterKey: key})
-}
-
-// MegaSessionFromContext returns an independent copy of scoped MEGA material.
-func MegaSessionFromContext(ctx context.Context) (MegaSession, bool) {
-	session, ok := ctx.Value(megaSessionContextKey{}).(MegaSession)
-	if !ok || session.ID == "" || len(session.MasterKey) == 0 {
-		return MegaSession{}, false
-	}
-	session.MasterKey = append([]byte(nil), session.MasterKey...)
-	return session, true
-}
-
-// WithTransferMetadata supplies provider-specific upload attributes without
-// widening StorageProvider or persisting plaintext credentials.
-func WithTransferMetadata(ctx context.Context, meta FileMetadata) context.Context {
-	return context.WithValue(ctx, transferMetadataContextKey{}, meta)
-}
-
-func TransferMetadataFromContext(ctx context.Context) (FileMetadata, bool) {
-	meta, ok := ctx.Value(transferMetadataContextKey{}).(FileMetadata)
-	return meta, ok
-}
-
-// WithUploadReceipt lets providers return a newly created target resource ID
-// without widening StorageProvider or sharing mutable provider state.
-func WithUploadReceipt(ctx context.Context, receipt *UploadReceipt) context.Context {
-	return context.WithValue(ctx, uploadReceiptContextKey{}, receipt)
-}
-
-func UploadReceiptFromContext(ctx context.Context) (*UploadReceipt, bool) {
-	receipt, ok := ctx.Value(uploadReceiptContextKey{}).(*UploadReceipt)
-	return receipt, ok && receipt != nil
-}
-
-// WithTargetResourceID supplies a persisted provider target identity for
-// verification. It is intentionally separate from transfer metadata because
-// source metadata may contain a different provider resource ID.
-func WithTargetResourceID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, targetResourceIDContextKey{}, id)
-}
-
-func TargetResourceIDFromContext(ctx context.Context) (string, bool) {
-	id, ok := ctx.Value(targetResourceIDContextKey{}).(string)
-	id = strings.TrimSpace(id)
-	return id, ok && id != ""
 }
 
 // SetImmichTargetAssetID preserves indexed source metadata while recording the

@@ -1012,7 +1012,7 @@ func TestFileHandlersUseStorageManagerAdapter(t *testing.T) {
 		db:            database,
 		rateLimiter:   allowAllFileRateLimiter{},
 		encryptionKey: key,
-		providerFactory: func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (storage.StorageProvider, error) {
 			return stub, nil
 		},
 	}

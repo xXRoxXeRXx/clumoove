@@ -37,7 +37,7 @@ type IndexSource interface {
 }
 
 // SourceFactoryFunc constructs the source client used by an indexing pass.
-type SourceFactoryFunc func(ctx context.Context, providerType, urlStr, username, password string) (IndexSource, error)
+type SourceFactoryFunc func(ctx context.Context, providerType, urlStr, username, password string, opts ...storage.ProviderOption) (IndexSource, error)
 
 // Indexer performs the indexing phase of a migration: it connects to the source,
 // walks the selected paths/calendars/contacts, and creates PENDING tasks in the DB.
@@ -169,13 +169,14 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		}
 	}
 
-	sourceCtx, err := megasecret.WithMegaSession(ctx, mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, idx.encryptionKey)
+	sourceMegaSession, err := megasecret.DecodeProviderMegaSession(mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, idx.encryptionKey)
 	if err != nil {
 		logger.Error("indexing_source_session_decrypt_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		failMigration(ctx, idx.db, migID, discoveryGeneration, "Failed to decrypt source connection session.")
 		return
 	}
-	sourceClient, err := idx.newSource(sourceCtx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
+	sourceClient, err := idx.newSource(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass, storage.WithProviderMegaSession(sourceMegaSession))
+	clear(sourceMegaSession.MasterKey)
 	crypto.ZeroString(&sourcePass)
 	if err != nil {
 		// Log the detailed (sanitized) error server-side for diagnostics, but do
@@ -568,11 +569,11 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 	return tokenResp.AccessToken, nil
 }
 
-func (idx *Indexer) newSource(ctx context.Context, providerType, urlStr, username, password string) (IndexSource, error) {
+func (idx *Indexer) newSource(ctx context.Context, providerType, urlStr, username, password string, opts ...storage.ProviderOption) (IndexSource, error) {
 	if idx.sourceFactory != nil {
-		return idx.sourceFactory(ctx, providerType, urlStr, username, password)
+		return idx.sourceFactory(ctx, providerType, urlStr, username, password, opts...)
 	}
-	return storage.NewProvider(ctx, providerType, urlStr, username, password)
+	return storage.NewProvider(ctx, providerType, urlStr, username, password, opts...)
 }
 
 const indexFolderListingWorkers = 4

@@ -183,7 +183,7 @@ func TestNewProfileConnectionCreatesProviderFromResolvedCredentials(t *testing.T
 	creds := profileCreds{Provider: "nextcloud", URL: "https://cloud.example.test", Username: "alice", Password: "secret"}
 	var gotProvider, gotURL, gotUsername, gotPassword string
 	connection, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{ID: "profile-1"}, creds,
-		func(_ context.Context, provider, url, username, password string) (storage.StorageProvider, error) {
+		func(_ context.Context, provider, url, username, password string, _ ...storage.ProviderOption) (storage.StorageProvider, error) {
 			gotProvider, gotURL, gotUsername, gotPassword = provider, url, username, password
 			return nil, nil
 		})
@@ -201,7 +201,7 @@ func TestNewProfileConnectionCreatesProviderFromResolvedCredentials(t *testing.T
 func TestNewProfileConnectionClearsCopiedSecretsWhenFactoryFails(t *testing.T) {
 	masterKey := []byte{1, 2, 3}
 	creds := profileCreds{Provider: "mega", Password: "secret", RefreshToken: "refresh", MegaSession: storage.MegaSession{MasterKey: masterKey}}
-	_, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{}, creds, func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+	_, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{}, creds, func(context.Context, string, string, string, string, ...storage.ProviderOption) (storage.StorageProvider, error) {
 		return nil, errors.New("factory failed")
 	})
 	if err == nil {
@@ -214,17 +214,30 @@ func TestNewProfileConnectionClearsCopiedSecretsWhenFactoryFails(t *testing.T) {
 	}
 }
 
-func TestProfileConnectionScopesMegaSessionToProviderContext(t *testing.T) {
+func TestProfileConnectionForwardsMegaSessionOption(t *testing.T) {
 	masterKey := []byte{1, 2, 3}
-	creds := profileCreds{Provider: "mega", MegaSession: storage.MegaSession{ID: "session", MasterKey: masterKey}}
+	creds := profileCreds{
+		Provider:    "mega",
+		Username:    "user@example.test",
+		Password:    "secret",
+		MegaSession: storage.MegaSession{ID: "session", MasterKey: masterKey},
+	}
 
-	ctx := withMegaProfileSession(context.Background(), creds)
-	session, ok := storage.MegaSessionFromContext(ctx)
-	if !ok || session.ID != "session" {
-		t.Fatalf("MEGA session = %#v, %t; want session in provider context", session, ok)
+	connection, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{ID: "profile-mega"}, creds, storage.NewProvider)
+	if err != nil {
+		t.Fatalf("newProfileConnection() error = %v", err)
+	}
+	defer connection.creds.clear()
+	megaProvider, ok := connection.provider.(*storage.MegaProvider)
+	if !ok {
+		t.Fatalf("provider = %T, want *storage.MegaProvider", connection.provider)
+	}
+	session := megaProvider.Session()
+	if session.ID != "session" {
+		t.Fatalf("MEGA session ID = %q, want session", session.ID)
 	}
 	if string(session.MasterKey) != string(masterKey) {
-		t.Fatal("provider context must retain MEGA master-key material")
+		t.Fatal("provider must retain MEGA master-key material passed via ProviderOption")
 	}
 	clear(session.MasterKey)
 	clear(masterKey)

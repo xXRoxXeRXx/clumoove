@@ -33,7 +33,14 @@ const (
 )
 
 func NewMegaProvider(email, password string, session MegaSession) *MegaProvider {
-	return &MegaProvider{email: email, password: password, session: session}
+	return &MegaProvider{
+		email:    email,
+		password: password,
+		session: MegaSession{
+			ID:        session.ID,
+			MasterKey: append([]byte(nil), session.MasterKey...),
+		},
+	}
 }
 
 func (p *MegaProvider) Close() error {

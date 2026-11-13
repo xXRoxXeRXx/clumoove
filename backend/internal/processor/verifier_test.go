@@ -792,7 +792,7 @@ func TestVerificationPassAcceptsMinimalTargetAdapters(t *testing.T) {
 		factoryCalled := false
 		verified := false
 		p := &Processor{}
-		p.SetProviderFactory(func(context.Context, string, string, string, string) (PooledProvider, error) {
+		p.SetProviderFactory(func(context.Context, string, string, string, string, ...storage.ProviderOption) (PooledProvider, error) {
 			factoryCalled = true
 			return target, nil
 		})
@@ -807,4 +807,65 @@ func TestVerificationPassAcceptsMinimalTargetAdapters(t *testing.T) {
 			t.Fatalf("factoryCalled=%v verified=%v connected=%v closed=%v, want all true", factoryCalled, verified, target.connected, target.closed)
 		}
 	})
+
+	t.Run("TargetResourceVerifier routes persisted target resource ID without context values", func(t *testing.T) {
+		target := &minimalResourceVerifierTarget{
+			minimalVerificationTarget: minimalVerificationTarget{
+				mode: storage.VerificationCryptographicHash,
+			},
+			byIDSize: 10,
+			byIDHash: "",
+		}
+		task := &db.Task{
+			ID:           "immich-resource-task",
+			ResourceType: "files",
+			FilePath:     "/photo.jpg",
+			FileSize:     10,
+			Metadata:     []byte(`{"custom_props":{"immich_target_asset_id":"target-asset-42"}}`),
+			SourceHash:   sql.NullString{String: "SHA1:deadbeef", Valid: true},
+		}
+		verified := false
+		(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+			EntityType: "Migration", EntityID: "mig-resource-id", TargetProvider: "immich", Threads: 1, TargetClient: target,
+			GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+			ReconcileProgress: func() error { return nil },
+			MarkVerified:      func(context.Context, *db.Task, string) (bool, error) { verified = true; return true, nil },
+			MarkMismatch:      func(context.Context, *db.Task) (bool, error) { t.Fatal("unexpected mismatch"); return true, nil },
+		})
+		if !verified {
+			t.Fatal("expected verification via TargetResourceVerifier to succeed")
+		}
+		if target.lastHashResourceID != "target-asset-42" || target.lastExistsResourceID != "target-asset-42" {
+			t.Fatalf("got resourceIDs hash=%q exists=%q, want target-asset-42", target.lastHashResourceID, target.lastExistsResourceID)
+		}
+	})
+}
+
+type minimalResourceVerifierTarget struct {
+	minimalVerificationTarget
+	byIDSize             int64
+	byIDHash             string
+	lastHashResourceID   string
+	lastExistsResourceID string
+}
+
+func (m *minimalResourceVerifierTarget) FileExists(_ context.Context, _, _ string) (bool, int64, error) {
+	return false, 0, fmt.Errorf("unexpected path-based FileExists")
+}
+
+func (m *minimalResourceVerifierTarget) GetFileHash(_ context.Context, _, _ string) (string, error) {
+	return "", fmt.Errorf("unexpected path-based GetFileHash")
+}
+
+func (m *minimalResourceVerifierTarget) FileExistsByResourceID(_ context.Context, _, resourceID string) (bool, int64, error) {
+	m.lastExistsResourceID = resourceID
+	return true, m.byIDSize, nil
+}
+
+func (m *minimalResourceVerifierTarget) GetFileHashByResourceID(_ context.Context, _, resourceID string) (string, error) {
+	m.lastHashResourceID = resourceID
+	if m.byIDHash == "" {
+		return "", storage.ErrChecksumNotAvailable
+	}
+	return m.byIDHash, nil
 }

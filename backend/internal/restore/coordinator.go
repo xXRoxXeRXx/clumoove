@@ -72,13 +72,13 @@ type RestoreTarget interface {
 }
 
 // PreviewTargetFactoryFunc constructs the read-only target client for restore previews.
-type PreviewTargetFactoryFunc func(ctx context.Context, provider, endpoint, username, password string) (PreviewTargetClient, error)
+type PreviewTargetFactoryFunc func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (PreviewTargetClient, error)
 
 // RepositorySourceFactoryFunc constructs the backup repository reader for restores.
-type RepositorySourceFactoryFunc func(ctx context.Context, provider, endpoint, username, password string) (RepositorySource, error)
+type RepositorySourceFactoryFunc func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RepositorySource, error)
 
 // RestoreTargetFactoryFunc constructs the target client for restore execution.
-type RestoreTargetFactoryFunc func(ctx context.Context, provider, endpoint, username, password string) (RestoreTarget, error)
+type RestoreTargetFactoryFunc func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RestoreTarget, error)
 
 type Coordinator struct {
 	db                      *sql.DB
@@ -230,11 +230,13 @@ func (c *Coordinator) previewTargetWithItems(ctx context.Context, preview *db.Re
 		return db.RestorePreviewStats{}, errors.New("restore preview target credential is unavailable")
 	}
 	providerCtx := storage.WithLocalUserScope(ctx, preview.UserID)
-	providerCtx, err := megasecret.WithMegaSession(providerCtx, preview.TargetProvider, preview.TargetMegaSessionIDEncrypted.String, preview.TargetMegaMasterKeyEncrypted.String, c.encryptionKey)
+	targetMegaSession, err := megasecret.DecodeProviderMegaSession(preview.TargetProvider, preview.TargetMegaSessionIDEncrypted.String, preview.TargetMegaMasterKeyEncrypted.String, c.encryptionKey)
 	if err != nil {
 		return db.RestorePreviewStats{}, err
 	}
-	target, err := c.newPreviewTarget(providerCtx, preview.TargetProvider, preview.TargetURL, preview.TargetUsername, preview.TargetPasswordEncrypted.String)
+	defer clear(targetMegaSession.MasterKey)
+	target, err := c.newPreviewTarget(providerCtx, preview.TargetProvider, preview.TargetURL, preview.TargetUsername, preview.TargetPasswordEncrypted.String, storage.WithProviderMegaSession(targetMegaSession))
+	clear(targetMegaSession.MasterKey)
 	if err != nil {
 		return db.RestorePreviewStats{}, err
 	}
@@ -540,20 +542,24 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 		return err
 	}
 	ctx = storage.WithLocalUserScope(ctx, repository.UserID)
-	repositoryCtx, err := megasecret.WithMegaSession(ctx, repository.Provider, repository.MegaSessionIDEncrypted.String, repository.MegaMasterKeyEncrypted.String, c.encryptionKey)
+	repositoryMegaSession, err := megasecret.DecodeProviderMegaSession(repository.Provider, repository.MegaSessionIDEncrypted.String, repository.MegaMasterKeyEncrypted.String, c.encryptionKey)
 	if err != nil {
 		return fmt.Errorf("load repository mega session: %w", err)
 	}
-	repositoryProvider, err := c.newRepositorySource(repositoryCtx, repository.Provider, repository.URL, repository.Username, repository.PasswordEncrypted)
+	defer clear(repositoryMegaSession.MasterKey)
+	repositoryProvider, err := c.newRepositorySource(ctx, repository.Provider, repository.URL, repository.Username, repository.PasswordEncrypted, storage.WithProviderMegaSession(repositoryMegaSession))
+	clear(repositoryMegaSession.MasterKey)
 	if err != nil {
 		return err
 	}
 	defer repositoryProvider.Close()
-	targetCtx, err := megasecret.WithMegaSession(ctx, targetProviderType, targetMegaSessionEncrypted.String, targetMegaMasterKeyEncrypted.String, c.encryptionKey)
+	targetMegaSession, err := megasecret.DecodeProviderMegaSession(targetProviderType, targetMegaSessionEncrypted.String, targetMegaMasterKeyEncrypted.String, c.encryptionKey)
 	if err != nil {
 		return fmt.Errorf("load restore target mega session: %w", err)
 	}
-	targetProvider, err := c.newRestoreTarget(targetCtx, targetProviderType, targetURL, targetUsername, targetPasswordEncrypted)
+	defer clear(targetMegaSession.MasterKey)
+	targetProvider, err := c.newRestoreTarget(ctx, targetProviderType, targetURL, targetUsername, targetPasswordEncrypted, storage.WithProviderMegaSession(targetMegaSession))
+	clear(targetMegaSession.MasterKey)
 	if err != nil {
 		return err
 	}
@@ -965,41 +971,42 @@ func trimExtension(name string) string {
 	return name[:len(name)-len(extension)]
 }
 
-func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string) (RepositorySource, error) {
+func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string, opts ...storage.ProviderOption) (RepositorySource, error) {
 	factory := c.repositorySourceFactory
 	if factory == nil {
-		factory = func(ctx context.Context, provider, endpoint, username, password string) (RepositorySource, error) {
-			return storage.NewProvider(ctx, provider, endpoint, username, password)
+		factory = func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RepositorySource, error) {
+			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
 		}
 	}
-	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory)
+	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory, opts...)
 }
 
-func (c *Coordinator) newPreviewTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string) (PreviewTargetClient, error) {
+func (c *Coordinator) newPreviewTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, opts ...storage.ProviderOption) (PreviewTargetClient, error) {
 	factory := c.previewTargetFactory
 	if factory == nil {
-		factory = func(ctx context.Context, provider, endpoint, username, password string) (PreviewTargetClient, error) {
-			return storage.NewProvider(ctx, provider, endpoint, username, password)
+		factory = func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (PreviewTargetClient, error) {
+			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
 		}
 	}
-	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory)
+	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory, opts...)
 }
 
-func (c *Coordinator) newRestoreTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string) (RestoreTarget, error) {
+func (c *Coordinator) newRestoreTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, opts ...storage.ProviderOption) (RestoreTarget, error) {
 	factory := c.restoreTargetFactory
 	if factory == nil {
-		factory = func(ctx context.Context, provider, endpoint, username, password string) (RestoreTarget, error) {
-			return storage.NewProvider(ctx, provider, endpoint, username, password)
+		factory = func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RestoreTarget, error) {
+			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
 		}
 	}
-	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory)
+	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory, opts...)
 }
 
 func openWithDecryptedPassword[T any](
 	c *Coordinator,
 	ctx context.Context,
 	provider, endpoint, username, encryptedPassword string,
-	factory func(ctx context.Context, provider, endpoint, username, password string) (T, error),
+	factory func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error),
+	opts ...storage.ProviderOption,
 ) (T, error) {
 	password, err := crypto.DecryptWithDomain(encryptedPassword, c.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(provider)))
 	if err != nil {
@@ -1007,7 +1014,7 @@ func openWithDecryptedPassword[T any](
 		return zero, err
 	}
 	defer crypto.ZeroString(&password)
-	return factory(ctx, provider, endpoint, username, password)
+	return factory(ctx, provider, endpoint, username, password, opts...)
 }
 
 func (c *Coordinator) Run(ctx context.Context, interval time.Duration) error {

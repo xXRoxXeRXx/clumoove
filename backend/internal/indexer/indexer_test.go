@@ -702,7 +702,7 @@ func TestIndexerSetSourceFactoryAcceptsMinimalIndexSource(t *testing.T) {
 			"/root": {{Path: "/root/doc.txt", Name: "doc.txt", Size: 11}},
 		},
 	}
-	idx.SetSourceFactory(func(context.Context, string, string, string, string) (IndexSource, error) {
+	idx.SetSourceFactory(func(context.Context, string, string, string, string, ...storage.ProviderOption) (IndexSource, error) {
 		return src, nil
 	})
 

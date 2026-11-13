@@ -26,7 +26,7 @@ func (p *pooledTestProvider) Close() error {
 func TestProviderPoolReusesMatchingEncryptedConfiguration(t *testing.T) {
 	pool := newProviderPool()
 	var created []*pooledTestProvider
-	pool.factory = func(context.Context, string, string, string, string) (PooledProvider, error) {
+	pool.factory = func(context.Context, string, string, string, string, ...storage.ProviderOption) (PooledProvider, error) {
 		provider := &pooledTestProvider{}
 		created = append(created, provider)
 		return provider, nil
@@ -60,7 +60,7 @@ func TestProviderPoolReusesMatchingEncryptedConfiguration(t *testing.T) {
 func TestProviderPoolReplacesChangedConfigurationAndClosesEntity(t *testing.T) {
 	pool := newProviderPool()
 	var created []*pooledTestProvider
-	pool.factory = func(context.Context, string, string, string, string) (PooledProvider, error) {
+	pool.factory = func(context.Context, string, string, string, string, ...storage.ProviderOption) (PooledProvider, error) {
 		provider := &pooledTestProvider{}
 		created = append(created, provider)
 		return provider, nil
@@ -92,7 +92,7 @@ func TestProviderPoolClosesClientInvalidatedDuringConnect(t *testing.T) {
 	provider := &pooledTestProvider{}
 	started := make(chan struct{})
 	release := make(chan struct{})
-	pool.factory = func(context.Context, string, string, string, string) (PooledProvider, error) {
+	pool.factory = func(context.Context, string, string, string, string, ...storage.ProviderOption) (PooledProvider, error) {
 		close(started)
 		<-release
 		return provider, nil
@@ -121,7 +121,7 @@ func TestProviderPoolClosesClientWhenShutdownDuringConnect(t *testing.T) {
 	provider := &pooledTestProvider{}
 	started := make(chan struct{})
 	release := make(chan struct{})
-	pool.factory = func(context.Context, string, string, string, string) (PooledProvider, error) {
+	pool.factory = func(context.Context, string, string, string, string, ...storage.ProviderOption) (PooledProvider, error) {
 		close(started)
 		<-release
 		return provider, nil
@@ -147,7 +147,7 @@ func TestProviderPoolClosesClientWhenShutdownDuringConnect(t *testing.T) {
 func TestProviderPoolPrunesTerminalEntriesAndClosesOnShutdown(t *testing.T) {
 	pool := newProviderPool()
 	var created []*pooledTestProvider
-	pool.factory = func(context.Context, string, string, string, string) (PooledProvider, error) {
+	pool.factory = func(context.Context, string, string, string, string, ...storage.ProviderOption) (PooledProvider, error) {
 		provider := &pooledTestProvider{}
 		created = append(created, provider)
 		return provider, nil
@@ -190,7 +190,7 @@ func TestProcessorSetProviderFactoryAcceptsMinimalSourceAndTargetRoles(t *testin
 	p := &Processor{}
 	src := &pooledMinimalSource{}
 	tgt := &pooledMinimalTarget{}
-	p.SetProviderFactory(func(_ context.Context, _ string, urlStr, _, _ string) (PooledProvider, error) {
+	p.SetProviderFactory(func(_ context.Context, _ string, urlStr, _, _ string, _ ...storage.ProviderOption) (PooledProvider, error) {
 		if urlStr == "https://source.test" {
 			return src, nil
 		}
@@ -222,4 +222,31 @@ func TestProcessorSetProviderFactoryAcceptsMinimalSourceAndTargetRoles(t *testin
 	if src.closes != 1 || tgt.closes != 1 {
 		t.Fatalf("expected pooled adapters to close once: src=%d tgt=%d", src.closes, tgt.closes)
 	}
+}
+
+func TestProviderPoolForwardsTypedProviderOptions(t *testing.T) {
+	pool := newProviderPool()
+	var applied storage.ProviderOptions
+	pool.factory = func(_ context.Context, _ string, _ string, _ string, _ string, opts ...storage.ProviderOption) (PooledProvider, error) {
+		for _, opt := range opts {
+			if opt != nil {
+				opt(&applied)
+			}
+		}
+		return &pooledTestProvider{}, nil
+	}
+
+	spec := providerPoolSpec{
+		providerType:      "mega",
+		passwordEncrypted: "enc",
+		megaSession:       storage.MegaSession{ID: "sess-42", MasterKey: []byte{1, 2, 3}},
+		threads:           6,
+	}
+	if _, err := pool.get(context.Background(), migrationProviderPoolKey("mig-opts"), "source", spec); err != nil {
+		t.Fatalf("pool.get: %v", err)
+	}
+	if applied.MegaSession.ID != "sess-42" || string(applied.MegaSession.MasterKey) != string([]byte{1, 2, 3}) || applied.Threads != 6 {
+		t.Fatalf("applied = %#v, want sess-42 with master key and threads=6", applied)
+	}
+	clear(applied.MegaSession.MasterKey)
 }

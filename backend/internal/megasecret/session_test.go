@@ -1,7 +1,6 @@
 package megasecret
 
 import (
-	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
@@ -16,7 +15,7 @@ import (
 
 const testEncryptionKey = "test-encryption-secret-key-32-bytes-long!"
 
-func TestWithMegaSession(t *testing.T) {
+func TestDecodeProviderMegaSession(t *testing.T) {
 	idEncrypted := encrypt(t, "session-id", crypto.DomainMegaSessionID)
 	keyEncrypted := encrypt(t, base64.StdEncoding.EncodeToString([]byte("master-key")), crypto.DomainMegaMasterKey)
 	emptyIDEncrypted := encryptEmpty(t, crypto.DomainMegaSessionID)
@@ -27,7 +26,7 @@ func TestWithMegaSession(t *testing.T) {
 		sessionIDEncrypted string
 		masterKeyEncrypted string
 		wantErr            string
-		wantUnchanged      bool
+		wantEmpty          bool
 		wantSession        storage.MegaSession
 	}{
 		{
@@ -35,12 +34,12 @@ func TestWithMegaSession(t *testing.T) {
 			provider:           "dropbox",
 			sessionIDEncrypted: idEncrypted,
 			masterKeyEncrypted: keyEncrypted,
-			wantUnchanged:      true,
+			wantEmpty:          true,
 		},
 		{
-			name:          "mega without persisted session",
-			provider:      "mega",
-			wantUnchanged: true,
+			name:      "mega without persisted session",
+			provider:  "mega",
+			wantEmpty: true,
 		},
 		{
 			name:               "incomplete session",
@@ -85,10 +84,9 @@ func TestWithMegaSession(t *testing.T) {
 		},
 	}
 
-	ctx := context.WithValue(context.Background(), struct{}{}, "sentinel")
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotCtx, err := WithMegaSession(ctx, tt.provider, tt.sessionIDEncrypted, tt.masterKeyEncrypted, testEncryptionKey)
+			session, err := DecodeProviderMegaSession(tt.provider, tt.sessionIDEncrypted, tt.masterKeyEncrypted, testEncryptionKey)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("error = %v, want containing %q", err, tt.wantErr)
@@ -98,17 +96,13 @@ func TestWithMegaSession(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tt.wantUnchanged {
-				if gotCtx != ctx {
-					t.Fatal("expected original context")
+			defer clear(session.MasterKey)
+			if tt.wantEmpty {
+				if session.ID != "" || len(session.MasterKey) != 0 {
+					t.Fatalf("session = %#v, want empty", session)
 				}
 				return
 			}
-			session, ok := storage.MegaSessionFromContext(gotCtx)
-			if !ok {
-				t.Fatal("MEGA session missing from context")
-			}
-			defer clear(session.MasterKey)
 			if session.ID != tt.wantSession.ID || string(session.MasterKey) != string(tt.wantSession.MasterKey) {
 				t.Fatalf("session = %#v, want %#v", session, tt.wantSession)
 			}

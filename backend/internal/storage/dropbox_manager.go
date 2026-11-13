@@ -269,9 +269,6 @@ func (p *DropboxProvider) uploadManagerStream(ctx context.Context, filePath stri
 			"autorename": false,
 			"mute":       false,
 		}
-		if meta, ok := TransferMetadataFromContext(ctx); ok && !meta.ModifiedTime.IsZero() {
-			uploadArgs["client_modified"] = meta.ModifiedTime.UTC().Format("2006-01-02T15:04:05Z")
-		}
 		apiArg, err := escapeAPIArg(uploadArgs)
 		if err != nil {
 			return err

@@ -995,8 +995,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 	}
 
 	browseCtx := storage.WithLocalUserScope(r.Context(), userID)
-	browseCtx = storage.WithMegaSession(browseCtx, creds.megaSession)
-	client, err := storage.NewProvider(browseCtx, creds.provider, creds.url, creds.username, creds.password)
+	client, err := storage.NewProvider(browseCtx, creds.provider, creds.url, creds.username, creds.password, storage.WithProviderMegaSession(creds.megaSession))
 	if err != nil {
 		s.logf(r, "handleBrowseSyncJob: NewProvider failed for provider %s: %v", creds.provider, err)
 		errCode := ErrSourceUrlInvalid
@@ -1109,8 +1108,7 @@ func (s *APIServer) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	providerCtx := storage.WithLocalUserScope(r.Context(), userID)
-	providerCtx = storage.WithMegaSession(providerCtx, creds.megaSession)
-	client, err := storage.NewProvider(providerCtx, creds.provider, creds.url, creds.username, creds.password)
+	client, err := storage.NewProvider(providerCtx, creds.provider, creds.url, creds.username, creds.password, storage.WithProviderMegaSession(creds.megaSession))
 	if err != nil {
 		s.logf(r, "handleSyncMkdir: failed to initialize target provider for job %s: %v", id, err)
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetUrlInvalid})

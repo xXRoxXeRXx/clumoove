@@ -632,15 +632,22 @@ func (p *davProvider) StreamDownloadRange(ctx context.Context, resourceType, fil
 	return ValidateHTTPRangeResponse(resp, offset, length)
 }
 
+var _ TransferUploader = (*davProvider)(nil)
+
 func (p *davProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
+	_, err := p.StreamUploadWithOptions(ctx, resourceType, filePath, stream, size, UploadOptions{})
+	return err
+}
+
+func (p *davProvider) StreamUploadWithOptions(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, opts UploadOptions) (UploadResult, error) {
 	if err := p.assertResourceType(resourceType); err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	u := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, filePath)
 
 	err := p.CreateParentDirectories(ctx, resourceType, filePath)
 	if err != nil {
-		return fmt.Errorf("failed to create parent directories: %w", err)
+		return UploadResult{}, fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
 	// CalDAV and CardDAV entries are small (typically a few KB). Use a tighter
@@ -669,7 +676,7 @@ func (p *davProvider) StreamUpload(ctx context.Context, resourceType, filePath s
 
 	req, err := p.newRequest("PUT", u, stream)
 	if err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	req = req.WithContext(uploadCtx)
 	if size > 0 {
@@ -683,18 +690,18 @@ func (p *davProvider) StreamUpload(ctx context.Context, resourceType, filePath s
 		contentType = "text/vcard; charset=utf-8"
 	}
 	req.Header.Set("Content-Type", contentType)
-	if chkVal := UploadChecksum(ctx); chkVal != "" {
-		req.Header.Set("OC-Checksum", chkVal)
+	if opts.Checksum != "" {
+		req.Header.Set("OC-Checksum", opts.Checksum)
 	}
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("nextcloud upload: %w", ErrAuth)
+		return UploadResult{}, fmt.Errorf("nextcloud upload: %w", ErrAuth)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -702,17 +709,22 @@ func (p *davProvider) StreamUpload(ctx context.Context, resourceType, filePath s
 		if (resourceType == "calendars" || resourceType == "contacts") &&
 			(resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusConflict ||
 				strings.Contains(respBody, "calobjects_by_uid_index") || strings.Contains(respBody, "unique constraint")) {
-			return ErrDuplicateUID
+			return UploadResult{}, ErrDuplicateUID
 		}
-		return fmt.Errorf("upload failed with status: %d", resp.StatusCode)
+		return UploadResult{}, fmt.Errorf("upload failed with status: %d", resp.StatusCode)
 	}
 
-	return nil
+	return UploadResult{}, nil
 }
 
 func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, fileSize int64, progressChan chan<- int64) error {
+	_, err := p.StreamUploadChunkedWithOptions(ctx, resourceType, filePath, stream, fileSize, progressChan, UploadOptions{})
+	return err
+}
+
+func (p *davProvider) StreamUploadChunkedWithOptions(ctx context.Context, resourceType, filePath string, stream io.Reader, fileSize int64, progressChan chan<- int64, opts UploadOptions) (UploadResult, error) {
 	if err := p.assertResourceType(resourceType); err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	// Some providers (e.g. MagentaCLOUD) do not support Nextcloud's /uploads
 	// chunked-upload API. Fall back to a plain PUT so the transfer still works
@@ -721,11 +733,11 @@ func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, fil
 		if progressChan != nil {
 			stream = &ProgressReader{Reader: stream, ProgressChan: progressChan}
 		}
-		return p.StreamUpload(ctx, resourceType, filePath, stream, fileSize)
+		return p.StreamUploadWithOptions(ctx, resourceType, filePath, stream, fileSize, opts)
 	}
 
 	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
-		return fmt.Errorf("failed to create parent directories: %w", err)
+		return UploadResult{}, fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
 	transferID := fmt.Sprintf("upload-%x", time.Now().UnixNano())
@@ -735,21 +747,21 @@ func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, fil
 
 	req, err := p.newRequest("MKCOL", uploadsFolderURL, nil)
 	if err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	req = req.WithContext(ctx)
 	req.Header.Set("Destination", destURL)
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("nextcloud mkdir (chunked upload): %w", ErrAuth)
+		return UploadResult{}, fmt.Errorf("nextcloud mkdir (chunked upload): %w", ErrAuth)
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
-		return fmt.Errorf("failed to create upload directory, status: %d", resp.StatusCode)
+		return UploadResult{}, fmt.Errorf("failed to create upload directory, status: %d", resp.StatusCode)
 	}
 
 	// Dynamically calculate chunk size so total memory limit is 256MB across all threads
@@ -768,11 +780,11 @@ func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, fil
 
 	for {
 		if chunkIndex >= 10000 {
-			return fmt.Errorf("file requires more than 10000 upload chunks")
+			return UploadResult{}, fmt.Errorf("file requires more than 10000 upload chunks")
 		}
 		bytesRead, readErr := io.ReadFull(stream, buffer)
 		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
-			return readErr
+			return UploadResult{}, readErr
 		}
 
 		if bytesRead == 0 {
@@ -785,7 +797,7 @@ func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, fil
 
 		err := p.uploadChunkWithRetry(ctx, chunkURL, chunkData, destURL, fileSize)
 		if err != nil {
-			return fmt.Errorf("failed to upload chunk %d: %w", chunkIndex+1, err)
+			return UploadResult{}, fmt.Errorf("failed to upload chunk %d: %w", chunkIndex+1, err)
 		}
 
 		totalUploaded += int64(bytesRead)
@@ -802,20 +814,20 @@ func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, fil
 	commitURL := fmt.Sprintf("%s/.file", uploadsFolderURL)
 	req, err = p.newRequest("MOVE", commitURL, nil)
 	if err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	req = req.WithContext(ctx)
 
 	req.Header.Set("Destination", destURL)
 	req.Header.Set("Overwrite", "T")
 	req.Header.Set("OC-Total-Length", strconv.FormatInt(fileSize, 10))
-	if chkVal := UploadChecksum(ctx); chkVal != "" {
-		req.Header.Set("OC-Checksum", chkVal)
+	if opts.Checksum != "" {
+		req.Header.Set("OC-Checksum", opts.Checksum)
 	}
 
 	resp, err = p.HTTPClient.Do(req)
 	if err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	defer resp.Body.Close()
 
@@ -831,22 +843,22 @@ func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, fil
 		for {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return UploadResult{}, ctx.Err()
 			case <-timeout:
-				return fmt.Errorf("failed to commit chunked upload, status: %d (verification timed out)", resp.StatusCode)
+				return UploadResult{}, fmt.Errorf("failed to commit chunked upload, status: %d (verification timed out)", resp.StatusCode)
 			case <-ticker.C:
 				exists, size, errExists := p.FileExists(ctx, resourceType, filePath)
 				if errExists == nil && exists && size == fileSize {
-					return nil // Successfully committed and verified!
+					return UploadResult{}, nil // Successfully committed and verified!
 				}
 			}
 		}
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("nextcloud chunked upload commit: %w", ErrAuth)
+		return UploadResult{}, fmt.Errorf("nextcloud chunked upload commit: %w", ErrAuth)
 	}
-	return fmt.Errorf("failed to commit chunked upload, status: %d", resp.StatusCode)
+	return UploadResult{}, fmt.Errorf("failed to commit chunked upload, status: %d", resp.StatusCode)
 }
 
 func (p *davProvider) uploadChunkWithRetry(ctx context.Context, chunkURL string, data []byte, destURL string, totalSize int64) error {

@@ -262,18 +262,30 @@ func (p *KoofrProvider) StreamDownloadRange(ctx context.Context, resourceType, f
 	return ValidateHTTPRangeResponse(resp, offset, length)
 }
 
+var _ TransferUploader = (*KoofrProvider)(nil)
+
 func (p *KoofrProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
+	_, err := p.StreamUploadWithOptions(ctx, resourceType, filePath, stream, size, UploadOptions{})
+	return err
+}
+
+func (p *KoofrProvider) StreamUploadWithOptions(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, opts UploadOptions) (UploadResult, error) {
 	if err := p.requireFiles(resourceType); err != nil {
-		return err
+		return UploadResult{}, err
 	}
-	return p.upload(ctx, filePath, stream, size)
+	return UploadResult{}, p.upload(ctx, filePath, stream, size, opts.Metadata)
 }
 
 func (p *KoofrProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
+	_, err := p.StreamUploadChunkedWithOptions(ctx, resourceType, filePath, stream, size, progressChan, UploadOptions{})
+	return err
+}
+
+func (p *KoofrProvider) StreamUploadChunkedWithOptions(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64, opts UploadOptions) (UploadResult, error) {
 	if err := p.requireFiles(resourceType); err != nil {
-		return err
+		return UploadResult{}, err
 	}
-	return p.upload(ctx, filePath, &ProgressReader{Reader: stream, ProgressChan: progressChan}, size)
+	return UploadResult{}, p.upload(ctx, filePath, &ProgressReader{Reader: stream, ProgressChan: progressChan}, size, opts.Metadata)
 }
 
 func (p *KoofrProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
@@ -449,7 +461,7 @@ func (p *KoofrProvider) fileInfo(ctx context.Context, filePath string) (koofrFil
 	return info, nil
 }
 
-func (p *KoofrProvider) upload(ctx context.Context, filePath string, stream io.Reader, size int64) error {
+func (p *KoofrProvider) upload(ctx context.Context, filePath string, stream io.Reader, size int64, meta FileMetadata) error {
 	filePath, err := normalizeKoofrFilePath(filePath)
 	if err != nil {
 		return err
@@ -469,7 +481,7 @@ func (p *KoofrProvider) upload(ctx context.Context, filePath string, stream io.R
 		"autorename":                 {"false"},
 		"overwriteIgnoreNonexisting": {""},
 	}
-	if meta, ok := TransferMetadataFromContext(ctx); ok && !meta.ModifiedTime.IsZero() {
+	if !meta.ModifiedTime.IsZero() {
 		query.Set("modified", fmt.Sprintf("%d", meta.ModifiedTime.UnixMilli()))
 	}
 	req, err := p.contentMountRequest(ctx, http.MethodPost, "/files/put", query, io.MultiReader(strings.NewReader(header), stream, strings.NewReader(trailer)))

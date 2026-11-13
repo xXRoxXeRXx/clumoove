@@ -253,21 +253,20 @@ func (s *APIServer) openOwnedProfileConnection(ctx context.Context, userID, prof
 	return newProfileConnection(ctx, userID, profile, creds, s.newProvider)
 }
 
-type profileProviderFactory func(context.Context, string, string, string, string) (storage.StorageProvider, error)
+type profileProviderFactory func(context.Context, string, string, string, string, ...storage.ProviderOption) (storage.StorageProvider, error)
 
-func (s *APIServer) newProvider(ctx context.Context, provider, url, username, password string) (storage.StorageProvider, error) {
+func (s *APIServer) newProvider(ctx context.Context, provider, url, username, password string, opts ...storage.ProviderOption) (storage.StorageProvider, error) {
 	factory := s.providerFactory
 	if factory == nil {
 		factory = storage.NewProvider
 	}
-	return factory(ctx, provider, url, username, password)
+	return factory(ctx, provider, url, username, password, opts...)
 }
 
 func newProfileConnection(ctx context.Context, userID string, profile *db.ConnectionProfile, creds profileCreds, factory profileProviderFactory) (*profileConnection, error) {
 	creds.MegaSession.MasterKey = append([]byte(nil), creds.MegaSession.MasterKey...)
 	providerCtx := storage.WithLocalUserScope(ctx, userID)
-	providerCtx = withMegaProfileSession(providerCtx, creds)
-	provider, err := factory(providerCtx, creds.Provider, creds.URL, creds.Username, creds.Password)
+	provider, err := factory(providerCtx, creds.Provider, creds.URL, creds.Username, creds.Password, megaProfileProviderOptions(creds)...)
 	if err != nil {
 		creds.clear()
 		return nil, fmt.Errorf("%w: %w", errProfileProvider, err)
@@ -303,9 +302,9 @@ func (s *APIServer) encryptMegaSession(session storage.MegaSession) (string, str
 	return sessionID, masterKey, nil
 }
 
-func withMegaProfileSession(ctx context.Context, creds profileCreds) context.Context {
-	if creds.Provider == "mega" && creds.MegaSession.ID != "" {
-		return storage.WithMegaSession(ctx, creds.MegaSession)
+func megaProfileProviderOptions(creds profileCreds) []storage.ProviderOption {
+	if creds.Provider == "mega" {
+		return []storage.ProviderOption{storage.WithProviderMegaSession(creds.MegaSession)}
 	}
-	return ctx
+	return nil
 }

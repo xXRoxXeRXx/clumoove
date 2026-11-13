@@ -3,7 +3,6 @@
 package megasecret
 
 import (
-	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -45,20 +44,12 @@ func DecodeMegaSession(sessionIDEncrypted, masterKeyEncrypted, encryptionKey str
 	return storage.MegaSession{ID: string(idBytes), MasterKey: key}, nil
 }
 
-// WithMegaSession decrypts and attaches persisted MEGA session material to a
-// task context. It leaves non-MEGA providers and empty MEGA sessions alone so
-// MEGA can fall back to email/password authentication.
-func WithMegaSession(ctx context.Context, provider, sessionIDEncrypted, masterKeyEncrypted, encryptionKey string) (context.Context, error) {
+// DecodeProviderMegaSession decrypts persisted MEGA session material when the
+// provider is "mega" and encrypted session fields are present. Callers must
+// clear the returned MasterKey when finished.
+func DecodeProviderMegaSession(provider, sessionIDEncrypted, masterKeyEncrypted, encryptionKey string) (storage.MegaSession, error) {
 	if provider != "mega" || (sessionIDEncrypted == "" && masterKeyEncrypted == "") {
-		return ctx, nil
+		return storage.MegaSession{}, nil
 	}
-
-	session, err := DecodeMegaSession(sessionIDEncrypted, masterKeyEncrypted, encryptionKey)
-	if err != nil {
-		return nil, err
-	}
-	ctxOut := storage.WithMegaSession(ctx, session)
-	clear(session.MasterKey)
-	crypto.ZeroString(&session.ID)
-	return ctxOut, nil
+	return DecodeMegaSession(sessionIDEncrypted, masterKeyEncrypted, encryptionKey)
 }

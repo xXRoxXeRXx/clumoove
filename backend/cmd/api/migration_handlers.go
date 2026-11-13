@@ -70,7 +70,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceClient, err := s.newProvider(withMegaProfileSession(r.Context(), sourceCreds), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
+	sourceClient, err := s.newProvider(r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword, megaProfileProviderOptions(sourceCreds)...)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 		return
@@ -161,7 +161,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 		targetCreds = tgt
 	}
 
-	targetClient, err := s.newProvider(withMegaProfileSession(r.Context(), targetCreds), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := s.newProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword, megaProfileProviderOptions(targetCreds)...)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
@@ -245,7 +245,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		targetCreds = tgt
 	}
 
-	targetClient, err := s.newProvider(withMegaProfileSession(r.Context(), targetCreds), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := s.newProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword, megaProfileProviderOptions(targetCreds)...)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
@@ -656,8 +656,7 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	providerCtx := withMegaProfileSession(r.Context(), creds)
-	client, err := s.newProvider(providerCtx, provider, url, username, password)
+	client, err := s.newProvider(r.Context(), provider, url, username, password, megaProfileProviderOptions(creds)...)
 	if err != nil {
 		code := ErrSourceUrlInvalid
 		if role == "target" {
@@ -759,7 +758,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceClient, err := s.newProvider(withMegaProfileSession(r.Context(), src), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
+	sourceClient, err := s.newProvider(r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword, megaProfileProviderOptions(src)...)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 		return
@@ -778,7 +777,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetClient, err := s.newProvider(withMegaProfileSession(r.Context(), tgt), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := s.newProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword, megaProfileProviderOptions(tgt)...)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return

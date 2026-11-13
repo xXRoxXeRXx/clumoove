@@ -72,17 +72,16 @@ func TestImmichVerificationUsesPersistedTargetAssetID(t *testing.T) {
 	defer server.Close()
 
 	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "test-key", HTTPClient: server.Client()}
-	ctx := WithTargetResourceID(context.Background(), "target-asset")
-	hash, err := p.GetFileHash(ctx, "files", "/album/photo.jpg")
+	hash, err := p.GetFileHashByResourceID(context.Background(), "files", "target-asset")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := "SHA1:" + strings.Repeat("ab", sha1.Size); hash != want {
-		t.Fatalf("GetFileHash() = %q, want %q", hash, want)
+		t.Fatalf("GetFileHashByResourceID() = %q, want %q", hash, want)
 	}
-	exists, size, err := p.FileExists(ctx, "files", "/album/photo.jpg")
+	exists, size, err := p.FileExistsByResourceID(context.Background(), "files", "target-asset")
 	if err != nil || !exists || size != 123 {
-		t.Fatalf("FileExists() = (%v, %d, %v)", exists, size, err)
+		t.Fatalf("FileExistsByResourceID() = (%v, %d, %v)", exists, size, err)
 	}
 }
 
@@ -105,17 +104,16 @@ func TestImmichVerificationAssetLookupEdgeCases(t *testing.T) {
 			}))
 			defer server.Close()
 			p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client()}
-			ctx := WithTargetResourceID(context.Background(), "asset")
-			exists, _, err := p.FileExists(ctx, "files", "/ignored")
+			exists, _, err := p.FileExistsByResourceID(context.Background(), "files", "asset")
 			if err != nil || exists != tc.wantExists {
-				t.Fatalf("FileExists() = (%v, _, %v), want (%v, _, nil)", exists, err, tc.wantExists)
+				t.Fatalf("FileExistsByResourceID() = (%v, _, %v), want (%v, _, nil)", exists, err, tc.wantExists)
 			}
-			_, err = p.GetFileHash(ctx, "files", "/ignored")
+			_, err = p.GetFileHashByResourceID(context.Background(), "files", "asset")
 			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
-				t.Fatalf("GetFileHash() error = %v, want %v", err, tc.wantErr)
+				t.Fatalf("GetFileHashByResourceID() error = %v, want %v", err, tc.wantErr)
 			}
 			if tc.status == http.StatusNotFound && !errors.Is(err, ErrNotFound) {
-				t.Fatalf("GetFileHash() error = %v, want ErrNotFound", err)
+				t.Fatalf("GetFileHashByResourceID() error = %v, want ErrNotFound", err)
 			}
 		})
 	}
@@ -159,13 +157,12 @@ func TestImmichStreamUploadChunkedLeavesProgressChannelOpen(t *testing.T) {
 	p := &ImmichProvider{BaseURL: server.URL, APIKey: "key", HTTPClient: server.Client()}
 	progress := make(chan int64, 16)
 	const largeFileSize = 50*1024*1024 + 1 // processor's chunked-upload threshold plus one byte
-	receipt := &UploadReceipt{}
-	ctx := WithUploadReceipt(context.Background(), receipt)
-	if err := p.StreamUploadChunked(ctx, "files", "/large.jpg", bytes.NewReader([]byte("asset bytes")), largeFileSize, progress); err != nil {
-		t.Fatalf("StreamUploadChunked() error = %v", err)
+	result, err := p.StreamUploadChunkedWithOptions(context.Background(), "files", "/large.jpg", bytes.NewReader([]byte("asset bytes")), largeFileSize, progress, UploadOptions{})
+	if err != nil {
+		t.Fatalf("StreamUploadChunkedWithOptions() error = %v", err)
 	}
-	if receipt.TargetResourceID != "asset-id" {
-		t.Fatalf("receipt target resource ID = %q", receipt.TargetResourceID)
+	if result.Receipt.TargetResourceID != "asset-id" {
+		t.Fatalf("receipt target resource ID = %q", result.Receipt.TargetResourceID)
 	}
 
 	// Progress channel lifecycle belongs to the caller. This would panic if the
@@ -187,13 +184,12 @@ func TestImmichStreamUploadDuplicateDoesNotPopulateReceipt(t *testing.T) {
 	}))
 	defer server.Close()
 	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client()}
-	receipt := &UploadReceipt{}
-	err := p.StreamUpload(WithUploadReceipt(context.Background(), receipt), "files", "/photo.jpg", bytes.NewReader([]byte("bytes")), 5)
+	result, err := p.StreamUploadWithOptions(context.Background(), "files", "/photo.jpg", bytes.NewReader([]byte("bytes")), 5, UploadOptions{})
 	if !errors.Is(err, ErrNativeDuplicate) {
-		t.Fatalf("StreamUpload() error = %v, want ErrNativeDuplicate", err)
+		t.Fatalf("StreamUploadWithOptions() error = %v, want ErrNativeDuplicate", err)
 	}
-	if receipt.TargetResourceID != "" {
-		t.Fatalf("duplicate upload populated receipt with %q", receipt.TargetResourceID)
+	if result.Receipt.TargetResourceID != "" {
+		t.Fatalf("duplicate upload populated receipt with %q", result.Receipt.TargetResourceID)
 	}
 }
 
@@ -204,14 +200,13 @@ func TestImmichStreamUploadChunkedDuplicateDoesNotPopulateReceipt(t *testing.T) 
 	}))
 	defer server.Close()
 	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client()}
-	receipt := &UploadReceipt{}
 	progress := make(chan int64, 1)
-	err := p.StreamUploadChunked(WithUploadReceipt(context.Background(), receipt), "files", "/photo.jpg", bytes.NewReader([]byte("bytes")), 5, progress)
+	result, err := p.StreamUploadChunkedWithOptions(context.Background(), "files", "/photo.jpg", bytes.NewReader([]byte("bytes")), 5, progress, UploadOptions{})
 	if !errors.Is(err, ErrNativeDuplicate) {
-		t.Fatalf("StreamUploadChunked() error = %v, want ErrNativeDuplicate", err)
+		t.Fatalf("StreamUploadChunkedWithOptions() error = %v, want ErrNativeDuplicate", err)
 	}
-	if receipt.TargetResourceID != "" {
-		t.Fatalf("duplicate upload populated receipt with %q", receipt.TargetResourceID)
+	if result.Receipt.TargetResourceID != "" {
+		t.Fatalf("duplicate upload populated receipt with %q", result.Receipt.TargetResourceID)
 	}
 }
 
@@ -419,11 +414,12 @@ func TestImmichSearchAcceptsStringNextPage(t *testing.T) {
 	}
 }
 
-func TestImmichStreamUploadUsesSourceModifiedTime(t *testing.T) {
+func TestImmichStreamUploadUsesSourceModifiedTimeAndChecksumOption(t *testing.T) {
 	expectedTime := time.Date(2023, 5, 10, 14, 20, 0, 0, time.UTC)
-	var gotCreatedAt, gotModifiedAt string
+	var gotCreatedAt, gotModifiedAt, gotChecksum string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotChecksum = r.Header.Get("x-immich-checksum")
 		err := r.ParseMultipartForm(10 << 20)
 		if err != nil {
 			t.Fatal(err)
@@ -437,11 +433,13 @@ func TestImmichStreamUploadUsesSourceModifiedTime(t *testing.T) {
 
 	p := &ImmichProvider{BaseURL: server.URL, APIKey: "test-key", HTTPClient: server.Client()}
 	meta := FileMetadata{ModifiedTime: expectedTime}
-	ctx := WithTransferMetadata(context.Background(), meta)
 
-	err := p.StreamUpload(ctx, "files", "/photo.jpg", strings.NewReader("dummy photo content"), 19)
+	result, err := p.StreamUploadWithOptions(context.Background(), "files", "/photo.jpg", strings.NewReader("dummy photo content"), 19, UploadOptions{
+		Metadata: meta,
+		Checksum: "SHA1:deadbeef",
+	})
 	if err != nil {
-		t.Fatalf("StreamUpload() error = %v", err)
+		t.Fatalf("StreamUploadWithOptions() error = %v", err)
 	}
 
 	wantFormatted := expectedTime.Format(time.RFC3339)
@@ -450,5 +448,11 @@ func TestImmichStreamUploadUsesSourceModifiedTime(t *testing.T) {
 	}
 	if gotModifiedAt != wantFormatted {
 		t.Errorf("fileModifiedAt = %q, want %q", gotModifiedAt, wantFormatted)
+	}
+	if gotChecksum != "deadbeef" {
+		t.Errorf("x-immich-checksum = %q, want %q", gotChecksum, "deadbeef")
+	}
+	if result.Receipt.TargetResourceID != "asset-123" {
+		t.Errorf("Receipt.TargetResourceID = %q, want asset-123", result.Receipt.TargetResourceID)
 	}
 }

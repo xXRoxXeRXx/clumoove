@@ -58,7 +58,7 @@ func TestFileEntriesListUsesOnlyOwnedProfileCredentials(t *testing.T) {
 		db:            database,
 		encryptionKey: key,
 		rateLimiter:   allowAllFileRateLimiter{},
-		providerFactory: func(_ context.Context, provider, url, username, password string) (storage.StorageProvider, error) {
+		providerFactory: func(_ context.Context, provider, url, username, password string, _ ...storage.ProviderOption) (storage.StorageProvider, error) {
 			gotProvider, gotURL, gotUsername, gotPassword = provider, url, username, password
 			return &legacyFileManagerTestProvider{listings: map[string][]storage.CloudResource{"/": {}}}, nil
 		},
@@ -91,7 +91,7 @@ func TestResolveFileProfileMapsProviderSetupFailure(t *testing.T) {
 	server := &APIServer{
 		db:            database,
 		encryptionKey: key,
-		providerFactory: func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (storage.StorageProvider, error) {
 			providerSetupCalled = true
 			return nil, errors.New("provider setup failed")
 		},
@@ -121,7 +121,7 @@ func TestFileEntriesListMapsProviderSetupFailure(t *testing.T) {
 		db:            database,
 		encryptionKey: key,
 		rateLimiter:   allowAllFileRateLimiter{},
-		providerFactory: func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (storage.StorageProvider, error) {
 			providerSetupCalled = true
 			return nil, errors.New("provider setup failed")
 		},

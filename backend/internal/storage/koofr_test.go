@@ -463,8 +463,7 @@ func TestKoofrProviderPreservesBackslashesAndUploadMetadata(t *testing.T) {
 	if _, err := p.InspectResource(context.Background(), "files", `/folder/a\b.txt`); err != nil {
 		t.Fatal(err)
 	}
-	ctx := WithTransferMetadata(context.Background(), FileMetadata{ModifiedTime: modified})
-	if err := p.StreamUpload(ctx, "files", "/file.txt", strings.NewReader("x"), 1); err != nil {
+	if _, err := p.StreamUploadWithOptions(context.Background(), "files", "/file.txt", strings.NewReader("x"), 1, UploadOptions{Metadata: FileMetadata{ModifiedTime: modified}}); err != nil {
 		t.Fatal(err)
 	}
 }

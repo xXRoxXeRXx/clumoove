@@ -218,11 +218,10 @@ func TestDropboxStreamUploadIncludesClientModified(t *testing.T) {
 	}
 	p := &DropboxProvider{HTTPClient: client}
 	meta := FileMetadata{ModifiedTime: expectedTime}
-	ctx := WithTransferMetadata(context.Background(), meta)
 
-	err := p.StreamUpload(ctx, "files", "/test.txt", strings.NewReader("content"), 7)
+	_, err := p.StreamUploadWithOptions(context.Background(), "files", "/test.txt", strings.NewReader("content"), 7, UploadOptions{Metadata: meta})
 	if err != nil {
-		t.Fatalf("StreamUpload() error = %v", err)
+		t.Fatalf("StreamUploadWithOptions() error = %v", err)
 	}
 
 	if !strings.Contains(gotAPIArg, `"client_modified":"2023-05-10T14:20:00Z"`) {

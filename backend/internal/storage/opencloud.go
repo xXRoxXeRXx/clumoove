@@ -47,7 +47,10 @@ type OpenCloudProvider struct {
 	*davProvider
 }
 
-var _ StorageProvider = (*OpenCloudProvider)(nil)
+var (
+	_ StorageProvider  = (*OpenCloudProvider)(nil)
+	_ TransferUploader = (*OpenCloudProvider)(nil)
+)
 
 func (p *OpenCloudProvider) bindCatalogueTraits(c *providerCatalogue, providerType string) {
 	if p == nil || p.davProvider == nil {
@@ -146,21 +149,26 @@ func (p *OpenCloudProvider) Connect(ctx context.Context) (bool, error) {
 // StreamUploadChunked performs a resumable upload using TUS 1.0.0 protocol if supported,
 // falling back to standard WebDAV chunked upload.
 func (p *OpenCloudProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
+	_, err := p.StreamUploadChunkedWithOptions(ctx, resourceType, filePath, stream, size, progressChan, UploadOptions{})
+	return err
+}
+
+func (p *OpenCloudProvider) StreamUploadChunkedWithOptions(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64, opts UploadOptions) (UploadResult, error) {
 	if err := p.assertResourceType(resourceType); err != nil {
-		return err
+		return UploadResult{}, err
 	}
 
 	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
-		return fmt.Errorf("failed to create parent directories: %w", err)
+		return UploadResult{}, fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
 	if size > 0 {
 		consumed, err := p.uploadTUS(ctx, resourceType, filePath, stream, size, progressChan)
 		if err == nil {
-			return nil
+			return UploadResult{}, nil
 		}
 		if consumed {
-			return fmt.Errorf("TUS upload failed after consuming the source stream: %w", err)
+			return UploadResult{}, fmt.Errorf("TUS upload failed after consuming the source stream: %w", err)
 		}
 		slog.WarnContext(ctx, "opencloud_tus_upload_fallback",
 			slog.String("component", "storage"),
@@ -168,7 +176,7 @@ func (p *OpenCloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 		)
 	}
 
-	return p.davProvider.StreamUploadChunked(ctx, resourceType, filePath, stream, size, progressChan)
+	return p.davProvider.StreamUploadChunkedWithOptions(ctx, resourceType, filePath, stream, size, progressChan, opts)
 }
 
 // uploadTUS implements TUS 1.0.0 protocol POST session creation and PATCH chunk uploads.

@@ -13,6 +13,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/megasecret"
 	"backend/internal/oauth"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
@@ -165,6 +166,7 @@ type verificationPassConfig struct {
 	TargetURL        string
 	TargetUsername   string
 	TargetPassword   string
+	MegaSession      storage.MegaSession
 	TargetDir        string
 	// Threads is retained for test fixture compatibility. Verification is
 	// intentionally serial because one target client is shared for the pass and
@@ -324,7 +326,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		if newTargetProvider == nil {
 			if p.providerFactory != nil {
 				newTargetProvider = func(ctx context.Context, providerType, urlStr, username, password string) (connectableVerificationTarget, error) {
-					client, err := p.providerFactory(ctx, providerType, urlStr, username, password)
+					client, err := p.providerFactory(ctx, providerType, urlStr, username, password, storage.WithProviderMegaSession(cfg.MegaSession))
 					if err != nil {
 						return nil, err
 					}
@@ -337,11 +339,12 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				}
 			} else {
 				newTargetProvider = func(ctx context.Context, providerType, urlStr, username, password string) (connectableVerificationTarget, error) {
-					return newProvider(ctx, providerType, urlStr, username, password)
+					return newProvider(ctx, providerType, urlStr, username, password, storage.WithProviderMegaSession(cfg.MegaSession))
 				}
 			}
 		}
 		createdTarget, err := newTargetProvider(passCtx, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
+		clear(cfg.MegaSession.MasterKey)
 		if err != nil {
 			processorLogf("[VERIFIER] Failed to create target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 			return
@@ -407,7 +410,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				}
 
 				targetPath := effectiveTargetPath(task, cfg.TargetDir, cfg.SourceProvider, cfg.TargetProvider)
-				taskCtx := passCtx
+				targetResourceID := ""
 				if cfg.TargetProvider == "immich" {
 					var metadata storage.FileMetadata
 					if err := json.Unmarshal(task.Metadata, &metadata); err != nil {
@@ -421,7 +424,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						processedCount.Add(1)
 						continue
 					}
-					taskCtx = storage.WithTargetResourceID(passCtx, assetID)
+					targetResourceID = assetID
 				}
 
 				var targetHash string
@@ -443,7 +446,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						processorLogf("[VERIFIER] [DIRECTORY_VERIFIED] %s — target directory confirmed [PASSED]\n", targetPath)
 						return markVerified(task, targetHash)
 					}
-					exists, targetSize, sizeErr := verifyTargetSize(taskCtx, targetClient, task.ResourceType, targetPath)
+					exists, targetSize, sizeErr := verifyTargetSizeByResourceID(passCtx, targetClient, task.ResourceType, targetPath, targetResourceID)
 					if sizeErr != nil {
 						if isDirErr(sizeErr) {
 							processorLogf("[VERIFIER] [DIRECTORY_VERIFIED] %s — target directory confirmed [PASSED]\n", targetPath)
@@ -476,8 +479,8 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 					continue
 				}
 				for attempt := 0; attempt < 3; attempt++ {
-					hashCtx, taskCancel := context.WithTimeout(taskCtx, 15*time.Second)
-					targetHash, errHash = targetClient.GetFileHash(hashCtx, task.ResourceType, targetPath)
+					hashCtx, taskCancel := context.WithTimeout(passCtx, 15*time.Second)
+					targetHash, errHash = getFileHashByResourceID(hashCtx, targetClient, task.ResourceType, targetPath, targetResourceID)
 					taskCancel()
 
 					if (errHash == nil && targetHash != "") || isNonRetryableHashError(errHash) ||
@@ -596,6 +599,12 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 		processorLogf("[VERIFIER] Failed to refresh target OAuth token for migration %s: %v\n", migrationID, err)
 		return
 	}
+	targetMegaSession, err := megasecret.DecodeProviderMegaSession(mig.TargetProvider, mig.TargetMegaSessionIDEncrypted, mig.TargetMegaMasterKeyEncrypted, p.secretKey)
+	if err != nil {
+		processorLogf("[VERIFIER] Failed to decode target MEGA session for migration %s: %v\n", migrationID, err)
+		return
+	}
+	defer clear(targetMegaSession.MasterKey)
 
 	cfg := verificationPassConfig{
 		GuardAlreadyHeld: guardAlreadyHeld,
@@ -607,6 +616,7 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 		TargetURL:        mig.TargetURL,
 		TargetUsername:   mig.TargetUsername,
 		TargetPassword:   targetPass,
+		MegaSession:      targetMegaSession,
 		TargetDir:        mig.TargetDir,
 		Threads:          mig.Threads,
 		GetTasks: func(ctx context.Context) ([]*db.Task, error) {
@@ -672,6 +682,15 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 		}
 		return
 	}
+	targetMegaSession, err := megasecret.DecodeProviderMegaSession(job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, p.secretKey)
+	if err != nil {
+		processorLogf("[VERIFIER] Failed to decode target MEGA session for sync job %s: %v\n", syncJobID, err)
+		if releaseErr := db.ReleaseSyncJobVerificationLease(p.db, context.Background(), syncJobID, verificationGeneration); releaseErr != nil {
+			processorLogf("[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, releaseErr)
+		}
+		return
+	}
+	defer clear(targetMegaSession.MasterKey)
 
 	cfg := verificationPassConfig{
 		GuardAlreadyHeld: guardAlreadyHeld,
@@ -683,6 +702,7 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 		TargetURL:        job.TargetURL,
 		TargetUsername:   job.TargetUsername,
 		TargetPassword:   targetPass,
+		MegaSession:      targetMegaSession,
 		TargetDir:        job.TargetDir,
 		GetTasks: func(ctx context.Context) ([]*db.Task, error) {
 			return db.GetUnverifiedCompletedSyncTasks(p.db, ctx, syncJobID, job.RunGeneration)

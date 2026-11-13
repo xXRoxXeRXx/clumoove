@@ -105,19 +105,23 @@ func (e *Engine) defaultProviders(ctx context.Context, job *db.SyncJob) (PassCli
 			return nil, nil, fmt.Errorf("Failed to refresh target OAuth token: %w", err)
 		}
 	}
-	sourceCtx, err := megasecret.WithMegaSession(ctx, job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, e.encryptionKey)
+	sourceMegaSession, err := megasecret.DecodeProviderMegaSession(job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, e.encryptionKey)
 	if err != nil {
 		return nil, nil, errors.New("Failed to decrypt source connection session.")
 	}
-	targetCtx, err := megasecret.WithMegaSession(ctx, job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, e.encryptionKey)
+	defer clear(sourceMegaSession.MasterKey)
+	targetMegaSession, err := megasecret.DecodeProviderMegaSession(job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, e.encryptionKey)
 	if err != nil {
 		return nil, nil, errors.New("Failed to decrypt target connection session.")
 	}
-	sourceClient, err := storage.NewProvider(sourceCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
+	defer clear(targetMegaSession.MasterKey)
+	sourceClient, err := storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass, storage.WithProviderMegaSession(sourceMegaSession))
+	clear(sourceMegaSession.MasterKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Failed to connect to source: %w", err)
 	}
-	targetClient, err := storage.NewProvider(targetCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
+	targetClient, err := storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass, storage.WithProviderMegaSession(targetMegaSession))
+	clear(targetMegaSession.MasterKey)
 	if err != nil {
 		_ = sourceClient.Close()
 		return nil, nil, fmt.Errorf("Failed to connect to target: %w", err)

@@ -255,15 +255,8 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 			transferMeta.ModifiedTime = srcInfo.LastModified
 		}
 	}
-	uploadCtx := storage.WithTransferMetadata(ctx, transferMeta)
-	var uploadReceipt *storage.UploadReceipt
-	if mig.TargetProvider == "immich" {
-		uploadReceipt = &storage.UploadReceipt{}
-		uploadCtx = storage.WithUploadReceipt(uploadCtx, uploadReceipt)
-	}
 	transfer, err := runTransferCore(transferRequest{
 		Context:          ctx,
-		UploadContext:    uploadCtx,
 		Source:           sourceClient,
 		Target:           targetClient,
 		SourceProvider:   mig.SourceProvider,
@@ -272,6 +265,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		SourcePath:       task.FilePath,
 		TargetPath:       uploadPath,
 		VerificationPath: targetPath,
+		UploadOptions:    storage.UploadOptions{Metadata: transferMeta},
 		FileSize:         task.FileSize,
 		SourceHash:       task.SourceHash.String,
 		Throttler:        migrationThrottler,
@@ -281,12 +275,6 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 				return nil
 			}
 			return promoteOverwrite(finalizeCtx, targetClient, task.ResourceType, targetPath, uploadPath, overwriteBackupPath(targetPath, task.ID))
-		},
-		VerificationContext: func() context.Context {
-			if uploadReceipt != nil && uploadReceipt.TargetResourceID != "" {
-				return storage.WithTargetResourceID(ctx, uploadReceipt.TargetResourceID)
-			}
-			return ctx
 		},
 	})
 	if err != nil {
@@ -298,11 +286,11 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		}
 		return err
 	}
-	if uploadReceipt != nil {
-		if uploadReceipt.TargetResourceID == "" {
+	if mig.TargetProvider == "immich" {
+		if transfer.UploadReceipt.TargetResourceID == "" {
 			return fmt.Errorf("immich upload completed without target asset ID")
 		}
-		storage.SetImmichTargetAssetID(&transferMeta, uploadReceipt.TargetResourceID)
+		storage.SetImmichTargetAssetID(&transferMeta, transfer.UploadReceipt.TargetResourceID)
 		metadata, err := json.Marshal(transferMeta)
 		if err != nil {
 			return fmt.Errorf("marshal immich target asset metadata: %w", err)
@@ -360,7 +348,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 			task.ChecksumVerified = true
 		} else if targetClient.VerificationMode() == storage.VerificationCryptographicHash {
 			// Fast inline verification using the existing connected targetClient
-			tryInlineHashVerify(ctx, task, targetClient, task.ResourceType, targetPath)
+			tryInlineHashVerifyByResourceID(ctx, task, targetClient, task.ResourceType, targetPath, transfer.UploadReceipt.TargetResourceID)
 		}
 	} else {
 		task.WorkerHash = sql.NullString{String: "DYNAMIC", Valid: true}

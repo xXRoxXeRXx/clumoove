@@ -133,12 +133,17 @@ func immichHash(encoded string) string {
 	return "SHA1:" + fmt.Sprintf("%x", b)
 }
 
-func (p *ImmichProvider) lookupVerificationAsset(ctx context.Context, typ string) (immichAsset, bool, error) {
+var (
+	_ TransferUploader       = (*ImmichProvider)(nil)
+	_ TargetResourceVerifier = (*ImmichProvider)(nil)
+)
+
+func (p *ImmichProvider) lookupVerificationAsset(ctx context.Context, typ, assetID string) (immichAsset, bool, error) {
 	if err := p.checkType(typ); err != nil {
 		return immichAsset{}, false, err
 	}
-	assetID, ok := TargetResourceIDFromContext(ctx)
-	if !ok {
+	assetID = strings.TrimSpace(assetID)
+	if assetID == "" {
 		return immichAsset{}, false, fmt.Errorf("immich target asset ID unavailable for verification")
 	}
 	r, err := p.request(ctx, http.MethodGet, "/assets/"+url.PathEscape(assetID), nil)
@@ -494,12 +499,17 @@ func (p *ImmichProvider) StreamDownload(ctx context.Context, typ, filePath strin
 	return r.Body, nil
 }
 func (p *ImmichProvider) StreamUpload(ctx context.Context, typ, filePath string, stream io.Reader, size int64) error {
+	_, err := p.StreamUploadWithOptions(ctx, typ, filePath, stream, size, UploadOptions{})
+	return err
+}
+
+func (p *ImmichProvider) StreamUploadWithOptions(ctx context.Context, typ, filePath string, stream io.Reader, size int64, opts UploadOptions) (UploadResult, error) {
 	if err := p.checkType(typ); err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	pr, pw := io.Pipe()
 	mw := multipart.NewWriter(pw)
-	meta, _ := TransferMetadataFromContext(ctx)
+	meta := opts.Metadata
 	createdAt := meta.CustomProps["immich_file_created_at"]
 	if createdAt == "" && !meta.ModifiedTime.IsZero() {
 		createdAt = meta.ModifiedTime.UTC().Format(time.RFC3339)
@@ -535,70 +545,83 @@ func (p *ImmichProvider) StreamUpload(ctx context.Context, typ, filePath string,
 	req, err := http.NewRequestWithContext(ctx, "POST", p.BaseURL+"/assets", pr)
 	if err != nil {
 		_ = pr.Close()
-		return err
+		return UploadResult{}, err
 	}
 	req.Header.Set("x-api-key", p.APIKey)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	if checksum := UploadChecksum(ctx); strings.HasPrefix(checksum, "SHA1:") {
+	if strings.HasPrefix(opts.Checksum, "SHA1:") {
 		// This is an optional duplicate-detection hint. Immich v2 does not
 		// require the header, so correctness never depends on it being honored.
-		req.Header.Set("x-immich-checksum", strings.TrimPrefix(checksum, "SHA1:"))
+		req.Header.Set("x-immich-checksum", strings.TrimPrefix(opts.Checksum, "SHA1:"))
 	}
 	r, err := p.HTTPClient.Do(req)
 	if err != nil {
 		// io.Pipe is unbuffered. Closing the read side releases the multipart
 		// writer goroutine (and any source stream it would otherwise retain).
 		_ = pr.Close()
-		return err
+		return UploadResult{}, err
 	}
 	defer r.Body.Close()
 	if r.StatusCode != 200 && r.StatusCode != 201 {
-		return immichStatus(r, "upload")
+		return UploadResult{}, immichStatus(r, "upload")
 	}
 	var asset struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&asset); err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	asset.ID = strings.TrimSpace(asset.ID)
 	if asset.ID == "" {
-		return fmt.Errorf("immich upload response missing asset ID")
+		return UploadResult{}, fmt.Errorf("immich upload response missing asset ID")
 	}
 	if r.StatusCode == http.StatusOK || asset.Status == "duplicate" {
-		return ErrNativeDuplicate
+		return UploadResult{}, ErrNativeDuplicate
 	}
 	if asset.Status != "" && asset.Status != "created" {
-		return fmt.Errorf("immich upload returned unexpected status %q", asset.Status)
+		return UploadResult{}, fmt.Errorf("immich upload returned unexpected status %q", asset.Status)
 	}
-	if receipt, ok := UploadReceiptFromContext(ctx); ok {
-		receipt.TargetResourceID = asset.ID
-	}
-	return nil
+	return UploadResult{Receipt: UploadReceipt{TargetResourceID: asset.ID}}, nil
 }
 
 func (p *ImmichProvider) StreamUploadChunked(ctx context.Context, t, filePath string, stream io.Reader, size int64, progress chan<- int64) error {
-	return p.StreamUpload(ctx, t, filePath, &ProgressReader{Reader: stream, ProgressChan: progress}, size)
+	_, err := p.StreamUploadChunkedWithOptions(ctx, t, filePath, stream, size, progress, UploadOptions{})
+	return err
 }
+
+func (p *ImmichProvider) StreamUploadChunkedWithOptions(ctx context.Context, t, filePath string, stream io.Reader, size int64, progress chan<- int64, opts UploadOptions) (UploadResult, error) {
+	return p.StreamUploadWithOptions(ctx, t, filePath, &ProgressReader{Reader: stream, ProgressChan: progress}, size, opts)
+}
+
 func (p *ImmichProvider) FileExists(ctx context.Context, typ, _ string) (bool, int64, error) {
-	asset, found, err := p.lookupVerificationAsset(ctx, typ)
+	return p.FileExistsByResourceID(ctx, typ, "")
+}
+
+func (p *ImmichProvider) FileExistsByResourceID(ctx context.Context, typ, resourceID string) (bool, int64, error) {
+	asset, found, err := p.lookupVerificationAsset(ctx, typ, resourceID)
 	if err != nil || !found || asset.IsTrashed {
 		return false, 0, err
 	}
 	return true, asset.ExifInfo.FileSizeInByte, nil
 }
+
 func (p *ImmichProvider) DeleteFile(context.Context, string, string) error {
 	return errors.New("Immich does not support filename deletion")
 }
+
 func (p *ImmichProvider) GetFileHash(ctx context.Context, typ, _ string) (string, error) {
+	return p.GetFileHashByResourceID(ctx, typ, "")
+}
+
+func (p *ImmichProvider) GetFileHashByResourceID(ctx context.Context, typ, resourceID string) (string, error) {
 	if err := p.checkType(typ); err != nil {
 		return "", err
 	}
-	if _, ok := TargetResourceIDFromContext(ctx); !ok {
+	if strings.TrimSpace(resourceID) == "" {
 		return "", ErrChecksumNotAvailable
 	}
-	asset, found, err := p.lookupVerificationAsset(ctx, typ)
+	asset, found, err := p.lookupVerificationAsset(ctx, typ, resourceID)
 	if err != nil {
 		return "", err
 	}

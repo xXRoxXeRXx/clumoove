@@ -67,23 +67,27 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
 	}
 
-	// Provider contexts carry scoped local-user and MEGA session state while a
-	// worker-local pool owns the resulting provider for this migration.
-	sourceCtx, err := megasecret.WithMegaSession(ctx, mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, p.secretKey)
+	// Context carries request/local-user scope while decrypted MEGA session state
+	// is passed explicitly in providerPoolSpec for construction only.
+	sourceMegaSession, err := megasecret.DecodeProviderMegaSession(mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, p.secretKey)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt source MEGA session: %w", err)
 	}
-	targetCtx, err := megasecret.WithMegaSession(ctx, mig.TargetProvider, mig.TargetMegaSessionIDEncrypted, mig.TargetMegaMasterKeyEncrypted, p.secretKey)
+	defer clear(sourceMegaSession.MasterKey)
+	targetMegaSession, err := megasecret.DecodeProviderMegaSession(mig.TargetProvider, mig.TargetMegaSessionIDEncrypted, mig.TargetMegaMasterKeyEncrypted, p.secretKey)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt target MEGA session: %w", err)
 	}
+	defer clear(targetMegaSession.MasterKey)
 	poolKey := migrationProviderPoolKey(mig.ID)
-	sourceClient, err := acquirePoolRole[inspectingTransferSource](pool, sourceCtx, poolKey, "source", providerPoolSpec{
+	sourceClient, err := acquirePoolRole[inspectingTransferSource](pool, ctx, poolKey, "source", providerPoolSpec{
 		providerType: mig.SourceProvider, url: mig.SourceURL, username: mig.SourceUsername,
 		password: sourceProviderPass, passwordEncrypted: mig.SourcePasswordEncrypted,
+		megaSession:            sourceMegaSession,
 		megaSessionIDEncrypted: mig.SourceMegaSessionIDEncrypted, megaMasterKeyEncrypted: mig.SourceMegaMasterKeyEncrypted,
 		threads: mig.Threads,
 	})
+	clear(sourceMegaSession.MasterKey)
 	if err != nil {
 		return fmt.Errorf("failed to connect to source provider: %w", err)
 	}
@@ -92,12 +96,14 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// the preceding task's tree and cannot race its parent-directory creation.
 	unlockMegaTarget := p.lockMegaTarget(mig.TargetProvider, mig.TargetURL, mig.TargetUsername)
 	defer unlockMegaTarget()
-	targetClient, err := acquirePoolRole[migrationTarget](pool, targetCtx, poolKey, "target", providerPoolSpec{
+	targetClient, err := acquirePoolRole[migrationTarget](pool, ctx, poolKey, "target", providerPoolSpec{
 		providerType: mig.TargetProvider, url: mig.TargetURL, username: mig.TargetUsername,
 		password: targetProviderPass, passwordEncrypted: mig.TargetPasswordEncrypted,
+		megaSession:            targetMegaSession,
 		megaSessionIDEncrypted: mig.TargetMegaSessionIDEncrypted, megaMasterKeyEncrypted: mig.TargetMegaMasterKeyEncrypted,
 		threads: mig.Threads,
 	})
+	clear(targetMegaSession.MasterKey)
 	if err != nil {
 		return fmt.Errorf("failed to connect to target provider: %w", err)
 	}

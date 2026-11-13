@@ -116,24 +116,28 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
 	}
 
-	sourceCtx, err := megasecret.WithMegaSession(ctx, job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, p.secretKey)
+	sourceMegaSession, err := megasecret.DecodeProviderMegaSession(job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, p.secretKey)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt source MEGA session: %w", err)
 	}
-	targetCtx, err := megasecret.WithMegaSession(ctx, job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, p.secretKey)
+	defer clear(sourceMegaSession.MasterKey)
+	targetMegaSession, err := megasecret.DecodeProviderMegaSession(job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, p.secretKey)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt target MEGA session: %w", err)
 	}
+	defer clear(targetMegaSession.MasterKey)
 	poolKey := syncProviderPoolKey(job.ID, task.PassGeneration)
 	sourceSpec := providerPoolSpec{
 		providerType: job.SourceProvider, url: job.SourceURL, username: job.SourceUsername,
 		password: sourceProviderPass, passwordEncrypted: job.SourcePasswordEncrypted,
+		megaSession:            sourceMegaSession,
 		megaSessionIDEncrypted: job.SourceMegaSessionIDEncrypted, megaMasterKeyEncrypted: job.SourceMegaMasterKeyEncrypted,
 		threads: job.Threads,
 	}
 	targetSpec := providerPoolSpec{
 		providerType: job.TargetProvider, url: job.TargetURL, username: job.TargetUsername,
 		password: targetProviderPass, passwordEncrypted: job.TargetPasswordEncrypted,
+		megaSession:            targetMegaSession,
 		megaSessionIDEncrypted: job.TargetMegaSessionIDEncrypted, megaMasterKeyEncrypted: job.TargetMegaMasterKeyEncrypted,
 		threads: job.Threads,
 	}
@@ -152,7 +156,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		if side == "source" {
 			unlockMegaTarget := p.lockMegaTarget(job.SourceProvider, job.SourceURL, job.SourceUsername)
 			defer unlockMegaTarget()
-			mkClient, err = acquirePoolRole[syncDirCreator](pool, sourceCtx, poolKey, "source", sourceSpec)
+			mkClient, err = acquirePoolRole[syncDirCreator](pool, ctx, poolKey, "source", sourceSpec)
 			if err != nil {
 				return fmt.Errorf("failed to connect to source provider for mkdir: %w", err)
 			}
@@ -161,7 +165,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		} else {
 			unlockMegaTarget := p.lockMegaTarget(job.TargetProvider, job.TargetURL, job.TargetUsername)
 			defer unlockMegaTarget()
-			mkClient, err = acquirePoolRole[syncDirCreator](pool, targetCtx, poolKey, "target", targetSpec)
+			mkClient, err = acquirePoolRole[syncDirCreator](pool, ctx, poolKey, "target", targetSpec)
 			if err != nil {
 				return fmt.Errorf("failed to connect to target provider for mkdir: %w", err)
 			}
@@ -203,13 +207,13 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		var delClient fileDeleter
 		var delPath string
 		if side == "source" {
-			delClient, err = acquirePoolRole[fileDeleter](pool, sourceCtx, poolKey, "source", sourceSpec)
+			delClient, err = acquirePoolRole[fileDeleter](pool, ctx, poolKey, "source", sourceSpec)
 			if err != nil {
 				return fmt.Errorf("failed to connect to source provider: %w", err)
 			}
 			delPath = task.FilePath
 		} else {
-			delClient, err = acquirePoolRole[fileDeleter](pool, targetCtx, poolKey, "target", targetSpec)
+			delClient, err = acquirePoolRole[fileDeleter](pool, ctx, poolKey, "target", targetSpec)
 			if err != nil {
 				return fmt.Errorf("failed to connect to target provider: %w", err)
 			}
@@ -230,7 +234,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	if action == "conflict_copy" {
 		var renClient fileRenamer
-		renClient, err = acquirePoolRole[fileRenamer](pool, targetCtx, poolKey, "target", targetSpec)
+		renClient, err = acquirePoolRole[fileRenamer](pool, ctx, poolKey, "target", targetSpec)
 		if err != nil {
 			return fmt.Errorf("failed to connect to target provider for conflict: %w", err)
 		}
@@ -263,7 +267,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	if action == "download" {
 		// Download: Target -> Source (Two-Way pull)
-		srcClient, err = acquirePoolRole[inspectingTransferSource](pool, targetCtx, poolKey, "target", targetSpec)
+		srcClient, err = acquirePoolRole[inspectingTransferSource](pool, ctx, poolKey, "target", targetSpec)
 		if err != nil {
 			return fmt.Errorf("failed to connect to target (source) provider: %w", err)
 		}
@@ -274,7 +278,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		tgtProvider = job.SourceProvider
 	} else {
 		// Upload: Source -> Target (Standard migration style)
-		srcClient, err = acquirePoolRole[inspectingTransferSource](pool, sourceCtx, poolKey, "source", sourceSpec)
+		srcClient, err = acquirePoolRole[inspectingTransferSource](pool, ctx, poolKey, "source", sourceSpec)
 		if err != nil {
 			return fmt.Errorf("failed to connect to source provider: %w", err)
 		}
@@ -291,16 +295,18 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	unlockMegaTarget := p.lockMegaTarget(tgtProvider, targetURL, targetUsername)
 	defer unlockMegaTarget()
 	if action == "download" {
-		tgtClient, err = acquirePoolRole[syncTransferTarget](pool, sourceCtx, poolKey, "source", sourceSpec)
+		tgtClient, err = acquirePoolRole[syncTransferTarget](pool, ctx, poolKey, "source", sourceSpec)
 		if err != nil {
 			return fmt.Errorf("failed to connect to source (target) provider: %w", err)
 		}
 	} else {
-		tgtClient, err = acquirePoolRole[syncTransferTarget](pool, targetCtx, poolKey, "target", targetSpec)
+		tgtClient, err = acquirePoolRole[syncTransferTarget](pool, ctx, poolKey, "target", targetSpec)
 		if err != nil {
 			return fmt.Errorf("failed to connect to target provider: %w", err)
 		}
 	}
+	clear(sourceMegaSession.MasterKey)
+	clear(targetMegaSession.MasterKey)
 	// Create directories if needed
 	if err := tgtClient.CreateParentDirectories(ctx, task.ResourceType, tgtPath); err != nil {
 		return fmt.Errorf("failed to create target directories: %w", err)
@@ -471,25 +477,25 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	sizedReader := newExpectedSizeReader(throttledDownloadStream, task.FileSize)
 	hashingReader := io.TeeReader(sizedReader, activeWriter)
 	uploadCtx, uploadCancel := context.WithTimeout(ctx, transferDeadline)
-	if srcRes, err := srcClient.InspectResource(ctx, task.ResourceType, srcPath); err == nil && !srcRes.LastModified.IsZero() {
-		uploadCtx = storage.WithTransferMetadata(uploadCtx, storage.FileMetadata{ModifiedTime: srcRes.LastModified})
-	}
-	if sourceHashStr != "" && sourceAlgo != "ETAG" {
-		uploadCtx = storage.WithUploadChecksum(uploadCtx, fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr))
-	}
 	defer uploadCancel()
 
-	if task.FileSize > chunkedUploadThreshold {
-		throttledHashingReader := throttle.NewUploadThrottledReader(uploadCtx, hashingReader, jobThrottler)
-		err = tgtClient.StreamUploadChunked(uploadCtx, task.ResourceType, uploadPath, throttledHashingReader, task.FileSize, progressChan)
-	} else {
-		progressReader := &ProgressReader{
+	var uploadOpts storage.UploadOptions
+	if srcRes, err := srcClient.InspectResource(ctx, task.ResourceType, srcPath); err == nil && !srcRes.LastModified.IsZero() {
+		uploadOpts.Metadata = storage.FileMetadata{ModifiedTime: srcRes.LastModified}
+	}
+	if sourceHashStr != "" && sourceAlgo != "ETAG" {
+		uploadOpts.Checksum = fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr)
+	}
+
+	uploadReader := io.Reader(hashingReader)
+	if task.FileSize <= chunkedUploadThreshold {
+		uploadReader = &ProgressReader{
 			Reader:       hashingReader,
 			ProgressChan: progressChan,
 		}
-		throttledProgressReader := throttle.NewUploadThrottledReader(uploadCtx, progressReader, jobThrottler)
-		err = tgtClient.StreamUpload(uploadCtx, task.ResourceType, uploadPath, throttledProgressReader, task.FileSize)
 	}
+	throttledUploadReader := throttle.NewUploadThrottledReader(uploadCtx, uploadReader, jobThrottler)
+	_, err = streamUploadWithOptions(uploadCtx, tgtClient, task.ResourceType, uploadPath, throttledUploadReader, task.FileSize, progressChan, uploadOpts)
 
 	if err != nil {
 		if useTempUpload {

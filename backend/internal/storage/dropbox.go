@@ -542,13 +542,20 @@ func (p *DropboxProvider) StreamDownloadRange(ctx context.Context, resourceType,
 	return ValidateHTTPRangeResponse(resp, offset, length)
 }
 
+var _ TransferUploader = (*DropboxProvider)(nil)
+
 func (p *DropboxProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
+	_, err := p.StreamUploadWithOptions(ctx, resourceType, filePath, stream, size, UploadOptions{})
+	return err
+}
+
+func (p *DropboxProvider) StreamUploadWithOptions(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, opts UploadOptions) (UploadResult, error) {
 	if resourceType != "files" {
-		return fmt.Errorf("resource type %s not supported by Dropbox", resourceType)
+		return UploadResult{}, fmt.Errorf("resource type %s not supported by Dropbox", resourceType)
 	}
 
 	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
-		return fmt.Errorf("failed to create parent directories: %w", err)
+		return UploadResult{}, fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
 	pathArg := p.cleanPath(filePath)
@@ -558,19 +565,19 @@ func (p *DropboxProvider) StreamUpload(ctx context.Context, resourceType, filePa
 		"autorename": false,
 		"mute":       false,
 	}
-	if meta, ok := TransferMetadataFromContext(ctx); ok && !meta.ModifiedTime.IsZero() {
+	if !opts.Metadata.ModifiedTime.IsZero() {
 		// Dropbox requires client_modified in UTC with second precision and a literal "Z" suffix.
 		// time.RFC3339 would emit "+00:00" which the API rejects.
-		uploadArgs["client_modified"] = meta.ModifiedTime.UTC().Format("2006-01-02T15:04:05Z")
+		uploadArgs["client_modified"] = opts.Metadata.ModifiedTime.UTC().Format("2006-01-02T15:04:05Z")
 	}
 	apiArg, err := escapeAPIArg(uploadArgs)
 	if err != nil {
-		return err
+		return UploadResult{}, err
 	}
 
 	req, err := p.newRequest("POST", "https://content.dropboxapi.com/2/files/upload", stream)
 	if err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	req.Header.Set("Dropbox-API-Arg", apiArg)
 	req.Header.Set("Content-Type", "application/octet-stream")
@@ -581,27 +588,32 @@ func (p *DropboxProvider) StreamUpload(ctx context.Context, resourceType, filePa
 
 	resp, err := p.do(ctx, req)
 	if err != nil {
-		return err
+		return UploadResult{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("dropbox upload: %w", ErrAuth)
+		return UploadResult{}, fmt.Errorf("dropbox upload: %w", ErrAuth)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("upload failed with status: %d", resp.StatusCode)
+		return UploadResult{}, fmt.Errorf("upload failed with status: %d", resp.StatusCode)
 	}
 
-	return nil
+	return UploadResult{}, nil
 }
 
 func (p *DropboxProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
+	_, err := p.StreamUploadChunkedWithOptions(ctx, resourceType, filePath, stream, size, progressChan, UploadOptions{})
+	return err
+}
+
+func (p *DropboxProvider) StreamUploadChunkedWithOptions(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64, opts UploadOptions) (UploadResult, error) {
 	if resourceType != "files" {
-		return fmt.Errorf("resource type %s not supported by Dropbox", resourceType)
+		return UploadResult{}, fmt.Errorf("resource type %s not supported by Dropbox", resourceType)
 	}
 
 	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
-		return fmt.Errorf("failed to create parent directories: %w", err)
+		return UploadResult{}, fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
 	cleanPath := p.cleanPath(filePath)
@@ -611,16 +623,16 @@ func (p *DropboxProvider) StreamUploadChunked(ctx context.Context, resourceType,
 
 	bytesRead, err := io.ReadFull(stream, buffer)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return err
+		return UploadResult{}, err
 	}
 
 	if bytesRead == 0 {
-		return p.StreamUpload(ctx, resourceType, filePath, bytes.NewReader(nil), 0)
+		return p.StreamUploadWithOptions(ctx, resourceType, filePath, bytes.NewReader(nil), 0, opts)
 	}
 
 	sessionID, err := p.startUploadSession(ctx, buffer[:bytesRead])
 	if err != nil {
-		return fmt.Errorf("failed to start upload session: %w", err)
+		return UploadResult{}, fmt.Errorf("failed to start upload session: %w", err)
 	}
 
 	var offset int64 = int64(bytesRead)
@@ -629,13 +641,13 @@ func (p *DropboxProvider) StreamUploadChunked(ctx context.Context, resourceType,
 	}
 
 	if err == io.EOF || err == io.ErrUnexpectedEOF {
-		return p.finishUploadSession(ctx, sessionID, offset, cleanPath, nil)
+		return UploadResult{}, p.finishUploadSession(ctx, sessionID, offset, cleanPath, nil, opts.Metadata)
 	}
 
 	for {
 		bytesRead, err = io.ReadFull(stream, buffer)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-			return err
+			return UploadResult{}, err
 		}
 
 		if bytesRead == 0 {
@@ -644,7 +656,7 @@ func (p *DropboxProvider) StreamUploadChunked(ctx context.Context, resourceType,
 
 		errAppend := p.appendUploadSessionWithRetry(ctx, sessionID, offset, buffer[:bytesRead])
 		if errAppend != nil {
-			return fmt.Errorf("failed to append chunk at offset %d: %w", offset, errAppend)
+			return UploadResult{}, fmt.Errorf("failed to append chunk at offset %d: %w", offset, errAppend)
 		}
 
 		offset += int64(bytesRead)
@@ -657,7 +669,7 @@ func (p *DropboxProvider) StreamUploadChunked(ctx context.Context, resourceType,
 		}
 	}
 
-	return p.finishUploadSession(ctx, sessionID, offset, cleanPath, nil)
+	return UploadResult{}, p.finishUploadSession(ctx, sessionID, offset, cleanPath, nil, opts.Metadata)
 }
 
 func (p *DropboxProvider) startUploadSession(ctx context.Context, chunk []byte) (string, error) {
@@ -730,7 +742,7 @@ func (p *DropboxProvider) appendUploadSessionWithRetry(ctx context.Context, sess
 	return fmt.Errorf("append session failed, status: %d", resp.StatusCode)
 }
 
-func (p *DropboxProvider) finishUploadSession(ctx context.Context, sessionID string, offset int64, cleanPath string, chunk []byte) error {
+func (p *DropboxProvider) finishUploadSession(ctx context.Context, sessionID string, offset int64, cleanPath string, chunk []byte, meta FileMetadata) error {
 	commitArgs := map[string]interface{}{
 		"path":            cleanPath,
 		"mode":            "overwrite",
@@ -738,7 +750,7 @@ func (p *DropboxProvider) finishUploadSession(ctx context.Context, sessionID str
 		"mute":            false,
 		"strict_conflict": false,
 	}
-	if meta, ok := TransferMetadataFromContext(ctx); ok && !meta.ModifiedTime.IsZero() {
+	if !meta.ModifiedTime.IsZero() {
 		// Dropbox requires client_modified in UTC with second precision and a literal "Z" suffix.
 		// time.RFC3339 would emit "+00:00" which the API rejects.
 		commitArgs["client_modified"] = meta.ModifiedTime.UTC().Format("2006-01-02T15:04:05Z")

@@ -345,8 +345,8 @@ func immichYearMonthFromMetadata(metadata []byte) (string, string) {
 // newProvider creates a provider scoped to a single operation. Providers retain
 // their credentials internally, so retaining them in a shared cache would keep
 // decrypted credentials alive beyond the task that needs them.
-func newProvider(ctx context.Context, providerType, urlStr, username, password string) (storage.StorageProvider, error) {
-	return storage.NewProvider(ctx, providerType, urlStr, username, password)
+func newProvider(ctx context.Context, providerType, urlStr, username, password string, opts ...storage.ProviderOption) (storage.StorageProvider, error) {
+	return storage.NewProvider(ctx, providerType, urlStr, username, password, opts...)
 }
 
 // SetDBConnStr sets the PostgreSQL DSN used to open a dedicated LISTEN
@@ -916,8 +916,17 @@ func applyOAuthTokensToSyncJob(job *db.SyncJob, role string, accessEnc string, r
 // *query* verification must not be mistaken for a corrupt transfer, so we retry
 // before giving up. Returns the last result after the attempts.
 func verifyTargetSize(ctx context.Context, client fileExister, resourceType, path string) (exists bool, size int64, err error) {
+	return verifyTargetSizeByResourceID(ctx, client, resourceType, path, "")
+}
+
+func verifyTargetSizeByResourceID(ctx context.Context, client fileExister, resourceType, path, resourceID string) (exists bool, size int64, err error) {
+	verifier, hasResourceVerifier := client.(storage.TargetResourceVerifier)
 	for attempt := 0; attempt < 3; attempt++ {
-		exists, size, err = client.FileExists(ctx, resourceType, path)
+		if resourceID != "" && hasResourceVerifier {
+			exists, size, err = verifier.FileExistsByResourceID(ctx, resourceType, resourceID)
+		} else {
+			exists, size, err = client.FileExists(ctx, resourceType, path)
+		}
 		if err == nil {
 			return exists, size, nil
 		}

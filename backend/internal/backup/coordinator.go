@@ -1032,19 +1032,23 @@ func (c *Coordinator) defaultProviders(ctx context.Context, job *db.BackupJob) (
 		return nil, nil, err
 	}
 	defer clear(targetBytes)
-	sourceCtx, err := megasecret.WithMegaSession(ctx, job.SourceProvider, job.SourceMegaSessionIDEncrypted.String, job.SourceMegaMasterKeyEncrypted.String, c.encryptionKey)
+	sourceMegaSession, err := megasecret.DecodeProviderMegaSession(job.SourceProvider, job.SourceMegaSessionIDEncrypted.String, job.SourceMegaMasterKeyEncrypted.String, c.encryptionKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	targetCtx, err := megasecret.WithMegaSession(ctx, job.TargetProvider, job.TargetMegaSessionIDEncrypted.String, job.TargetMegaMasterKeyEncrypted.String, c.encryptionKey)
+	defer clear(sourceMegaSession.MasterKey)
+	targetMegaSession, err := megasecret.DecodeProviderMegaSession(job.TargetProvider, job.TargetMegaSessionIDEncrypted.String, job.TargetMegaMasterKeyEncrypted.String, c.encryptionKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	source, err := storage.NewProvider(sourceCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, string(sourceBytes))
+	defer clear(targetMegaSession.MasterKey)
+	source, err := storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, string(sourceBytes), storage.WithProviderMegaSession(sourceMegaSession))
+	clear(sourceMegaSession.MasterKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	target, err := storage.NewProvider(targetCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, string(targetBytes))
+	target, err := storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, string(targetBytes), storage.WithProviderMegaSession(targetMegaSession))
+	clear(targetMegaSession.MasterKey)
 	if err != nil {
 		source.Close()
 		return nil, nil, err

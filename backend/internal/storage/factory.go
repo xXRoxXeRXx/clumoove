@@ -29,6 +29,46 @@ var (
 	ValidProviders           = defaultProviderCatalogue.validProviders()
 )
 
+// ProviderOptions carries explicit session-specific settings for NewProvider.
+type ProviderOptions struct {
+	MegaSession MegaSession
+	Threads     int
+}
+
+// ProviderOption configures a provider created via NewProvider.
+type ProviderOption func(*ProviderOptions)
+
+// WithProviderMegaSession attaches MEGA session material explicitly for
+// provider construction instead of passing secrets via context.Context.
+// Passing an incomplete session (empty ID or MasterKey) is a no-op.
+// The returned option transfers its internal key copy on invocation so NewProvider
+// can zero it immediately after construction.
+func WithProviderMegaSession(session MegaSession) ProviderOption {
+	if session.ID == "" || len(session.MasterKey) == 0 {
+		return func(*ProviderOptions) {}
+	}
+	key := append([]byte(nil), session.MasterKey...)
+	sessionID := session.ID
+	return func(opts *ProviderOptions) {
+		clear(opts.MegaSession.MasterKey)
+		opts.MegaSession = MegaSession{
+			ID:        sessionID,
+			MasterKey: key,
+		}
+		key = nil
+	}
+}
+
+// WithProviderThreads configures concurrency for providers with parallel
+// chunked upload support (such as Nextcloud).
+func WithProviderThreads(threads int) ProviderOption {
+	return func(opts *ProviderOptions) {
+		if threads > 0 {
+			opts.Threads = threads
+		}
+	}
+}
+
 type providerRegistration struct {
 	Type                      string
 	RequiresHost              bool
@@ -46,6 +86,7 @@ type providerRegistration struct {
 	ManagerDownloadByNativeID bool
 	ManagerSingleOp           func(locator, destination ManagerLocator, name string) bool
 	Construct                 func(ctx context.Context, urlStr, username, password string) (StorageProvider, error)
+	ConstructWithOptions      func(ctx context.Context, urlStr, username, password string, opts ProviderOptions) (StorageProvider, error)
 }
 
 type providerCatalogue struct {
@@ -71,7 +112,7 @@ func newProviderCatalogue(entries []providerRegistration) (*providerCatalogue, e
 		if _, exists := byType[entry.Type]; exists {
 			return nil, fmt.Errorf("duplicate provider registration: %q", entry.Type)
 		}
-		if entry.Construct == nil {
+		if entry.Construct == nil && entry.ConstructWithOptions == nil {
 			return nil, fmt.Errorf("provider %q registration requires a constructor", entry.Type)
 		}
 		if len(entry.SupportedResourceTypes) == 0 {
@@ -184,11 +225,19 @@ func (t *catalogueTraits) verificationMode(fallback string) VerificationMode {
 	return c.verificationMode(providerType)
 }
 
-func (c *providerCatalogue) newProvider(ctx context.Context, providerType, urlStr, username, password string) (StorageProvider, error) {
+func (c *providerCatalogue) newProvider(ctx context.Context, providerType, urlStr, username, password string, opts ...ProviderOption) (StorageProvider, error) {
 	entry, exists := c.lookup(providerType)
 	if !exists {
 		return nil, fmt.Errorf("unsupported provider type: %q", providerType)
 	}
+
+	var providerOpts ProviderOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&providerOpts)
+		}
+	}
+	defer clear(providerOpts.MegaSession.MasterKey)
 
 	// URL userinfo is accepted only for host-based providers that use the
 	// explicit username/password fields. Extract and remove it before any
@@ -219,7 +268,15 @@ func (c *providerCatalogue) newProvider(ctx context.Context, providerType, urlSt
 		}
 	}
 
-	provider, err := entry.Construct(ctx, urlStr, username, password)
+	var (
+		provider StorageProvider
+		err      error
+	)
+	if entry.ConstructWithOptions != nil {
+		provider, err = entry.ConstructWithOptions(ctx, urlStr, username, password, providerOpts)
+	} else {
+		provider, err = entry.Construct(ctx, urlStr, username, password)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -313,8 +370,15 @@ var providerCatalogueEntries = []providerRegistration{
 		VerificationMode:         VerificationSizeOnly,
 		ManagerCapabilities:      ManagerCapabilities{Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
 		ManagerPathMutation:      true,
-		Construct: func(_ context.Context, urlStr, username, password string) (StorageProvider, error) {
-			return NewNextcloudProvider(urlStr, username, password)
+		ConstructWithOptions: func(_ context.Context, urlStr, username, password string, opts ProviderOptions) (StorageProvider, error) {
+			p, err := NewNextcloudProvider(urlStr, username, password)
+			if err != nil {
+				return nil, err
+			}
+			if opts.Threads > 0 {
+				p.Threads = opts.Threads
+			}
+			return p, nil
 		},
 	},
 	{
@@ -327,8 +391,15 @@ var providerCatalogueEntries = []providerRegistration{
 		VerificationMode:         VerificationSizeOnly,
 		ManagerCapabilities:      ManagerCapabilities{Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: false},
 		ManagerPathMutation:      true,
-		Construct: func(_ context.Context, urlStr, username, password string) (StorageProvider, error) {
-			return NewOpenCloudProvider(urlStr, username, password)
+		ConstructWithOptions: func(_ context.Context, urlStr, username, password string, opts ProviderOptions) (StorageProvider, error) {
+			p, err := NewOpenCloudProvider(urlStr, username, password)
+			if err != nil {
+				return nil, err
+			}
+			if opts.Threads > 0 {
+				p.Threads = opts.Threads
+			}
+			return p, nil
 		},
 	},
 	{
@@ -524,11 +595,10 @@ var providerCatalogueEntries = []providerRegistration{
 		ManagerSingleOp: func(locator, destination ManagerLocator, _ string) bool {
 			return path.Dir(locator.Path) == path.Clean(destination.Path)
 		},
-		Construct: func(ctx context.Context, _, username, password string) (StorageProvider, error) {
-			// A missing scoped session is normal for a first MEGA connection; the
+		ConstructWithOptions: func(_ context.Context, _, username, password string, opts ProviderOptions) (StorageProvider, error) {
+			// A missing session is normal for a first MEGA connection; the
 			// provider authenticates and establishes one when Connect is called.
-			session, _ := MegaSessionFromContext(ctx)
-			return NewMegaProvider(username, password, session), nil
+			return NewMegaProvider(username, password, opts.MegaSession), nil
 		},
 	},
 }
@@ -578,6 +648,6 @@ func ValidateProviderURL(providerType, urlStr string) error {
 	return defaultProviderCatalogue.validateProviderURL(providerType, urlStr)
 }
 
-func NewProvider(ctx context.Context, providerType, urlStr, username, password string) (StorageProvider, error) {
-	return defaultProviderCatalogue.newProvider(ctx, providerType, urlStr, username, password)
+func NewProvider(ctx context.Context, providerType, urlStr, username, password string, opts ...ProviderOption) (StorageProvider, error) {
+	return defaultProviderCatalogue.newProvider(ctx, providerType, urlStr, username, password, opts...)
 }

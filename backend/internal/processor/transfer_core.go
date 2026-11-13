@@ -21,9 +21,13 @@ type transferSource interface {
 	StreamDownload(ctx context.Context, resourceType, path string) (io.ReadCloser, error)
 }
 
-type transferTarget interface {
+type uploadTarget interface {
 	StreamUpload(ctx context.Context, resourceType, path string, reader io.Reader, size int64) error
 	StreamUploadChunked(ctx context.Context, resourceType, path string, reader io.Reader, size int64, progress chan<- int64) error
+}
+
+type transferTarget interface {
+	uploadTarget
 	fileExister
 }
 
@@ -32,7 +36,6 @@ type transferTarget interface {
 // be exercised with focused stream/existence adapters.
 type transferRequest struct {
 	Context          context.Context
-	UploadContext    context.Context
 	Source           transferSource
 	Target           transferTarget
 	SourceProvider   string
@@ -41,13 +44,12 @@ type transferRequest struct {
 	SourcePath       string
 	TargetPath       string
 	VerificationPath string
-	// VerificationContext is evaluated after upload/finalization, allowing a
-	// provider to expose an upload-created target identity for size checks.
-	VerificationContext func() context.Context
-	FileSize            int64
-	SourceHash          string
-	Throttler           *throttle.MigrationThrottler
-	Progress            chan<- int64
+	TargetResourceID string
+	UploadOptions    storage.UploadOptions
+	FileSize         int64
+	SourceHash       string
+	Throttler        *throttle.MigrationThrottler
+	Progress         chan<- int64
 	// Finalize runs after the complete source stream has been uploaded and
 	// before the destination is size-verified (for example, to promote an
 	// overwrite temporary object).
@@ -61,6 +63,7 @@ type transferResult struct {
 	SourceHasher    hash.Hash
 	TargetAlgorithm string
 	TargetHasher    hash.Hash
+	UploadReceipt   storage.UploadReceipt
 }
 
 func transferSourceHasher(provider, sourceHash string) (string, string, hash.Hash) {
@@ -110,9 +113,22 @@ func transferTargetHasher(provider string) (string, hash.Hash) {
 	}
 }
 
+func streamUploadWithOptions(ctx context.Context, target uploadTarget, resourceType, targetPath string, reader io.Reader, fileSize int64, progress chan<- int64, opts storage.UploadOptions) (storage.UploadResult, error) {
+	if uploader, ok := target.(storage.TransferUploader); ok {
+		if fileSize > chunkedUploadThreshold {
+			return uploader.StreamUploadChunkedWithOptions(ctx, resourceType, targetPath, reader, fileSize, progress, opts)
+		}
+		return uploader.StreamUploadWithOptions(ctx, resourceType, targetPath, reader, fileSize, opts)
+	}
+	if fileSize > chunkedUploadThreshold {
+		return storage.UploadResult{}, target.StreamUploadChunked(ctx, resourceType, targetPath, reader, fileSize, progress)
+	}
+	return storage.UploadResult{}, target.StreamUpload(ctx, resourceType, targetPath, reader, fileSize)
+}
+
 func runTransferCore(req transferRequest) (transferResult, error) {
-	if req.Context == nil || req.UploadContext == nil || req.Source == nil || req.Target == nil {
-		return transferResult{}, fmt.Errorf("transfer core requires contexts and providers")
+	if req.Context == nil || req.Source == nil || req.Target == nil {
+		return transferResult{}, fmt.Errorf("transfer core requires context and providers")
 	}
 	deadline := transferTimeout(req.FileSize)
 	downloadCtx, cancelDownload := context.WithTimeout(req.Context, deadline)
@@ -138,25 +154,20 @@ func runTransferCore(req transferRequest) (transferResult, error) {
 	}
 	reader := newExpectedSizeReader(downloadReader, req.FileSize)
 	hashingReader := io.TeeReader(reader, hashWriter)
-	uploadCtx, cancelUpload := context.WithTimeout(req.UploadContext, deadline)
+	uploadCtx, cancelUpload := context.WithTimeout(req.Context, deadline)
 	defer cancelUpload()
-	if expectedHash != "" {
-		uploadCtx = storage.WithUploadChecksum(uploadCtx, fmt.Sprintf("%s:%s", sourceAlgo, expectedHash))
+	uploadOpts := req.UploadOptions
+	if expectedHash != "" && uploadOpts.Checksum == "" {
+		uploadOpts.Checksum = fmt.Sprintf("%s:%s", sourceAlgo, expectedHash)
 	}
-	if req.FileSize > chunkedUploadThreshold {
-		uploadReader := io.Reader(hashingReader)
-		if req.Throttler != nil {
-			uploadReader = throttle.NewUploadThrottledReader(uploadCtx, uploadReader, req.Throttler)
-		}
-		err = req.Target.StreamUploadChunked(uploadCtx, req.ResourceType, req.TargetPath, uploadReader, req.FileSize, req.Progress)
-	} else {
-		progress := &ProgressReader{Reader: hashingReader, ProgressChan: req.Progress}
-		uploadReader := io.Reader(progress)
-		if req.Throttler != nil {
-			uploadReader = throttle.NewUploadThrottledReader(uploadCtx, uploadReader, req.Throttler)
-		}
-		err = req.Target.StreamUpload(uploadCtx, req.ResourceType, req.TargetPath, uploadReader, req.FileSize)
+	uploadReader := io.Reader(hashingReader)
+	if req.FileSize <= chunkedUploadThreshold {
+		uploadReader = &ProgressReader{Reader: hashingReader, ProgressChan: req.Progress}
 	}
+	if req.Throttler != nil {
+		uploadReader = throttle.NewUploadThrottledReader(uploadCtx, uploadReader, req.Throttler)
+	}
+	uploadResult, err := streamUploadWithOptions(uploadCtx, req.Target, req.ResourceType, req.TargetPath, uploadReader, req.FileSize, req.Progress, uploadOpts)
 	if err != nil {
 		return transferResult{}, fmt.Errorf("upload to target failed: %w", err)
 	}
@@ -173,11 +184,11 @@ func runTransferCore(req transferRequest) (transferResult, error) {
 		if verificationPath == "" {
 			verificationPath = req.TargetPath
 		}
-		verificationCtx := req.Context
-		if req.VerificationContext != nil {
-			verificationCtx = req.VerificationContext()
+		targetResourceID := uploadResult.Receipt.TargetResourceID
+		if targetResourceID == "" {
+			targetResourceID = req.TargetResourceID
 		}
-		exists, size, err := verifyTargetSize(verificationCtx, req.Target, req.ResourceType, verificationPath)
+		exists, size, err := verifyTargetSizeByResourceID(req.Context, req.Target, req.ResourceType, verificationPath, targetResourceID)
 		if err != nil {
 			return transferResult{}, fmt.Errorf("failed to verify target size: %w", err)
 		}
@@ -190,5 +201,6 @@ func runTransferCore(req transferRequest) (transferResult, error) {
 		SourceHasher:    sourceHasher,
 		TargetAlgorithm: targetAlgo,
 		TargetHasher:    targetHasher,
+		UploadReceipt:   uploadResult.Receipt,
 	}, nil
 }

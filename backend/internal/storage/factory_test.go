@@ -527,12 +527,12 @@ func TestNewProviderOAuthProviders(t *testing.T) {
 
 func TestNewProviderMega(t *testing.T) {
 	session := MegaSession{ID: "session-id", MasterKey: []byte{1, 2, 3}}
-	ctx := WithMegaSession(context.Background(), session)
 
-	provider, err := NewProvider(ctx, "mega", "", "user@example.com", "password")
+	provider, err := NewProvider(context.Background(), "mega", "", "user@example.com", "password", WithProviderMegaSession(session))
 	if err != nil {
 		t.Fatalf("NewProvider() error = %v", err)
 	}
+	session.MasterKey[0] = 7
 
 	megaProvider, ok := provider.(*MegaProvider)
 	if !ok {
@@ -543,12 +543,47 @@ func TestNewProviderMega(t *testing.T) {
 	}
 
 	gotSession := megaProvider.Session()
-	if gotSession.ID != session.ID || string(gotSession.MasterKey) != string(session.MasterKey) {
-		t.Errorf("provider session = %+v, want %+v", gotSession, session)
+	if gotSession.ID != session.ID || string(gotSession.MasterKey) != string([]byte{1, 2, 3}) {
+		t.Errorf("provider session = %+v, want %+v", gotSession, MegaSession{ID: "session-id", MasterKey: []byte{1, 2, 3}})
 	}
 	gotSession.MasterKey[0] = 9
 	if megaProvider.Session().MasterKey[0] != 1 {
 		t.Error("Session() returned a mutable reference to the provider session")
+	}
+}
+
+func TestNewProviderThreadsOption(t *testing.T) {
+	provider, err := NewProvider(context.Background(), "nextcloud", "https://1.1.1.1", "user", "pass", WithProviderThreads(12))
+	if err != nil {
+		t.Fatalf("NewProvider() error = %v", err)
+	}
+	defer provider.Close()
+	nc, ok := provider.(*NextcloudProvider)
+	if !ok {
+		t.Fatalf("NewProvider() type = %T, want *NextcloudProvider", provider)
+	}
+	if nc.Threads != 12 {
+		t.Fatalf("NextcloudProvider.Threads = %d, want 12", nc.Threads)
+	}
+
+	ocProvider, err := NewProvider(context.Background(), "opencloud", "https://1.1.1.1", "user", "pass", WithProviderThreads(8))
+	if err != nil {
+		t.Fatalf("NewProvider(opencloud) error = %v", err)
+	}
+	defer ocProvider.Close()
+	oc, ok := ocProvider.(*OpenCloudProvider)
+	if !ok {
+		t.Fatalf("NewProvider(opencloud) type = %T, want *OpenCloudProvider", ocProvider)
+	}
+	if oc.Threads != 8 {
+		t.Fatalf("OpenCloudProvider.Threads = %d, want 8", oc.Threads)
+	}
+
+	var opts ProviderOptions
+	WithProviderMegaSession(MegaSession{ID: "partial-only"})(&opts)
+	WithProviderMegaSession(MegaSession{MasterKey: []byte{1, 2}})(&opts)
+	if opts.MegaSession.ID != "" || len(opts.MegaSession.MasterKey) != 0 {
+		t.Fatalf("incomplete MEGA sessions must be no-op, got %+v", opts.MegaSession)
 	}
 }
 

@@ -36,6 +36,7 @@ type providerPoolSpec struct {
 	username               string
 	password               string // Plaintext for construction only; never fingerprinted or stored by the pool.
 	passwordEncrypted      string
+	megaSession            storage.MegaSession // Plaintext for construction only; never fingerprinted or stored by the pool.
 	megaSessionIDEncrypted string
 	megaMasterKeyEncrypted string
 	threads                int
@@ -60,7 +61,7 @@ type PooledProvider interface {
 }
 
 // ProviderFactoryFunc constructs a pooled provider adapter for transfer workers.
-type ProviderFactoryFunc func(ctx context.Context, providerType, urlStr, username, password string) (PooledProvider, error)
+type ProviderFactoryFunc func(ctx context.Context, providerType, urlStr, username, password string, opts ...storage.ProviderOption) (PooledProvider, error)
 
 type providerPoolEntry struct {
 	client      PooledProvider
@@ -83,8 +84,8 @@ func newProviderPool() *providerPool {
 		entries:       make(map[providerPoolKey]map[string]providerPoolEntry),
 		entityEpochs:  make(map[providerPoolKey]uint64),
 		syncJobEpochs: make(map[string]uint64),
-		factory: func(ctx context.Context, providerType, urlStr, username, password string) (PooledProvider, error) {
-			return newProvider(ctx, providerType, urlStr, username, password)
+		factory: func(ctx context.Context, providerType, urlStr, username, password string, opts ...storage.ProviderOption) (PooledProvider, error) {
+			return newProvider(ctx, providerType, urlStr, username, password, opts...)
 		},
 	}
 }
@@ -111,7 +112,10 @@ func (p *providerPool) get(ctx context.Context, key providerPoolKey, role string
 	}
 	p.mu.Unlock()
 
-	client, err := p.factory(ctx, spec.providerType, spec.url, spec.username, spec.password)
+	client, err := p.factory(ctx, spec.providerType, spec.url, spec.username, spec.password,
+		storage.WithProviderMegaSession(spec.megaSession),
+		storage.WithProviderThreads(spec.threads),
+	)
 	if err != nil {
 		return nil, err
 	}
