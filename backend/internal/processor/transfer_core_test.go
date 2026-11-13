@@ -165,3 +165,57 @@ func TestRecoveryCursorKeepsMigrationAndSyncQueuesIndependent(t *testing.T) {
 }
 
 var _ storage.StorageProvider = (*memoryTransferProvider)(nil)
+var _ transferSource = (storage.StorageProvider)(nil)
+var _ transferTarget = (storage.StorageProvider)(nil)
+
+type streamOnlyTransferSource struct {
+	data []byte
+}
+
+func (s *streamOnlyTransferSource) StreamDownload(_ context.Context, _, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(s.data)), nil
+}
+
+type uploadOnlyTransferTarget struct {
+	files map[string][]byte
+}
+
+func (t *uploadOnlyTransferTarget) StreamUpload(_ context.Context, _, filePath string, stream io.Reader, _ int64) error {
+	data, err := io.ReadAll(stream)
+	if err == nil {
+		t.files[filePath] = data
+	}
+	return err
+}
+
+func (t *uploadOnlyTransferTarget) StreamUploadChunked(ctx context.Context, kind, filePath string, stream io.Reader, size int64, _ chan<- int64) error {
+	return t.StreamUpload(ctx, kind, filePath, stream, size)
+}
+
+func (t *uploadOnlyTransferTarget) FileExists(_ context.Context, _, filePath string) (bool, int64, error) {
+	data, ok := t.files[filePath]
+	return ok, int64(len(data)), nil
+}
+
+func TestRunTransferCoreAcceptsMinimalSourceAndTarget(t *testing.T) {
+	data := []byte("narrow transfer core contract")
+	source := &streamOnlyTransferSource{data: data}
+	target := &uploadOnlyTransferTarget{files: make(map[string][]byte)}
+
+	_, err := runTransferCore(transferRequest{
+		Context:       context.Background(),
+		UploadContext: context.Background(),
+		Source:        source,
+		Target:        target,
+		ResourceType:  "files",
+		SourcePath:    "/source",
+		TargetPath:    "/target",
+		FileSize:      int64(len(data)),
+	})
+	if err != nil {
+		t.Fatalf("runTransferCore() error = %v", err)
+	}
+	if !bytes.Equal(target.files["/target"], data) {
+		t.Fatalf("uploaded bytes = %q, want %q", target.files["/target"], data)
+	}
+}

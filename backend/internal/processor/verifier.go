@@ -172,10 +172,10 @@ type verificationPassConfig struct {
 	Threads int
 	// TargetClient is test-only injection for a connected target. Production
 	// callers leave it nil and construct a scoped provider below.
-	TargetClient storage.StorageProvider
+	TargetClient verificationTarget
 	// NewTargetProvider is test-only injection for constructing a provider that
 	// still needs Connect before verification. Production callers use newProvider.
-	NewTargetProvider func(ctx context.Context, providerType, urlStr, username, password string) (storage.StorageProvider, error)
+	NewTargetProvider func(ctx context.Context, providerType, urlStr, username, password string) (connectableVerificationTarget, error)
 	GetTasks          func(ctx context.Context) ([]*db.Task, error)
 	ReconcileProgress func() error
 	MarkVerified      func(ctx context.Context, task *db.Task, targetHash string) (bool, error)
@@ -185,6 +185,18 @@ type verificationPassConfig struct {
 	// claim. CanWrite reads its result without issuing a DB query.
 	RenewLease func(ctx context.Context) (bool, error)
 	CanWrite   func() bool
+}
+
+type verificationTarget interface {
+	fileExister
+	fileHasher
+	VerificationMode() storage.VerificationMode
+}
+
+type connectableVerificationTarget interface {
+	verificationTarget
+	Connect(ctx context.Context) (bool, error)
+	Close() error
 }
 
 func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPassConfig) {
@@ -310,21 +322,24 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	if targetClient == nil {
 		newTargetProvider := cfg.NewTargetProvider
 		if newTargetProvider == nil {
-			newTargetProvider = newProvider
+			newTargetProvider = func(ctx context.Context, providerType, urlStr, username, password string) (connectableVerificationTarget, error) {
+				return newProvider(ctx, providerType, urlStr, username, password)
+			}
 		}
-		targetClient, err = newTargetProvider(passCtx, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
+		createdTarget, err := newTargetProvider(passCtx, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
 		if err != nil {
 			processorLogf("[VERIFIER] Failed to create target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 			return
 		}
-		defer targetClient.Close()
-		if connected, connectErr := targetClient.Connect(passCtx); !connected {
+		defer createdTarget.Close()
+		if connected, connectErr := createdTarget.Connect(passCtx); !connected {
 			if connectErr == nil {
 				connectErr = errors.New("provider rejected connection")
 			}
 			processorLogf("[VERIFIER] Failed to connect to target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, connectErr)
 			return
 		}
+		targetClient = createdTarget
 	}
 	// This is a provider capability, not a per-file property. Resolve it once
 	// for the entire pass so size-only targets never enter the hash-query path.

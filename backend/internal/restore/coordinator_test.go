@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"io"
 	"testing"
 
 	"backend/internal/backuprepo"
+	"backend/internal/db"
 	"backend/internal/storage"
 )
 
@@ -280,5 +283,159 @@ func TestReconstructAndValidateFullFlow(t *testing.T) {
 	}
 	if !bytes.Equal(reconstructed.Bytes(), blockData) {
 		t.Fatalf("reconstructed = %q, want %q", reconstructed.Bytes(), blockData)
+	}
+}
+
+var _ previewTreeReader = (storage.StorageProvider)(nil)
+var _ directoryRestorer = (storage.StorageProvider)(nil)
+var _ uploadPromoter = (storage.StorageProvider)(nil)
+var _ repositorySource = (storage.StorageProvider)(nil)
+var _ previewTargetClient = (storage.StorageProvider)(nil)
+var _ restoreTarget = (storage.StorageProvider)(nil)
+
+type minimalPreviewReader struct {
+	dirs  map[string][]storage.CloudResource
+	files map[string]bool
+}
+
+func (m *minimalPreviewReader) FileExists(_ context.Context, _, filePath string) (bool, int64, error) {
+	return m.files[filePath], 0, nil
+}
+
+func (m *minimalPreviewReader) GetDirectoryListing(_ context.Context, _, dirPath string) ([]storage.CloudResource, error) {
+	return m.dirs[dirPath], nil
+}
+
+type minimalUploadPromoter struct {
+	files map[string]string
+}
+
+func (m *minimalUploadPromoter) FileExists(_ context.Context, _, filePath string) (bool, int64, error) {
+	_, ok := m.files[filePath]
+	return ok, 0, nil
+}
+
+func (m *minimalUploadPromoter) DeleteFile(_ context.Context, _, filePath string) error {
+	delete(m.files, filePath)
+	return nil
+}
+
+func (m *minimalUploadPromoter) RenameFile(_ context.Context, _, oldPath, newPath string) error {
+	content, ok := m.files[oldPath]
+	if !ok {
+		return errors.New("missing")
+	}
+	delete(m.files, oldPath)
+	m.files[newPath] = content
+	return nil
+}
+
+type minimalDirRestorer struct {
+	existing    map[string]storage.CloudResource
+	createdDirs []string
+}
+
+func (m *minimalDirRestorer) FileExists(_ context.Context, _, filePath string) (bool, int64, error) {
+	_, ok := m.existing[filePath]
+	return ok, 0, nil
+}
+
+func (m *minimalDirRestorer) InspectResource(_ context.Context, _, filePath string) (storage.CloudResource, error) {
+	res, ok := m.existing[filePath]
+	if !ok {
+		return storage.CloudResource{}, errors.New("missing")
+	}
+	return res, nil
+}
+
+func (m *minimalDirRestorer) DeleteFile(_ context.Context, _, filePath string) error {
+	delete(m.existing, filePath)
+	return nil
+}
+
+func (m *minimalDirRestorer) CreateParentDirectories(context.Context, string, string) error {
+	return nil
+}
+
+func (m *minimalDirRestorer) CreateDirectory(_ context.Context, _, dirPath string) error {
+	m.createdDirs = append(m.createdDirs, dirPath)
+	return nil
+}
+
+type metadataOnlyTarget struct {
+	appliedPath string
+}
+
+func (m *metadataOnlyTarget) ApplyMetadata(_ context.Context, _, targetPath string, _ storage.FileMetadata) error {
+	m.appliedPath = targetPath
+	return nil
+}
+
+type minimalRepositorySource struct{}
+
+func (*minimalRepositorySource) Close() error                       { return nil }
+func (*minimalRepositorySource) Connect(context.Context) (bool, error) { return true, nil }
+func (*minimalRepositorySource) StreamDownload(_ context.Context, _, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(nil)), nil
+}
+
+type noopSQLConnector struct{}
+
+func (noopSQLConnector) Connect(context.Context) (driver.Conn, error) { return noopSQLConn{}, nil }
+func (noopSQLConnector) Driver() driver.Driver                        { return nil }
+
+type noopSQLConn struct{}
+
+func (noopSQLConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("unused") }
+func (noopSQLConn) Close() error                        { return nil }
+func (noopSQLConn) Begin() (driver.Tx, error)           { return nil, errors.New("unused") }
+func (noopSQLConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+	return driver.RowsAffected(1), nil
+}
+
+func TestRestoreHelpersAcceptFocusedAdapters(t *testing.T) {
+	var _ repositorySource = (*minimalRepositorySource)(nil)
+
+	tree, err := enumeratePreviewTargetTree(context.Background(), &minimalPreviewReader{
+		files: map[string]bool{"/restore": true},
+		dirs: map[string][]storage.CloudResource{
+			"/restore": {{Path: "/restore/a.txt", Size: 5}},
+		},
+	}, "/restore")
+	if err != nil || tree["/restore/a.txt"].Size != 5 {
+		t.Fatalf("enumeratePreviewTargetTree() = (%+v, %v)", tree, err)
+	}
+
+	promoter := &minimalUploadPromoter{
+		files: map[string]string{"/restore/a.txt": "old", "/restore/a.txt.tmp": "new"},
+	}
+	if err := promoteRestoreUpload(context.Background(), promoter, "/restore/a.txt.tmp", "/restore/a.txt", "/restore/a.txt.bak", true); err != nil {
+		t.Fatalf("promoteRestoreUpload() error = %v", err)
+	}
+	if promoter.files["/restore/a.txt"] != "new" {
+		t.Fatalf("promoted = %q, want new", promoter.files["/restore/a.txt"])
+	}
+
+	testDB := sql.OpenDB(noopSQLConnector{})
+	defer testDB.Close()
+
+	dirRestorer := &minimalDirRestorer{existing: map[string]storage.CloudResource{}}
+	if err := (&Coordinator{db: testDB}).restoreDirectory(context.Background(), dirRestorer, &db.RestoreItem{TargetPath: "/restore/sub"}, "OVERWRITE"); err != nil {
+		t.Fatalf("restoreDirectory() error = %v", err)
+	}
+	if len(dirRestorer.createdDirs) != 1 || dirRestorer.createdDirs[0] != "/restore/sub" {
+		t.Fatalf("createdDirs = %v, want [/restore/sub]", dirRestorer.createdDirs)
+	}
+
+	metaTarget := &metadataOnlyTarget{}
+	item := &db.RestoreItem{
+		TargetPath:     "/restore/a.txt",
+		SourceMetadata: []byte(`{}`),
+	}
+	if err := (&Coordinator{}).applyItemMetadata(context.Background(), metaTarget, item); err != nil {
+		t.Fatalf("applyItemMetadata() error = %v", err)
+	}
+	if metaTarget.appliedPath != "/restore/a.txt" {
+		t.Fatalf("appliedPath = %q, want /restore/a.txt", metaTarget.appliedPath)
 	}
 }

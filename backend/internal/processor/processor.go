@@ -642,6 +642,24 @@ func (p *Processor) Start(ctx context.Context) {
 
 }
 
+type atomicRenameChecker interface {
+	SupportsAtomicRename() bool
+}
+
+type fileDeleter interface {
+	DeleteFile(ctx context.Context, resourceType, path string) error
+}
+
+type fileRenamer interface {
+	RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error
+}
+
+type overwritePromoter interface {
+	fileExister
+	fileDeleter
+	fileRenamer
+}
+
 // useTempThenRename reports whether the processor should use the
 // "upload to <path>.tmp then atomically rename" overwrite pattern for the
 // given target. It is only safe when (a) an overwrite/retry actually requires
@@ -650,7 +668,7 @@ func (p *Processor) Start(ctx context.Context) {
 // name during upload. This includes S3, whose copy-and-delete "rename" would
 // otherwise require deleting an existing object before a potentially failing
 // copy completes.
-func useTempThenRename(target storage.StorageProvider, deleteAfterUpload bool) bool {
+func useTempThenRename(target atomicRenameChecker, deleteAfterUpload bool) bool {
 	return deleteAfterUpload && target.SupportsAtomicRename()
 }
 
@@ -664,7 +682,7 @@ func overwriteBackupPath(targetPath, taskID string) string {
 	return fmt.Sprintf("%s.bak-%s", targetPath, taskID)
 }
 
-func cleanupStagingUpload(ctx context.Context, target storage.StorageProvider, resourceType, uploadPath string) {
+func cleanupStagingUpload(ctx context.Context, target fileDeleter, resourceType, uploadPath string) {
 	if err := target.DeleteFile(ctx, resourceType, uploadPath); err != nil {
 		processorLogf("Warning: failed to clean up staging upload %s: %v", uploadPath, err)
 	}
@@ -676,7 +694,7 @@ func cleanupStagingUpload(ctx context.Context, target storage.StorageProvider, r
 // the temporary upload fails, the original is moved back immediately. A backup
 // is intentionally left in place when its cleanup fails so a transient error
 // can never turn into data loss.
-func promoteOverwrite(ctx context.Context, target storage.StorageProvider, resourceType, targetPath, uploadPath, backupPath string) error {
+func promoteOverwrite(ctx context.Context, target overwritePromoter, resourceType, targetPath, uploadPath, backupPath string) error {
 	exists, _, err := target.FileExists(ctx, resourceType, targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to check target before overwrite promotion: %w", err)
@@ -882,7 +900,7 @@ func applyOAuthTokensToSyncJob(job *db.SyncJob, role string, accessEnc string, r
 // transient errors (Nextcloud 502/503/423/timeout). A transient failure to
 // *query* verification must not be mistaken for a corrupt transfer, so we retry
 // before giving up. Returns the last result after the attempts.
-func verifyTargetSize(ctx context.Context, client storage.StorageProvider, resourceType, path string) (exists bool, size int64, err error) {
+func verifyTargetSize(ctx context.Context, client fileExister, resourceType, path string) (exists bool, size int64, err error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		exists, size, err = client.FileExists(ctx, resourceType, path)
 		if err == nil {

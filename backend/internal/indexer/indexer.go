@@ -24,6 +24,17 @@ import (
 	"backend/internal/storage"
 )
 
+type folderLister interface {
+	GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]storage.CloudResource, error)
+}
+
+type indexSource interface {
+	Close() error
+	Connect(ctx context.Context) (bool, error)
+	InspectResource(ctx context.Context, resourceType, path string) (storage.CloudResource, error)
+	folderLister
+}
+
 // Indexer performs the indexing phase of a migration: it connects to the source,
 // walks the selected paths/calendars/contacts, and creates PENDING tasks in the DB.
 // It is safe to call from both the API (immediate start) and the scheduler (deferred start).
@@ -154,7 +165,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		failMigration(ctx, idx.db, migID, discoveryGeneration, "Failed to decrypt source connection session.")
 		return
 	}
-	sourceClient, err := storage.NewProvider(sourceCtx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
+	sourceClient, err := idx.newSource(sourceCtx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
 	crypto.ZeroString(&sourcePass)
 	if err != nil {
 		// Log the detailed (sanitized) error server-side for diagnostics, but do
@@ -547,6 +558,10 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 	return tokenResp.AccessToken, nil
 }
 
+func (idx *Indexer) newSource(ctx context.Context, providerType, urlStr, username, password string) (indexSource, error) {
+	return storage.NewProvider(ctx, providerType, urlStr, username, password)
+}
+
 const indexFolderListingWorkers = 4
 
 type folderListingResult struct {
@@ -563,15 +578,15 @@ type folderListingResult struct {
 // totals for tasks that were never committed.
 // indexFolder is retained for unit tests of traversal mechanics. Production
 // indexing must use indexFolderClaim with its explicit discovery generation.
-func indexFolder(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID, sourceProvider, targetProvider string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
+func indexFolder(ctx context.Context, database *sql.DB, client folderLister, resourceType string, startPath string, migID, sourceProvider, targetProvider string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
 	return indexFolderWithClaim(ctx, database, client, resourceType, startPath, migID, sourceProvider, targetProvider, totalFiles, totalDirs, totalBytes, indexedPaths, indexErrors, 0, false)
 }
 
-func indexFolderClaim(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID, sourceProvider, targetProvider string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput, discoveryGeneration int64) error {
+func indexFolderClaim(ctx context.Context, database *sql.DB, client folderLister, resourceType string, startPath string, migID, sourceProvider, targetProvider string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput, discoveryGeneration int64) error {
 	return indexFolderWithClaim(ctx, database, client, resourceType, startPath, migID, sourceProvider, targetProvider, totalFiles, totalDirs, totalBytes, indexedPaths, indexErrors, discoveryGeneration, true)
 }
 
-func indexFolderWithClaim(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID, sourceProvider, targetProvider string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput, discoveryGeneration int64, fenced bool) error {
+func indexFolderWithClaim(ctx context.Context, database *sql.DB, client folderLister, resourceType string, startPath string, migID, sourceProvider, targetProvider string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput, discoveryGeneration int64, fenced bool) error {
 	queue := []string{startPath}
 	head := 0
 	visited := make(map[string]bool)
@@ -820,7 +835,7 @@ func isSameOrDescendantPath(candidate, parent string) bool {
 	return strings.HasPrefix(candidate, strings.TrimSuffix(parent, "/")+"/")
 }
 
-func resolveIndexedFileSize(ctx context.Context, provider storage.StorageProvider, resourceType, resourcePath string, resource storage.CloudResource) (int64, error) {
+func resolveIndexedFileSize(ctx context.Context, provider any, resourceType, resourcePath string, resource storage.CloudResource) (int64, error) {
 	if resource.Metadata.CustomProps == nil || resource.Metadata.CustomProps["google_workspace_export"] != "true" {
 		return resource.Size, nil
 	}

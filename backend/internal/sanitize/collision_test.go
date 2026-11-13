@@ -149,3 +149,40 @@ func TestResolveCollision_NoExtension(t *testing.T) {
 		t.Errorf("expected README_2, got %q", resolved)
 	}
 }
+
+type listingOnlyClient struct {
+	files map[string][]storage.CloudResource
+}
+
+func (c *listingOnlyClient) GetDirectoryListing(_ context.Context, _ string, dirPath string) ([]storage.CloudResource, error) {
+	return c.files[dirPath], nil
+}
+
+var _ DirectoryLister = (storage.StorageProvider)(nil)
+
+func TestCollisionHelpersAcceptListingOnlyClient(t *testing.T) {
+	client := &listingOnlyClient{
+		files: map[string][]storage.CloudResource{
+			"/target": {
+				{Path: "/target/Report.pdf", Name: "Report.pdf"},
+				{Path: "/target/report_1.pdf", Name: "report_1.pdf"},
+			},
+		},
+	}
+
+	collision, err := CheckCaseCollision(context.Background(), client, "files", "/target", "report.pdf")
+	if err != nil {
+		t.Fatalf("CheckCaseCollision() error = %v", err)
+	}
+	if collision != "Report.pdf" {
+		t.Fatalf("CheckCaseCollision() = %q, want Report.pdf", collision)
+	}
+
+	resolved, err := ResolveCollision(context.Background(), client, "files", "/target", "report.pdf", "dropbox")
+	if err != nil {
+		t.Fatalf("ResolveCollision() error = %v", err)
+	}
+	if resolved != "report_2.pdf" {
+		t.Fatalf("ResolveCollision() = %q, want report_2.pdf", resolved)
+	}
+}

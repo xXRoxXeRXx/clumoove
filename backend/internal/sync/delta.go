@@ -123,15 +123,27 @@ func calculateDirectoryDelta(
 	return tasks, cleanupCandidates
 }
 
-// cleanupEmptyDirectories removes only directories that are empty when the
-// pass has finished. Candidates are processed bottom-up so a deleted tree can
-// be removed without ever asking a provider to recursively delete a non-empty
-// parent. The returned directories were either removed here or had already
-// disappeared externally and must be removed from the persisted directory map.
+type resourceInspector interface {
+	InspectResource(ctx context.Context, resourceType, path string) (storage.CloudResource, error)
+}
+
+type emptyDirRemover interface {
+	GetDirectoryListing(ctx context.Context, resourceType, path string) ([]storage.CloudResource, error)
+	DeleteFile(ctx context.Context, resourceType, path string) error
+}
+
+type treeReader interface {
+	resourceInspector
+	GetDirectoryListing(ctx context.Context, resourceType, path string) ([]storage.CloudResource, error)
+}
+
+// cleanupEmptyDirectories deletes only directories that became empty after sync
+// file deletions in bottom-up depth order so parents are removed after empty
+// children, returning entries that were deleted or disappeared externally.
 func cleanupEmptyDirectories(
 	ctx context.Context,
 	targetDir string,
-	sourceClient, targetClient storage.StorageProvider,
+	sourceClient, targetClient emptyDirRemover,
 	candidates []directoryCleanupCandidate,
 ) []directoryCleanupCandidate {
 	// directoryCleanupCandidate contains only comparable string fields; this
@@ -383,7 +395,7 @@ type completedTaskOperation struct {
 func reconcileSuccessfulOperations(
 	ctx context.Context,
 	targetDir string,
-	sourceClient, targetClient storage.StorageProvider,
+	sourceClient, targetClient resourceInspector,
 	sourceMap, targetMap map[string]fileState,
 	sourceDirMap, targetDirMap map[string]bool,
 	sourceDirETags, targetDirETags map[string]string,
@@ -488,7 +500,7 @@ func invalidateProtectedPathDirectoryETags(
 // provider listing.
 func (e *Engine) listFiles(
 	ctx context.Context,
-	client storage.StorageProvider,
+	client treeReader,
 	startPaths []string,
 	prevDirETags map[string]string,
 	prevFileStates map[string]fileState,

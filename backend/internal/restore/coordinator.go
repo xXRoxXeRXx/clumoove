@@ -25,6 +25,49 @@ import (
 	"backend/internal/throttle"
 )
 
+type previewTreeReader interface {
+	FileExists(ctx context.Context, resourceType, path string) (bool, int64, error)
+	GetDirectoryListing(ctx context.Context, resourceType, path string) ([]storage.CloudResource, error)
+}
+
+type uploadPromoter interface {
+	FileExists(ctx context.Context, resourceType, path string) (bool, int64, error)
+	DeleteFile(ctx context.Context, resourceType, path string) error
+	RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error
+}
+
+type directoryRestorer interface {
+	FileExists(ctx context.Context, resourceType, path string) (bool, int64, error)
+	InspectResource(ctx context.Context, resourceType, path string) (storage.CloudResource, error)
+	DeleteFile(ctx context.Context, resourceType, path string) error
+	CreateParentDirectories(ctx context.Context, resourceType, path string) error
+	CreateDirectory(ctx context.Context, resourceType, path string) error
+}
+
+type repositorySource interface {
+	Close() error
+	Connect(ctx context.Context) (bool, error)
+	StreamDownload(ctx context.Context, resourceType, path string) (io.ReadCloser, error)
+}
+
+type previewTargetClient interface {
+	Close() error
+	Connect(ctx context.Context) (bool, error)
+	previewTreeReader
+}
+
+type restoreTarget interface {
+	Close() error
+	Connect(ctx context.Context) (bool, error)
+	previewTreeReader
+	directoryRestorer
+	uploadPromoter
+	StreamUpload(ctx context.Context, resourceType, path string, reader io.Reader, size int64) error
+	SupportsAtomicRename() bool
+	VerificationMode() storage.VerificationMode
+	GetFileHash(ctx context.Context, resourceType, path string) (string, error)
+}
+
 type Coordinator struct {
 	db            *sql.DB
 	encryptionKey string
@@ -157,7 +200,7 @@ func (c *Coordinator) previewTarget(ctx context.Context, preview *db.RestorePrev
 	if err != nil {
 		return db.RestorePreviewStats{}, err
 	}
-	target, err := c.newProvider(providerCtx, preview.TargetProvider, preview.TargetURL, preview.TargetUsername, preview.TargetPasswordEncrypted.String)
+	target, err := c.newPreviewTarget(providerCtx, preview.TargetProvider, preview.TargetURL, preview.TargetUsername, preview.TargetPasswordEncrypted.String)
 	if err != nil {
 		return db.RestorePreviewStats{}, err
 	}
@@ -271,7 +314,7 @@ func previewTargetPath(root, relative string) (string, error) {
 	return resolveWithinRoot(root, relative)
 }
 
-func enumeratePreviewTargetTree(ctx context.Context, target storage.StorageProvider, root string) (map[string]storage.CloudResource, error) {
+func enumeratePreviewTargetTree(ctx context.Context, target previewTreeReader, root string) (map[string]storage.CloudResource, error) {
 	result := make(map[string]storage.CloudResource)
 	root = path.Clean(root)
 	if root == "." {
@@ -467,7 +510,7 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 	if err != nil {
 		return fmt.Errorf("load repository mega session: %w", err)
 	}
-	repositoryProvider, err := c.newProvider(repositoryCtx, repository.Provider, repository.URL, repository.Username, repository.PasswordEncrypted)
+	repositoryProvider, err := c.newRepositorySource(repositoryCtx, repository.Provider, repository.URL, repository.Username, repository.PasswordEncrypted)
 	if err != nil {
 		return err
 	}
@@ -476,7 +519,7 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 	if err != nil {
 		return fmt.Errorf("load restore target mega session: %w", err)
 	}
-	targetProvider, err := c.newProvider(targetCtx, targetProviderType, targetURL, targetUsername, targetPasswordEncrypted)
+	targetProvider, err := c.newRestoreTarget(targetCtx, targetProviderType, targetURL, targetUsername, targetPasswordEncrypted)
 	if err != nil {
 		return err
 	}
@@ -684,7 +727,7 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 	return c.applyItemMetadata(ctx, targetProvider, item)
 }
 
-func (c *Coordinator) applyItemMetadata(ctx context.Context, target storage.StorageProvider, item *db.RestoreItem) error {
+func (c *Coordinator) applyItemMetadata(ctx context.Context, target any, item *db.RestoreItem) error {
 	if !item.SourceMTime.Valid && len(item.SourceMetadata) == 0 {
 		return nil
 	}
@@ -780,7 +823,7 @@ func (c *Coordinator) moveRestoreTargetReservation(ctx context.Context, item *db
 // promoteRestoreUpload never deletes an existing target until the staged file
 // is complete. The backup is retained if cleanup fails so a transient provider
 // error cannot turn an overwrite into data loss.
-func promoteRestoreUpload(ctx context.Context, target storage.StorageProvider, uploadPath, targetPath, backupPath string, overwriteExisting bool) error {
+func promoteRestoreUpload(ctx context.Context, target uploadPromoter, uploadPath, targetPath, backupPath string, overwriteExisting bool) error {
 	if overwriteExisting {
 		backupExists, _, err := target.FileExists(ctx, "files", backupPath)
 		if err != nil {
@@ -810,7 +853,7 @@ func promoteRestoreUpload(ctx context.Context, target storage.StorageProvider, u
 	return nil
 }
 
-func (c *Coordinator) restoreDirectory(ctx context.Context, target storage.StorageProvider, item *db.RestoreItem, conflictStrategy string) error {
+func (c *Coordinator) restoreDirectory(ctx context.Context, target directoryRestorer, item *db.RestoreItem, conflictStrategy string) error {
 	exists, _, err := target.FileExists(ctx, "files", item.TargetPath)
 	if err != nil {
 		return err
@@ -886,6 +929,18 @@ func (r *limitedReadCloser) Close() error {
 func trimExtension(name string) string {
 	extension := path.Ext(name)
 	return name[:len(name)-len(extension)]
+}
+
+func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string) (repositorySource, error) {
+	return c.newProvider(ctx, provider, endpoint, username, encryptedPassword)
+}
+
+func (c *Coordinator) newPreviewTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string) (previewTargetClient, error) {
+	return c.newProvider(ctx, provider, endpoint, username, encryptedPassword)
+}
+
+func (c *Coordinator) newRestoreTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string) (restoreTarget, error) {
+	return c.newProvider(ctx, provider, endpoint, username, encryptedPassword)
 }
 
 func (c *Coordinator) newProvider(ctx context.Context, provider, endpoint, username, encryptedPassword string) (storage.StorageProvider, error) {

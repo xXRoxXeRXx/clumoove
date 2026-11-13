@@ -850,3 +850,120 @@ func TestBatchCreateBackupSnapshotItemsAndBlocksContextSingleTransaction(t *test
 		t.Errorf("rollbackCount = %d, want 0", state.rollbackCount)
 	}
 }
+
+var _ SourceProvider = (storage.StorageProvider)(nil)
+var _ TargetProvider = (storage.StorageProvider)(nil)
+var _ sourceScanner = (storage.StorageProvider)(nil)
+var _ fileBackupSource = (storage.StorageProvider)(nil)
+var _ backupTargetLister = (storage.StorageProvider)(nil)
+var _ packVerifierTarget = (storage.StorageProvider)(nil)
+var _ packDeleterTarget = (storage.StorageProvider)(nil)
+var _ packWriterTarget = (storage.StorageProvider)(nil)
+var _ compactionTarget = (storage.StorageProvider)(nil)
+
+type minimalBackupSource struct {
+	resources map[string]storage.CloudResource
+	children  map[string][]storage.CloudResource
+	contents  map[string][]byte
+}
+
+func (s *minimalBackupSource) Close() error                       { return nil }
+func (s *minimalBackupSource) Connect(context.Context) (bool, error) { return true, nil }
+func (s *minimalBackupSource) InspectResource(_ context.Context, _, resourcePath string) (storage.CloudResource, error) {
+	res, ok := s.resources[resourcePath]
+	if !ok {
+		return storage.CloudResource{}, errors.New("not found")
+	}
+	return res, nil
+}
+
+func (s *minimalBackupSource) GetDirectoryListing(_ context.Context, _, dirPath string) ([]storage.CloudResource, error) {
+	return s.children[dirPath], nil
+}
+
+func (s *minimalBackupSource) StreamDownload(_ context.Context, _, filePath string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(s.contents[filePath])), nil
+}
+
+type minimalBackupTarget struct {
+	files map[string][]byte
+	dirs  map[string][]storage.CloudResource
+}
+
+func (t *minimalBackupTarget) Close() error                       { return nil }
+func (t *minimalBackupTarget) Connect(context.Context) (bool, error) { return true, nil }
+func (t *minimalBackupTarget) GetDirectoryListing(_ context.Context, _, dirPath string) ([]storage.CloudResource, error) {
+	return t.dirs[dirPath], nil
+}
+
+func (t *minimalBackupTarget) FileExists(_ context.Context, _, filePath string) (bool, int64, error) {
+	data, ok := t.files[filePath]
+	return ok, int64(len(data)), nil
+}
+
+func (t *minimalBackupTarget) StreamDownload(_ context.Context, _, filePath string) (io.ReadCloser, error) {
+	data, ok := t.files[filePath]
+	if !ok {
+		return nil, errors.New("missing")
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+func (t *minimalBackupTarget) StreamUpload(_ context.Context, _, filePath string, stream io.Reader, _ int64) error {
+	data, err := io.ReadAll(stream)
+	if err == nil {
+		t.files[filePath] = data
+	}
+	return err
+}
+
+func (t *minimalBackupTarget) DeleteFile(_ context.Context, _, filePath string) error {
+	delete(t.files, filePath)
+	return nil
+}
+
+func (t *minimalBackupTarget) CreateParentDirectories(context.Context, string, string) error {
+	return nil
+}
+
+func TestCoordinatorAcceptsMinimalBackupSourceAndTarget(t *testing.T) {
+	src := &minimalBackupSource{
+		resources: map[string]storage.CloudResource{
+			"/docs": {Path: "/docs", IsDir: true},
+		},
+		children: map[string][]storage.CloudResource{
+			"/docs": {{Path: "/docs/note.txt", Size: 4, IsDir: false}},
+		},
+		contents: map[string][]byte{"/docs/note.txt": []byte("note")},
+	}
+	tgt := &minimalBackupTarget{
+		files: map[string][]byte{"/backup/packs/p1.pack": []byte("pack")},
+		dirs:  map[string][]storage.CloudResource{},
+	}
+
+	c := &Coordinator{}
+	c.SetProviderFactory(func(context.Context, *db.BackupJob) (SourceProvider, TargetProvider, error) {
+		return src, tgt, nil
+	})
+	gotSrc, gotTgt, err := c.providers(context.Background(), &db.BackupJob{})
+	if err != nil || gotSrc != src || gotTgt != tgt {
+		t.Fatalf("providers() = (%v, %v, %v)", gotSrc, gotTgt, err)
+	}
+
+	files, _, _, err := scanFiles(context.Background(), src, []string{"/docs"}, "")
+	if err != nil || len(files) != 1 || files[0].sourcePath != "/docs/note.txt" {
+		t.Fatalf("scanFiles() = (%+v, %v), want 1 file", files, err)
+	}
+	if err := ensureDedicatedTarget(context.Background(), tgt, "/backup", "repo-1"); err != nil {
+		t.Fatalf("ensureDedicatedTarget() error = %v", err)
+	}
+	if err := ensureFormat(context.Background(), tgt, "/backup", "repo-1"); err != nil {
+		t.Fatalf("ensureFormat() error = %v", err)
+	}
+	if err := deleteRemotePack(context.Background(), tgt, db.BackupPack{RemotePath: "/backup/packs/p1.pack"}); err != nil {
+		t.Fatalf("deleteRemotePack() error = %v", err)
+	}
+	if _, exists := tgt.files["/backup/packs/p1.pack"]; exists {
+		t.Fatal("deleteRemotePack() left pack in minimalBackupTarget")
+	}
+}

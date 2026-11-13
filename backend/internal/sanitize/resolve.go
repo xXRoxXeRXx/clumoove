@@ -11,7 +11,7 @@ import (
 
 const maxRenameAttempts = 100
 
-func ResolveCollision(ctx context.Context, client storage.StorageProvider, resourceType, dirPath, fileName string, targetProvider string) (string, error) {
+func ResolveCollision(ctx context.Context, client DirectoryLister, resourceType, dirPath, fileName string, targetProvider string) (string, error) {
 	ext := ""
 	base := fileName
 	if idx := strings.LastIndex(fileName, "."); idx > 0 {

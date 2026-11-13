@@ -26,6 +26,20 @@ import (
 	"backend/internal/throttle"
 )
 
+type syncDirCreator interface {
+	sanitize.DirectoryLister
+	CreateDirectory(ctx context.Context, resourceType, path string) error
+}
+
+type syncTransferTarget interface {
+	CreateParentDirectories(ctx context.Context, resourceType, path string) error
+	overwritePromoter
+	transferTarget
+	fileHasher
+	atomicRenameChecker
+	VerificationMode() storage.VerificationMode
+}
+
 // processSyncTask handles execution of a single task belonging to a sync job.
 func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload, threadID int, pool *providerPool) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -138,7 +152,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		// Determine which client and path to create the directory on.
 		// side == "source" means create on source (two-way: target has the dir, source doesn't).
 		// side == "" or "target" means create on target (one-way or two-way source->target).
-		var mkClient storage.StorageProvider
+		var mkClient syncDirCreator
 		var mkPath string
 		var mkProvider string
 		if side == "source" {
@@ -192,26 +206,26 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	// Setup clients depending on action
 	if action == "delete" {
-		sourceClient, err := getSource()
-		if err != nil {
-			return fmt.Errorf("failed to connect to source provider: %w", err)
-		}
-		targetClient, err := getTarget()
-		if err != nil {
-			return fmt.Errorf("failed to connect to target provider: %w", err)
-		}
-
+		var delClient fileDeleter
+		var delPath string
 		if side == "source" {
-			err = sourceClient.DeleteFile(ctx, task.ResourceType, task.FilePath)
+			delClient, err = getSource()
 			if err != nil {
+				return fmt.Errorf("failed to connect to source provider: %w", err)
+			}
+			delPath = task.FilePath
+		} else {
+			delClient, err = getTarget()
+			if err != nil {
+				return fmt.Errorf("failed to connect to target provider: %w", err)
+			}
+			delPath = path.Clean(path.Join(job.TargetDir, task.FilePath))
+		}
+		if err := delClient.DeleteFile(ctx, task.ResourceType, delPath); err != nil {
+			if side == "source" {
 				return fmt.Errorf("failed to delete source file: %w", err)
 			}
-		} else {
-			tgtPath := path.Clean(path.Join(job.TargetDir, task.FilePath))
-			err = targetClient.DeleteFile(ctx, task.ResourceType, tgtPath)
-			if err != nil {
-				return fmt.Errorf("failed to delete target file: %w", err)
-			}
+			return fmt.Errorf("failed to delete target file: %w", err)
 		}
 
 		// Success
@@ -221,7 +235,8 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	}
 
 	if action == "conflict_copy" {
-		targetClient, err := getTarget()
+		var renClient fileRenamer
+		renClient, err = getTarget()
 		if err != nil {
 			return fmt.Errorf("failed to connect to target provider for conflict: %w", err)
 		}
@@ -235,7 +250,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		conflictName := fmt.Sprintf("%s.conflict-%s%s", nameWithoutExt, ts, ext)
 		newPath := path.Clean(path.Join(dir, conflictName))
 
-		err = targetClient.RenameFile(ctx, task.ResourceType, tgtPath, newPath)
+		err = renClient.RenameFile(ctx, task.ResourceType, tgtPath, newPath)
 		if err != nil {
 			return fmt.Errorf("failed to rename target to conflict copy: %w", err)
 		}
@@ -247,7 +262,8 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	}
 
 	// Handle upload and download
-	var srcClient, tgtClient storage.StorageProvider
+	var srcClient inspectingTransferSource
+	var tgtClient syncTransferTarget
 	var srcPath, tgtPath string
 	var srcProvider, tgtProvider string
 

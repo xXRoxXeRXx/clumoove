@@ -77,7 +77,7 @@ func TestVerificationPassConnectsConstructedTargetProvider(t *testing.T) {
 		EntityType: "Migration",
 		EntityID:   "connect-target",
 		Threads:    1,
-		NewTargetProvider: func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+		NewTargetProvider: func(context.Context, string, string, string, string) (connectableVerificationTarget, error) {
 			return provider, nil
 		},
 		GetTasks: func(context.Context) ([]*db.Task, error) {
@@ -690,4 +690,94 @@ func (p *pathTrackingVerifierProvider) GetFileHash(ctx context.Context, resource
 		p.onHash(filePath)
 	}
 	return p.verifierProvider.GetFileHash(ctx, resourceType, filePath)
+}
+
+var _ verificationTarget = (storage.StorageProvider)(nil)
+var _ connectableVerificationTarget = (storage.StorageProvider)(nil)
+
+type minimalVerificationTarget struct {
+	hash string
+	size int64
+	mode storage.VerificationMode
+}
+
+func (m *minimalVerificationTarget) FileExists(_ context.Context, _, _ string) (bool, int64, error) {
+	return true, m.size, nil
+}
+
+func (m *minimalVerificationTarget) GetFileHash(_ context.Context, _, _ string) (string, error) {
+	return m.hash, nil
+}
+
+func (m *minimalVerificationTarget) VerificationMode() storage.VerificationMode {
+	return m.mode
+}
+
+type minimalConnectableVerificationTarget struct {
+	minimalVerificationTarget
+	connected bool
+	closed    bool
+}
+
+func (m *minimalConnectableVerificationTarget) Connect(context.Context) (bool, error) {
+	m.connected = true
+	return true, nil
+}
+
+func (m *minimalConnectableVerificationTarget) Close() error {
+	m.closed = true
+	return nil
+}
+
+func TestVerificationPassAcceptsMinimalTargetAdapters(t *testing.T) {
+	task := &db.Task{
+		ID:           "verify-minimal",
+		ResourceType: "files",
+		FilePath:     "/doc.txt",
+		FileSize:     12,
+		SourceHash:   sql.NullString{String: "SHA1:deadbeef", Valid: true},
+	}
+
+	t.Run("injected TargetClient requires only verification operations", func(t *testing.T) {
+		target := &minimalVerificationTarget{
+			hash: "SHA1:deadbeef",
+			size: 12,
+			mode: storage.VerificationCryptographicHash,
+		}
+		verified := false
+		(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+			EntityType: "Migration", EntityID: "mig-1", TargetProvider: "nextcloud", Threads: 1, TargetClient: target,
+			GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+			ReconcileProgress: func() error { return nil },
+			MarkVerified:      func(context.Context, *db.Task, string) (bool, error) { verified = true; return true, nil },
+			MarkMismatch:      func(context.Context, *db.Task) (bool, error) { t.Fatal("unexpected mismatch"); return true, nil },
+		})
+		if !verified {
+			t.Fatal("expected verification to succeed with minimal TargetClient")
+		}
+	})
+
+	t.Run("NewTargetProvider requires only Connect/Close plus verification operations", func(t *testing.T) {
+		target := &minimalConnectableVerificationTarget{
+			minimalVerificationTarget: minimalVerificationTarget{
+				hash: "SHA1:deadbeef",
+				size: 12,
+				mode: storage.VerificationCryptographicHash,
+			},
+		}
+		verified := false
+		(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+			EntityType: "Migration", EntityID: "mig-2", TargetProvider: "nextcloud", Threads: 1,
+			NewTargetProvider: func(context.Context, string, string, string, string) (connectableVerificationTarget, error) {
+				return target, nil
+			},
+			GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+			ReconcileProgress: func() error { return nil },
+			MarkVerified:      func(context.Context, *db.Task, string) (bool, error) { verified = true; return true, nil },
+			MarkMismatch:      func(context.Context, *db.Task) (bool, error) { t.Fatal("unexpected mismatch"); return true, nil },
+		})
+		if !verified || !target.connected || !target.closed {
+			t.Fatalf("verified=%v connected=%v closed=%v, want all true", verified, target.connected, target.closed)
+		}
+	})
 }

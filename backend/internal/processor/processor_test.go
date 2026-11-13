@@ -965,3 +965,138 @@ func TestApplyOAuthTokensToSyncJob(t *testing.T) {
 		}
 	})
 }
+
+var _ atomicRenameChecker = (storage.StorageProvider)(nil)
+var _ fileDeleter = (storage.StorageProvider)(nil)
+var _ overwritePromoter = (storage.StorageProvider)(nil)
+var _ fileHasher = (storage.StorageProvider)(nil)
+var _ inspectingTransferSource = (storage.StorageProvider)(nil)
+var _ migrationTarget = (storage.StorageProvider)(nil)
+var _ syncDirCreator = (storage.StorageProvider)(nil)
+var _ syncTransferTarget = (storage.StorageProvider)(nil)
+
+type renameCheckerOnly struct {
+	canRename bool
+}
+
+func (r *renameCheckerOnly) SupportsAtomicRename() bool {
+	return r.canRename
+}
+
+type deleterOnly struct {
+	deleted []string
+}
+
+func (d *deleterOnly) DeleteFile(_ context.Context, _, filePath string) error {
+	d.deleted = append(d.deleted, filePath)
+	return nil
+}
+
+type minimalOverwritePromoter struct {
+	files map[string]string
+}
+
+func (p *minimalOverwritePromoter) FileExists(_ context.Context, _, filePath string) (bool, int64, error) {
+	_, ok := p.files[filePath]
+	return ok, 0, nil
+}
+
+func (p *minimalOverwritePromoter) DeleteFile(_ context.Context, _, filePath string) error {
+	delete(p.files, filePath)
+	return nil
+}
+
+func (p *minimalOverwritePromoter) RenameFile(_ context.Context, _, oldPath, newPath string) error {
+	content, ok := p.files[oldPath]
+	if !ok {
+		return errors.New("missing source")
+	}
+	delete(p.files, oldPath)
+	p.files[newPath] = content
+	return nil
+}
+
+type hasherOnly struct {
+	hashes map[string]string
+}
+
+func (h *hasherOnly) GetFileHash(_ context.Context, _, filePath string) (string, error) {
+	return h.hashes[filePath], nil
+}
+
+type readOnlyMigrationSource struct{}
+
+func (*readOnlyMigrationSource) InspectResource(_ context.Context, _, _ string) (storage.CloudResource, error) {
+	return storage.CloudResource{}, nil
+}
+
+func (*readOnlyMigrationSource) StreamDownload(_ context.Context, _, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(nil)), nil
+}
+
+type writeOnlyMigrationTarget struct{}
+
+func (*writeOnlyMigrationTarget) GetDirectoryListing(_ context.Context, _, _ string) ([]storage.CloudResource, error) {
+	return nil, nil
+}
+
+func (*writeOnlyMigrationTarget) CreateDirectory(_ context.Context, _, _ string) error { return nil }
+func (*writeOnlyMigrationTarget) CreateParentDirectories(_ context.Context, _, _ string) error {
+	return nil
+}
+func (*writeOnlyMigrationTarget) FileExists(_ context.Context, _, _ string) (bool, int64, error) {
+	return false, 0, nil
+}
+func (*writeOnlyMigrationTarget) DeleteFile(_ context.Context, _, _ string) error    { return nil }
+func (*writeOnlyMigrationTarget) RenameFile(_ context.Context, _, _, _ string) error { return nil }
+func (*writeOnlyMigrationTarget) StreamUpload(_ context.Context, _, _ string, _ io.Reader, _ int64) error {
+	return nil
+}
+func (*writeOnlyMigrationTarget) StreamUploadChunked(_ context.Context, _, _ string, _ io.Reader, _ int64, _ chan<- int64) error {
+	return nil
+}
+func (*writeOnlyMigrationTarget) GetFileHash(_ context.Context, _, _ string) (string, error) {
+	return "", nil
+}
+func (*writeOnlyMigrationTarget) SupportsAtomicRename() bool { return false }
+func (*writeOnlyMigrationTarget) VerificationMode() storage.VerificationMode {
+	return storage.VerificationNone
+}
+
+func TestMigrationHelpersAcceptFocusedAdapters(t *testing.T) {
+	if !useTempThenRename(&renameCheckerOnly{canRename: true}, true) {
+		t.Fatal("useTempThenRename() = false for rename-capable adapter")
+	}
+	if useTempThenRename(&renameCheckerOnly{canRename: false}, true) {
+		t.Fatal("useTempThenRename() = true for non-rename adapter")
+	}
+
+	deleter := &deleterOnly{}
+	cleanupStagingUpload(context.Background(), deleter, "files", "/staging.tmp")
+	if len(deleter.deleted) != 1 || deleter.deleted[0] != "/staging.tmp" {
+		t.Fatalf("deleted = %v, want [/staging.tmp]", deleter.deleted)
+	}
+
+	promoter := &minimalOverwritePromoter{
+		files: map[string]string{"/dest.txt": "old", "/dest.txt.tmp": "new"},
+	}
+	if err := promoteOverwrite(context.Background(), promoter, "files", "/dest.txt", "/dest.txt.tmp", "/dest.txt.bak"); err != nil {
+		t.Fatalf("promoteOverwrite() error = %v", err)
+	}
+	if promoter.files["/dest.txt"] != "new" {
+		t.Fatalf("promoted content = %q, want new", promoter.files["/dest.txt"])
+	}
+
+	task := &db.Task{SourceHash: sql.NullString{String: "MD5:abc123", Valid: true}}
+	if !tryInlineHashVerify(context.Background(), task, &hasherOnly{hashes: map[string]string{"/dest.txt": "MD5:abc123"}}, "files", "/dest.txt") {
+		t.Fatal("tryInlineHashVerify() = false for matching hasher adapter")
+	}
+
+	var src inspectingTransferSource = &readOnlyMigrationSource{}
+	var tgt migrationTarget = &writeOnlyMigrationTarget{}
+	var _ syncDirCreator = tgt
+	var _ syncTransferTarget = tgt
+	var _ = func(p *Processor) {
+		_ = p.executeMigrationTransfer(context.Background(), nil, nil, nil, src, tgt, nil)
+	}
+}

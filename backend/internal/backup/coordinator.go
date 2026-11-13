@@ -30,7 +30,59 @@ import (
 
 var errVerifyMoreWork = errors.New("repository check has more bounded work")
 
-type ProviderFactoryFunc func(ctx context.Context, job *db.BackupJob) (storage.StorageProvider, storage.StorageProvider, error)
+// SourceProvider is the read-only storage contract required from a backup source.
+type SourceProvider interface {
+	Close() error
+	Connect(ctx context.Context) (bool, error)
+	sourceScanner
+	StreamDownload(ctx context.Context, resourceType, path string) (io.ReadCloser, error)
+}
+
+// TargetProvider is the storage contract required from a backup repository target.
+type TargetProvider interface {
+	Close() error
+	Connect(ctx context.Context) (bool, error)
+	backupTargetLister
+	compactionTarget
+}
+
+type sourceScanner interface {
+	InspectResource(ctx context.Context, resourceType, path string) (storage.CloudResource, error)
+	GetDirectoryListing(ctx context.Context, resourceType, path string) ([]storage.CloudResource, error)
+}
+
+type fileBackupSource interface {
+	InspectResource(ctx context.Context, resourceType, path string) (storage.CloudResource, error)
+	StreamDownload(ctx context.Context, resourceType, path string) (io.ReadCloser, error)
+}
+
+type backupTargetLister interface {
+	GetDirectoryListing(ctx context.Context, resourceType, path string) ([]storage.CloudResource, error)
+}
+
+type packVerifierTarget interface {
+	FileExists(ctx context.Context, resourceType, path string) (bool, int64, error)
+	StreamDownload(ctx context.Context, resourceType, path string) (io.ReadCloser, error)
+}
+
+type packDeleterTarget interface {
+	FileExists(ctx context.Context, resourceType, path string) (bool, int64, error)
+	DeleteFile(ctx context.Context, resourceType, path string) error
+}
+
+type packWriterTarget interface {
+	CreateParentDirectories(ctx context.Context, resourceType, path string) error
+	StreamUpload(ctx context.Context, resourceType, path string, reader io.Reader, size int64) error
+	packVerifierTarget
+}
+
+type compactionTarget interface {
+	packWriterTarget
+	DeleteFile(ctx context.Context, resourceType, path string) error
+}
+
+// ProviderFactoryFunc constructs the source and target contracts for a backup job run.
+type ProviderFactoryFunc func(ctx context.Context, job *db.BackupJob) (SourceProvider, TargetProvider, error)
 
 // Coordinator owns only backup worker execution. Its pack semaphore is process
 // scoped, preventing independently claimed jobs from exhausting memory/network.
@@ -214,7 +266,7 @@ func (c *Coordinator) executeMaintenance(ctx context.Context, maintenance *db.Ba
 	}
 }
 
-func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance *db.BackupMaintenance, job *db.BackupJob, target storage.StorageProvider) error {
+func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance *db.BackupMaintenance, job *db.BackupJob, target packVerifierTarget) error {
 	if maintenance.VerifyMode.String != db.BackupVerifyMetadata && maintenance.VerifyMode.String != db.BackupVerifyFull && maintenance.VerifyMode.String != db.BackupVerifyBudgeted {
 		return errors.New("invalid repository check mode")
 	}
@@ -340,7 +392,7 @@ func isRetryableVerifyReadError(err error) bool {
 	return errors.As(err, &networkErr)
 }
 
-func deleteRemotePack(ctx context.Context, target storage.StorageProvider, pack db.BackupPack) error {
+func deleteRemotePack(ctx context.Context, target packDeleterTarget, pack db.BackupPack) error {
 	exists, _, err := target.FileExists(ctx, "files", pack.RemotePath)
 	if err != nil {
 		return err
@@ -351,7 +403,7 @@ func deleteRemotePack(ctx context.Context, target storage.StorageProvider, pack 
 	return nil
 }
 
-func (c *Coordinator) applyRetention(ctx context.Context, job *db.BackupJob, target storage.StorageProvider) error {
+func (c *Coordinator) applyRetention(ctx context.Context, job *db.BackupJob, target packDeleterTarget) error {
 	if err := db.ExpireBackupSnapshotsContext(ctx, c.db, job.ID, job.RetentionCount); err != nil {
 		return err
 	}
@@ -382,7 +434,7 @@ func (c *Coordinator) applyRetention(ctx context.Context, job *db.BackupJob, tar
 	return nil
 }
 
-func (c *Coordinator) compactOnePack(ctx context.Context, job *db.BackupJob, target storage.StorageProvider) error {
+func (c *Coordinator) compactOnePack(ctx context.Context, job *db.BackupJob, target compactionTarget) error {
 	pack, err := db.FindBackupCompactionCandidateContext(ctx, c.db, job.ID)
 	if err != nil || pack == nil {
 		return err
@@ -487,7 +539,7 @@ func (c *Coordinator) compactOnePack(ctx context.Context, job *db.BackupJob, tar
 	return nil
 }
 
-func (c *Coordinator) deleteRepository(ctx context.Context, maintenance *db.BackupMaintenance, job *db.BackupJob, target storage.StorageProvider) error {
+func (c *Coordinator) deleteRepository(ctx context.Context, maintenance *db.BackupMaintenance, job *db.BackupJob, target packDeleterTarget) error {
 	packs, err := db.ListBackupPacksForDeletionContext(ctx, c.db, job.ID, 1000)
 	if err != nil {
 		return err
@@ -843,7 +895,7 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 // verifySnapshotSample checks a cryptographically selected subset of packs
 // before publication. Each selected pack is fully parsed, which validates its
 // framing, pack ID, and every block without requiring range-read support.
-func (c *Coordinator) verifySnapshotSample(ctx context.Context, job *db.BackupJob, snapshotID string, target storage.StorageProvider) error {
+func (c *Coordinator) verifySnapshotSample(ctx context.Context, job *db.BackupJob, snapshotID string, target packVerifierTarget) error {
 	packs, err := db.ListBackupSnapshotPacksContext(ctx, c.db, job.ID, snapshotID)
 	if err != nil {
 		return err
@@ -930,7 +982,7 @@ func (c *Coordinator) heartbeatRun(ctx context.Context, job *db.BackupJob, run *
 	}
 }
 
-func ensureDedicatedTarget(ctx context.Context, target storage.StorageProvider, targetDir, repositoryID string) error {
+func ensureDedicatedTarget(ctx context.Context, target backupTargetLister, targetDir, repositoryID string) error {
 	entries, err := target.GetDirectoryListing(ctx, "files", targetDir)
 	if err != nil {
 		return err
@@ -956,14 +1008,14 @@ func ensureDedicatedTarget(ctx context.Context, target storage.StorageProvider, 
 	return nil
 }
 
-func (c *Coordinator) providers(ctx context.Context, job *db.BackupJob) (storage.StorageProvider, storage.StorageProvider, error) {
+func (c *Coordinator) providers(ctx context.Context, job *db.BackupJob) (SourceProvider, TargetProvider, error) {
 	if c.providerFactory != nil {
 		return c.providerFactory(ctx, job)
 	}
 	return c.defaultProviders(ctx, job)
 }
 
-func (c *Coordinator) defaultProviders(ctx context.Context, job *db.BackupJob) (storage.StorageProvider, storage.StorageProvider, error) {
+func (c *Coordinator) defaultProviders(ctx context.Context, job *db.BackupJob) (SourceProvider, TargetProvider, error) {
 	if err := c.ensureFreshOAuthToken(ctx, job, "source"); err != nil {
 		return nil, nil, err
 	}
@@ -1050,7 +1102,7 @@ func (c *Coordinator) ensureFreshOAuthToken(ctx context.Context, job *db.BackupJ
 	return nil
 }
 
-func (c *Coordinator) backupFile(ctx context.Context, job *db.BackupJob, source storage.StorageProvider, file scannedFile, stats *runStats, builder *packBuilder) (pendingFile, bool, error) {
+func (c *Coordinator) backupFile(ctx context.Context, job *db.BackupJob, source fileBackupSource, file scannedFile, stats *runStats, builder *packBuilder) (pendingFile, bool, error) {
 	// A file that changes during both attempts is deliberately omitted, rather
 	// than publishing content whose recorded metadata is no longer truthful.
 	for attempt := 0; attempt < 2; attempt++ {
@@ -1121,14 +1173,14 @@ func sameSource(file scannedFile, resource storage.CloudResource) bool {
 type packBuilder struct {
 	coordinator *Coordinator
 	job         *db.BackupJob
-	target      storage.StorageProvider
+	target      packWriterTarget
 	entries     []backuprepo.Entry
 	encodedSize int64
 	ids         map[string]string
 	pending     map[string]struct{}
 }
 
-func newPackBuilder(coordinator *Coordinator, job *db.BackupJob, target storage.StorageProvider) *packBuilder {
+func newPackBuilder(coordinator *Coordinator, job *db.BackupJob, target packWriterTarget) *packBuilder {
 	return &packBuilder{
 		coordinator: coordinator,
 		job:         job,
@@ -1229,7 +1281,7 @@ func (b *packBuilder) flush(ctx context.Context) error {
 	return nil
 }
 
-func ensureFormat(ctx context.Context, target storage.StorageProvider, root, repositoryID string) error {
+func ensureFormat(ctx context.Context, target packWriterTarget, root, repositoryID string) error {
 	format := fmt.Sprintf("{\"repository_id\":%q,\"format_version\":1,\"block_size\":4194304,\"target_pack_size\":67108864,\"compression\":\"none\"}\n", repositoryID)
 	formatPath, err := repositoryPath(root, "format-v1.json")
 	if err != nil {
@@ -1260,7 +1312,7 @@ func ensureFormat(ctx context.Context, target storage.StorageProvider, root, rep
 	return nil
 }
 
-func scanFiles(ctx context.Context, source storage.StorageProvider, selected []string, excludedRoot string) ([]scannedFile, []scannedDirectory, runStats, error) {
+func scanFiles(ctx context.Context, source sourceScanner, selected []string, excludedRoot string) ([]scannedFile, []scannedDirectory, runStats, error) {
 	files := make([]scannedFile, 0)
 	directories := make([]scannedDirectory, 0)
 	seen := make(map[string]struct{})

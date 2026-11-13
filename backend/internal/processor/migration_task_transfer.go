@@ -15,15 +15,34 @@ import (
 	"backend/internal/throttle"
 )
 
+type inspectingTransferSource interface {
+	InspectResource(ctx context.Context, resourceType, path string) (storage.CloudResource, error)
+	transferSource
+}
+
+type migrationTarget interface {
+	syncDirCreator
+	syncTransferTarget
+}
+
 // executeMigrationTransfer owns the destination preparation, provider transfer,
 // integrity bookkeeping for one claimed task. Terminal persistence belongs to
 // the outcome stage.
-func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context.CancelFunc, mig *db.Migration, task *db.Task, sourceClient storage.StorageProvider, targetClient storage.StorageProvider, migrationThrottler *throttle.MigrationThrottler) error {
+func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context.CancelFunc, mig *db.Migration, task *db.Task, sourceClient inspectingTransferSource, targetClient migrationTarget, migrationThrottler *throttle.MigrationThrottler) error {
 	// Update task status to RUNNING in DB.
 	task.Status = "RUNNING"
 	if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
 		processorLogf("[Worker %s] Failed to mark task %s RUNNING: %v", p.workerID, task.ID, err)
 		return fmt.Errorf("failed to mark task running: %w", err)
+	}
+
+	var moveDeleter fileDeleter
+	if fileManagerTransferOperation(mig.PickerSessionID) == "move" && task.ResourceType == "files" {
+		deleter, ok := sourceClient.(fileDeleter)
+		if !ok {
+			return fmt.Errorf("%w: source provider does not support deleting files after move", storage.ErrPermanentTransfer)
+		}
+		moveDeleter = deleter
 	}
 
 	// Skip read-only system or app-generated calendar/contact collections
@@ -310,8 +329,8 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 	// source until the destination stream has completed successfully. Directory
 	// entries are intentionally not removed here: their content may still be
 	// queued and an empty directory is safer than a partially removed tree.
-	if fileManagerTransferOperation(mig.PickerSessionID) == "move" && task.ResourceType == "files" {
-		if err := sourceClient.DeleteFile(ctx, task.ResourceType, task.FilePath); err != nil {
+	if moveDeleter != nil {
+		if err := moveDeleter.DeleteFile(ctx, task.ResourceType, task.FilePath); err != nil {
 			return fmt.Errorf("delete source after file-manager move: %w", err)
 		}
 	}

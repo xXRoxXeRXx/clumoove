@@ -13,14 +13,28 @@ import (
 	"backend/internal/throttle"
 )
 
+type fileExister interface {
+	FileExists(ctx context.Context, resourceType, path string) (bool, int64, error)
+}
+
+type transferSource interface {
+	StreamDownload(ctx context.Context, resourceType, path string) (io.ReadCloser, error)
+}
+
+type transferTarget interface {
+	StreamUpload(ctx context.Context, resourceType, path string, reader io.Reader, size int64) error
+	StreamUploadChunked(ctx context.Context, resourceType, path string, reader io.Reader, size int64, progress chan<- int64) error
+	fileExister
+}
+
 // transferRequest contains the provider-facing part of a file transfer. It is
 // intentionally independent of task persistence and queue lifecycle so it can
-// be exercised with in-memory StorageProvider implementations.
+// be exercised with focused stream/existence adapters.
 type transferRequest struct {
 	Context          context.Context
 	UploadContext    context.Context
-	Source           storage.StorageProvider
-	Target           storage.StorageProvider
+	Source           transferSource
+	Target           transferTarget
 	SourceProvider   string
 	TargetProvider   string
 	ResourceType     string

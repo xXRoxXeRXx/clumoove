@@ -648,3 +648,30 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+type listingOnlySource struct {
+	listing []storage.CloudResource
+}
+
+func (s listingOnlySource) GetDirectoryListing(context.Context, string, string) ([]storage.CloudResource, error) {
+	return s.listing, nil
+}
+
+var (
+	_ folderLister = (storage.StorageProvider)(nil)
+	_ indexSource  = (storage.StorageProvider)(nil)
+)
+
+func TestIndexFolderAcceptsListingOnlySource(t *testing.T) {
+	database, _ := newBatchTestDB(t, false)
+	files, dirs, bytes := 0, 0, int64(0)
+	err := indexFolder(context.Background(), database, listingOnlySource{listing: []storage.CloudResource{
+		{Path: "/only-listed.txt", Name: "only-listed.txt", Size: 19},
+	}}, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
+	if err != nil {
+		t.Fatalf("indexFolder() error = %v", err)
+	}
+	if files != 1 || dirs != 0 || bytes != 19 {
+		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want files:1 dirs:0 bytes:19", files, dirs, bytes)
+	}
+}

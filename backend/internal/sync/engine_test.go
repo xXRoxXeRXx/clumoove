@@ -13,10 +13,8 @@ import (
 	"backend/internal/storage"
 )
 
-// listingTestProvider embeds the full provider contract and only implements
-// the listing calls exercised by listFiles.
+// listingTestProvider implements only the listing calls exercised by listFiles.
 type listingTestProvider struct {
-	storage.StorageProvider
 	inspect func(path string) (storage.CloudResource, error)
 	list    func(path string) ([]storage.CloudResource, error)
 }
@@ -30,7 +28,6 @@ func (p listingTestProvider) GetDirectoryListing(_ context.Context, _ string, di
 }
 
 type directoryCleanupTestProvider struct {
-	storage.StorageProvider
 	list   func(path string) ([]storage.CloudResource, error)
 	delete func(path string) error
 }
@@ -1025,5 +1022,52 @@ func TestSrcRelTargetDirETagsAreSourceRelative(t *testing.T) {
 	}
 	if _, ok := srcRelTargetDirETags["/backup"]; ok {
 		t.Errorf("raw target path \"/backup\" must not appear in srcRelTargetDirETags")
+	}
+}
+
+var _ treeReader = (storage.StorageProvider)(nil)
+var _ resourceInspector = (storage.StorageProvider)(nil)
+var _ emptyDirRemover = (storage.StorageProvider)(nil)
+
+type inspectOnlySyncClient struct {
+	resources map[string]storage.CloudResource
+}
+
+func (c inspectOnlySyncClient) InspectResource(_ context.Context, _, resourcePath string) (storage.CloudResource, error) {
+	res, ok := c.resources[resourcePath]
+	if !ok {
+		return storage.CloudResource{}, errors.New("missing")
+	}
+	return res, nil
+}
+
+func TestReconcileSuccessfulOperationsAcceptsInspectOnlyClients(t *testing.T) {
+	src := inspectOnlySyncClient{resources: map[string]storage.CloudResource{}}
+	tgt := inspectOnlySyncClient{resources: map[string]storage.CloudResource{
+		"/target/file.txt": {
+			Path:         "/target/file.txt",
+			Size:         42,
+			LastModified: time.Unix(1700000000, 0).UTC(),
+		},
+	}}
+	sourceMap := map[string]fileState{}
+	targetMap := map[string]fileState{}
+	protected := map[string]bool{}
+	reconcileSuccessfulOperations(
+		context.Background(),
+		"/target",
+		src,
+		tgt,
+		sourceMap,
+		targetMap,
+		map[string]bool{},
+		map[string]bool{},
+		map[string]string{},
+		map[string]string{},
+		[]completedTaskOperation{{action: "upload", filePath: "/file.txt"}},
+		protected,
+	)
+	if targetMap["/file.txt"].Size != 42 {
+		t.Fatalf("reconciled target size = %d, want 42", targetMap["/file.txt"].Size)
 	}
 }

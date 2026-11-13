@@ -9,10 +9,14 @@ import (
 	"backend/internal/storage"
 )
 
+type fileHasher interface {
+	GetFileHash(ctx context.Context, resourceType, path string) (string, error)
+}
+
 // tryInlineHashVerify attempts an immediate cryptographic checksum verification
 // directly after an upload using the existing connected target provider client.
 // Returns true if verification succeeded and updates task.ChecksumVerified and task.TargetHash.
-func tryInlineHashVerify(ctx context.Context, task *db.Task, targetClient storage.StorageProvider, resourceType, targetPath string) bool {
+func tryInlineHashVerify(ctx context.Context, task *db.Task, targetClient fileHasher, resourceType, targetPath string) bool {
 	verifyCtx, verifyCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer verifyCancel()
 
