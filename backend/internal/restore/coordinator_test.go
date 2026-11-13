@@ -289,9 +289,9 @@ func TestReconstructAndValidateFullFlow(t *testing.T) {
 var _ previewTreeReader = (storage.StorageProvider)(nil)
 var _ directoryRestorer = (storage.StorageProvider)(nil)
 var _ uploadPromoter = (storage.StorageProvider)(nil)
-var _ repositorySource = (storage.StorageProvider)(nil)
-var _ previewTargetClient = (storage.StorageProvider)(nil)
-var _ restoreTarget = (storage.StorageProvider)(nil)
+var _ RepositorySource = (storage.StorageProvider)(nil)
+var _ PreviewTargetClient = (storage.StorageProvider)(nil)
+var _ RestoreTarget = (storage.StorageProvider)(nil)
 
 type minimalPreviewReader struct {
 	dirs  map[string][]storage.CloudResource
@@ -394,7 +394,7 @@ func (noopSQLConn) ExecContext(context.Context, string, []driver.NamedValue) (dr
 }
 
 func TestRestoreHelpersAcceptFocusedAdapters(t *testing.T) {
-	var _ repositorySource = (*minimalRepositorySource)(nil)
+	var _ RepositorySource = (*minimalRepositorySource)(nil)
 
 	tree, err := enumeratePreviewTargetTree(context.Background(), &minimalPreviewReader{
 		files: map[string]bool{"/restore": true},
@@ -438,4 +438,100 @@ func TestRestoreHelpersAcceptFocusedAdapters(t *testing.T) {
 	if metaTarget.appliedPath != "/restore/a.txt" {
 		t.Fatalf("appliedPath = %q, want /restore/a.txt", metaTarget.appliedPath)
 	}
+}
+
+type minimalWorkflowPreviewTarget struct {
+	minimalPreviewReader
+	connected bool
+	closed    bool
+}
+
+func (m *minimalWorkflowPreviewTarget) Close() error {
+	m.closed = true
+	return nil
+}
+
+func (m *minimalWorkflowPreviewTarget) Connect(context.Context) (bool, error) {
+	m.connected = true
+	return true, nil
+}
+
+type minimalWorkflowRestoreTarget struct{}
+
+func (*minimalWorkflowRestoreTarget) Close() error                                         { return nil }
+func (*minimalWorkflowRestoreTarget) Connect(context.Context) (bool, error)                { return true, nil }
+func (*minimalWorkflowRestoreTarget) FileExists(context.Context, string, string) (bool, int64, error) {
+	return false, 0, nil
+}
+func (*minimalWorkflowRestoreTarget) GetDirectoryListing(context.Context, string, string) ([]storage.CloudResource, error) {
+	return nil, nil
+}
+func (*minimalWorkflowRestoreTarget) InspectResource(context.Context, string, string) (storage.CloudResource, error) {
+	return storage.CloudResource{}, nil
+}
+func (*minimalWorkflowRestoreTarget) DeleteFile(context.Context, string, string) error { return nil }
+func (*minimalWorkflowRestoreTarget) CreateParentDirectories(context.Context, string, string) error {
+	return nil
+}
+func (*minimalWorkflowRestoreTarget) CreateDirectory(context.Context, string, string) error {
+	return nil
+}
+func (*minimalWorkflowRestoreTarget) RenameFile(context.Context, string, string, string) error {
+	return nil
+}
+func (*minimalWorkflowRestoreTarget) StreamUpload(context.Context, string, string, io.Reader, int64) error {
+	return nil
+}
+func (*minimalWorkflowRestoreTarget) SupportsAtomicRename() bool               { return false }
+func (*minimalWorkflowRestoreTarget) VerificationMode() storage.VerificationMode { return storage.VerificationNone }
+func (*minimalWorkflowRestoreTarget) GetFileHash(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
+func TestRestoreCoordinatorFactoriesAcceptMinimalAdapters(t *testing.T) {
+	c := &Coordinator{}
+	previewClient := &minimalWorkflowPreviewTarget{
+		minimalPreviewReader: minimalPreviewReader{
+			files: map[string]bool{"/restore": true},
+			dirs: map[string][]storage.CloudResource{
+				"/restore": {{Path: "/restore/a.txt", Size: 10}},
+			},
+		},
+	}
+	c.SetPreviewTargetFactory(func(context.Context, string, string, string, string) (PreviewTargetClient, error) {
+		return previewClient, nil
+	})
+	c.SetRepositorySourceFactory(func(context.Context, string, string, string, string) (RepositorySource, error) {
+		return &minimalRepositorySource{}, nil
+	})
+	c.SetRestoreTargetFactory(func(context.Context, string, string, string, string) (RestoreTarget, error) {
+		return &minimalWorkflowRestoreTarget{}, nil
+	})
+
+	stats, err := c.previewTargetWithItems(context.Background(), &db.RestorePreview{
+		TargetProvider:          "webdav",
+		TargetRoot:              "/restore",
+		ConflictStrategy:        "OVERWRITE",
+		TargetPasswordEncrypted: sql.NullString{String: "dummy", Valid: true},
+	}, []db.RestorePreviewItem{
+		{RelativePath: "a.txt", SizeBytes: 10, State: "AVAILABLE"},
+	})
+	if err != nil {
+		t.Fatalf("previewTargetWithItems() error = %v", err)
+	}
+	if !previewClient.connected || !previewClient.closed || stats.Files != 1 || stats.ExistingFiles != 1 {
+		t.Fatalf("previewTargetWithItems() stats=%+v connected=%v closed=%v", stats, previewClient.connected, previewClient.closed)
+	}
+
+	repoClient, err := c.newRepositorySource(context.Background(), "s3", "https://repo.test", "u", "")
+	if err != nil {
+		t.Fatalf("newRepositorySource() error = %v", err)
+	}
+	_ = repoClient.Close()
+
+	tgtClient, err := c.newRestoreTarget(context.Background(), "nextcloud", "https://target.test", "u", "")
+	if err != nil {
+		t.Fatalf("newRestoreTarget() error = %v", err)
+	}
+	_ = tgtClient.Close()
 }

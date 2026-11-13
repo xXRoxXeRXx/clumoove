@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sync"
 
 	"backend/internal/storage"
@@ -52,8 +53,17 @@ func (s providerPoolSpec) fingerprint() string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
+// PooledProvider is the lifecycle contract required by the worker provider pool.
+type PooledProvider interface {
+	Connect(ctx context.Context) (bool, error)
+	Close() error
+}
+
+// ProviderFactoryFunc constructs a pooled provider adapter for transfer workers.
+type ProviderFactoryFunc func(ctx context.Context, providerType, urlStr, username, password string) (PooledProvider, error)
+
 type providerPoolEntry struct {
-	client      storage.StorageProvider
+	client      PooledProvider
 	fingerprint string
 }
 
@@ -65,7 +75,7 @@ type providerPool struct {
 	entityEpochs  map[providerPoolKey]uint64
 	syncJobEpochs map[string]uint64
 	closed        bool
-	factory       func(context.Context, string, string, string, string) (storage.StorageProvider, error)
+	factory       ProviderFactoryFunc
 }
 
 func newProviderPool() *providerPool {
@@ -73,11 +83,13 @@ func newProviderPool() *providerPool {
 		entries:       make(map[providerPoolKey]map[string]providerPoolEntry),
 		entityEpochs:  make(map[providerPoolKey]uint64),
 		syncJobEpochs: make(map[string]uint64),
-		factory:       newProvider,
+		factory: func(ctx context.Context, providerType, urlStr, username, password string) (PooledProvider, error) {
+			return newProvider(ctx, providerType, urlStr, username, password)
+		},
 	}
 }
 
-func (p *providerPool) get(ctx context.Context, key providerPoolKey, role string, spec providerPoolSpec) (storage.StorageProvider, error) {
+func (p *providerPool) get(ctx context.Context, key providerPoolKey, role string, spec providerPoolSpec) (PooledProvider, error) {
 	fingerprint := spec.fingerprint()
 
 	p.mu.Lock()
@@ -135,7 +147,20 @@ func (p *providerPool) get(ctx context.Context, key providerPoolKey, role string
 	return client, nil
 }
 
-func configurePooledProvider(client storage.StorageProvider, spec providerPoolSpec) {
+func acquirePoolRole[T any](p *providerPool, ctx context.Context, key providerPoolKey, role string, spec providerPoolSpec) (T, error) {
+	var zero T
+	client, err := p.get(ctx, key, role, spec)
+	if err != nil {
+		return zero, err
+	}
+	typed, ok := client.(T)
+	if !ok {
+		return zero, fmt.Errorf("%w: pooled %s provider does not satisfy %T", storage.ErrPermanentTransfer, role, zero)
+	}
+	return typed, nil
+}
+
+func configurePooledProvider(client any, spec providerPoolSpec) {
 	if nextcloud, ok := client.(*storage.NextcloudProvider); ok {
 		nextcloud.Threads = spec.threads
 	}

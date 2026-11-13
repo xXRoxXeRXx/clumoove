@@ -17,7 +17,7 @@ func (p *Processor) runTransferWorkers(ctx context.Context, notifyTasksCh <-chan
 		wg.Add(1)
 		go func(threadID int) {
 			defer wg.Done()
-			pool := newProviderPool()
+			pool := p.newWorkerPool()
 			defer pool.Close()
 			// fallbackInterval is the maximum time an idle thread waits before
 			// re-polling even without a notify signal. 5s is fine because

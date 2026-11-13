@@ -97,6 +97,21 @@ type Processor struct {
 	// worker. MEGA permits duplicate same-name folders, and independent clients
 	// with stale filesystem trees can otherwise race while creating parents.
 	megaTargetLocks keyedMutexes
+	providerFactory ProviderFactoryFunc
+}
+
+// SetProviderFactory overrides provider construction for tests or focused
+// source-only/target-only transfer adapters.
+func (p *Processor) SetProviderFactory(factory ProviderFactoryFunc) {
+	p.providerFactory = factory
+}
+
+func (p *Processor) newWorkerPool() *providerPool {
+	pool := newProviderPool()
+	if p.providerFactory != nil {
+		pool.factory = p.providerFactory
+	}
+	return pool
 }
 
 type verificationWork struct {

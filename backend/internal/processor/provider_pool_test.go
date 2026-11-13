@@ -9,7 +9,6 @@ import (
 )
 
 type pooledTestProvider struct {
-	fakeProvider
 	connects int
 	closes   int
 }
@@ -27,7 +26,7 @@ func (p *pooledTestProvider) Close() error {
 func TestProviderPoolReusesMatchingEncryptedConfiguration(t *testing.T) {
 	pool := newProviderPool()
 	var created []*pooledTestProvider
-	pool.factory = func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+	pool.factory = func(context.Context, string, string, string, string) (PooledProvider, error) {
 		provider := &pooledTestProvider{}
 		created = append(created, provider)
 		return provider, nil
@@ -61,7 +60,7 @@ func TestProviderPoolReusesMatchingEncryptedConfiguration(t *testing.T) {
 func TestProviderPoolReplacesChangedConfigurationAndClosesEntity(t *testing.T) {
 	pool := newProviderPool()
 	var created []*pooledTestProvider
-	pool.factory = func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+	pool.factory = func(context.Context, string, string, string, string) (PooledProvider, error) {
 		provider := &pooledTestProvider{}
 		created = append(created, provider)
 		return provider, nil
@@ -93,7 +92,7 @@ func TestProviderPoolClosesClientInvalidatedDuringConnect(t *testing.T) {
 	provider := &pooledTestProvider{}
 	started := make(chan struct{})
 	release := make(chan struct{})
-	pool.factory = func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+	pool.factory = func(context.Context, string, string, string, string) (PooledProvider, error) {
 		close(started)
 		<-release
 		return provider, nil
@@ -122,7 +121,7 @@ func TestProviderPoolClosesClientWhenShutdownDuringConnect(t *testing.T) {
 	provider := &pooledTestProvider{}
 	started := make(chan struct{})
 	release := make(chan struct{})
-	pool.factory = func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+	pool.factory = func(context.Context, string, string, string, string) (PooledProvider, error) {
 		close(started)
 		<-release
 		return provider, nil
@@ -148,7 +147,7 @@ func TestProviderPoolClosesClientWhenShutdownDuringConnect(t *testing.T) {
 func TestProviderPoolPrunesTerminalEntriesAndClosesOnShutdown(t *testing.T) {
 	pool := newProviderPool()
 	var created []*pooledTestProvider
-	pool.factory = func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+	pool.factory = func(context.Context, string, string, string, string) (PooledProvider, error) {
 		provider := &pooledTestProvider{}
 		created = append(created, provider)
 		return provider, nil
@@ -172,5 +171,55 @@ func TestProviderPoolPrunesTerminalEntriesAndClosesOnShutdown(t *testing.T) {
 	pool.Close()
 	if created[1].closes != 1 {
 		t.Fatalf("shutdown closes=%d, want 1", created[1].closes)
+	}
+}
+
+var _ PooledProvider = (storage.StorageProvider)(nil)
+
+type pooledMinimalSource struct {
+	pooledTestProvider
+	readOnlyMigrationSource
+}
+
+type pooledMinimalTarget struct {
+	pooledTestProvider
+	writeOnlyMigrationTarget
+}
+
+func TestProcessorSetProviderFactoryAcceptsMinimalSourceAndTargetRoles(t *testing.T) {
+	p := &Processor{}
+	src := &pooledMinimalSource{}
+	tgt := &pooledMinimalTarget{}
+	p.SetProviderFactory(func(_ context.Context, _ string, urlStr, _, _ string) (PooledProvider, error) {
+		if urlStr == "https://source.test" {
+			return src, nil
+		}
+		return tgt, nil
+	})
+
+	pool := p.newWorkerPool()
+	defer pool.Close()
+
+	key := migrationProviderPoolKey("mig-narrow")
+	gotSrc, err := acquirePoolRole[inspectingTransferSource](pool, context.Background(), key, "source", providerPoolSpec{
+		providerType: "webdav", url: "https://source.test", passwordEncrypted: "src",
+	})
+	if err != nil || gotSrc != src {
+		t.Fatalf("acquirePoolRole(source) = (%v, %v)", gotSrc, err)
+	}
+	gotTgt, err := acquirePoolRole[migrationTarget](pool, context.Background(), key, "target", providerPoolSpec{
+		providerType: "nextcloud", url: "https://target.test", passwordEncrypted: "tgt",
+	})
+	if err != nil || gotTgt != tgt {
+		t.Fatalf("acquirePoolRole(target) = (%v, %v)", gotTgt, err)
+	}
+	if _, err := acquirePoolRole[migrationTarget](pool, context.Background(), key, "source", providerPoolSpec{
+		providerType: "webdav", url: "https://source.test", passwordEncrypted: "src",
+	}); err == nil {
+		t.Fatal("acquirePoolRole(migrationTarget) succeeded for source-only adapter")
+	}
+	pool.Close()
+	if src.closes != 1 || tgt.closes != 1 {
+		t.Fatalf("expected pooled adapters to close once: src=%d tgt=%d", src.closes, tgt.closes)
 	}
 }

@@ -137,12 +137,6 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		megaSessionIDEncrypted: job.TargetMegaSessionIDEncrypted, megaMasterKeyEncrypted: job.TargetMegaMasterKeyEncrypted,
 		threads: job.Threads,
 	}
-	getSource := func() (storage.StorageProvider, error) {
-		return pool.get(sourceCtx, poolKey, "source", sourceSpec)
-	}
-	getTarget := func() (storage.StorageProvider, error) {
-		return pool.get(targetCtx, poolKey, "target", targetSpec)
-	}
 
 	// Handle directory creation tasks (action == "mkdir").
 	// Enqueued by the sync engine for directories present on one side but
@@ -158,7 +152,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		if side == "source" {
 			unlockMegaTarget := p.lockMegaTarget(job.SourceProvider, job.SourceURL, job.SourceUsername)
 			defer unlockMegaTarget()
-			mkClient, err = getSource()
+			mkClient, err = acquirePoolRole[syncDirCreator](pool, sourceCtx, poolKey, "source", sourceSpec)
 			if err != nil {
 				return fmt.Errorf("failed to connect to source provider for mkdir: %w", err)
 			}
@@ -167,7 +161,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		} else {
 			unlockMegaTarget := p.lockMegaTarget(job.TargetProvider, job.TargetURL, job.TargetUsername)
 			defer unlockMegaTarget()
-			mkClient, err = getTarget()
+			mkClient, err = acquirePoolRole[syncDirCreator](pool, targetCtx, poolKey, "target", targetSpec)
 			if err != nil {
 				return fmt.Errorf("failed to connect to target provider for mkdir: %w", err)
 			}
@@ -209,13 +203,13 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		var delClient fileDeleter
 		var delPath string
 		if side == "source" {
-			delClient, err = getSource()
+			delClient, err = acquirePoolRole[fileDeleter](pool, sourceCtx, poolKey, "source", sourceSpec)
 			if err != nil {
 				return fmt.Errorf("failed to connect to source provider: %w", err)
 			}
 			delPath = task.FilePath
 		} else {
-			delClient, err = getTarget()
+			delClient, err = acquirePoolRole[fileDeleter](pool, targetCtx, poolKey, "target", targetSpec)
 			if err != nil {
 				return fmt.Errorf("failed to connect to target provider: %w", err)
 			}
@@ -236,7 +230,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	if action == "conflict_copy" {
 		var renClient fileRenamer
-		renClient, err = getTarget()
+		renClient, err = acquirePoolRole[fileRenamer](pool, targetCtx, poolKey, "target", targetSpec)
 		if err != nil {
 			return fmt.Errorf("failed to connect to target provider for conflict: %w", err)
 		}
@@ -269,7 +263,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	if action == "download" {
 		// Download: Target -> Source (Two-Way pull)
-		srcClient, err = getTarget()
+		srcClient, err = acquirePoolRole[inspectingTransferSource](pool, targetCtx, poolKey, "target", targetSpec)
 		if err != nil {
 			return fmt.Errorf("failed to connect to target (source) provider: %w", err)
 		}
@@ -280,7 +274,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		tgtProvider = job.SourceProvider
 	} else {
 		// Upload: Source -> Target (Standard migration style)
-		srcClient, err = getSource()
+		srcClient, err = acquirePoolRole[inspectingTransferSource](pool, sourceCtx, poolKey, "source", sourceSpec)
 		if err != nil {
 			return fmt.Errorf("failed to connect to source provider: %w", err)
 		}
@@ -297,12 +291,12 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	unlockMegaTarget := p.lockMegaTarget(tgtProvider, targetURL, targetUsername)
 	defer unlockMegaTarget()
 	if action == "download" {
-		tgtClient, err = getSource()
+		tgtClient, err = acquirePoolRole[syncTransferTarget](pool, sourceCtx, poolKey, "source", sourceSpec)
 		if err != nil {
 			return fmt.Errorf("failed to connect to source (target) provider: %w", err)
 		}
 	} else {
-		tgtClient, err = getTarget()
+		tgtClient, err = acquirePoolRole[syncTransferTarget](pool, targetCtx, poolKey, "target", targetSpec)
 		if err != nil {
 			return fmt.Errorf("failed to connect to target provider: %w", err)
 		}

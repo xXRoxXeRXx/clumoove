@@ -28,12 +28,16 @@ type folderLister interface {
 	GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]storage.CloudResource, error)
 }
 
-type indexSource interface {
+// IndexSource is the read-only storage contract required to index a migration source.
+type IndexSource interface {
 	Close() error
 	Connect(ctx context.Context) (bool, error)
 	InspectResource(ctx context.Context, resourceType, path string) (storage.CloudResource, error)
-	folderLister
+	GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]storage.CloudResource, error)
 }
+
+// SourceFactoryFunc constructs the source client used by an indexing pass.
+type SourceFactoryFunc func(ctx context.Context, providerType, urlStr, username, password string) (IndexSource, error)
 
 // Indexer performs the indexing phase of a migration: it connects to the source,
 // walks the selected paths/calendars/contacts, and creates PENDING tasks in the DB.
@@ -42,6 +46,12 @@ type Indexer struct {
 	db            *sql.DB
 	encryptionKey string
 	queue         *queue.Queue
+	sourceFactory SourceFactoryFunc
+}
+
+// SetSourceFactory overrides source provider creation for tests or read-only source adapters.
+func (idx *Indexer) SetSourceFactory(factory SourceFactoryFunc) {
+	idx.sourceFactory = factory
 }
 
 // NewIndexer creates a new Indexer instance
@@ -558,7 +568,10 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 	return tokenResp.AccessToken, nil
 }
 
-func (idx *Indexer) newSource(ctx context.Context, providerType, urlStr, username, password string) (indexSource, error) {
+func (idx *Indexer) newSource(ctx context.Context, providerType, urlStr, username, password string) (IndexSource, error) {
+	if idx.sourceFactory != nil {
+		return idx.sourceFactory(ctx, providerType, urlStr, username, password)
+	}
 	return storage.NewProvider(ctx, providerType, urlStr, username, password)
 }
 

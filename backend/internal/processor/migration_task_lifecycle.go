@@ -78,7 +78,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		return fmt.Errorf("failed to decrypt target MEGA session: %w", err)
 	}
 	poolKey := migrationProviderPoolKey(mig.ID)
-	sourceClient, err := pool.get(sourceCtx, poolKey, "source", providerPoolSpec{
+	sourceClient, err := acquirePoolRole[inspectingTransferSource](pool, sourceCtx, poolKey, "source", providerPoolSpec{
 		providerType: mig.SourceProvider, url: mig.SourceURL, username: mig.SourceUsername,
 		password: sourceProviderPass, passwordEncrypted: mig.SourcePasswordEncrypted,
 		megaSessionIDEncrypted: mig.SourceMegaSessionIDEncrypted, megaMasterKeyEncrypted: mig.SourceMegaMasterKeyEncrypted,
@@ -92,7 +92,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// the preceding task's tree and cannot race its parent-directory creation.
 	unlockMegaTarget := p.lockMegaTarget(mig.TargetProvider, mig.TargetURL, mig.TargetUsername)
 	defer unlockMegaTarget()
-	targetClient, err := pool.get(targetCtx, poolKey, "target", providerPoolSpec{
+	targetClient, err := acquirePoolRole[migrationTarget](pool, targetCtx, poolKey, "target", providerPoolSpec{
 		providerType: mig.TargetProvider, url: mig.TargetURL, username: mig.TargetUsername,
 		password: targetProviderPass, passwordEncrypted: mig.TargetPasswordEncrypted,
 		megaSessionIDEncrypted: mig.TargetMegaSessionIDEncrypted, megaMasterKeyEncrypted: mig.TargetMegaMasterKeyEncrypted,

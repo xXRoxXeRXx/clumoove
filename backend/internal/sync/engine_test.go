@@ -1028,6 +1028,7 @@ func TestSrcRelTargetDirETagsAreSourceRelative(t *testing.T) {
 var _ treeReader = (storage.StorageProvider)(nil)
 var _ resourceInspector = (storage.StorageProvider)(nil)
 var _ emptyDirRemover = (storage.StorageProvider)(nil)
+var _ PassClient = (storage.StorageProvider)(nil)
 
 type inspectOnlySyncClient struct {
 	resources map[string]storage.CloudResource
@@ -1069,5 +1070,77 @@ func TestReconcileSuccessfulOperationsAcceptsInspectOnlyClients(t *testing.T) {
 	)
 	if targetMap["/file.txt"].Size != 42 {
 		t.Fatalf("reconciled target size = %d, want 42", targetMap["/file.txt"].Size)
+	}
+}
+
+type minimalSyncPassClient struct {
+	connected bool
+	closed    bool
+	resources map[string]storage.CloudResource
+	listings  map[string][]storage.CloudResource
+	deleted   []string
+}
+
+func (c *minimalSyncPassClient) Close() error {
+	c.closed = true
+	return nil
+}
+
+func (c *minimalSyncPassClient) Connect(context.Context) (bool, error) {
+	c.connected = true
+	return true, nil
+}
+
+func (c *minimalSyncPassClient) InspectResource(_ context.Context, _, resourcePath string) (storage.CloudResource, error) {
+	res, ok := c.resources[resourcePath]
+	if !ok {
+		return storage.CloudResource{}, errors.New("not found")
+	}
+	return res, nil
+}
+
+func (c *minimalSyncPassClient) GetDirectoryListing(_ context.Context, _, dirPath string) ([]storage.CloudResource, error) {
+	return c.listings[dirPath], nil
+}
+
+func (c *minimalSyncPassClient) DeleteFile(_ context.Context, _, filePath string) error {
+	c.deleted = append(c.deleted, filePath)
+	return nil
+}
+
+func TestEngineSetProviderFactoryAcceptsMinimalPassClients(t *testing.T) {
+	e := NewEngine(nil, nil, "secret")
+	src := &minimalSyncPassClient{
+		resources: map[string]storage.CloudResource{"/": {Path: "/", IsDir: true}},
+		listings: map[string][]storage.CloudResource{
+			"/": {{Path: "/hello.txt", Size: 5}},
+		},
+	}
+	tgt := &minimalSyncPassClient{
+		resources: map[string]storage.CloudResource{"/target": {Path: "/target", IsDir: true}},
+		listings:  map[string][]storage.CloudResource{"/target": {}},
+	}
+	e.SetProviderFactory(func(context.Context, *db.SyncJob) (PassClient, PassClient, error) {
+		return src, tgt, nil
+	})
+
+	gotSrc, gotTgt, err := e.providers(context.Background(), &db.SyncJob{ID: "job-1"})
+	if err != nil {
+		t.Fatalf("providers() error = %v", err)
+	}
+	if ok, err := gotSrc.Connect(context.Background()); err != nil || !ok {
+		t.Fatalf("src.Connect() = (%v, %v)", ok, err)
+	}
+	if ok, err := gotTgt.Connect(context.Background()); err != nil || !ok {
+		t.Fatalf("tgt.Connect() = (%v, %v)", ok, err)
+	}
+	srcFiles, _, _, _, err := e.listFiles(context.Background(), gotSrc, []string{"/"}, nil, nil)
+	if err != nil || srcFiles["/hello.txt"].Size != 5 {
+		t.Fatalf("listFiles(src) = (%+v, %v)", srcFiles, err)
+	}
+	_ = gotSrc.Close()
+	_ = gotTgt.Close()
+	if !src.connected || !src.closed || !tgt.connected || !tgt.closed {
+		t.Fatalf("lifecycle flags src=(%v,%v) tgt=(%v,%v)", src.connected, src.closed, tgt.connected, tgt.closed)
 	}
 }

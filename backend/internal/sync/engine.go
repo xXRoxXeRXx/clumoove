@@ -21,13 +21,26 @@ import (
 	"backend/internal/storage"
 )
 
+// PassClient is the metadata, directory listing, and empty-directory cleanup
+// contract required from each side of a sync pass.
+type PassClient interface {
+	Close() error
+	Connect(ctx context.Context) (bool, error)
+	treeReader
+	emptyDirRemover
+}
+
+// ProviderFactoryFunc constructs the source and target clients for a sync pass.
+type ProviderFactoryFunc func(ctx context.Context, job *db.SyncJob) (PassClient, PassClient, error)
+
 type Engine struct {
-	db            *sql.DB
-	queue         *queue.Queue
-	encryptionKey string
-	passStore     passStore
-	passRunner    passRunner
-	passSignals   passSignals
+	db              *sql.DB
+	queue           *queue.Queue
+	encryptionKey   string
+	passStore       passStore
+	passRunner      passRunner
+	passSignals     passSignals
+	providerFactory ProviderFactoryFunc
 
 	// cancelMu guards the activePassCancels map which tracks in-progress
 	// sync-pass goroutines. Entries are added just before the goroutine body
@@ -57,6 +70,60 @@ func NewEngine(database *sql.DB, q *queue.Queue, encryptionKey string) *Engine {
 // Pass exposes the deep Sync Job lifecycle module. HTTP and scheduler callers
 // use this interface instead of coordinating pass ordering themselves.
 func (e *Engine) Pass() Pass { return e }
+
+// SetProviderFactory overrides source/target provider creation for tests or
+// focused sync-pass adapters.
+func (e *Engine) SetProviderFactory(factory ProviderFactoryFunc) {
+	e.providerFactory = factory
+}
+
+func (e *Engine) providers(ctx context.Context, job *db.SyncJob) (PassClient, PassClient, error) {
+	if e.providerFactory != nil {
+		return e.providerFactory(ctx, job)
+	}
+	return e.defaultProviders(ctx, job)
+}
+
+func (e *Engine) defaultProviders(ctx context.Context, job *db.SyncJob) (PassClient, PassClient, error) {
+	sourcePass, err := crypto.DecryptWithDomain(job.SourcePasswordEncrypted, e.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(job.SourceProvider)))
+	if err != nil {
+		return nil, nil, fmt.Errorf("Failed to decrypt source password: %w", err)
+	}
+	targetPass, err := crypto.DecryptWithDomain(job.TargetPasswordEncrypted, e.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(job.TargetProvider)))
+	if err != nil {
+		return nil, nil, fmt.Errorf("Failed to decrypt target password: %w", err)
+	}
+	if job.SourceRefreshTokenEncrypted.Valid && job.SourceRefreshTokenEncrypted.String != "" {
+		sourcePass, err = e.ensureFreshToken(ctx, job.ID, job, "source", sourcePass)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Failed to refresh source OAuth token: %w", err)
+		}
+	}
+	if job.TargetRefreshTokenEncrypted.Valid && job.TargetRefreshTokenEncrypted.String != "" {
+		targetPass, err = e.ensureFreshToken(ctx, job.ID, job, "target", targetPass)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Failed to refresh target OAuth token: %w", err)
+		}
+	}
+	sourceCtx, err := megasecret.WithMegaSession(ctx, job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, e.encryptionKey)
+	if err != nil {
+		return nil, nil, errors.New("Failed to decrypt source connection session.")
+	}
+	targetCtx, err := megasecret.WithMegaSession(ctx, job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, e.encryptionKey)
+	if err != nil {
+		return nil, nil, errors.New("Failed to decrypt target connection session.")
+	}
+	sourceClient, err := storage.NewProvider(sourceCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Failed to connect to source: %w", err)
+	}
+	targetClient, err := storage.NewProvider(targetCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
+	if err != nil {
+		_ = sourceClient.Close()
+		return nil, nil, fmt.Errorf("Failed to connect to target: %w", err)
+	}
+	return sourceClient, targetClient, nil
+}
 
 // CancelPass cancels any in-progress sync pass for the given sync job.
 // It is a no-op if no pass is running for the job.
@@ -220,60 +287,13 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		return
 	}
 
-	// 1. Fetch the claimed job configuration.
-
-	// 3. Decrypt credentials
-	sourcePass, err := crypto.DecryptWithDomain(job.SourcePasswordEncrypted, e.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(job.SourceProvider)))
+	// 3. Construct source and target storage clients
+	sourceClient, targetClient, err := e.providers(indexCtx, job)
 	if err != nil {
-		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to decrypt source password: %v", err))
-		return
-	}
-
-	targetPass, err := crypto.DecryptWithDomain(job.TargetPasswordEncrypted, e.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(job.TargetProvider)))
-	if err != nil {
-		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to decrypt target password: %v", err))
-		return
-	}
-
-	// Refresh OAuth tokens if necessary
-	if job.SourceRefreshTokenEncrypted.Valid && job.SourceRefreshTokenEncrypted.String != "" {
-		sourcePass, err = e.ensureFreshToken(indexCtx, syncJobID, job, "source", sourcePass)
-		if err != nil {
-			e.failSync(syncJobID, generation, fmt.Sprintf("Failed to refresh source OAuth token: %v", err))
-			return
-		}
-	}
-	if job.TargetRefreshTokenEncrypted.Valid && job.TargetRefreshTokenEncrypted.String != "" {
-		targetPass, err = e.ensureFreshToken(indexCtx, syncJobID, job, "target", targetPass)
-		if err != nil {
-			e.failSync(syncJobID, generation, fmt.Sprintf("Failed to refresh target OAuth token: %v", err))
-			return
-		}
-	}
-
-	// 4. Create storage provider clients
-	sourceCtx, err := megasecret.WithMegaSession(indexCtx, job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, e.encryptionKey)
-	if err != nil {
-		e.failSync(syncJobID, generation, "Failed to decrypt source connection session.")
-		return
-	}
-	targetCtx, err := megasecret.WithMegaSession(indexCtx, job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, e.encryptionKey)
-	if err != nil {
-		e.failSync(syncJobID, generation, "Failed to decrypt target connection session.")
-		return
-	}
-	sourceClient, err := storage.NewProvider(sourceCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
-	if err != nil {
-		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to connect to source: %v", err))
+		e.failSync(syncJobID, generation, err.Error())
 		return
 	}
 	defer sourceClient.Close()
-
-	targetClient, err := storage.NewProvider(targetCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
-	if err != nil {
-		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to connect to target: %v", err))
-		return
-	}
 	defer targetClient.Close()
 
 	// Each provider gets its own connection budget; a slow source must not

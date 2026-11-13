@@ -659,8 +659,74 @@ func (s listingOnlySource) GetDirectoryListing(context.Context, string, string) 
 
 var (
 	_ folderLister = (storage.StorageProvider)(nil)
-	_ indexSource  = (storage.StorageProvider)(nil)
+	_ IndexSource  = (storage.StorageProvider)(nil)
 )
+
+type minimalIndexSource struct {
+	connected bool
+	closed    bool
+	resources map[string]storage.CloudResource
+	listing   map[string][]storage.CloudResource
+}
+
+func (s *minimalIndexSource) Close() error {
+	s.closed = true
+	return nil
+}
+
+func (s *minimalIndexSource) Connect(context.Context) (bool, error) {
+	s.connected = true
+	return true, nil
+}
+
+func (s *minimalIndexSource) InspectResource(_ context.Context, _, resourcePath string) (storage.CloudResource, error) {
+	res, ok := s.resources[resourcePath]
+	if !ok {
+		return storage.CloudResource{}, errors.New("missing")
+	}
+	return res, nil
+}
+
+func (s *minimalIndexSource) GetDirectoryListing(_ context.Context, _, dirPath string) ([]storage.CloudResource, error) {
+	return s.listing[dirPath], nil
+}
+
+func TestIndexerSetSourceFactoryAcceptsMinimalIndexSource(t *testing.T) {
+	database, _ := newBatchTestDB(t, false)
+	idx := NewIndexer(database, "", nil)
+	src := &minimalIndexSource{
+		resources: map[string]storage.CloudResource{
+			"/root": {Path: "/root", Name: "root", IsDir: true},
+		},
+		listing: map[string][]storage.CloudResource{
+			"/root": {{Path: "/root/doc.txt", Name: "doc.txt", Size: 11}},
+		},
+	}
+	idx.SetSourceFactory(func(context.Context, string, string, string, string) (IndexSource, error) {
+		return src, nil
+	})
+
+	client, err := idx.newSource(context.Background(), "nextcloud", "https://cloud.example.test", "user", "pass")
+	if err != nil {
+		t.Fatalf("newSource() error = %v", err)
+	}
+	defer client.Close()
+	if ok, err := client.Connect(context.Background()); err != nil || !ok {
+		t.Fatalf("Connect() = (%v, %v), want (true, nil)", ok, err)
+	}
+	res, err := client.InspectResource(context.Background(), "files", "/root")
+	if err != nil || !res.IsDir {
+		t.Fatalf("InspectResource() = (%+v, %v), want directory", res, err)
+	}
+	files, dirs, bytes := 0, 0, int64(0)
+	if err := indexFolder(context.Background(), database, client, "files", "/root", "mig-1", "nextcloud", "google", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{}); err != nil {
+		t.Fatalf("indexFolder() error = %v", err)
+	}
+	_ = client.Close()
+	if !src.connected || !src.closed || files != 1 || bytes != 11 {
+		t.Fatalf("connected=%v closed=%v files=%d bytes=%d", src.connected, src.closed, files, bytes)
+	}
+}
 
 func TestIndexFolderAcceptsListingOnlySource(t *testing.T) {
 	database, _ := newBatchTestDB(t, false)

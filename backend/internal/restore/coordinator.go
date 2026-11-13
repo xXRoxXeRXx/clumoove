@@ -44,19 +44,22 @@ type directoryRestorer interface {
 	CreateDirectory(ctx context.Context, resourceType, path string) error
 }
 
-type repositorySource interface {
+// RepositorySource is the read-only storage contract required from a backup repository during restore.
+type RepositorySource interface {
 	Close() error
 	Connect(ctx context.Context) (bool, error)
 	StreamDownload(ctx context.Context, resourceType, path string) (io.ReadCloser, error)
 }
 
-type previewTargetClient interface {
+// PreviewTargetClient is the read-only target contract required by restore previews.
+type PreviewTargetClient interface {
 	Close() error
 	Connect(ctx context.Context) (bool, error)
 	previewTreeReader
 }
 
-type restoreTarget interface {
+// RestoreTarget is the destination storage contract required to apply restore items.
+type RestoreTarget interface {
 	Close() error
 	Connect(ctx context.Context) (bool, error)
 	previewTreeReader
@@ -68,11 +71,38 @@ type restoreTarget interface {
 	GetFileHash(ctx context.Context, resourceType, path string) (string, error)
 }
 
+// PreviewTargetFactoryFunc constructs the read-only target client for restore previews.
+type PreviewTargetFactoryFunc func(ctx context.Context, provider, endpoint, username, password string) (PreviewTargetClient, error)
+
+// RepositorySourceFactoryFunc constructs the backup repository reader for restores.
+type RepositorySourceFactoryFunc func(ctx context.Context, provider, endpoint, username, password string) (RepositorySource, error)
+
+// RestoreTargetFactoryFunc constructs the target client for restore execution.
+type RestoreTargetFactoryFunc func(ctx context.Context, provider, endpoint, username, password string) (RestoreTarget, error)
+
 type Coordinator struct {
-	db            *sql.DB
-	encryptionKey string
-	packReaders   *PackReaderLimiter
-	workerID      string
+	db                      *sql.DB
+	encryptionKey           string
+	packReaders             *PackReaderLimiter
+	workerID                string
+	previewTargetFactory    PreviewTargetFactoryFunc
+	repositorySourceFactory RepositorySourceFactoryFunc
+	restoreTargetFactory    RestoreTargetFactoryFunc
+}
+
+// SetPreviewTargetFactory overrides preview target creation for tests or read-only adapters.
+func (c *Coordinator) SetPreviewTargetFactory(factory PreviewTargetFactoryFunc) {
+	c.previewTargetFactory = factory
+}
+
+// SetRepositorySourceFactory overrides backup repository reader creation for tests or read-only adapters.
+func (c *Coordinator) SetRepositorySourceFactory(factory RepositorySourceFactoryFunc) {
+	c.repositorySourceFactory = factory
+}
+
+// SetRestoreTargetFactory overrides restore destination creation for tests or target-only adapters.
+func (c *Coordinator) SetRestoreTargetFactory(factory RestoreTargetFactoryFunc) {
+	c.restoreTargetFactory = factory
 }
 
 var ErrRestoreTypeConflict = errors.New("restore target type conflict")
@@ -192,11 +222,15 @@ func (c *Coordinator) previewTarget(ctx context.Context, preview *db.RestorePrev
 	if err != nil {
 		return db.RestorePreviewStats{}, err
 	}
+	return c.previewTargetWithItems(ctx, preview, items)
+}
+
+func (c *Coordinator) previewTargetWithItems(ctx context.Context, preview *db.RestorePreview, items []db.RestorePreviewItem) (db.RestorePreviewStats, error) {
 	if preview.TargetPasswordEncrypted.String == "" && preview.TargetProvider != "local" {
 		return db.RestorePreviewStats{}, errors.New("restore preview target credential is unavailable")
 	}
 	providerCtx := storage.WithLocalUserScope(ctx, preview.UserID)
-	providerCtx, err = megasecret.WithMegaSession(providerCtx, preview.TargetProvider, preview.TargetMegaSessionIDEncrypted.String, preview.TargetMegaMasterKeyEncrypted.String, c.encryptionKey)
+	providerCtx, err := megasecret.WithMegaSession(providerCtx, preview.TargetProvider, preview.TargetMegaSessionIDEncrypted.String, preview.TargetMegaMasterKeyEncrypted.String, c.encryptionKey)
 	if err != nil {
 		return db.RestorePreviewStats{}, err
 	}
@@ -931,15 +965,24 @@ func trimExtension(name string) string {
 	return name[:len(name)-len(extension)]
 }
 
-func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string) (repositorySource, error) {
+func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string) (RepositorySource, error) {
+	if c.repositorySourceFactory != nil {
+		return c.repositorySourceFactory(ctx, provider, endpoint, username, encryptedPassword)
+	}
 	return c.newProvider(ctx, provider, endpoint, username, encryptedPassword)
 }
 
-func (c *Coordinator) newPreviewTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string) (previewTargetClient, error) {
+func (c *Coordinator) newPreviewTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string) (PreviewTargetClient, error) {
+	if c.previewTargetFactory != nil {
+		return c.previewTargetFactory(ctx, provider, endpoint, username, encryptedPassword)
+	}
 	return c.newProvider(ctx, provider, endpoint, username, encryptedPassword)
 }
 
-func (c *Coordinator) newRestoreTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string) (restoreTarget, error) {
+func (c *Coordinator) newRestoreTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string) (RestoreTarget, error) {
+	if c.restoreTargetFactory != nil {
+		return c.restoreTargetFactory(ctx, provider, endpoint, username, encryptedPassword)
+	}
 	return c.newProvider(ctx, provider, endpoint, username, encryptedPassword)
 }
 
