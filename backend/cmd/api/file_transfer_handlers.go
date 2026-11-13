@@ -148,38 +148,18 @@ func (s *APIServer) handleFileTransferCreate(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	source, err := s.loadOwnedFileProfile(r.Context(), userID, sourceProfileID)
-	if err != nil {
-		s.writeFileProfileError(w, err)
-		return
-	}
-	target, err := s.loadOwnedFileProfile(r.Context(), userID, req.TargetProfileID)
-	if err != nil {
-		s.writeFileProfileError(w, err)
-		return
-	}
-	sourceCreds, _, err := s.resolveProfileCredentials(r.Context(), userID, source.ID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+	sourceSnap, err := s.profiles().SnapshotOwned(r.Context(), userID, sourceProfileID)
 	if err != nil {
 		s.writeFileProfileError(w, mapFileProfileError(err))
 		return
 	}
-	defer sourceCreds.clear()
-	targetCreds, _, err := s.resolveProfileCredentials(r.Context(), userID, target.ID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+	targetSnap, err := s.profiles().SnapshotOwned(r.Context(), userID, req.TargetProfileID)
 	if err != nil {
 		s.writeFileProfileError(w, mapFileProfileError(err))
 		return
 	}
-	defer targetCreds.clear()
-	sourcePersisted, err := s.encryptProfileCreds(sourceCreds)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-	targetPersisted, err := s.encryptProfileCreds(targetCreds)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
+	source, sourcePersisted := sourceSnap.Profile, sourceSnap.Creds
+	target, targetPersisted := targetSnap.Profile, targetSnap.Creds
 	if !storage.ManagerCapabilitiesFor(source.Provider).Browse || !storage.ManagerCapabilitiesFor(target.Provider).Browse {
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return

@@ -31,7 +31,7 @@ func mapFileProfileError(err error) error {
 // loadOwnedFileProfile keeps the file-manager read-only profile lookup seam
 // while delegating ownership resolution to the shared module.
 func (s *APIServer) loadOwnedFileProfile(ctx context.Context, userID, profileID string) (*db.ConnectionProfile, error) {
-	profile, err := s.resolveOwnedProfile(ctx, userID, profileID)
+	profile, err := s.profiles().LoadOwned(ctx, userID, profileID)
 	if err != nil {
 		return nil, mapFileProfileError(err)
 	}
@@ -43,40 +43,40 @@ func (s *APIServer) loadOwnedFileProfile(ctx context.Context, userID, profileID 
 // owns profile ownership, credential lifecycles, provider construction, and
 // plaintext cleanup; this adapter only adds file-manager connection semantics.
 func (s *APIServer) resolveFileProfile(ctx context.Context, userID, profileID string) (*resolvedFileProfile, error) {
-	connection, err := s.openOwnedProfileConnection(ctx, userID, profileID, refreshOAuthWhenExpiring)
+	connection, err := s.profiles().OpenOwned(ctx, userID, profileID)
 	if err != nil {
 		return nil, mapFileProfileError(err)
 	}
 	defer func() {
 		if connection != nil {
-			connection.close()
+			connection.Close()
 		}
 	}()
 
-	managerProvider, ok := connection.provider.(storage.ManagerProvider)
+	managerProvider, ok := connection.Provider().(storage.ManagerProvider)
 	if !ok {
 		return nil, errFileProviderUnavailable
 	}
-	manager, err := storage.NewFileManager(connection.profile.Provider, managerProvider)
+	manager, err := storage.NewFileManager(connection.Profile().Provider, managerProvider)
 	if err != nil {
 		return nil, err
 	}
 
-	connectCtx, cancel := context.WithTimeout(connection.ctx, 30*time.Second)
+	connectCtx, cancel := context.WithTimeout(connection.Context(), 30*time.Second)
 	connected, err := manager.ConnectManager(connectCtx)
 	cancel()
 	if err != nil || !connected {
 		return nil, errFileProviderUnavailable
 	}
-	if err := s.persistMegaProfileSession(ctx, connection); err != nil {
+	if err := connection.PersistSession(ctx); err != nil {
 		return nil, errFileProviderUnavailable
 	}
 
 	resolved := &resolvedFileProfile{
-		profile: connection.profile,
+		profile: connection.Profile(),
 		manager: manager,
-		ctx:     connection.ctx,
-		close:   connection.close,
+		ctx:     connection.Context(),
+		close:   connection.Close,
 	}
 	connection = nil
 	return resolved, nil

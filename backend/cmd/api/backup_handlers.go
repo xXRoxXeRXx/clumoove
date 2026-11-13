@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/oauth"
 	"backend/internal/scheduler"
@@ -180,36 +179,38 @@ func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Re
 	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
-	var targetProfileID sql.NullString
-	targetCreds, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, profileCreds{
-		Provider: req.TargetProvider, URL: req.TargetURL, Username: req.TargetUsername,
-		Password: req.TargetPassword, RefreshToken: req.TargetRefreshToken,
+	targetSnap, err := s.snapshotRequestConnection(r, requestConnectionInput{
+		ProfileID:      req.TargetProfileID,
+		NormalizeURL:   true,
+		Provider:       req.TargetProvider,
+		URL:            req.TargetURL,
+		Username:       req.TargetUsername,
+		Password:       req.TargetPassword,
+		RefreshToken:   req.TargetRefreshToken,
+		TokenExpiresIn: req.TargetTokenExpiresIn,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		s.writeRequestSnapshotError(w, r, "", err)
 		return
 	}
-	if req.TargetProfileID != "" {
-		targetProfileID = sql.NullString{String: req.TargetProfileID, Valid: true}
-	}
-	if targetCreds.Provider == "" {
+	targetProfileID := targetSnap.ProfileID
+	if targetSnap.Provider == "" {
 		writeValidationError(w, ErrProviderUnsupported)
 		return
 	}
-	targetCreds.URL = normalizeProviderURL(targetCreds.Provider, targetCreds.URL)
-	if targetCreds.Provider == "immich" {
+	if targetSnap.Provider == "immich" {
 		writeValidationError(w, ErrImmichBackupUnsupported)
 		return
 	}
-	if !storage.IsValidProvider(targetCreds.Provider) || !storage.ProviderSupportsResourceType(targetCreds.Provider, "files") || storage.ValidateProviderURL(targetCreds.Provider, targetCreds.URL) != nil {
+	if !storage.IsValidProvider(targetSnap.Provider) || !storage.ProviderSupportsResourceType(targetSnap.Provider, "files") || storage.ValidateProviderURL(targetSnap.Provider, targetSnap.URL) != nil {
 		writeValidationError(w, ErrProviderUnsupported)
 		return
 	}
-	if oauth.IsProvider(targetCreds.Provider) && targetCreds.RefreshToken == "" {
+	if oauth.IsProvider(targetSnap.Provider) && !targetSnap.HasRefreshToken {
 		writeValidationError(w, ErrRefreshTokenMissing)
 		return
 	}
-	if req.TargetProfileID == "" && targetCreds.Provider != "local" && targetCreds.Password == "" {
+	if req.TargetProfileID == "" && targetSnap.Provider != "local" && !targetSnap.HasPassword {
 		writeValidationError(w, ErrMissingRequiredFields)
 		return
 	}
@@ -234,7 +235,7 @@ func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Re
 	}
 	sameRepositoryAccount := backupJob.TargetProfileID.Valid && targetProfileID.Valid && backupJob.TargetProfileID.String == targetProfileID.String
 	if !sameRepositoryAccount {
-		sameRepositoryAccount = strings.EqualFold(backupJob.TargetProvider, targetCreds.Provider) && strings.EqualFold(strings.TrimSpace(backupJob.TargetURL), strings.TrimSpace(targetCreds.URL)) && strings.EqualFold(strings.TrimSpace(backupJob.TargetUsername), strings.TrimSpace(targetCreds.Username))
+		sameRepositoryAccount = strings.EqualFold(backupJob.TargetProvider, targetSnap.Provider) && strings.EqualFold(strings.TrimSpace(backupJob.TargetURL), strings.TrimSpace(targetSnap.URL)) && strings.EqualFold(strings.TrimSpace(backupJob.TargetUsername), strings.TrimSpace(targetSnap.Username))
 	}
 	if sameRepositoryAccount && (targetRoot == backupJob.RepositoryRoot || strings.HasPrefix(targetRoot, backupJob.RepositoryRoot+"/") || strings.HasPrefix(backupJob.RepositoryRoot, targetRoot+"/")) {
 		writeValidationError(w, ErrRestoreRepositoryOverlap)
@@ -269,34 +270,14 @@ func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, ErrRestoreSnapshotUnavailable)
 		return
 	}
-	passwordEncrypted, err := crypto.EncryptWithDomain(targetCreds.Password, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(targetCreds.Provider)))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-	var refreshEncrypted sql.NullString
-	var expiresAt sql.NullTime
-	if targetCreds.RefreshToken != "" {
-		value, encryptErr := crypto.EncryptWithDomain(targetCreds.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
-		if encryptErr != nil {
-			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-			return
-		}
-		refreshEncrypted = sql.NullString{String: value, Valid: true}
-		expiresIn := req.TargetTokenExpiresIn
-		if expiresIn <= 0 {
-			expiresIn = 3600
-		}
-		expiresAt = sql.NullTime{Time: time.Now().Add(time.Duration(expiresIn) * time.Second), Valid: true}
-	}
-	megaSessionID, megaMasterKey, err := s.encryptMegaSession(targetCreds.MegaSession)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-	identity := "direct:" + strings.ToLower(targetCreds.Provider) + ":" + strings.ToLower(strings.TrimSpace(targetCreds.URL)) + ":" + strings.ToLower(strings.TrimSpace(targetCreds.Username))
+	passwordEncrypted := targetSnap.Creds.PasswordEncrypted
+	refreshEncrypted := targetSnap.Creds.RefreshTokenEncrypted
+	expiresAt := targetSnap.TokenExpiresAt
+	megaSessionID := targetSnap.Creds.MegaSessionIDEncrypted
+	megaMasterKey := targetSnap.Creds.MegaMasterKeyEncrypted
+	identity := "direct:" + strings.ToLower(targetSnap.Provider) + ":" + strings.ToLower(strings.TrimSpace(targetSnap.URL)) + ":" + strings.ToLower(strings.TrimSpace(targetSnap.Username))
 	if targetProfileID.Valid {
-		identity = "profile:" + targetProfileID.String + ":" + strings.ToLower(targetCreds.Provider) + ":" + strings.ToLower(strings.TrimSpace(targetCreds.URL)) + ":" + strings.ToLower(strings.TrimSpace(targetCreds.Username))
+		identity = "profile:" + targetProfileID.String + ":" + strings.ToLower(targetSnap.Provider) + ":" + strings.ToLower(strings.TrimSpace(targetSnap.URL)) + ":" + strings.ToLower(strings.TrimSpace(targetSnap.Username))
 	}
 	retryJobID := sql.NullString{}
 	if req.RetryRestoreJobID != "" {
@@ -311,14 +292,14 @@ func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Re
 			writeConflictError(w, ErrRestorePreviewInvalidState)
 			return
 		}
-		fingerprint, fingerprintErr := db.RestoreConfigFingerprintWithIdentity(snapshotID, db.StringArray(paths), targetCreds.Provider, targetRoot, identity, req.ConflictStrategy)
+		fingerprint, fingerprintErr := db.RestoreConfigFingerprintWithIdentity(snapshotID, db.StringArray(paths), targetSnap.Provider, targetRoot, identity, req.ConflictStrategy)
 		if fingerprintErr != nil || !bytes.Equal(fingerprint[:], existingFingerprint) {
 			writeConflictError(w, ErrRestorePreviewInvalidState)
 			return
 		}
 		retryJobID = sql.NullString{String: req.RetryRestoreJobID, Valid: true}
 	}
-	previewID, err := db.CreateRestorePreviewContext(r.Context(), s.db, &db.RestorePreview{UserID: userID, BackupJobID: backupID, BackupSnapshotID: snapshotID, RetryRestoreJobID: retryJobID, TargetProfileID: targetProfileID, SelectedPaths: db.StringArray(paths), TargetProvider: targetCreds.Provider, TargetURL: targetCreds.URL, TargetUsername: targetCreds.Username, TargetPasswordEncrypted: sql.NullString{String: passwordEncrypted, Valid: passwordEncrypted != ""}, TargetRefreshTokenEncrypted: refreshEncrypted, TargetTokenExpiresAt: expiresAt, TargetMegaSessionIDEncrypted: sql.NullString{String: megaSessionID, Valid: megaSessionID != ""}, TargetMegaMasterKeyEncrypted: sql.NullString{String: megaMasterKey, Valid: megaMasterKey != ""}, TargetConnectionIdentity: identity, TargetRoot: targetRoot, ConflictStrategy: req.ConflictStrategy, Threads: req.Threads, BandwidthMbps: req.BandwidthMbps})
+	previewID, err := db.CreateRestorePreviewContext(r.Context(), s.db, &db.RestorePreview{UserID: userID, BackupJobID: backupID, BackupSnapshotID: snapshotID, RetryRestoreJobID: retryJobID, TargetProfileID: targetProfileID, SelectedPaths: db.StringArray(paths), TargetProvider: targetSnap.Provider, TargetURL: targetSnap.URL, TargetUsername: targetSnap.Username, TargetPasswordEncrypted: sql.NullString{String: passwordEncrypted, Valid: passwordEncrypted != ""}, TargetRefreshTokenEncrypted: refreshEncrypted, TargetTokenExpiresAt: expiresAt, TargetMegaSessionIDEncrypted: sql.NullString{String: megaSessionID, Valid: megaSessionID != ""}, TargetMegaMasterKeyEncrypted: sql.NullString{String: megaMasterKey, Valid: megaMasterKey != ""}, TargetConnectionIdentity: identity, TargetRoot: targetRoot, ConflictStrategy: req.ConflictStrategy, Threads: req.Threads, BandwidthMbps: req.BandwidthMbps})
 	if err != nil {
 		s.logf(r, "create restore preview failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -642,18 +623,18 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrMissingRequiredFields)
 		return
 	}
-	sourceCreds, source, err := s.resolveProfileCredentials(r.Context(), userID, req.SourceProfileID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+	sourceSnap, err := s.profiles().SnapshotOwned(r.Context(), userID, req.SourceProfileID)
 	if err != nil {
 		s.writeBackupProfileResolutionError(w, err)
 		return
 	}
-	defer sourceCreds.clear()
-	targetCreds, target, err := s.resolveProfileCredentials(r.Context(), userID, req.TargetProfileID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+	targetSnap, err := s.profiles().SnapshotOwned(r.Context(), userID, req.TargetProfileID)
 	if err != nil {
 		s.writeBackupProfileResolutionError(w, err)
 		return
 	}
-	defer targetCreds.clear()
+	source, sourcePersisted := sourceSnap.Profile, sourceSnap.Creds
+	target, targetPersisted := targetSnap.Profile, targetSnap.Creds
 	if source.Provider == "immich" || target.Provider == "immich" {
 		writeValidationError(w, ErrImmichBackupUnsupported)
 		return
@@ -669,16 +650,6 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := storage.ValidateProviderURL(target.Provider, target.URL); err != nil {
 		writeValidationError(w, ErrProfileURLRequired)
-		return
-	}
-	sourcePersisted, err := s.encryptProfileCreds(sourceCreds)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-	targetPersisted, err := s.encryptProfileCreds(targetCreds)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
 	paths, valid := normalizeBackupPaths(req.SelectedPaths)

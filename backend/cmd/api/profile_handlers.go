@@ -1,15 +1,12 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"net/http"
 	"time"
 
-	"backend/internal/crypto"
 	"backend/internal/db"
-	"backend/internal/oauth"
 	"backend/internal/storage"
 )
 
@@ -80,25 +77,16 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var passEnc string
-	if req.Password != "" {
-		enc, err := crypto.EncryptWithDomain(req.Password, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(req.Provider)))
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-			return
-		}
-		passEnc = enc
+	passEnc, refreshEncStr, err := s.profiles().EncryptProfileSecrets(req.Provider, req.Password, req.RefreshToken)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
 	}
 
 	var refreshEnc sql.NullString
 	var tokenExpiresAt sql.NullTime
-	if req.RefreshToken != "" {
-		enc, err := crypto.EncryptWithDomain(req.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-			return
-		}
-		refreshEnc = sql.NullString{String: enc, Valid: true}
+	if refreshEncStr != "" {
+		refreshEnc = sql.NullString{String: refreshEncStr, Valid: true}
 		expiresIn := req.RefreshTokenExpiresIn
 		if expiresIn <= 0 {
 			expiresIn = 3600
@@ -136,6 +124,15 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"success": true, "id": id})
 }
 
+func (s *APIServer) writeOwnedProfileAccessError(w http.ResponseWriter, r *http.Request, action string, err error) {
+	if errors.Is(err, errProfileOwnership) {
+		s.logf(r, "%s: ownership check failed: %v", action, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeError(w, http.StatusNotFound, ErrProfileNotFound)
+}
+
 func (s *APIServer) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	userID, authenticated := s.requireUserID(w, r)
 	if !authenticated {
@@ -146,19 +143,9 @@ func (s *APIServer) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
 		return
 	}
-	owned, err := db.VerifyProfileOwnershipContext(r.Context(), s.db, id, userID)
+	p, err := s.profiles().LoadOwned(r.Context(), userID, id)
 	if err != nil {
-		s.logf(r, "handleGetProfile: ownership check failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
-		return
-	}
-	p, err := db.GetConnectionProfile(r.Context(), s.db, id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		s.writeOwnedProfileAccessError(w, r, "handleGetProfile", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "profile": p.ToPublic()})
@@ -178,14 +165,9 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
 		return
 	}
-	owned, err := db.VerifyProfileOwnershipContext(r.Context(), s.db, id, userID)
+	existing, err := s.profiles().LoadOwned(r.Context(), userID, id)
 	if err != nil {
-		s.logf(r, "handleUpdateProfile: ownership check failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		s.writeOwnedProfileAccessError(w, r, "handleUpdateProfile", err)
 		return
 	}
 
@@ -195,11 +177,6 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 	}
 
 	in := db.UpdateConnectionProfileInput{}
-	existing, existingErr := db.GetConnectionProfile(r.Context(), s.db, id)
-	if existingErr != nil {
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
-		return
-	}
 	if req.Name != "" {
 		in.Name = &req.Name
 	}
@@ -221,26 +198,21 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 	if r.URL.Query().Get("username") == "1" || req.Username != "" {
 		in.Username = &req.Username
 	}
-	if req.Password != "" {
-		enc, err := crypto.EncryptWithDomain(req.Password, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(credentialProvider)))
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-			return
-		}
-		in.PasswordEncrypted = &enc
+	passEnc, refreshEnc, err := s.profiles().EncryptProfileSecrets(credentialProvider, req.Password, req.RefreshToken)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
+	}
+	if passEnc != "" {
+		in.PasswordEncrypted = &passEnc
 	}
 	if existing.Provider == "mega" && (req.Password != "" || (in.Provider != nil && *in.Provider != "mega")) {
 		empty := ""
 		in.MegaSessionIDEncrypted = &empty
 		in.MegaMasterKeyEncrypted = &empty
 	}
-	if req.RefreshToken != "" {
-		enc, err := crypto.EncryptWithDomain(req.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-			return
-		}
-		in.RefreshTokenEncrypted = &enc
+	if refreshEnc != "" {
+		in.RefreshTokenEncrypted = &refreshEnc
 		expiresIn := req.RefreshTokenExpiresIn
 		if expiresIn <= 0 {
 			expiresIn = 3600
@@ -252,19 +224,17 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 		in.OAuthUser = &req.OAuthUser
 	}
 
-	if existing != nil {
-		mergedProvider := existing.Provider
-		if in.Provider != nil {
-			mergedProvider = *in.Provider
-		}
-		mergedURL := existing.URL
-		if in.URL != nil {
-			mergedURL = *in.URL
-		}
-		if err := storage.ValidateProviderURL(mergedProvider, mergedURL); err != nil {
-			writeError(w, http.StatusBadRequest, ErrProfileURLRequired)
-			return
-		}
+	mergedProvider := existing.Provider
+	if in.Provider != nil {
+		mergedProvider = *in.Provider
+	}
+	mergedURL := existing.URL
+	if in.URL != nil {
+		mergedURL = *in.URL
+	}
+	if err := storage.ValidateProviderURL(mergedProvider, mergedURL); err != nil {
+		writeError(w, http.StatusBadRequest, ErrProfileURLRequired)
+		return
 	}
 
 	if err := db.UpdateConnectionProfile(s.db, id, in); err != nil {
@@ -290,14 +260,8 @@ func (s *APIServer) handleDeleteProfile(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
 		return
 	}
-	owned, err := db.VerifyProfileOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil {
-		s.logf(r, "handleDeleteProfile: ownership check failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+	if err := s.profiles().VerifyOwned(r.Context(), userID, id); err != nil {
+		s.writeOwnedProfileAccessError(w, r, "handleDeleteProfile", err)
 		return
 	}
 	if err := db.DeleteConnectionProfile(s.db, id); err != nil {
@@ -323,7 +287,7 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
 		return
 	}
-	connection, err := s.openOwnedProfileConnection(r.Context(), userID, id, refreshOAuthAlways)
+	provider, err := s.profiles().TestOwned(r.Context(), userID, id)
 	if err != nil {
 		if errors.Is(err, errProfileNotFound) || errors.Is(err, errProfileNotOwned) {
 			writeError(w, http.StatusNotFound, ErrProfileNotFound)
@@ -342,24 +306,13 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
-		return
-	}
-	defer connection.close()
-
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	ok, cerr := connection.provider.Connect(ctx)
-	if !ok {
-		s.logf(r, "handleTestProfile: connection failed for profile %s (provider %s): %v", id, connection.profile.Provider, cerr)
-		if errors.Is(cerr, storage.ErrMegaMFARequired) {
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
-			return
+		if errors.Is(err, errProfileConnectFailed) {
+			s.logf(r, "handleTestProfile: connection failed for profile %s (provider %s): %v", id, provider, err)
+			if errors.Is(err, storage.ErrMegaMFARequired) {
+				writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
+				return
+			}
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
-		return
-	}
-	if err := s.persistMegaProfileSession(r.Context(), connection); err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
 		return
 	}

@@ -49,40 +49,38 @@ func (c *syncBrowseCredentials) clear() {
 	clear(c.megaSession.MasterKey)
 }
 
-// syncJobBrowseCredentials decrypts only the credentials needed for a browse
-// request and refreshes an expiring OAuth access token before it is used.
-func (s *APIServer) syncJobBrowseCredentials(ctx context.Context, id, role string, job *db.SyncJob) (syncBrowseCredentials, error) {
+type openedSyncEndpoint[T any] struct {
+	Client   T
+	Provider string
+	closeFn  func()
+}
+
+func (e *openedSyncEndpoint[T]) Close() {
+	if e != nil && e.closeFn != nil {
+		e.closeFn()
+	}
+}
+
+func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, role string, job *db.SyncJob) (*openedSyncEndpoint[T], error) {
 	profileID := job.SourceProfileID
 	if role == "target" {
 		profileID = job.TargetProfileID
 	}
 	if profileID.Valid {
-		resolved, profile, err := s.resolveProfileCredentials(ctx, job.UserID, profileID.String, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+		conn, err := s.profiles().OpenOwned(ctx, userID, profileID.String)
 		if err != nil {
-			return syncBrowseCredentials{}, err
+			return nil, err
 		}
-		if oauth.IsProvider(resolved.Provider) && resolved.RefreshToken != "" {
-			accessEncrypted, encryptErr := crypto.EncryptWithDomain(resolved.Password, s.encryptionKey, crypto.DomainOAuthAccessToken)
-			if encryptErr != nil {
-				resolved.clear()
-				return syncBrowseCredentials{}, encryptErr
-			}
-			refreshEncrypted, encryptErr := crypto.EncryptWithDomain(resolved.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
-			if encryptErr != nil {
-				resolved.clear()
-				return syncBrowseCredentials{}, encryptErr
-			}
-			expiresAt := profile.TokenExpiresAt.Time
-			if !profile.TokenExpiresAt.Valid {
-				expiresAt = time.Now().Add(time.Hour)
-			}
-			if err := db.UpdateSyncJobOAuthTokens(s.db, id, role, accessEncrypted, refreshEncrypted, expiresAt, syncJobRefreshTokenEncrypted(role, job)); err != nil && !errors.Is(err, db.ErrOAuthTokenConflict) {
-				resolved.clear()
-				return syncBrowseCredentials{}, err
-			}
+		if err := conn.SyncJobOAuthTokens(id, role, syncJobRefreshTokenEncrypted(role, job)); err != nil {
+			conn.Close()
+			return nil, err
 		}
-		crypto.ZeroString(&resolved.RefreshToken)
-		return syncBrowseCredentials{provider: resolved.Provider, url: resolved.URL, username: resolved.Username, password: resolved.Password, megaSession: resolved.MegaSession}, nil
+		client, err := narrowProvider[T](conn.Provider())
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		return &openedSyncEndpoint[T]{Client: client, Provider: conn.Profile().Provider, closeFn: conn.Close}, nil
 	}
 
 	// Profile-less jobs predate reusable profiles and retain their encrypted
@@ -107,7 +105,7 @@ func (s *APIServer) syncJobBrowseCredentials(ctx context.Context, id, role strin
 	if oauth.IsProvider(creds.provider) && expiresAt.Valid && !time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) && refreshEncrypted != "" {
 		refreshToken, err := crypto.DecryptWithDomain(refreshEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if err != nil {
-			return syncBrowseCredentials{}, err
+			return nil, err
 		}
 		if refreshToken != "" {
 			token, err := oauth.RefreshToken(ctx, creds.provider, refreshToken)
@@ -121,7 +119,8 @@ func (s *APIServer) syncJobBrowseCredentials(ctx context.Context, id, role strin
 						expiresIn = 3600
 					}
 					if err := db.UpdateSyncJobOAuthTokens(s.db, id, role, accessEncrypted, newRefreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), refreshEncrypted); err != nil {
-						return syncBrowseCredentials{}, err
+						creds.clear()
+						return nil, err
 					}
 				}
 			}
@@ -131,11 +130,21 @@ func (s *APIServer) syncJobBrowseCredentials(ctx context.Context, id, role strin
 	if creds.password == "" && passwordEncrypted != "" {
 		password, err := crypto.DecryptWithDomain(passwordEncrypted, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(creds.provider)))
 		if err != nil {
-			return syncBrowseCredentials{}, err
+			creds.clear()
+			return nil, err
 		}
 		creds.password = password
 	}
-	return creds, nil
+	rawClient, err := s.profiles().openDirectProvider(ctx, userID, creds.provider, creds.url, creds.username, creds.password, creds.megaSession)
+	creds.clear()
+	if err != nil {
+		return nil, err
+	}
+	client, err := narrowProvider[T](rawClient)
+	if err != nil {
+		return nil, err
+	}
+	return &openedSyncEndpoint[T]{Client: client, Provider: creds.provider, closeFn: func() { _ = rawClient.Close() }}, nil
 }
 
 func syncJobRefreshTokenEncrypted(role string, job *db.SyncJob) string {
@@ -206,68 +215,47 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Merge any referenced reusable connection profiles into the request.
-	src, err := s.resolveRequestProfileCredentials(r, req.SourceProfileID, profileCreds{
-		Provider:     req.SourceProvider,
-		URL:          req.SourceURL,
-		Username:     req.SourceUsername,
-		Password:     req.SourcePassword,
-		RefreshToken: req.SourceRefreshToken,
+	src, err := s.snapshotRequestConnection(r, requestConnectionInput{
+		ProfileID:       req.SourceProfileID,
+		DefaultProvider: "nextcloud",
+		NormalizeURL:    true,
+		Provider:        req.SourceProvider,
+		URL:             req.SourceURL,
+		Username:        req.SourceUsername,
+		Password:        req.SourcePassword,
+		RefreshToken:    req.SourceRefreshToken,
+		TokenExpiresAt:  parseSyncTokenExpiry(req.SourceTokenExpiresAt),
 	})
 	if err != nil {
-		s.logf(r, "handleCreateSync: failed to load source profile: %v", err)
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		s.writeRequestSnapshotError(w, r, "handleCreateSync: failed to load source profile", err)
 		return
 	}
-	req.SourceProvider = src.Provider
-	req.SourceURL = src.URL
-	req.SourceUsername = src.Username
-	if req.SourcePassword == "" {
-		req.SourcePassword = src.Password
-	}
-	if req.SourceRefreshToken == "" {
-		req.SourceRefreshToken = src.RefreshToken
-	}
 
-	tgt, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, profileCreds{
-		Provider:     req.TargetProvider,
-		URL:          req.TargetURL,
-		Username:     req.TargetUsername,
-		Password:     req.TargetPassword,
-		RefreshToken: req.TargetRefreshToken,
+	tgt, err := s.snapshotRequestConnection(r, requestConnectionInput{
+		ProfileID:       req.TargetProfileID,
+		DefaultProvider: "nextcloud",
+		NormalizeURL:    true,
+		Provider:        req.TargetProvider,
+		URL:             req.TargetURL,
+		Username:        req.TargetUsername,
+		Password:        req.TargetPassword,
+		RefreshToken:    req.TargetRefreshToken,
+		TokenExpiresAt:  parseSyncTokenExpiry(req.TargetTokenExpiresAt),
 	})
 	if err != nil {
-		s.logf(r, "handleCreateSync: failed to load target profile: %v", err)
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		s.writeRequestSnapshotError(w, r, "handleCreateSync: failed to load target profile", err)
 		return
 	}
-	req.TargetProvider = tgt.Provider
-	req.TargetURL = tgt.URL
-	req.TargetUsername = tgt.Username
-	if req.TargetPassword == "" {
-		req.TargetPassword = tgt.Password
-	}
-	if req.TargetRefreshToken == "" {
-		req.TargetRefreshToken = tgt.RefreshToken
-	}
 
-	// Default fallback values
-	if req.SourceProvider == "" {
-		req.SourceProvider = "nextcloud"
-	}
-	if req.TargetProvider == "" {
-		req.TargetProvider = "nextcloud"
-	}
-	if oauth.IsProvider(req.SourceProvider) && req.SourceRefreshToken == "" {
+	if oauth.IsProvider(src.Provider) && !src.HasRefreshToken {
 		writeValidationError(w, ErrRefreshTokenMissing)
 		return
 	}
-	if oauth.IsProvider(req.TargetProvider) && req.TargetRefreshToken == "" {
+	if oauth.IsProvider(tgt.Provider) && !tgt.HasRefreshToken {
 		writeValidationError(w, ErrRefreshTokenMissing)
 		return
 	}
-	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
-	req.TargetURL = normalizeProviderURL(req.TargetProvider, req.TargetURL)
-	if req.SourceProvider == "immich" || req.TargetProvider == "immich" {
+	if src.Provider == "immich" || tgt.Provider == "immich" {
 		writeError(w, http.StatusBadRequest, ErrImmichSyncUnsupported)
 		return
 	}
@@ -302,85 +290,35 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate provider URLs for host-based providers upfront
-	if err := storage.ValidateProviderURL(req.SourceProvider, req.SourceURL); err != nil {
+	if err := storage.ValidateProviderURL(src.Provider, src.URL); err != nil {
 		writeError(w, http.StatusBadRequest, ErrProfileURLRequired)
 		return
 	}
-	if err := storage.ValidateProviderURL(req.TargetProvider, req.TargetURL); err != nil {
+	if err := storage.ValidateProviderURL(tgt.Provider, tgt.URL); err != nil {
 		writeError(w, http.StatusBadRequest, ErrProfileURLRequired)
 		return
-	}
-
-	// Encrypt passwords
-	sEnc, err := crypto.EncryptWithDomain(req.SourcePassword, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(req.SourceProvider)))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-
-	tEnc, err := crypto.EncryptWithDomain(req.TargetPassword, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(req.TargetProvider)))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-	sourceMegaSessionIDEncrypted, sourceMegaMasterKeyEncrypted, err := s.encryptMegaSession(src.MegaSession)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-	targetMegaSessionIDEncrypted, targetMegaMasterKeyEncrypted, err := s.encryptMegaSession(tgt.MegaSession)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-
-	// Persist OAuth refresh tokens so the engine can rotate them before expiry.
-	// Without this, OAuth-based sync jobs (Dropbox/Google) would fail as soon as
-	// the initial access token expires.
-	var sourceRefreshEnc sql.NullString
-	var sourceTokenExpiresAt sql.NullTime
-	if req.SourceRefreshToken != "" {
-		enc, eerr := crypto.EncryptWithDomain(req.SourceRefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
-		if eerr != nil {
-			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-			return
-		}
-		sourceRefreshEnc = sql.NullString{String: enc, Valid: true}
-		sourceTokenExpiresAt = parseSyncTokenExpiry(req.SourceTokenExpiresAt)
-	}
-
-	var targetRefreshEnc sql.NullString
-	var targetTokenExpiresAt sql.NullTime
-	if req.TargetRefreshToken != "" {
-		enc, eerr := crypto.EncryptWithDomain(req.TargetRefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
-		if eerr != nil {
-			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-			return
-		}
-		targetRefreshEnc = sql.NullString{String: enc, Valid: true}
-		targetTokenExpiresAt = parseSyncTokenExpiry(req.TargetTokenExpiresAt)
 	}
 
 	job := &db.SyncJob{
 		UserID:                       userID,
-		SourceProfileID:              sql.NullString{String: req.SourceProfileID, Valid: req.SourceProfileID != ""},
-		TargetProfileID:              sql.NullString{String: req.TargetProfileID, Valid: req.TargetProfileID != ""},
-		SourceURL:                    req.SourceURL,
-		SourceUsername:               req.SourceUsername,
-		SourcePasswordEncrypted:      sEnc,
-		SourceRefreshTokenEncrypted:  sourceRefreshEnc,
-		SourceTokenExpiresAt:         sourceTokenExpiresAt,
-		SourceMegaSessionIDEncrypted: sourceMegaSessionIDEncrypted,
-		SourceMegaMasterKeyEncrypted: sourceMegaMasterKeyEncrypted,
-		TargetURL:                    req.TargetURL,
-		TargetUsername:               req.TargetUsername,
-		TargetPasswordEncrypted:      tEnc,
-		TargetRefreshTokenEncrypted:  targetRefreshEnc,
-		TargetTokenExpiresAt:         targetTokenExpiresAt,
-		TargetMegaSessionIDEncrypted: targetMegaSessionIDEncrypted,
-		TargetMegaMasterKeyEncrypted: targetMegaMasterKeyEncrypted,
-		SourceProvider:               req.SourceProvider,
-		TargetProvider:               req.TargetProvider,
+		SourceProfileID:              src.ProfileID,
+		TargetProfileID:              tgt.ProfileID,
+		SourceURL:                    src.URL,
+		SourceUsername:               src.Username,
+		SourcePasswordEncrypted:      src.Creds.PasswordEncrypted,
+		SourceRefreshTokenEncrypted:  src.Creds.RefreshTokenEncrypted,
+		SourceTokenExpiresAt:         src.TokenExpiresAt,
+		SourceMegaSessionIDEncrypted: src.Creds.MegaSessionIDEncrypted,
+		SourceMegaMasterKeyEncrypted: src.Creds.MegaMasterKeyEncrypted,
+		TargetURL:                    tgt.URL,
+		TargetUsername:               tgt.Username,
+		TargetPasswordEncrypted:      tgt.Creds.PasswordEncrypted,
+		TargetRefreshTokenEncrypted:  tgt.Creds.RefreshTokenEncrypted,
+		TargetTokenExpiresAt:         tgt.TokenExpiresAt,
+		TargetMegaSessionIDEncrypted: tgt.Creds.MegaSessionIDEncrypted,
+		TargetMegaMasterKeyEncrypted: tgt.Creds.MegaMasterKeyEncrypted,
+		SourceProvider:               src.Provider,
+		TargetProvider:               tgt.Provider,
 		Direction:                    req.Direction,
 		ConflictStrategy:             req.ConflictStrategy,
 		DeletePropagation:            req.DeletePropagation,
@@ -413,8 +351,8 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeAudit(r, db.AuditSyncCreated, jobID, userID, map[string]interface{}{
-		"source_provider": req.SourceProvider,
-		"target_provider": req.TargetProvider,
+		"source_provider": src.Provider,
+		"target_provider": tgt.Provider,
 		"direction":       req.Direction,
 	})
 
@@ -973,9 +911,17 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	creds, err := s.syncJobBrowseCredentials(r.Context(), id, role, job)
+	endpoint, err := openSyncJobEndpoint[migrationBrowser](s, r.Context(), id, userID, role, job)
 	if err != nil {
-		s.logf(r, "handleBrowseSyncJob: failed to load credentials for job %s role %s: %v", id, role, err)
+		if errors.Is(err, errProfileInvalidProvider) || errors.Is(err, errProfileProvider) {
+			errCode := ErrSourceUrlInvalid
+			if role == "target" {
+				errCode = ErrTargetUrlInvalid
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
+			return
+		}
+		s.logf(r, "handleBrowseSyncJob: failed to open endpoint for job %s role %s: %v", id, role, err)
 		errCode := ErrSourceConnectionFailed
 		if role == "target" {
 			errCode = ErrTargetConnectionFailed
@@ -983,36 +929,14 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
 		return
 	}
-	defer creds.clear()
-
-	if !storage.IsValidProvider(creds.provider) {
-		errCode := ErrSourceUrlInvalid
-		if role == "target" {
-			errCode = ErrTargetUrlInvalid
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
-		return
-	}
-
-	browseCtx := storage.WithLocalUserScope(r.Context(), userID)
-	client, err := storage.NewProvider(browseCtx, creds.provider, creds.url, creds.username, creds.password, storage.WithProviderMegaSession(creds.megaSession))
-	if err != nil {
-		s.logf(r, "handleBrowseSyncJob: NewProvider failed for provider %s: %v", creds.provider, err)
-		errCode := ErrSourceUrlInvalid
-		if role == "target" {
-			errCode = ErrTargetUrlInvalid
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
-		return
-	}
-	defer client.Close()
+	defer endpoint.Close()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
 
-	ok, err := client.Connect(ctx)
+	ok, err := endpoint.Client.Connect(ctx)
 	if !ok {
-		s.logf(r, "handleBrowseSyncJob: connection failed for provider %s: %v", creds.provider, err)
+		s.logf(r, "handleBrowseSyncJob: connection failed for provider %s: %v", endpoint.Provider, err)
 		errCode := ErrSourceConnectionFailed
 		if role == "target" {
 			errCode = ErrTargetConnectionFailed
@@ -1021,9 +945,9 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	items, err := client.GetDirectoryListing(ctx, resourceType, reqPath)
+	items, err := endpoint.Client.GetDirectoryListing(ctx, resourceType, reqPath)
 	if err != nil {
-		s.logf(r, "handleBrowseSyncJob: failed to list %s for path %s (provider %s): %v", resourceType, reqPath, creds.provider, err)
+		s.logf(r, "handleBrowseSyncJob: failed to list %s for path %s (provider %s): %v", resourceType, reqPath, endpoint.Provider, err)
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(ErrListFailed)})
 		return
 	}
@@ -1095,35 +1019,26 @@ func (s *APIServer) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	creds, err := s.syncJobBrowseCredentials(r.Context(), id, "target", job)
+	endpoint, err := openSyncJobEndpoint[migrationDirectoryCreator](s, r.Context(), id, userID, "target", job)
 	if err != nil {
-		s.logf(r, "handleSyncMkdir: failed to load target credentials for job %s: %v", id, err)
+		if errors.Is(err, errProfileInvalidProvider) || errors.Is(err, errProfileProvider) {
+			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetUrlInvalid})
+			return
+		}
+		s.logf(r, "handleSyncMkdir: failed to open target endpoint for job %s: %v", id, err)
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetConnectionFailed})
 		return
 	}
-	defer creds.clear()
-	if !storage.IsValidProvider(creds.provider) {
-		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetUrlInvalid})
-		return
-	}
-
-	providerCtx := storage.WithLocalUserScope(r.Context(), userID)
-	client, err := storage.NewProvider(providerCtx, creds.provider, creds.url, creds.username, creds.password, storage.WithProviderMegaSession(creds.megaSession))
-	if err != nil {
-		s.logf(r, "handleSyncMkdir: failed to initialize target provider for job %s: %v", id, err)
-		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetUrlInvalid})
-		return
-	}
-	defer client.Close()
+	defer endpoint.Close()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	if ok, err := client.Connect(ctx); !ok {
+	if ok, err := endpoint.Client.Connect(ctx); !ok {
 		s.logf(r, "handleSyncMkdir: target connection failed for job %s: %v", id, err)
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetConnectionFailed})
 		return
 	}
-	if err := client.CreateDirectory(ctx, "files", dirPath); err != nil {
+	if err := endpoint.Client.CreateDirectory(ctx, "files", dirPath); err != nil {
 		s.logf(r, "handleSyncMkdir: target directory creation failed for job %s: %v", id, err)
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrFolderCreateFailed})
 		return

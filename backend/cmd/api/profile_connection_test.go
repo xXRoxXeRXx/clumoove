@@ -2,17 +2,19 @@ package main
 
 import (
 	"context"
-	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/oauth"
 	"backend/internal/storage"
 )
 
-func TestResolveOwnedProfileRequiresProfileAndOwner(t *testing.T) {
+func TestLoadOwnedProfileRequiresProfileAndOwner(t *testing.T) {
 	server := &APIServer{}
 	for _, tc := range []struct {
 		name      string
@@ -23,63 +25,53 @@ func TestResolveOwnedProfileRequiresProfileAndOwner(t *testing.T) {
 		{name: "missing profile", userID: "user-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := server.resolveOwnedProfile(context.Background(), tc.userID, tc.profileID)
+			_, err := server.profiles().LoadOwned(context.Background(), tc.userID, tc.profileID)
 			if !errors.Is(err, errProfileNotFound) {
-				t.Fatalf("resolveOwnedProfile() error = %v, want errProfileNotFound", err)
+				t.Fatalf("LoadOwned() error = %v, want errProfileNotFound", err)
 			}
 		})
 	}
 }
 
-func TestProfileCredentialResolverPropagatesOwnershipFailure(t *testing.T) {
-	resolver := testProfileCredentialResolver(nil)
-	resolver.loadOwned = func(context.Context, string, string) (*db.ConnectionProfile, error) {
-		return nil, errProfileNotOwned
+func TestOwnedProfileAccessPropagatesOwnershipAndRejectsInvalidProvider(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	badProviderRow := profileTestRow("bad-prov", "user-1", "not-a-provider", "", "alice", "")
+	database, _ := newBackupProfileConnectionTestDB(t, map[string][]driver.Value{
+		"bad-prov": badProviderRow,
+	})
+	factoryCalled := false
+	access := &ownedProfileAccess{
+		db:            database,
+		encryptionKey: key,
+		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
+			factoryCalled = true
+			return nil, nil
+		},
 	}
-	_, _, err := resolver.resolve(context.Background(), "user-1", "profile-1", profileCreds{}, refreshOAuthAlways, failOnProfileSecretError)
-	if !errors.Is(err, errProfileNotOwned) {
-		t.Fatalf("resolve() error = %v, want errProfileNotOwned", err)
+
+	if _, err := access.OpenOwned(context.Background(), "user-1", "other-users-profile"); !errors.Is(err, errProfileNotOwned) {
+		t.Fatalf("OpenOwned(unowned) error = %v, want errProfileNotOwned", err)
+	}
+	if _, err := access.OpenOwned(context.Background(), "user-1", "bad-prov"); !errors.Is(err, errProfileInvalidProvider) {
+		t.Fatalf("OpenOwned(invalid provider) error = %v, want errProfileInvalidProvider", err)
+	}
+	if factoryCalled {
+		t.Fatal("providerFactory must not be called for invalid provider")
 	}
 }
 
-func TestProfileCredentialResolverSelectedProfilePrecedence(t *testing.T) {
-	profile := &db.ConnectionProfile{
-		Provider:              "nextcloud",
-		URL:                   "https://profile.example.test",
-		Username:              "profile-user",
-		PasswordEncrypted:     "profile-password",
-		RefreshTokenEncrypted: "profile-refresh",
-	}
-	resolver := testProfileCredentialResolver(profile)
-	base := profileCreds{
-		Provider:     "webdav",
-		URL:          "https://request.example.test",
-		Username:     "request-user",
-		Password:     "request-password",
-		RefreshToken: "request-refresh",
-	}
-
-	creds, _, err := resolver.resolve(context.Background(), "user-1", "profile-1", base, refreshOAuthAlways, fallbackOnProfileSecretError)
-	if err != nil {
-		t.Fatalf("resolve() error = %v", err)
-	}
-	if creds.Provider != profile.Provider || creds.URL != profile.URL || creds.Username != profile.Username || creds.Password != "profile-password" || creds.RefreshToken != "profile-refresh" {
-		t.Fatal("selected profile did not retain precedence over request credentials")
-	}
-}
-
-func TestProfileConnectionCloseClearsSecrets(t *testing.T) {
+func TestOwnedProfileConnectionCloseClearsSecrets(t *testing.T) {
 	masterKey := []byte{1, 2, 3, 4}
-	connection := &profileConnection{creds: profileCreds{
+	connection := &ownedProfileConnection{creds: profileCreds{
 		Password:     "password",
 		RefreshToken: "refresh-token",
 		MegaSession:  storage.MegaSession{ID: "session", MasterKey: masterKey},
 	}}
 
-	connection.close()
+	connection.Close()
 
 	if connection.creds.Password != "" || connection.creds.RefreshToken != "" {
-		t.Fatal("close must clear plaintext OAuth and password credentials")
+		t.Fatal("Close must clear plaintext OAuth and password credentials")
 	}
 	for i, value := range masterKey {
 		if value != 0 {
@@ -88,124 +80,131 @@ func TestProfileConnectionCloseClearsSecrets(t *testing.T) {
 	}
 }
 
-func TestProfileCredentialResolverRefreshPolicies(t *testing.T) {
-	now := time.Date(2026, time.August, 14, 20, 0, 0, 0, time.UTC)
-	profile := &db.ConnectionProfile{Provider: "google", PasswordEncrypted: "access", RefreshTokenEncrypted: "refresh", TokenExpiresAt: sql.NullTime{Time: now.Add(time.Hour), Valid: true}}
-	for _, tc := range []struct {
-		name        string
-		policy      profileOAuthRefreshPolicy
-		wantRefresh bool
-	}{
-		{name: "always", policy: refreshOAuthAlways, wantRefresh: true},
-		{name: "when expiring", policy: refreshOAuthWhenExpiring, wantRefresh: false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			refreshCalls := 0
-			resolver := testProfileCredentialResolver(profile)
-			resolver.now = func() time.Time { return now }
-			resolver.refresh = func(context.Context, string, string) (*oauth.TokenResponse, error) {
-				refreshCalls++
-				return &oauth.TokenResponse{AccessToken: "fresh-access", RefreshToken: "fresh-refresh", ExpiresIn: 60}, nil
-			}
-			creds, _, err := resolver.resolve(context.Background(), "user-1", "profile-1", profileCreds{}, tc.policy, failOnProfileSecretError)
-			if err != nil {
-				t.Fatalf("resolve() error = %v", err)
-			}
-			if (refreshCalls == 1) != tc.wantRefresh {
-				t.Fatalf("refresh calls = %d, wantRefresh = %t", refreshCalls, tc.wantRefresh)
-			}
-			if tc.wantRefresh && (creds.Password != "fresh-access" || creds.RefreshToken != "fresh-refresh") {
-				t.Fatalf("refreshed credentials = %#v", creds)
-			}
-		})
-	}
-}
+func TestOwnedProfileAccessRefreshAndPersistFailures(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	refreshEnc, _ := crypto.EncryptWithDomain("refresh-secret", key, crypto.DomainOAuthRefreshToken)
 
-func TestProfileCredentialResolverRefreshAndPersistFailures(t *testing.T) {
-	profile := &db.ConnectionProfile{Provider: "google", RefreshTokenEncrypted: "refresh"}
-	for _, tc := range []struct {
-		name      string
-		configure func(*profileCredentialResolver)
-	}{
-		{name: "refresh", configure: func(r *profileCredentialResolver) {
-			r.refresh = func(context.Context, string, string) (*oauth.TokenResponse, error) {
+	withRefreshRow := profileTestRow("with-refresh", "user-1", "google", "", "user@example.test", "")
+	withRefreshRow[7] = refreshEnc
+
+	// Profile without stored refresh token triggers OAuth conflict when inline refresh token tries to persist.
+	noStoredRefreshRow := profileTestRow("no-stored-refresh", "user-1", "google", "", "user@example.test", "")
+
+	database, _ := newBackupProfileConnectionTestDB(t, map[string][]driver.Value{
+		"with-refresh":      withRefreshRow,
+		"no-stored-refresh": noStoredRefreshRow,
+	})
+
+	t.Run("refresh failure aborts TestOwned", func(t *testing.T) {
+		access := &ownedProfileAccess{
+			db:            database,
+			encryptionKey: key,
+			refreshOAuth: func(context.Context, string, string) (*oauth.TokenResponse, error) {
 				return nil, errors.New("refresh failed")
-			}
-		}},
-		{name: "persist", configure: func(r *profileCredentialResolver) {
-			r.persist = func(*db.ConnectionProfile, *oauth.TokenResponse) error { return errors.New("persist failed") }
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resolver := testProfileCredentialResolver(profile)
-			tc.configure(&resolver)
-			_, _, err := resolver.resolve(context.Background(), "user-1", "profile-1", profileCreds{}, refreshOAuthAlways, failOnProfileSecretError)
-			if err == nil {
-				t.Fatal("resolve() error = nil, want failure")
-			}
-		})
-	}
-}
-
-func TestProfileCredentialResolverSecretFailures(t *testing.T) {
-	profile := &db.ConnectionProfile{Provider: "mega", PasswordEncrypted: "password", RefreshTokenEncrypted: "refresh", MegaSessionIDEncrypted: "session", MegaMasterKeyEncrypted: "key"}
-	baseKey := []byte{1, 2, 3}
-	base := profileCreds{Password: "fallback-password", RefreshToken: "fallback-refresh", MegaSession: storage.MegaSession{MasterKey: baseKey}}
-	resolver := testProfileCredentialResolver(profile)
-	resolver.decrypt = func(string, string) ([]byte, error) { return nil, errors.New("decrypt failed") }
-	resolver.decodeMega = func(string, string) (storage.MegaSession, error) {
-		return storage.MegaSession{}, errors.New("MEGA decode failed")
-	}
-	creds, _, err := resolver.resolve(context.Background(), "user-1", "profile-1", base, refreshOAuthAlways, fallbackOnProfileSecretError)
-	if err == nil || creds.Password != "fallback-password" {
-		t.Fatal("MEGA decode failure must stop credential resolution")
-	}
-	for i, value := range baseKey {
-		if value == 0 {
-			t.Fatalf("base MEGA master key byte %d was cleared through an alias", i)
+			},
 		}
+		if _, err := access.TestOwned(context.Background(), "user-1", "with-refresh"); err == nil {
+			t.Fatal("TestOwned() error = nil, want refresh failure")
+		}
+	})
+
+	t.Run("persist failure aborts request profile resolution", func(t *testing.T) {
+		access := &ownedProfileAccess{
+			db:            database,
+			encryptionKey: key,
+			refreshOAuth: func(context.Context, string, string) (*oauth.TokenResponse, error) {
+				return &oauth.TokenResponse{AccessToken: "fresh-access", RefreshToken: "fresh-refresh", ExpiresIn: 3600}, nil
+			},
+		}
+		if _, err := openRequestProviderFor[profileProvider](access, context.Background(), "user-1", requestConnectionInput{
+			ProfileID:    "no-stored-refresh",
+			RefreshToken: "inline-refresh",
+		}); err == nil {
+			t.Fatal("openRequestProviderFor() error = nil, want persist failure")
+		}
+	})
+}
+
+func TestOwnedProfileAccessSecretFailurePolicies(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+
+	megaBadRow := profileTestRow("mega-bad", "user-1", "mega", "", "user@example.test", "bad-cipher")
+	megaBadRow[9] = "bad-session"
+	megaBadRow[10] = "bad-key"
+
+	nextcloudBadRow := profileTestRow("nc-bad", "user-1", "nextcloud", "https://cloud.example.test", "alice", "bad-cipher")
+
+	database, _ := newBackupProfileConnectionTestDB(t, map[string][]driver.Value{
+		"mega-bad": megaBadRow,
+		"nc-bad":   nextcloudBadRow,
+	})
+
+	var gotPassword string
+	access := &ownedProfileAccess{
+		db:            database,
+		encryptionKey: key,
+		providerFactory: func(_ context.Context, _, _, _, password string, _ ...storage.ProviderOption) (profileProvider, error) {
+			gotPassword = password
+			return &connectionOnlyProvider{}, nil
+		},
 	}
 
-	profile = &db.ConnectionProfile{Provider: "nextcloud", PasswordEncrypted: "password"}
-	resolver = testProfileCredentialResolver(profile)
-	resolver.decrypt = func(string, string) ([]byte, error) { return nil, errors.New("decrypt failed") }
-	creds, _, err = resolver.resolve(context.Background(), "user-1", "profile-1", profileCreds{Password: "fallback"}, refreshOAuthAlways, fallbackOnProfileSecretError)
-	if err != nil || creds.Password != "fallback" {
-		t.Fatalf("fallback secret behavior = (%#v, %v)", creds, err)
+	if _, err := access.OpenOwned(context.Background(), "user-1", "nc-bad"); !errors.Is(err, errProfileSecret) {
+		t.Fatalf("OpenOwned(corrupt password) error = %v, want errProfileSecret", err)
 	}
-	_, _, err = resolver.resolve(context.Background(), "user-1", "profile-1", profileCreds{}, refreshOAuthAlways, failOnProfileSecretError)
-	if err == nil {
-		t.Fatal("strict secret behavior must return decrypt failure")
+	if _, err := access.SnapshotOwned(context.Background(), "user-1", "nc-bad"); !errors.Is(err, errProfileSecret) {
+		t.Fatalf("SnapshotOwned(corrupt password) error = %v, want errProfileSecret", err)
+	}
+	if _, err := openRequestProviderFor[profileProvider](access, context.Background(), "user-1", requestConnectionInput{
+		ProfileID: "mega-bad",
+		Password:  "fallback-password",
+	}); !errors.Is(err, errProfileSecret) {
+		t.Fatalf("openRequestProviderFor(corrupt mega) error = %v, want errProfileSecret", err)
+	}
+
+	conn, err := openRequestProviderFor[profileProvider](access, context.Background(), "user-1", requestConnectionInput{
+		ProfileID: "nc-bad",
+		Password:  "fallback",
+	})
+	if err != nil {
+		t.Fatalf("openRequestProviderFor(fallback password) error = %v", err)
+	}
+	conn.Close()
+	if gotPassword != "fallback" {
+		t.Fatalf("fallback password = %q, want fallback", gotPassword)
 	}
 }
 
-func TestNewProfileConnectionCreatesProviderFromResolvedCredentials(t *testing.T) {
-	creds := profileCreds{Provider: "nextcloud", URL: "https://cloud.example.test", Username: "alice", Password: "secret"}
+func TestOwnedProfileAccessCreatesProviderFromCredentials(t *testing.T) {
 	var gotProvider, gotURL, gotUsername, gotPassword string
-	connection, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{ID: "profile-1"}, creds,
-		func(_ context.Context, provider, url, username, password string, _ ...storage.ProviderOption) (profileProvider, error) {
+	access := &ownedProfileAccess{
+		providerFactory: func(_ context.Context, provider, url, username, password string, _ ...storage.ProviderOption) (profileProvider, error) {
 			gotProvider, gotURL, gotUsername, gotPassword = provider, url, username, password
 			return nil, nil
-		})
-	if err != nil {
-		t.Fatalf("newProfileConnection() error = %v", err)
+		},
 	}
-	if connection.profile.ID != "profile-1" {
-		t.Fatalf("connection profile = %q, want profile-1", connection.profile.ID)
+	provider, err := access.openDirectProvider(context.Background(), "user-1", "nextcloud", "https://cloud.example.test", "alice", "secret", storage.MegaSession{})
+	if err != nil {
+		t.Fatalf("openDirectProvider() error = %v", err)
+	}
+	if provider != nil {
+		_ = provider.Close()
 	}
 	if gotProvider != "nextcloud" || gotURL != "https://cloud.example.test" || gotUsername != "alice" || gotPassword != "secret" {
 		t.Fatalf("provider creation args = (%q, %q, %q, %q)", gotProvider, gotURL, gotUsername, gotPassword)
 	}
 }
 
-func TestNewProfileConnectionClearsCopiedSecretsWhenFactoryFails(t *testing.T) {
+func TestOwnedProfileAccessClearsCopiedSecretsWhenFactoryFails(t *testing.T) {
 	masterKey := []byte{1, 2, 3}
-	creds := profileCreds{Provider: "mega", Password: "secret", RefreshToken: "refresh", MegaSession: storage.MegaSession{MasterKey: masterKey}}
-	_, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{}, creds, func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
-		return nil, errors.New("factory failed")
-	})
+	access := &ownedProfileAccess{
+		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
+			return nil, errors.New("factory failed")
+		},
+	}
+	_, err := access.openDirectProvider(context.Background(), "user-1", "mega", "", "user@example.test", "secret", storage.MegaSession{MasterKey: masterKey})
 	if err == nil {
-		t.Fatal("newProfileConnection() error = nil, want factory failure")
+		t.Fatal("openDirectProvider() error = nil, want factory failure")
 	}
 	for i, value := range masterKey {
 		if value == 0 {
@@ -214,25 +213,22 @@ func TestNewProfileConnectionClearsCopiedSecretsWhenFactoryFails(t *testing.T) {
 	}
 }
 
-func TestProfileConnectionForwardsMegaSessionOption(t *testing.T) {
+func TestOwnedProfileAccessForwardsMegaSessionOption(t *testing.T) {
 	masterKey := []byte{1, 2, 3}
-	creds := profileCreds{
-		Provider:    "mega",
-		Username:    "user@example.test",
-		Password:    "secret",
-		MegaSession: storage.MegaSession{ID: "session", MasterKey: masterKey},
+	access := &ownedProfileAccess{
+		providerFactory: func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (profileProvider, error) {
+			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
+		},
 	}
 
-	connection, err := newProfileConnection(context.Background(), "user-1", &db.ConnectionProfile{ID: "profile-mega"}, creds, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (profileProvider, error) {
-		return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
-	})
+	provider, err := access.openDirectProvider(context.Background(), "user-1", "mega", "", "user@example.test", "secret", storage.MegaSession{ID: "session", MasterKey: masterKey})
 	if err != nil {
-		t.Fatalf("newProfileConnection() error = %v", err)
+		t.Fatalf("openDirectProvider() error = %v", err)
 	}
-	defer connection.creds.clear()
-	megaProvider, ok := connection.provider.(*storage.MegaProvider)
+	defer func() { _ = provider.Close() }()
+	megaProvider, ok := provider.(*storage.MegaProvider)
 	if !ok {
-		t.Fatalf("provider = %T, want *storage.MegaProvider", connection.provider)
+		t.Fatalf("provider = %T, want *storage.MegaProvider", provider)
 	}
 	session := megaProvider.Session()
 	if session.ID != "session" {
@@ -252,17 +248,237 @@ func TestProfileOAuthAccessNeedsRefreshOnlyForOAuthProfiles(t *testing.T) {
 	}
 }
 
-func testProfileCredentialResolver(profile *db.ConnectionProfile) profileCredentialResolver {
-	return profileCredentialResolver{
-		loadOwned: func(context.Context, string, string) (*db.ConnectionProfile, error) { return profile, nil },
-		decrypt:   func(ciphertext, _ string) ([]byte, error) { return []byte(ciphertext), nil },
-		decodeMega: func(string, string) (storage.MegaSession, error) {
-			return storage.MegaSession{ID: "session", MasterKey: []byte{9, 8, 7}}, nil
+func TestOwnedProfileAccessLoadAndVerifyOwned(t *testing.T) {
+	database, state := newBackupProfileConnectionTestDB(t, map[string][]driver.Value{
+		"profile-1": profileTestRow("profile-1", "user-1", "nextcloud", "https://cloud.example.test", "alice", "enc"),
+	})
+	access := &ownedProfileAccess{db: database}
+
+	if _, err := access.LoadOwned(context.Background(), "", "profile-1"); !errors.Is(err, errProfileNotFound) {
+		t.Fatalf("LoadOwned(missing user) error = %v, want errProfileNotFound", err)
+	}
+	if _, err := access.LoadOwned(context.Background(), "user-1", ""); !errors.Is(err, errProfileNotFound) {
+		t.Fatalf("LoadOwned(missing profile) error = %v, want errProfileNotFound", err)
+	}
+	if _, err := access.LoadOwned(context.Background(), "user-1", "missing"); !errors.Is(err, errProfileNotOwned) {
+		t.Fatalf("LoadOwned(unowned) error = %v, want errProfileNotOwned", err)
+	}
+	profile, err := access.LoadOwned(context.Background(), "user-1", "profile-1")
+	if err != nil || profile.ID != "profile-1" {
+		t.Fatalf("LoadOwned(owned) = (%v, %v), want profile-1", profile, err)
+	}
+	if err := access.VerifyOwned(context.Background(), "user-1", "profile-1"); err != nil {
+		t.Fatalf("VerifyOwned(owned) error = %v", err)
+	}
+
+	state.ownershipErr = errors.New("db down")
+	if err := access.VerifyOwned(context.Background(), "user-1", "profile-1"); !errors.Is(err, errProfileOwnership) {
+		t.Fatalf("VerifyOwned(db error) error = %v, want errProfileOwnership", err)
+	}
+}
+
+func TestOwnedProfileAccessEncryptProfileSecrets(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	access := &ownedProfileAccess{encryptionKey: key}
+
+	passEnc, refreshEnc, err := access.EncryptProfileSecrets("google", "access-secret", "refresh-secret")
+	if err != nil {
+		t.Fatalf("EncryptProfileSecrets() error = %v", err)
+	}
+	gotAccess, err := crypto.DecryptWithDomain(passEnc, key, crypto.DomainOAuthAccessToken)
+	if err != nil || gotAccess != "access-secret" {
+		t.Fatalf("decrypted access = (%q, %v), want access-secret", gotAccess, err)
+	}
+	gotRefresh, err := crypto.DecryptWithDomain(refreshEnc, key, crypto.DomainOAuthRefreshToken)
+	if err != nil || gotRefresh != "refresh-secret" {
+		t.Fatalf("decrypted refresh = (%q, %v), want refresh-secret", gotRefresh, err)
+	}
+
+	basicPassEnc, emptyRefreshEnc, err := access.EncryptProfileSecrets("nextcloud", "basic-secret", "")
+	if err != nil {
+		t.Fatalf("EncryptProfileSecrets(nextcloud) error = %v", err)
+	}
+	gotBasic, err := crypto.DecryptWithDomain(basicPassEnc, key, crypto.ConnectionCredentialDomain(false))
+	if err != nil || gotBasic != "basic-secret" || emptyRefreshEnc != "" {
+		t.Fatalf("decrypted basic = (%q, %v, %q), want basic-secret and empty refresh", gotBasic, err, emptyRefreshEnc)
+	}
+}
+
+func TestOwnedProfileAccessTestOwnedAlwaysRefreshesOAuthAndCloses(t *testing.T) {
+	t.Setenv("LOCAL_STORAGE_ROOT", t.TempDir())
+	const key = "01234567890123456789012345678901"
+	now := time.Date(2026, time.November, 13, 12, 0, 0, 0, time.UTC)
+	accessEnc, _ := crypto.EncryptWithDomain("old-access", key, crypto.DomainOAuthAccessToken)
+	refreshEnc, _ := crypto.EncryptWithDomain("old-refresh", key, crypto.DomainOAuthRefreshToken)
+	row := profileTestRow("profile-oauth", "user-1", "google", "", "user@example.test", accessEnc)
+	row[7] = refreshEnc
+	row[8] = now.Add(time.Hour)
+	database, _ := newBackupProfileConnectionTestDB(t, map[string][]driver.Value{"profile-oauth": row})
+
+	stub := &connectionOnlyProvider{}
+	var gotPassword string
+	var gotScoped bool
+	refreshCalls := 0
+	access := &ownedProfileAccess{
+		db:            database,
+		encryptionKey: key,
+		now:           func() time.Time { return now },
+		refreshOAuth: func(context.Context, string, string) (*oauth.TokenResponse, error) {
+			refreshCalls++
+			return &oauth.TokenResponse{AccessToken: "fresh-access", RefreshToken: "fresh-refresh", ExpiresIn: 3600}, nil
 		},
-		refresh: func(context.Context, string, string) (*oauth.TokenResponse, error) {
-			return &oauth.TokenResponse{AccessToken: "access", RefreshToken: "refresh"}, nil
+		providerFactory: func(ctx context.Context, _, _, _, password string, _ ...storage.ProviderOption) (profileProvider, error) {
+			gotPassword = password
+			_, localErr := storage.NewProvider(ctx, "local", "", "", "")
+			gotScoped = localErr == nil || !strings.Contains(localErr.Error(), "authenticated user scope")
+			return stub, nil
 		},
-		persist: func(*db.ConnectionProfile, *oauth.TokenResponse) error { return nil },
-		now:     time.Now,
+	}
+
+	provider, err := access.TestOwned(context.Background(), "user-1", "profile-oauth")
+	if err != nil {
+		t.Fatalf("TestOwned() error = %v", err)
+	}
+	if provider != "google" || refreshCalls != 1 || gotPassword != "fresh-access" || !gotScoped || !stub.closed {
+		t.Fatalf("TestOwned() = (provider=%q, refresh=%d, pass=%q, scoped=%t, closed=%t)", provider, refreshCalls, gotPassword, gotScoped, stub.closed)
+	}
+}
+
+func TestOwnedProfileAccessOpenOwnedRefreshesOnlyWhenExpiringAndSnapshotOwned(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	now := time.Date(2026, time.November, 13, 12, 0, 0, 0, time.UTC)
+	accessEnc, _ := crypto.EncryptWithDomain("valid-access", key, crypto.DomainOAuthAccessToken)
+	refreshEnc, _ := crypto.EncryptWithDomain("valid-refresh", key, crypto.DomainOAuthRefreshToken)
+
+	freshRow := profileTestRow("fresh", "user-1", "google", "", "user@example.test", accessEnc)
+	freshRow[7] = refreshEnc
+	freshRow[8] = now.Add(time.Hour)
+
+	expiringRow := profileTestRow("expiring", "user-1", "google", "", "user@example.test", accessEnc)
+	expiringRow[7] = refreshEnc
+	expiringRow[8] = now.Add(30 * time.Second)
+
+	database, _ := newBackupProfileConnectionTestDB(t, map[string][]driver.Value{
+		"fresh":    freshRow,
+		"expiring": expiringRow,
+	})
+
+	refreshCalls := 0
+	access := &ownedProfileAccess{
+		db:            database,
+		encryptionKey: key,
+		now:           func() time.Time { return now },
+		refreshOAuth: func(context.Context, string, string) (*oauth.TokenResponse, error) {
+			refreshCalls++
+			return &oauth.TokenResponse{AccessToken: "renewed-access", RefreshToken: "renewed-refresh", ExpiresIn: 3600}, nil
+		},
+		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
+			return &connectionOnlyProvider{}, nil
+		},
+	}
+
+	conn, err := access.OpenOwned(context.Background(), "user-1", "fresh")
+	if err != nil {
+		t.Fatalf("OpenOwned(fresh) error = %v", err)
+	}
+	if refreshCalls != 0 {
+		t.Fatalf("OpenOwned(fresh) refreshCalls = %d, want 0", refreshCalls)
+	}
+	err = conn.SyncJobOAuthTokens("sync-1", "source", refreshEnc)
+	conn.Close()
+	if err != nil {
+		t.Fatalf("SyncJobOAuthTokens() error = %v", err)
+	}
+
+	snap, err := access.SnapshotOwned(context.Background(), "user-1", "expiring")
+	if err != nil {
+		t.Fatalf("SnapshotOwned(expiring) error = %v", err)
+	}
+	if refreshCalls != 1 {
+		t.Fatalf("SnapshotOwned(expiring) refreshCalls = %d, want 1", refreshCalls)
+	}
+	if snap.Profile.ID != "expiring" {
+		t.Fatalf("snapshot profile ID = %q, want expiring", snap.Profile.ID)
+	}
+	if dec, _ := crypto.DecryptWithDomain(snap.Creds.PasswordEncrypted, key, crypto.DomainOAuthAccessToken); dec != "renewed-access" {
+		t.Fatalf("snapshot access = %q, want renewed-access", dec)
+	}
+	if dec, _ := crypto.DecryptWithDomain(snap.Creds.RefreshTokenEncrypted.String, key, crypto.DomainOAuthRefreshToken); dec != "renewed-refresh" {
+		t.Fatalf("snapshot refresh = %q, want renewed-refresh", dec)
+	}
+}
+
+func TestOwnedProfileAccessRequestProviderAndSnapshot(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	now := time.Date(2026, time.November, 13, 12, 0, 0, 0, time.UTC)
+	passwordEnc, _ := crypto.EncryptWithDomain("saved-secret", key, crypto.ConnectionCredentialDomain(false))
+	database, _ := newBackupProfileConnectionTestDB(t, map[string][]driver.Value{
+		"profile-1": profileTestRow("profile-1", "user-1", "magentacloud", "https://ignored.example.test", "saved-user", passwordEnc),
+	})
+
+	stub := &legacyFileManagerTestProvider{}
+	var gotProvider, gotURL, gotUsername, gotPassword string
+	access := &ownedProfileAccess{
+		db:            database,
+		encryptionKey: key,
+		now:           func() time.Time { return now },
+		providerFactory: func(_ context.Context, provider, url, username, password string, _ ...storage.ProviderOption) (profileProvider, error) {
+			gotProvider, gotURL, gotUsername, gotPassword = provider, url, username, password
+			return stub, nil
+		},
+	}
+
+	// 1. Selected profile overrides inline fields, normalizes URL, and enforces provider capability.
+	conn, err := openRequestProviderFor[migrationBrowser](access, context.Background(), "user-1", requestConnectionInput{
+		ProfileID:    "profile-1",
+		NormalizeURL: true,
+		Provider:     "nextcloud",
+		URL:          "https://request.example.test",
+		Username:     "request-user",
+		Password:     "request-secret",
+	})
+	if err != nil {
+		t.Fatalf("openRequestProviderFor(profile) error = %v", err)
+	}
+	conn.Close()
+	if gotProvider != "magentacloud" || gotURL != "https://magentacloud.de/remote.php/webdav" || gotUsername != "saved-user" || gotPassword != "saved-secret" {
+		t.Fatalf("opened args = (%q, %q, %q, %q)", gotProvider, gotURL, gotUsername, gotPassword)
+	}
+
+	// 2. Unconditionally rejects invalid provider without calling factory.
+	_, err = openRequestProviderFor[profileProvider](access, context.Background(), "user-1", requestConnectionInput{
+		DefaultProvider: "nextcloud",
+		Provider:        "not-a-provider",
+	})
+	if !errors.Is(err, errProfileInvalidProvider) {
+		t.Fatalf("openRequestProviderFor(invalid provider) error = %v, want errProfileInvalidProvider", err)
+	}
+
+	// 3. Rejects missing user when ProfileID is set.
+	_, err = access.SnapshotRequest(context.Background(), "", requestConnectionInput{ProfileID: "profile-1"})
+	if !errors.Is(err, errProfileNotFound) {
+		t.Fatalf("SnapshotRequest(missing user) error = %v, want errProfileNotFound", err)
+	}
+
+	// 4. SnapshotRequest encrypts direct credentials when no profile is selected.
+	snap, err := access.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+		DefaultProvider: "nextcloud",
+		NormalizeURL:    true,
+		URL:             "https://direct.example.test",
+		Username:        "alice",
+		Password:        "direct-secret",
+		RefreshToken:    "direct-refresh",
+	})
+	if err != nil {
+		t.Fatalf("SnapshotRequest(direct) error = %v", err)
+	}
+	if snap.ProfileID.Valid || snap.Provider != "nextcloud" || !snap.HasPassword || !snap.HasRefreshToken || !snap.TokenExpiresAt.Valid {
+		t.Fatalf("unexpected direct snapshot metadata: %+v", snap)
+	}
+	if dec, _ := crypto.DecryptWithDomain(snap.Creds.PasswordEncrypted, key, crypto.ConnectionCredentialDomain(false)); dec != "direct-secret" {
+		t.Fatalf("snapshot password = %q, want direct-secret", dec)
+	}
+	if dec, _ := crypto.DecryptWithDomain(snap.Creds.RefreshTokenEncrypted.String, key, crypto.DomainOAuthRefreshToken); dec != "direct-refresh" {
+		t.Fatalf("snapshot refresh = %q, want direct-refresh", dec)
 	}
 }

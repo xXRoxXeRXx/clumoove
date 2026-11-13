@@ -112,12 +112,12 @@ type connectionOnlyProvider struct{ closed bool }
 func (*connectionOnlyProvider) Connect(context.Context) (bool, error) { return true, nil }
 func (p *connectionOnlyProvider) Close() error                        { p.closed = true; return nil }
 
-func TestNewProfileProviderForRejectsMissingOperationsAndCloses(t *testing.T) {
+func TestOpenRequestProviderForRejectsMissingOperationsAndCloses(t *testing.T) {
 	provider := &connectionOnlyProvider{}
 	server := &APIServer{providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
 		return provider, nil
 	}}
-	_, err := newProfileProviderFor[migrationBrowser](server, context.Background(), "nextcloud", "", "", "")
+	_, err := openRequestProviderFor[migrationBrowser](server.profiles(), context.Background(), "", requestConnectionInput{Provider: "nextcloud"})
 	if !errors.Is(err, errProfileProvider) {
 		t.Fatalf("error = %v, want errProfileProvider", err)
 	}

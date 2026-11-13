@@ -7,20 +7,30 @@ import (
 	"backend/internal/auth"
 )
 
-// resolveRequestProfileCredentials is the HTTP adapter for the
-// shared profile connection module. It deliberately leaves request-supplied
-// credentials intact when no profile is selected, and delegates all selected
-// profile ownership, decryption, OAuth refresh, and fallback behavior to the
-// shared resolver.
-func (s *APIServer) resolveRequestProfileCredentials(r *http.Request, profileID string, base profileCreds) (profileCreds, error) {
-	if profileID == "" {
-		return base, nil
-	}
+func openRequestProviderFromRequest[T any](s *APIServer, r *http.Request, input requestConnectionInput) (*openedRequestConnection[T], error) {
+	return openRequestProviderFor[T](s.profiles(), r.Context(), auth.GetUserIDFromContext(r.Context()), input)
+}
 
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		return base, errors.New("missing authenticated user")
+func (s *APIServer) snapshotRequestConnection(r *http.Request, input requestConnectionInput) (requestConnectionSnapshot, error) {
+	return s.profiles().SnapshotRequest(r.Context(), auth.GetUserIDFromContext(r.Context()), input)
+}
+
+func (s *APIServer) writeRequestSnapshotError(w http.ResponseWriter, r *http.Request, contextLabel string, err error) {
+	if errors.Is(err, errProfileSecret) {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
 	}
-	creds, _, err := s.resolveProfileCredentials(r.Context(), userID, profileID, base, refreshOAuthAlways, fallbackOnProfileSecretError)
-	return creds, err
+	if contextLabel != "" {
+		s.logf(r, "%s: %v", contextLabel, err)
+	}
+	writeError(w, http.StatusNotFound, ErrProfileNotFound)
+}
+
+func (s *APIServer) writeRequestProviderBrowseError(w http.ResponseWriter, r *http.Request, contextLabel string, urlErrorCode APIErrorCode, err error) {
+	if errors.Is(err, errProfileInvalidProvider) || errors.Is(err, errProfileProvider) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": urlErrorCode})
+		return
+	}
+	s.logf(r, "%s: %v", contextLabel, err)
+	writeError(w, http.StatusNotFound, ErrProfileNotFound)
 }

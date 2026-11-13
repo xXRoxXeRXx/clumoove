@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"time"
 
-	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/oauth"
 	"backend/internal/processor"
@@ -59,40 +58,33 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceCreds := profileCreds{Provider: req.SourceProvider, URL: req.SourceURL, Username: req.SourceUsername, Password: req.SourcePassword}
-	if req.SourceProfileID != "" {
-		src, err := s.resolveRequestProfileCredentials(r, req.SourceProfileID, sourceCreds)
-		if err == nil {
-			req.SourceProvider = src.Provider
-			req.SourceURL = src.URL
-			req.SourceUsername = src.Username
-			req.SourcePassword = src.Password
-			sourceCreds = src
-		}
-	}
-
-	if req.SourceProvider == "" {
-		req.SourceProvider = "nextcloud"
-	}
-	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
 	if req.ResourceType != "calendars" && req.ResourceType != "contacts" && req.ResourceType != "files" {
 		writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
 		return
 	}
 
-	sourceClient, err := newProfileProviderFor[migrationBrowser](s, r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword, megaProfileProviderOptions(sourceCreds)...)
+	sourceConn, err := openRequestProviderFromRequest[migrationBrowser](s, r, requestConnectionInput{
+		ProfileID:       req.SourceProfileID,
+		DefaultProvider: "nextcloud",
+		NormalizeURL:    true,
+		Provider:        req.SourceProvider,
+		URL:             req.SourceURL,
+		Username:        req.SourceUsername,
+		Password:        req.SourcePassword,
+	})
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
+		s.writeRequestProviderBrowseError(w, r, "handleBrowse: failed to load source profile", ErrSourceUrlInvalid, err)
 		return
 	}
-	defer sourceClient.Close()
+	defer sourceConn.Close()
+	sourceClient := sourceConn.Client
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
 	ok, err := sourceClient.Connect(ctx)
 	if !ok {
-		s.logf(r, "handleBrowse: source connection failed for provider %s: %v", req.SourceProvider, err)
+		s.logf(r, "handleBrowse: source connection failed for provider %s: %v", sourceConn.Provider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -108,7 +100,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 
 	items, err := sourceClient.GetDirectoryListing(ctx, req.ResourceType, reqPath)
 	if err != nil {
-		s.logf(r, "handleBrowse: failed to list %s for path %s (provider %s): %v", req.ResourceType, reqPath, req.SourceProvider, err)
+		s.logf(r, "handleBrowse: failed to list %s for path %s (provider %s): %v", req.ResourceType, reqPath, sourceConn.Provider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"success":    false,
 			"error_code": ErrListFailed,
@@ -150,40 +142,28 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.TargetProvider == "" {
-		req.TargetProvider = "nextcloud"
-	}
-
-	targetCreds := profileCreds{Provider: req.TargetProvider, URL: req.TargetURL, Username: req.TargetUsername, Password: req.TargetPassword}
-	if req.TargetProfileID != "" {
-		tgt, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, targetCreds)
-		if err != nil {
-			s.logf(r, "handleTargetBrowse: failed to load target profile: %v", err)
-			writeError(w, http.StatusNotFound, ErrProfileNotFound)
-			return
-		}
-		req.TargetProvider = tgt.Provider
-		req.TargetURL = tgt.URL
-		req.TargetUsername = tgt.Username
-		if req.TargetPassword == "" {
-			req.TargetPassword = tgt.Password
-		}
-		targetCreds = tgt
-	}
-
-	targetClient, err := newProfileProviderFor[migrationBrowser](s, r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword, megaProfileProviderOptions(targetCreds)...)
+	targetConn, err := openRequestProviderFromRequest[migrationBrowser](s, r, requestConnectionInput{
+		ProfileID:       req.TargetProfileID,
+		DefaultProvider: "nextcloud",
+		NormalizeURL:    true,
+		Provider:        req.TargetProvider,
+		URL:             req.TargetURL,
+		Username:        req.TargetUsername,
+		Password:        req.TargetPassword,
+	})
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
+		s.writeRequestProviderBrowseError(w, r, "handleTargetBrowse: failed to load target profile", ErrTargetUrlInvalid, err)
 		return
 	}
-	defer targetClient.Close()
+	defer targetConn.Close()
+	targetClient := targetConn.Client
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	ok, err := targetClient.Connect(ctx)
 	if !ok {
-		s.logf(r, "handleTargetBrowse: connection failed for provider %s: %v", req.TargetProvider, err)
+		s.logf(r, "handleTargetBrowse: connection failed for provider %s: %v", targetConn.Provider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -199,7 +179,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 
 	files, err := targetClient.GetDirectoryListing(ctx, "files", reqPath)
 	if err != nil {
-		s.logf(r, "handleTargetBrowse: failed to list target files for path %s (provider %s): %v", reqPath, req.TargetProvider, err)
+		s.logf(r, "handleTargetBrowse: failed to list target files for path %s (provider %s): %v", reqPath, targetConn.Provider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
 		return
 	}
@@ -230,44 +210,33 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.TargetProvider == "" {
-		req.TargetProvider = "nextcloud"
-	}
 	if req.Path == "" || req.Path == "/" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrFolderPathInvalid})
 		return
 	}
 
-	targetCreds := profileCreds{Provider: req.TargetProvider, URL: req.TargetURL, Username: req.TargetUsername, Password: req.TargetPassword}
-	if req.TargetProfileID != "" {
-		tgt, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, targetCreds)
-		if err != nil {
-			s.logf(r, "handleTargetMkdir: failed to load target profile: %v", err)
-			writeError(w, http.StatusNotFound, ErrProfileNotFound)
-			return
-		}
-		req.TargetProvider = tgt.Provider
-		req.TargetURL = tgt.URL
-		req.TargetUsername = tgt.Username
-		if req.TargetPassword == "" {
-			req.TargetPassword = tgt.Password
-		}
-		targetCreds = tgt
-	}
-
-	targetClient, err := newProfileProviderFor[migrationDirectoryCreator](s, r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword, megaProfileProviderOptions(targetCreds)...)
+	targetConn, err := openRequestProviderFromRequest[migrationDirectoryCreator](s, r, requestConnectionInput{
+		ProfileID:       req.TargetProfileID,
+		DefaultProvider: "nextcloud",
+		NormalizeURL:    true,
+		Provider:        req.TargetProvider,
+		URL:             req.TargetURL,
+		Username:        req.TargetUsername,
+		Password:        req.TargetPassword,
+	})
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
+		s.writeRequestProviderBrowseError(w, r, "handleTargetMkdir: failed to load target profile", ErrTargetUrlInvalid, err)
 		return
 	}
-	defer targetClient.Close()
+	defer targetConn.Close()
+	targetClient := targetConn.Client
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	ok, err := targetClient.Connect(ctx)
 	if !ok {
-		s.logf(r, "handleTargetMkdir: connection failed for provider %s: %v", req.TargetProvider, err)
+		s.logf(r, "handleTargetMkdir: connection failed for provider %s: %v", targetConn.Provider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -637,50 +606,40 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 		profileID = req.TargetProfileID
 	}
 
-	creds, err := s.resolveRequestProfileCredentials(r, profileID, profileCreds{
-		Provider:     provider,
-		URL:          url,
-		Username:     username,
-		Password:     password,
-		RefreshToken: refreshToken,
+	conn, err := openRequestProviderFromRequest[profileProvider](s, r, requestConnectionInput{
+		ProfileID:       profileID,
+		DefaultProvider: "nextcloud",
+		NormalizeURL:    true,
+		Provider:        provider,
+		URL:             url,
+		Username:        username,
+		Password:        password,
+		RefreshToken:    refreshToken,
 	})
 	if err != nil {
+		if errors.Is(err, errProfileInvalidProvider) {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
+			return
+		}
+		if errors.Is(err, errProfileProvider) {
+			code := ErrSourceUrlInvalid
+			if role == "target" {
+				code = ErrTargetUrlInvalid
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": string(code)})
+			return
+		}
 		s.logf(r, "handleConnectTest: failed to load %s profile: %v", role, err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
-	provider = creds.Provider
-	url = creds.URL
-	username = creds.Username
-	if password == "" {
-		password = creds.Password
-	}
-
-	if provider == "" {
-		provider = "nextcloud"
-	}
-	url = normalizeProviderURL(provider, url)
-
-	if !storage.IsValidProvider(provider) {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
-		return
-	}
-
-	client, err := s.newProvider(r.Context(), provider, url, username, password, megaProfileProviderOptions(creds)...)
-	if err != nil {
-		code := ErrSourceUrlInvalid
-		if role == "target" {
-			code = ErrTargetUrlInvalid
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": string(code)})
-		return
-	}
-	defer client.Close()
+	defer conn.Close()
+	client := conn.Client
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	ok, err := client.Connect(ctx)
 	if !ok {
-		s.logf(r, "handleConnectTest: %s connection failed for provider %s: %v", role, provider, err)
+		s.logf(r, "handleConnectTest: %s connection failed for provider %s: %v", role, conn.Provider, err)
 		code := ErrSourceConnectionFailed
 		if role == "target" {
 			code = ErrTargetConnectionFailed
@@ -707,78 +666,67 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	src, err := s.resolveRequestProfileCredentials(r, req.SourceProfileID, profileCreds{
-		Provider:     req.SourceProvider,
-		URL:          req.SourceURL,
-		Username:     req.SourceUsername,
-		Password:     req.SourcePassword,
-		RefreshToken: req.SourceRefreshToken,
-	})
-	if err != nil {
-		s.logf(r, "handleConnect: failed to load source profile: %v", err)
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
-		return
-	}
-	req.SourceProvider = src.Provider
-	req.SourceURL = src.URL
-	req.SourceUsername = src.Username
-	if req.SourcePassword == "" {
-		req.SourcePassword = src.Password
-	}
-	if req.SourceRefreshToken == "" {
-		req.SourceRefreshToken = src.RefreshToken
-	}
-
-	tgt, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, profileCreds{
-		Provider:     req.TargetProvider,
-		URL:          req.TargetURL,
-		Username:     req.TargetUsername,
-		Password:     req.TargetPassword,
-		RefreshToken: req.TargetRefreshToken,
-	})
-	if err != nil {
-		s.logf(r, "handleConnect: failed to load target profile: %v", err)
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
-		return
-	}
-	req.TargetProvider = tgt.Provider
-	req.TargetURL = tgt.URL
-	req.TargetUsername = tgt.Username
-	if req.TargetPassword == "" {
-		req.TargetPassword = tgt.Password
-	}
-	if req.TargetRefreshToken == "" {
-		req.TargetRefreshToken = tgt.RefreshToken
-	}
-
-	if req.SourceProvider == "" {
-		req.SourceProvider = "nextcloud"
-	}
-	if req.TargetProvider == "" {
-		req.TargetProvider = "nextcloud"
-	}
-	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
-	req.TargetURL = normalizeProviderURL(req.TargetProvider, req.TargetURL)
 	if req.ResourceType == "" {
 		req.ResourceType = "files"
 	}
 
-	if !storage.IsValidProvider(req.SourceProvider) || !storage.IsValidProvider(req.TargetProvider) {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
-		return
-	}
-
-	sourceClient, err := newProfileProviderFor[migrationBrowser](s, r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword, megaProfileProviderOptions(src)...)
+	sourceConn, err := openRequestProviderFromRequest[migrationBrowser](s, r, requestConnectionInput{
+		ProfileID:       req.SourceProfileID,
+		DefaultProvider: "nextcloud",
+		NormalizeURL:    true,
+		Provider:        req.SourceProvider,
+		URL:             req.SourceURL,
+		Username:        req.SourceUsername,
+		Password:        req.SourcePassword,
+		RefreshToken:    req.SourceRefreshToken,
+	})
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
+		if errors.Is(err, errProfileInvalidProvider) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
+			return
+		}
+		if errors.Is(err, errProfileProvider) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
+			return
+		}
+		s.logf(r, "handleConnect: failed to load source profile: %v", err)
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
-	defer sourceClient.Close()
+	defer sourceConn.Close()
+	sourceClient := sourceConn.Client
+
+	targetConn, err := openRequestProviderFromRequest[profileProvider](s, r, requestConnectionInput{
+		ProfileID:       req.TargetProfileID,
+		DefaultProvider: "nextcloud",
+		NormalizeURL:    true,
+		Provider:        req.TargetProvider,
+		URL:             req.TargetURL,
+		Username:        req.TargetUsername,
+		Password:        req.TargetPassword,
+		RefreshToken:    req.TargetRefreshToken,
+	})
+	if err != nil {
+		if errors.Is(err, errProfileInvalidProvider) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
+			return
+		}
+		if errors.Is(err, errProfileProvider) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
+			return
+		}
+		s.logf(r, "handleConnect: failed to load target profile: %v", err)
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	defer targetConn.Close()
+	targetClient := targetConn.Client
+
 	srcCtx, srcCancel := context.WithTimeout(r.Context(), 15*time.Second)
 	sourceOK, err := sourceClient.Connect(srcCtx)
 	srcCancel()
 	if !sourceOK {
-		s.logf(r, "handleConnect: source connection failed for provider %s: %v", req.SourceProvider, err)
+		s.logf(r, "handleConnect: source connection failed for provider %s: %v", sourceConn.Provider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -787,17 +735,11 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetClient, err := s.newProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword, megaProfileProviderOptions(tgt)...)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
-		return
-	}
-	defer targetClient.Close()
 	tgtCtx, tgtCancel := context.WithTimeout(r.Context(), 15*time.Second)
 	targetOK, err := targetClient.Connect(tgtCtx)
 	tgtCancel()
 	if !targetOK {
-		s.logf(r, "handleConnect: target connection failed for provider %s: %v", req.TargetProvider, err)
+		s.logf(r, "handleConnect: target connection failed for provider %s: %v", targetConn.Provider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -814,7 +756,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	defer listCancel()
 	files, err := sourceClient.GetDirectoryListing(listCtx, req.ResourceType, reqPath)
 	if err != nil {
-		s.logf(r, "handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, req.SourceProvider, err)
+		s.logf(r, "handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, sourceConn.Provider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
 		return
 	}
@@ -848,48 +790,36 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	src, err := s.resolveRequestProfileCredentials(r, req.SourceProfileID, profileCreds{
-		Provider:     req.SourceProvider,
-		URL:          req.SourceURL,
-		Username:     req.SourceUsername,
-		Password:     req.SourcePassword,
-		RefreshToken: req.SourceRefreshToken,
+	src, err := s.snapshotRequestConnection(r, requestConnectionInput{
+		ProfileID:       req.SourceProfileID,
+		DefaultProvider: "nextcloud",
+		NormalizeURL:    true,
+		Provider:        req.SourceProvider,
+		URL:             req.SourceURL,
+		Username:        req.SourceUsername,
+		Password:        req.SourcePassword,
+		RefreshToken:    req.SourceRefreshToken,
+		TokenExpiresIn:  req.SourceTokenExpiresIn,
 	})
 	if err != nil {
-		s.logf(r, "handleStart: failed to load source profile: %v", err)
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		s.writeRequestSnapshotError(w, r, "handleStart: failed to load source profile", err)
 		return
-	}
-	req.SourceProvider = src.Provider
-	req.SourceURL = src.URL
-	req.SourceUsername = src.Username
-	if req.SourcePassword == "" {
-		req.SourcePassword = src.Password
-	}
-	if req.SourceRefreshToken == "" {
-		req.SourceRefreshToken = src.RefreshToken
 	}
 
-	tgt, err := s.resolveRequestProfileCredentials(r, req.TargetProfileID, profileCreds{
-		Provider:     req.TargetProvider,
-		URL:          req.TargetURL,
-		Username:     req.TargetUsername,
-		Password:     req.TargetPassword,
-		RefreshToken: req.TargetRefreshToken,
+	tgt, err := s.snapshotRequestConnection(r, requestConnectionInput{
+		ProfileID:       req.TargetProfileID,
+		DefaultProvider: "nextcloud",
+		NormalizeURL:    true,
+		Provider:        req.TargetProvider,
+		URL:             req.TargetURL,
+		Username:        req.TargetUsername,
+		Password:        req.TargetPassword,
+		RefreshToken:    req.TargetRefreshToken,
+		TokenExpiresIn:  req.TargetTokenExpiresIn,
 	})
 	if err != nil {
-		s.logf(r, "handleStart: failed to load target profile: %v", err)
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		s.writeRequestSnapshotError(w, r, "handleStart: failed to load target profile", err)
 		return
-	}
-	req.TargetProvider = tgt.Provider
-	req.TargetURL = tgt.URL
-	req.TargetUsername = tgt.Username
-	if req.TargetPassword == "" {
-		req.TargetPassword = tgt.Password
-	}
-	if req.TargetRefreshToken == "" {
-		req.TargetRefreshToken = tgt.RefreshToken
 	}
 
 	if len(req.Paths) == 0 && len(req.Calendars) == 0 && len(req.Contacts) == 0 {
@@ -897,34 +827,26 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.SourceProvider == "" {
-		req.SourceProvider = "nextcloud"
-	}
-	if req.TargetProvider == "" {
-		req.TargetProvider = "nextcloud"
-	}
 	// Long-running migrations must be able to recover from short-lived OAuth
 	// access tokens. Reject incomplete OAuth credentials up front rather than
 	// allowing a migration that is guaranteed to fail roughly an hour later.
-	if oauth.IsProvider(req.SourceProvider) && req.SourceRefreshToken == "" {
+	if oauth.IsProvider(src.Provider) && !src.HasRefreshToken {
 		writeValidationError(w, ErrRefreshTokenMissing)
 		return
 	}
-	if oauth.IsProvider(req.TargetProvider) && req.TargetRefreshToken == "" {
+	if oauth.IsProvider(tgt.Provider) && !tgt.HasRefreshToken {
 		writeValidationError(w, ErrRefreshTokenMissing)
 		return
 	}
-	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
-	req.TargetURL = normalizeProviderURL(req.TargetProvider, req.TargetURL)
 
 	if len(req.Calendars) > 0 {
-		if !storage.ProviderSupportsResourceType(req.SourceProvider, "calendars") || !storage.ProviderSupportsResourceType(req.TargetProvider, "calendars") {
+		if !storage.ProviderSupportsResourceType(src.Provider, "calendars") || !storage.ProviderSupportsResourceType(tgt.Provider, "calendars") {
 			writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
 			return
 		}
 	}
 	if len(req.Contacts) > 0 {
-		if !storage.ProviderSupportsResourceType(req.SourceProvider, "contacts") || !storage.ProviderSupportsResourceType(req.TargetProvider, "contacts") {
+		if !storage.ProviderSupportsResourceType(src.Provider, "contacts") || !storage.ProviderSupportsResourceType(tgt.Provider, "contacts") {
 			writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
 			return
 		}
@@ -938,16 +860,16 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	// Conflict strategy controls writes at the target; Immich remains a valid
 	// source with any strategy supported by the non-Immich target.
-	if req.TargetProvider == "immich" && req.ConflictStrategy != "SKIP" {
+	if tgt.Provider == "immich" && req.ConflictStrategy != "SKIP" {
 		writeError(w, http.StatusBadRequest, ErrImmichConflictStrategy)
 		return
 	}
 
-	if err := storage.ValidateProviderURL(req.SourceProvider, req.SourceURL); err != nil {
+	if err := storage.ValidateProviderURL(src.Provider, src.URL); err != nil {
 		writeError(w, http.StatusBadRequest, ErrSourceUrlInvalid)
 		return
 	}
-	if err := storage.ValidateProviderURL(req.TargetProvider, req.TargetURL); err != nil {
+	if err := storage.ValidateProviderURL(tgt.Provider, tgt.URL); err != nil {
 		writeError(w, http.StatusBadRequest, ErrTargetUrlInvalid)
 		return
 	}
@@ -955,60 +877,6 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	targetDir := req.TargetDir
 	if targetDir == "" {
 		targetDir = "/"
-	}
-
-	sourcePassEnc, err := crypto.EncryptWithDomain(req.SourcePassword, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(req.SourceProvider)))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-
-	targetPassEnc, err := crypto.EncryptWithDomain(req.TargetPassword, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(req.TargetProvider)))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-	sourceMegaSessionIDEncrypted, sourceMegaMasterKeyEncrypted, err := s.encryptMegaSession(src.MegaSession)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-	targetMegaSessionIDEncrypted, targetMegaMasterKeyEncrypted, err := s.encryptMegaSession(tgt.MegaSession)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-		return
-	}
-
-	var sourceRefreshEnc sql.NullString
-	var sourceTokenExpiresAt sql.NullTime
-	if req.SourceRefreshToken != "" {
-		enc, err := crypto.EncryptWithDomain(req.SourceRefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-			return
-		}
-		sourceRefreshEnc = sql.NullString{String: enc, Valid: true}
-		expiresIn := req.SourceTokenExpiresIn
-		if expiresIn <= 0 {
-			expiresIn = 3600
-		}
-		sourceTokenExpiresAt = sql.NullTime{Time: time.Now().Add(time.Duration(expiresIn) * time.Second), Valid: true}
-	}
-
-	var targetRefreshEnc sql.NullString
-	var targetTokenExpiresAt sql.NullTime
-	if req.TargetRefreshToken != "" {
-		enc, err := crypto.EncryptWithDomain(req.TargetRefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
-			return
-		}
-		targetRefreshEnc = sql.NullString{String: enc, Valid: true}
-		expiresIn := req.TargetTokenExpiresIn
-		if expiresIn <= 0 {
-			expiresIn = 3600
-		}
-		targetTokenExpiresAt = sql.NullTime{Time: time.Now().Add(time.Duration(expiresIn) * time.Second), Valid: true}
 	}
 
 	userID, authenticated := s.requireUserID(w, r)
@@ -1059,24 +927,24 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	m := &db.Migration{
 		UserID:                       sql.NullString{String: userID, Valid: userID != ""},
-		SourceProfileID:              sql.NullString{String: req.SourceProfileID, Valid: req.SourceProfileID != ""},
-		TargetProfileID:              sql.NullString{String: req.TargetProfileID, Valid: req.TargetProfileID != ""},
-		SourceURL:                    req.SourceURL,
-		SourceUsername:               req.SourceUsername,
-		SourcePasswordEncrypted:      sourcePassEnc,
-		SourceRefreshTokenEncrypted:  sourceRefreshEnc,
-		SourceTokenExpiresAt:         sourceTokenExpiresAt,
-		SourceMegaSessionIDEncrypted: sourceMegaSessionIDEncrypted,
-		SourceMegaMasterKeyEncrypted: sourceMegaMasterKeyEncrypted,
-		TargetURL:                    req.TargetURL,
-		TargetUsername:               req.TargetUsername,
-		TargetPasswordEncrypted:      targetPassEnc,
-		TargetRefreshTokenEncrypted:  targetRefreshEnc,
-		TargetTokenExpiresAt:         targetTokenExpiresAt,
-		TargetMegaSessionIDEncrypted: targetMegaSessionIDEncrypted,
-		TargetMegaMasterKeyEncrypted: targetMegaMasterKeyEncrypted,
-		SourceProvider:               req.SourceProvider,
-		TargetProvider:               req.TargetProvider,
+		SourceProfileID:              src.ProfileID,
+		TargetProfileID:              tgt.ProfileID,
+		SourceURL:                    src.URL,
+		SourceUsername:               src.Username,
+		SourcePasswordEncrypted:      src.Creds.PasswordEncrypted,
+		SourceRefreshTokenEncrypted:  src.Creds.RefreshTokenEncrypted,
+		SourceTokenExpiresAt:         src.TokenExpiresAt,
+		SourceMegaSessionIDEncrypted: src.Creds.MegaSessionIDEncrypted,
+		SourceMegaMasterKeyEncrypted: src.Creds.MegaMasterKeyEncrypted,
+		TargetURL:                    tgt.URL,
+		TargetUsername:               tgt.Username,
+		TargetPasswordEncrypted:      tgt.Creds.PasswordEncrypted,
+		TargetRefreshTokenEncrypted:  tgt.Creds.RefreshTokenEncrypted,
+		TargetTokenExpiresAt:         tgt.TokenExpiresAt,
+		TargetMegaSessionIDEncrypted: tgt.Creds.MegaSessionIDEncrypted,
+		TargetMegaMasterKeyEncrypted: tgt.Creds.MegaMasterKeyEncrypted,
+		SourceProvider:               src.Provider,
+		TargetProvider:               tgt.Provider,
 		Status:                       initialStatus,
 		ConflictStrategy:             req.ConflictStrategy,
 		TargetDir:                    targetDir,

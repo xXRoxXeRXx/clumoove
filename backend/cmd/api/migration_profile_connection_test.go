@@ -10,21 +10,32 @@ import (
 	"testing"
 
 	"backend/internal/auth"
+	"backend/internal/crypto"
 	"backend/internal/storage"
 )
 
-func TestResolveRequestProfileCredentialsKeepsRequestCredentialsWithoutProfile(t *testing.T) {
-	server := &APIServer{}
+func TestSnapshotRequestConnectionKeepsRequestCredentialsWithoutProfile(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	server := &APIServer{encryptionKey: key}
 	request := httptest.NewRequest(http.MethodPost, "/api/migration/connect", nil)
 	request = request.WithContext(storage.WithLocalUserScope(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}), "user-1"))
-	base := profileCreds{Provider: "local", URL: "", Username: "", Password: "request-secret", RefreshToken: "request-refresh"}
 
-	got, err := server.resolveRequestProfileCredentials(request, "", base)
+	got, err := server.snapshotRequestConnection(request, requestConnectionInput{
+		Provider:     "local",
+		Password:     "request-secret",
+		RefreshToken: "request-refresh",
+	})
 	if err != nil {
-		t.Fatalf("resolveRequestProfileCredentials() error = %v", err)
+		t.Fatalf("snapshotRequestConnection() error = %v", err)
 	}
-	if got.Provider != base.Provider || got.Password != base.Password || got.RefreshToken != base.RefreshToken {
-		t.Fatal("request-supplied credentials were not preserved")
+	if got.Provider != "local" || !got.HasPassword || !got.HasRefreshToken {
+		t.Fatalf("request-supplied snapshot metadata = %+v", got)
+	}
+	if dec, _ := crypto.DecryptWithDomain(got.Creds.PasswordEncrypted, key, crypto.ConnectionCredentialDomain(false)); dec != "request-secret" {
+		t.Fatalf("snapshot password = %q, want request-secret", dec)
+	}
+	if dec, _ := crypto.DecryptWithDomain(got.Creds.RefreshTokenEncrypted.String, key, crypto.DomainOAuthRefreshToken); dec != "request-refresh" {
+		t.Fatalf("snapshot refresh token = %q, want request-refresh", dec)
 	}
 }
 
@@ -128,6 +139,16 @@ func TestMigrationBrowseAndStartProfileFailures(t *testing.T) {
 		}
 	})
 
+	t.Run("browse rejects an unavailable source profile", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "/api/migration/browse", bytes.NewBufferString(`{"source_profile_id":"missing-profile","resource_type":"files"}`))
+		request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
+		recorder := httptest.NewRecorder()
+
+		server.handleBrowse(recorder, request)
+
+		assertAPIError(t, recorder, http.StatusNotFound, ErrProfileNotFound)
+	})
+
 	t.Run("start rejects an unavailable source profile", func(t *testing.T) {
 		request := httptest.NewRequest(http.MethodPost, "/api/migration/start", bytes.NewBufferString(`{"source_profile_id":"missing-profile","paths":["/"]}`))
 		request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
@@ -159,6 +180,27 @@ func TestSyncAndBackupProfileFailuresRemainMachineReadable(t *testing.T) {
 		recorder := httptest.NewRecorder()
 
 		server.handleCreateBackup(recorder, request)
+
+		assertAPIError(t, recorder, http.StatusNotFound, ErrProfileNotFound)
+	})
+
+	t.Run("file transfer source profile is not found", func(t *testing.T) {
+		transferServer := &APIServer{rateLimiter: allowAllFileRateLimiter{}, encryptionKey: "01234567890123456789012345678901"}
+		ref, err := sealFileReference(fileReference{
+			UserID:       "user-1",
+			ProfileID:    "missing-profile",
+			ResourceType: "files",
+			Kind:         "file",
+			Locator:      storage.ManagerLocator{Path: "/report.pdf"},
+		}, transferServer.encryptionKey)
+		if err != nil {
+			t.Fatalf("sealFileReference() error = %v", err)
+		}
+		request := requestContext(httptest.NewRequest(http.MethodPost, "/api/files/profiles/missing-profile/transfers", bytes.NewBufferString(`{"refs":["`+ref+`"],"target_profile_id":"target-profile","operation":"COPY"}`)))
+		request.SetPathValue("profileID", "missing-profile")
+		recorder := httptest.NewRecorder()
+
+		transferServer.handleFileTransferCreate(recorder, request)
 
 		assertAPIError(t, recorder, http.StatusNotFound, ErrProfileNotFound)
 	})
