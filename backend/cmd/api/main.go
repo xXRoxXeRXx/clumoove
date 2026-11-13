@@ -56,6 +56,8 @@ type APIServer struct {
 	// authStateLookup is nil in production, where AuthMiddleware queries PostgreSQL.
 	// Tests may inject an in-memory lookup to exercise route access contracts.
 	authStateLookup auth.AuthStateLookup
+	oauthRotationMu sync.Mutex
+	oauthRotations  *oauthRotationCache
 }
 
 // Rate-limit and quota configuration for the public / sensitive endpoints.

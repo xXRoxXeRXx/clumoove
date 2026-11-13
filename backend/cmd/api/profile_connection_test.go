@@ -202,14 +202,20 @@ func TestOwnedProfileAccessSuppliedOAuthDoesNotMutateProfileOrUseStaleExpiry(t *
 		}
 	})
 
-	t.Run("temporary connection persists rotated token when supplied token matches saved profile", func(t *testing.T) {
+	t.Run("temporary connection persists rotated token when supplied token matches saved profile and chained request inherits it", func(t *testing.T) {
 		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{"profile-oauth": row})
+		var refreshedTokens []string
 		access := &ownedProfileAccess{
-			db:            spyDB,
-			encryptionKey: key,
-			now:           func() time.Time { return now },
-			refreshOAuth: func(context.Context, string, string) (*oauth.TokenResponse, error) {
-				return &oauth.TokenResponse{AccessToken: "rotated-access", RefreshToken: "rotated-refresh", ExpiresIn: 900}, nil
+			db:             spyDB,
+			encryptionKey:  key,
+			now:            func() time.Time { return now },
+			oauthRotations: newOAuthRotationCache(),
+			refreshOAuth: func(_ context.Context, _, refreshToken string) (*oauth.TokenResponse, error) {
+				refreshedTokens = append(refreshedTokens, refreshToken)
+				if refreshToken == "saved-refresh" {
+					return &oauth.TokenResponse{AccessToken: "rotated-access-1", RefreshToken: "rotated-refresh-1", ExpiresIn: 900}, nil
+				}
+				return &oauth.TokenResponse{AccessToken: "rotated-access-2", RefreshToken: "rotated-refresh-2", ExpiresIn: 1200}, nil
 			},
 			providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
 				return &connectionOnlyProvider{}, nil
@@ -225,31 +231,80 @@ func TestOwnedProfileAccessSuppliedOAuthDoesNotMutateProfileOrUseStaleExpiry(t *
 		}
 		conn.Close()
 		if spyState.execCalls != 1 {
-			t.Fatalf("DB Exec calls = %d, want 1 (matching saved token rotation must persist to profile)", spyState.execCalls)
+			t.Fatalf("DB Exec calls = %d, want 1", spyState.execCalls)
+		}
+
+		// Simulate DB now holding the updated profile row while the caller still sends the old refresh token.
+		updatedRefreshEnc, _ := crypto.EncryptWithDomain("rotated-refresh-1", key, crypto.DomainOAuthRefreshToken)
+		updatedRow := append([]driver.Value(nil), row...)
+		updatedRow[7] = updatedRefreshEnc
+		spyState.profiles["profile-oauth"] = updatedRow
+
+		snap, err := access.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+			ProfileID:    "profile-oauth",
+			RefreshToken: "saved-refresh",
+		})
+		if err != nil {
+			t.Fatalf("SnapshotRequest() error = %v", err)
+		}
+		if len(refreshedTokens) != 2 || refreshedTokens[1] != "rotated-refresh-1" {
+			t.Fatalf("refreshed tokens = %v, want [saved-refresh rotated-refresh-1]", refreshedTokens)
+		}
+		if spyState.execCalls != 2 {
+			t.Fatalf("DB Exec calls = %d, want 2", spyState.execCalls)
+		}
+		if dec, _ := crypto.DecryptWithDomain(snap.Creds.RefreshTokenEncrypted.String, key, crypto.DomainOAuthRefreshToken); dec != "rotated-refresh-2" {
+			t.Fatalf("snapshot refresh = %q, want rotated-refresh-2", dec)
 		}
 	})
 
-	t.Run("temporary connection rejects foreign refresh token without access token before burning rotation", func(t *testing.T) {
+	t.Run("temporary connection refreshes foreign refresh token without mutating profile and preserves rotated token for next request", func(t *testing.T) {
 		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{"profile-oauth": row})
-		refreshCalls := 0
+		var refreshedTokens []string
 		access := &ownedProfileAccess{
-			db:            spyDB,
-			encryptionKey: key,
-			now:           func() time.Time { return now },
-			refreshOAuth: func(context.Context, string, string) (*oauth.TokenResponse, error) {
-				refreshCalls++
-				return &oauth.TokenResponse{AccessToken: "rotated-access", RefreshToken: "rotated-refresh", ExpiresIn: 900}, nil
+			db:             spyDB,
+			encryptionKey:  key,
+			now:            func() time.Time { return now },
+			oauthRotations: newOAuthRotationCache(),
+			refreshOAuth: func(_ context.Context, _, refreshToken string) (*oauth.TokenResponse, error) {
+				refreshedTokens = append(refreshedTokens, refreshToken)
+				if refreshToken == "foreign-refresh" {
+					return &oauth.TokenResponse{AccessToken: "rotated-access-1", RefreshToken: "rotated-refresh-1", ExpiresIn: 900}, nil
+				}
+				return &oauth.TokenResponse{AccessToken: "rotated-access-2", RefreshToken: "rotated-refresh-2", ExpiresIn: 1200}, nil
+			},
+			providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
+				return &connectionOnlyProvider{}, nil
 			},
 		}
 
-		if _, err := openRequestProviderFor[profileProvider](access, context.Background(), "user-1", requestConnectionInput{
+		conn, err := openRequestProviderFor[profileProvider](access, context.Background(), "user-1", requestConnectionInput{
 			ProfileID:    "profile-oauth",
 			RefreshToken: "foreign-refresh",
-		}); !errors.Is(err, errProfileProvider) {
-			t.Fatalf("openRequestProviderFor() error = %v, want errProfileProvider", err)
+		})
+		if err != nil {
+			t.Fatalf("openRequestProviderFor(foreign) error = %v", err)
 		}
-		if refreshCalls != 0 || spyState.execCalls != 0 {
-			t.Fatalf("refreshCalls=%d execCalls=%d, want both 0 (must not consume/overwrite foreign token)", refreshCalls, spyState.execCalls)
+		conn.Close()
+
+		snap, err := access.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+			ProfileID:    "profile-oauth",
+			RefreshToken: "foreign-refresh",
+		})
+		if err != nil {
+			t.Fatalf("SnapshotRequest(foreign) error = %v", err)
+		}
+		if len(refreshedTokens) != 2 || refreshedTokens[1] != "rotated-refresh-1" {
+			t.Fatalf("refreshed tokens = %v, want [foreign-refresh rotated-refresh-1]", refreshedTokens)
+		}
+		if spyState.execCalls != 0 {
+			t.Fatalf("DB Exec calls = %d, want 0 (foreign token must never mutate profile)", spyState.execCalls)
+		}
+		if dec, _ := crypto.DecryptWithDomain(snap.Creds.RefreshTokenEncrypted.String, key, crypto.DomainOAuthRefreshToken); dec != "rotated-refresh-2" {
+			t.Fatalf("snapshot refresh = %q, want rotated-refresh-2", dec)
+		}
+		if wantExpiry := now.Add(1200 * time.Second); !snap.TokenExpiresAt.Valid || !snap.TokenExpiresAt.Time.Equal(wantExpiry) {
+			t.Fatalf("snapshot TokenExpiresAt = %+v, want %v", snap.TokenExpiresAt, wantExpiry)
 		}
 	})
 }

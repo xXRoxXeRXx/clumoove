@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"backend/internal/crypto"
@@ -35,6 +38,19 @@ type ownedProfileAccess struct {
 	providerFactory profileProviderFactory
 	refreshOAuth    func(context.Context, string, string) (*oauth.TokenResponse, error)
 	now             func() time.Time
+	oauthRotations  *oauthRotationCache
+}
+
+func (s *APIServer) rotationCache() *oauthRotationCache {
+	if s == nil {
+		return nil
+	}
+	s.oauthRotationMu.Lock()
+	defer s.oauthRotationMu.Unlock()
+	if s.oauthRotations == nil {
+		s.oauthRotations = newOAuthRotationCache()
+	}
+	return s.oauthRotations
 }
 
 func (s *APIServer) profiles() *ownedProfileAccess {
@@ -42,6 +58,7 @@ func (s *APIServer) profiles() *ownedProfileAccess {
 		db:              s.db,
 		encryptionKey:   s.encryptionKey,
 		providerFactory: s.providerFactory,
+		oauthRotations:  s.rotationCache(),
 	}
 }
 
@@ -110,7 +127,7 @@ type ownedProfileSnapshot struct {
 }
 
 func (a *ownedProfileAccess) SnapshotOwned(ctx context.Context, userID, profileID string) (ownedProfileSnapshot, error) {
-	creds, profile, err := a.resolveCredentials(ctx, userID, profileID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError, false)
+	creds, profile, err := a.resolveCredentials(ctx, userID, profileID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
 	if err != nil {
 		return ownedProfileSnapshot{}, err
 	}
@@ -168,7 +185,7 @@ func (c *ownedProfileConnection) Close() {
 }
 
 func (a *ownedProfileAccess) openOwnedWithPolicy(ctx context.Context, userID, profileID string, refreshPolicy profileOAuthRefreshPolicy) (*ownedProfileConnection, error) {
-	creds, profile, err := a.resolveCredentials(ctx, userID, profileID, profileCreds{}, refreshPolicy, failOnProfileSecretError, false)
+	creds, profile, err := a.resolveCredentials(ctx, userID, profileID, profileCreds{}, refreshPolicy, failOnProfileSecretError)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +263,7 @@ type requestConnectionSnapshot struct {
 	Creds           persistedProfileCreds
 }
 
-func (a *ownedProfileAccess) resolveRequestConnection(ctx context.Context, userID string, input requestConnectionInput, allowEphemeralOAuthRefresh bool) (profileCreds, error) {
+func (a *ownedProfileAccess) resolveRequestConnection(ctx context.Context, userID string, input requestConnectionInput) (profileCreds, error) {
 	base := profileCreds{
 		Provider:     input.Provider,
 		URL:          input.URL,
@@ -262,7 +279,7 @@ func (a *ownedProfileAccess) resolveRequestConnection(ctx context.Context, userI
 		if userID == "" {
 			return profileCreds{}, errProfileNotFound
 		}
-		creds, _, err = a.resolveCredentials(ctx, userID, input.ProfileID, base, refreshOAuthAlways, fallbackOnProfileSecretError, allowEphemeralOAuthRefresh)
+		creds, _, err = a.resolveCredentials(ctx, userID, input.ProfileID, base, refreshOAuthAlways, fallbackOnProfileSecretError)
 		if err != nil {
 			return profileCreds{}, err
 		}
@@ -298,7 +315,7 @@ func narrowProvider[T any](client profileProvider) (T, error) {
 }
 
 func openRequestProviderFor[T any](access *ownedProfileAccess, ctx context.Context, userID string, input requestConnectionInput) (*openedRequestConnection[T], error) {
-	creds, err := access.resolveRequestConnection(ctx, userID, input, false)
+	creds, err := access.resolveRequestConnection(ctx, userID, input)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +348,7 @@ func openRequestProviderFor[T any](access *ownedProfileAccess, ctx context.Conte
 }
 
 func (a *ownedProfileAccess) SnapshotRequest(ctx context.Context, userID string, input requestConnectionInput) (requestConnectionSnapshot, error) {
-	creds, err := a.resolveRequestConnection(ctx, userID, input, true)
+	creds, err := a.resolveRequestConnection(ctx, userID, input)
 	if err != nil {
 		return requestConnectionSnapshot{}, err
 	}
@@ -516,7 +533,7 @@ const (
 	fallbackOnProfileSecretError
 )
 
-func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, profileID string, base profileCreds, refreshPolicy profileOAuthRefreshPolicy, secretFailurePolicy profileSecretFailurePolicy, allowEphemeralOAuthRefresh bool) (profileCreds, *db.ConnectionProfile, error) {
+func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, profileID string, base profileCreds, refreshPolicy profileOAuthRefreshPolicy, secretFailurePolicy profileSecretFailurePolicy) (profileCreds, *db.ConnectionProfile, error) {
 	if profileID == "" {
 		return base, nil, nil
 	}
@@ -575,12 +592,18 @@ func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, pro
 	if base.Password == "" && base.RefreshToken == "" {
 		creds.TokenExpiresAt = profile.TokenExpiresAt
 	}
-	if creds.RefreshToken != "" && oauth.IsProvider(profile.Provider) && base.Password == "" && (refreshPolicy == refreshOAuthAlways || profileOAuthAccessNeedsRefresh(profile, creds.Password, a.currentTime())) {
-		isProfileToken := base.RefreshToken == "" || (storedRefresh != "" && subtle.ConstantTimeCompare([]byte(base.RefreshToken), []byte(storedRefresh)) == 1)
-		if !isProfileToken && !allowEphemeralOAuthRefresh {
-			creds.clear()
-			return base, nil, fmt.Errorf("%w: temporary connection cannot persist rotated OAuth refresh token", errProfileProvider)
+	now := a.currentTime()
+	var resolvedFromRotation string
+	defer crypto.ZeroString(&resolvedFromRotation)
+	if creds.RefreshToken != "" && oauth.IsProvider(profile.Provider) {
+		if rotated, ok := a.oauthRotations.lookup(userID, creds.Provider, creds.RefreshToken, a.encryptionKey, now); ok {
+			resolvedFromRotation = rotated
+			creds.RefreshToken = rotated
 		}
+	}
+	if creds.RefreshToken != "" && oauth.IsProvider(profile.Provider) && base.Password == "" && (refreshPolicy == refreshOAuthAlways || profileOAuthAccessNeedsRefresh(profile, creds.Password, now)) {
+		isProfileToken := base.RefreshToken == "" || (storedRefresh != "" && (subtle.ConstantTimeCompare([]byte(base.RefreshToken), []byte(storedRefresh)) == 1 || subtle.ConstantTimeCompare([]byte(creds.RefreshToken), []byte(storedRefresh)) == 1))
+		previousRefresh := creds.RefreshToken
 		token, refreshErr := a.refreshToken(ctx, creds.Provider, creds.RefreshToken)
 		if refreshErr != nil || token == nil || token.AccessToken == "" {
 			creds.clear()
@@ -597,14 +620,105 @@ func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, pro
 			if expiresIn <= 0 {
 				expiresIn = 3600
 			}
-			creds.TokenExpiresAt = sql.NullTime{Time: a.currentTime().Add(time.Duration(expiresIn) * time.Second), Valid: true}
+			creds.TokenExpiresAt = sql.NullTime{Time: now.Add(time.Duration(expiresIn) * time.Second), Valid: true}
 		}
 		creds.Password = token.AccessToken
 		if token.RefreshToken != "" {
 			creds.RefreshToken = token.RefreshToken
+			a.oauthRotations.record(userID, creds.Provider, previousRefresh, token.RefreshToken, a.encryptionKey, now)
+			if base.RefreshToken != "" && base.RefreshToken != previousRefresh {
+				a.oauthRotations.record(userID, creds.Provider, base.RefreshToken, token.RefreshToken, a.encryptionKey, now)
+			}
+			if isProfileToken && storedRefresh != "" && storedRefresh != previousRefresh {
+				a.oauthRotations.record(userID, creds.Provider, storedRefresh, token.RefreshToken, a.encryptionKey, now)
+			}
 		}
 	}
 	return creds, profile, nil
+}
+
+const (
+	oauthRotationCacheTTL     = 15 * time.Minute
+	oauthRotationCacheMaxSize = 256
+)
+
+type oauthRotationEntry struct {
+	refreshTokenEncrypted string
+	expiresAt             time.Time
+}
+
+// oauthRotationCache tracks recent OAuth refresh token rotations (encrypted at
+// rest with AES-256-GCM) so sequential requests still carrying a pre-rotation
+// refresh token succeed without overwriting unrelated saved profiles.
+type oauthRotationCache struct {
+	mu      sync.Mutex
+	entries map[string]oauthRotationEntry
+}
+
+func newOAuthRotationCache() *oauthRotationCache {
+	return &oauthRotationCache{entries: make(map[string]oauthRotationEntry)}
+}
+
+func oauthRotationKey(userID, provider, refreshToken string) string {
+	sum := sha256.Sum256([]byte(userID + "\x00" + provider + "\x00" + refreshToken))
+	return hex.EncodeToString(sum[:])
+}
+
+func (c *oauthRotationCache) lookup(userID, provider, refreshToken, encryptionKey string, now time.Time) (string, bool) {
+	if c == nil || refreshToken == "" || encryptionKey == "" {
+		return "", false
+	}
+	key := oauthRotationKey(userID, provider, refreshToken)
+	c.mu.Lock()
+	entry, ok := c.entries[key]
+	if ok && !now.Before(entry.expiresAt) {
+		delete(c.entries, key)
+		ok = false
+	}
+	c.mu.Unlock()
+	if !ok {
+		return "", false
+	}
+	plain, err := crypto.DecryptWithDomain(entry.refreshTokenEncrypted, encryptionKey, crypto.DomainOAuthRefreshToken)
+	if err != nil || plain == "" {
+		return "", false
+	}
+	return plain, true
+}
+
+func (c *oauthRotationCache) record(userID, provider, previousToken, rotatedToken, encryptionKey string, now time.Time) {
+	if c == nil || previousToken == "" || rotatedToken == "" || previousToken == rotatedToken || encryptionKey == "" {
+		return
+	}
+	encrypted, err := crypto.EncryptWithDomain(rotatedToken, encryptionKey, crypto.DomainOAuthRefreshToken)
+	if err != nil {
+		return
+	}
+	key := oauthRotationKey(userID, provider, previousToken)
+	entry := oauthRotationEntry{refreshTokenEncrypted: encrypted, expiresAt: now.Add(oauthRotationCacheTTL)}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = make(map[string]oauthRotationEntry)
+	}
+	for k, existing := range c.entries {
+		if !now.Before(existing.expiresAt) {
+			delete(c.entries, k)
+		}
+	}
+	for len(c.entries) >= oauthRotationCacheMaxSize {
+		var oldestKey string
+		var oldestExpiry time.Time
+		for k, existing := range c.entries {
+			if oldestKey == "" || existing.expiresAt.Before(oldestExpiry) {
+				oldestKey = k
+				oldestExpiry = existing.expiresAt
+			}
+		}
+		delete(c.entries, oldestKey)
+	}
+	c.entries[key] = entry
 }
 
 type profileProviderFactory func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error)
