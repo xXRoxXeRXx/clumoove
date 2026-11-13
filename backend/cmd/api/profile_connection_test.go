@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -309,8 +311,15 @@ func TestOwnedProfileAccessSuppliedOAuthDoesNotMutateProfileOrUseStaleExpiry(t *
 	})
 }
 
+type profileSpyRotation struct {
+	rotatedHash      string
+	rotatedEncrypted string
+}
+
 type profileSpyState struct {
+	mu        sync.Mutex
 	profiles  map[string][]driver.Value
+	rotations map[string]profileSpyRotation
 	execCalls int
 	execErr   error
 }
@@ -327,22 +336,249 @@ type profileSpyConn struct{ state *profileSpyState }
 func (profileSpyConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
 func (profileSpyConn) Close() error                        { return nil }
 func (profileSpyConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
-func (c profileSpyConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+func (c profileSpyConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	if strings.Contains(query, "oauth_token_rotations") {
+		if c.state.rotations == nil {
+			c.state.rotations = make(map[string]profileSpyRotation)
+		}
+		key := fmt.Sprintf("%v\x00%v\x00%v", args[0].Value, args[1].Value, args[2].Value)
+		c.state.rotations[key] = profileSpyRotation{
+			rotatedHash:      args[3].Value.(string),
+			rotatedEncrypted: args[4].Value.(string),
+		}
+		return driver.RowsAffected(1), nil
+	}
 	c.state.execCalls++
 	if c.state.execErr != nil {
 		return nil, c.state.execErr
 	}
+	if strings.Contains(query, "UPDATE connection_profiles") && len(args) == 5 {
+		id, _ := args[3].Value.(string)
+		expectedRefresh, _ := args[4].Value.(string)
+		row, ok := c.state.profiles[id]
+		if !ok || row[7] != expectedRefresh {
+			return driver.RowsAffected(0), nil
+		}
+		updated := append([]driver.Value(nil), row...)
+		updated[5] = args[0].Value
+		updated[7] = args[1].Value
+		updated[8] = args[2].Value
+		c.state.profiles[id] = updated
+		return driver.RowsAffected(1), nil
+	}
 	return driver.RowsAffected(1), nil
 }
 func (c profileSpyConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	if strings.Contains(query, "FROM oauth_token_rotations") {
+		key := fmt.Sprintf("%v\x00%v\x00%v", args[0].Value, args[1].Value, args[2].Value)
+		rot, ok := c.state.rotations[key]
+		if !ok {
+			return &profileSpyRows{columns: 2}, nil
+		}
+		return &profileSpyRows{
+			rows:    [][]driver.Value{{rot.rotatedHash, rot.rotatedEncrypted}},
+			columns: 2,
+		}, nil
+	}
 	if strings.Contains(query, "SELECT EXISTS") && strings.Contains(query, "connection_profiles") {
 		_, ok := c.state.profiles[args[0].Value.(string)]
 		return &profileSpyRows{rows: [][]driver.Value{{ok}}, columns: 1}, nil
 	}
 	if strings.Contains(query, "FROM connection_profiles WHERE id") {
-		return &profileSpyRows{rows: [][]driver.Value{c.state.profiles[args[0].Value.(string)]}, columns: 14}, nil
+		row := append([]driver.Value(nil), c.state.profiles[args[0].Value.(string)]...)
+		return &profileSpyRows{rows: [][]driver.Value{row}, columns: 14}, nil
 	}
 	return nil, driver.ErrSkip
+}
+
+type testDistributedOAuthLocker struct {
+	mu    sync.Mutex
+	locks map[string]string
+	seq   int
+}
+
+func (l *testDistributedOAuthLocker) TryClaimOAuthLock(_ context.Context, jobType, jobID, role string, _ time.Duration) (string, bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.locks == nil {
+		l.locks = make(map[string]string)
+	}
+	key := jobType + ":" + jobID + ":" + role
+	if _, held := l.locks[key]; held {
+		return "", false, nil
+	}
+	l.seq++
+	tok := fmt.Sprintf("tok-%d", l.seq)
+	l.locks[key] = tok
+	return tok, true, nil
+}
+
+func (l *testDistributedOAuthLocker) ReleaseOAuthLock(_ context.Context, jobType, jobID, role, token string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	key := jobType + ":" + jobID + ":" + role
+	if l.locks[key] == token {
+		delete(l.locks, key)
+	}
+	return nil
+}
+
+func TestOwnedProfileAccessRotationDurabilityChainsAndConcurrency(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	now := time.Date(2026, time.November, 14, 12, 0, 0, 0, time.UTC)
+	savedAccessEnc, _ := crypto.EncryptWithDomain("saved-access", key, crypto.DomainOAuthAccessToken)
+	savedRefreshEnc, _ := crypto.EncryptWithDomain("saved-refresh", key, crypto.DomainOAuthRefreshToken)
+	makeRow := func() []driver.Value {
+		r := profileTestRow("profile-oauth", "user-1", "google", "", "saved@example.test", savedAccessEnc)
+		r[7] = savedRefreshEnc
+		r[8] = now.Add(-10 * time.Minute)
+		return r
+	}
+
+	t.Run("rotation history persists in database across restarts and transitive A->B->C chains", func(t *testing.T) {
+		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{"profile-oauth": makeRow()})
+		var refreshedTokens []string
+		refreshFn := func(_ context.Context, _, refreshToken string) (*oauth.TokenResponse, error) {
+			refreshedTokens = append(refreshedTokens, refreshToken)
+			switch refreshToken {
+			case "foreign-A":
+				return &oauth.TokenResponse{AccessToken: "at-B", RefreshToken: "foreign-B", ExpiresIn: 900}, nil
+			case "foreign-B":
+				return &oauth.TokenResponse{AccessToken: "at-C", RefreshToken: "foreign-C", ExpiresIn: 900}, nil
+			case "foreign-C":
+				return &oauth.TokenResponse{AccessToken: "at-D", RefreshToken: "foreign-D", ExpiresIn: 900}, nil
+			default:
+				return nil, fmt.Errorf("unexpected/invalidated refresh token %q", refreshToken)
+			}
+		}
+
+		// Instance 1 receives foreign-A and rotates it to foreign-B.
+		instance1 := &ownedProfileAccess{
+			db:             spyDB,
+			encryptionKey:  key,
+			now:            func() time.Time { return now },
+			oauthRotations: newOAuthRotationCache(),
+			refreshOAuth:   refreshFn,
+		}
+		if _, err := instance1.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+			ProfileID:    "profile-oauth",
+			RefreshToken: "foreign-A",
+		}); err != nil {
+			t.Fatalf("instance1 SnapshotRequest(A) error = %v", err)
+		}
+
+		// Instance 2 (restarted/separate process with empty cache, long after cache TTL)
+		// receives foreign-B directly and rotates it to foreign-C.
+		later := now.Add(48 * time.Hour)
+		instance2 := &ownedProfileAccess{
+			db:             spyDB,
+			encryptionKey:  key,
+			now:            func() time.Time { return later },
+			oauthRotations: newOAuthRotationCache(),
+			refreshOAuth:   refreshFn,
+		}
+		if _, err := instance2.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+			ProfileID:    "profile-oauth",
+			RefreshToken: "foreign-B",
+		}); err != nil {
+			t.Fatalf("instance2 SnapshotRequest(B) error = %v", err)
+		}
+
+		// Instance 3 (restarted/separate process with empty cache) still holds original foreign-A.
+		// Transitive DB lookup resolves A -> B -> C before refreshing to D.
+		instance3 := &ownedProfileAccess{
+			db:             spyDB,
+			encryptionKey:  key,
+			now:            func() time.Time { return later.Add(48 * time.Hour) },
+			oauthRotations: newOAuthRotationCache(),
+			refreshOAuth:   refreshFn,
+		}
+		snap, err := instance3.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+			ProfileID:    "profile-oauth",
+			RefreshToken: "foreign-A",
+		})
+		if err != nil {
+			t.Fatalf("instance3 SnapshotRequest(A) error = %v", err)
+		}
+		if spyState.execCalls != 0 {
+			t.Fatalf("connection_profiles execCalls = %d, want 0", spyState.execCalls)
+		}
+		wantSeq := []string{"foreign-A", "foreign-B", "foreign-C"}
+		if strings.Join(refreshedTokens, ",") != strings.Join(wantSeq, ",") {
+			t.Fatalf("refreshed sequence = %v, want %v", refreshedTokens, wantSeq)
+		}
+		if dec, _ := crypto.DecryptWithDomain(snap.Creds.RefreshTokenEncrypted.String, key, crypto.DomainOAuthRefreshToken); dec != "foreign-D" {
+			t.Fatalf("final refresh token = %q, want foreign-D", dec)
+		}
+	})
+
+	t.Run("concurrent requests serialize single-use token rotation across instances without double spending", func(t *testing.T) {
+		spyDB, _ := newProfileSpyDB(t, map[string][]driver.Value{"profile-oauth": makeRow()})
+		locker := &testDistributedOAuthLocker{}
+
+		var mu sync.Mutex
+		activeToken := "saved-refresh"
+		spent := make(map[string]bool)
+		refreshSeq := 0
+		refreshFn := func(_ context.Context, _, refreshToken string) (*oauth.TokenResponse, error) {
+			// Simulate network latency inside provider token endpoint.
+			time.Sleep(15 * time.Millisecond)
+			mu.Lock()
+			defer mu.Unlock()
+			if spent[refreshToken] || refreshToken != activeToken {
+				return nil, fmt.Errorf("token %q revoked or already spent (active=%q)", refreshToken, activeToken)
+			}
+			spent[refreshToken] = true
+			refreshSeq++
+			nextToken := fmt.Sprintf("rotated-%d", refreshSeq)
+			activeToken = nextToken
+			return &oauth.TokenResponse{
+				AccessToken:  fmt.Sprintf("access-%d", refreshSeq),
+				RefreshToken: nextToken,
+				ExpiresIn:    3600,
+			}, nil
+		}
+
+		// Two separate API instances (empty shared memory, shared DB + Redis lock) run concurrently.
+		const workers = 6
+		start := make(chan struct{})
+		errs := make(chan error, workers)
+		var wg sync.WaitGroup
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				// Alternate between shared instance0 vs brand-new instance per worker,
+				// and alternate between empty RefreshToken (profile default) vs initial "saved-refresh".
+				access := &ownedProfileAccess{
+					db:             spyDB,
+					encryptionKey:  key,
+					now:            func() time.Time { return now },
+					oauthRotations: newOAuthRotationCache(),
+					oauthLocker:    locker,
+					refreshOAuth:   refreshFn,
+				}
+				<-start
+				req := requestConnectionInput{ProfileID: "profile-oauth"}
+				if idx%2 == 0 {
+					req.RefreshToken = "saved-refresh"
+				}
+				if _, err := access.SnapshotRequest(context.Background(), "user-1", req); err != nil {
+					errs <- fmt.Errorf("worker %d: %w", idx, err)
+				}
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatal(err)
+		}
+	})
 }
 
 type profileSpyRows struct {

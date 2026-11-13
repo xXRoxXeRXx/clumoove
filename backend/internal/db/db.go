@@ -1231,6 +1231,25 @@ $$ language 'plpgsql'`)
 				log.Printf("Failed schema migration (notification_events backup): %v\n", err)
 			}
 
+			_, err = db.Exec(`
+				CREATE TABLE IF NOT EXISTS oauth_token_rotations (
+					user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+					provider TEXT NOT NULL,
+					token_hash TEXT NOT NULL,
+					rotated_token_hash TEXT NOT NULL,
+					rotated_refresh_token_encrypted TEXT NOT NULL,
+					created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					PRIMARY KEY (user_id, provider, token_hash)
+				);
+				CREATE INDEX IF NOT EXISTS idx_oauth_token_rotations_updated_at ON oauth_token_rotations(updated_at);
+				DROP TRIGGER IF EXISTS update_oauth_token_rotations_updated_at ON oauth_token_rotations;
+				CREATE TRIGGER update_oauth_token_rotations_updated_at BEFORE UPDATE ON oauth_token_rotations FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+			`)
+			if err != nil {
+				log.Printf("Failed schema migration (oauth_token_rotations): %v\n", err)
+			}
+
 			if schemaErr != nil {
 				releaseLock()
 				db.Close()

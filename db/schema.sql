@@ -925,3 +925,25 @@ CREATE OR REPLACE TRIGGER update_notification_deliveries_updated_at
     BEFORE UPDATE ON notification_deliveries
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+-- Tracks OAuth refresh token rotations (encrypted at rest) so sequential,
+-- concurrent, or multi-instance requests presenting a pre-rotation refresh
+-- token resolve transitively to the latest token across restarts.
+CREATE TABLE IF NOT EXISTS oauth_token_rotations (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    rotated_token_hash TEXT NOT NULL,
+    rotated_refresh_token_encrypted TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, provider, token_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_token_rotations_updated_at
+    ON oauth_token_rotations(updated_at);
+
+CREATE OR REPLACE TRIGGER update_oauth_token_rotations_updated_at
+    BEFORE UPDATE ON oauth_token_rotations
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
