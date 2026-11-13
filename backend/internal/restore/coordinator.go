@@ -966,33 +966,48 @@ func trimExtension(name string) string {
 }
 
 func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string) (RepositorySource, error) {
-	if c.repositorySourceFactory != nil {
-		return c.repositorySourceFactory(ctx, provider, endpoint, username, encryptedPassword)
+	factory := c.repositorySourceFactory
+	if factory == nil {
+		factory = func(ctx context.Context, provider, endpoint, username, password string) (RepositorySource, error) {
+			return storage.NewProvider(ctx, provider, endpoint, username, password)
+		}
 	}
-	return c.newProvider(ctx, provider, endpoint, username, encryptedPassword)
+	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory)
 }
 
 func (c *Coordinator) newPreviewTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string) (PreviewTargetClient, error) {
-	if c.previewTargetFactory != nil {
-		return c.previewTargetFactory(ctx, provider, endpoint, username, encryptedPassword)
+	factory := c.previewTargetFactory
+	if factory == nil {
+		factory = func(ctx context.Context, provider, endpoint, username, password string) (PreviewTargetClient, error) {
+			return storage.NewProvider(ctx, provider, endpoint, username, password)
+		}
 	}
-	return c.newProvider(ctx, provider, endpoint, username, encryptedPassword)
+	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory)
 }
 
 func (c *Coordinator) newRestoreTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string) (RestoreTarget, error) {
-	if c.restoreTargetFactory != nil {
-		return c.restoreTargetFactory(ctx, provider, endpoint, username, encryptedPassword)
+	factory := c.restoreTargetFactory
+	if factory == nil {
+		factory = func(ctx context.Context, provider, endpoint, username, password string) (RestoreTarget, error) {
+			return storage.NewProvider(ctx, provider, endpoint, username, password)
+		}
 	}
-	return c.newProvider(ctx, provider, endpoint, username, encryptedPassword)
+	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory)
 }
 
-func (c *Coordinator) newProvider(ctx context.Context, provider, endpoint, username, encryptedPassword string) (storage.StorageProvider, error) {
+func openWithDecryptedPassword[T any](
+	c *Coordinator,
+	ctx context.Context,
+	provider, endpoint, username, encryptedPassword string,
+	factory func(ctx context.Context, provider, endpoint, username, password string) (T, error),
+) (T, error) {
 	password, err := crypto.DecryptWithDomain(encryptedPassword, c.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(provider)))
 	if err != nil {
-		return nil, err
+		var zero T
+		return zero, err
 	}
 	defer crypto.ZeroString(&password)
-	return storage.NewProvider(ctx, provider, endpoint, username, password)
+	return factory(ctx, provider, endpoint, username, password)
 }
 
 func (c *Coordinator) Run(ctx context.Context, interval time.Duration) error {

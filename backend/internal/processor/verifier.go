@@ -322,8 +322,23 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	if targetClient == nil {
 		newTargetProvider := cfg.NewTargetProvider
 		if newTargetProvider == nil {
-			newTargetProvider = func(ctx context.Context, providerType, urlStr, username, password string) (connectableVerificationTarget, error) {
-				return newProvider(ctx, providerType, urlStr, username, password)
+			if p.providerFactory != nil {
+				newTargetProvider = func(ctx context.Context, providerType, urlStr, username, password string) (connectableVerificationTarget, error) {
+					client, err := p.providerFactory(ctx, providerType, urlStr, username, password)
+					if err != nil {
+						return nil, err
+					}
+					target, ok := client.(connectableVerificationTarget)
+					if !ok {
+						_ = client.Close()
+						return nil, fmt.Errorf("%w: verification target provider does not satisfy verification contract", storage.ErrPermanentTransfer)
+					}
+					return target, nil
+				}
+			} else {
+				newTargetProvider = func(ctx context.Context, providerType, urlStr, username, password string) (connectableVerificationTarget, error) {
+					return newProvider(ctx, providerType, urlStr, username, password)
+				}
 			}
 		}
 		createdTarget, err := newTargetProvider(passCtx, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)

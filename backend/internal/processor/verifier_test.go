@@ -780,4 +780,31 @@ func TestVerificationPassAcceptsMinimalTargetAdapters(t *testing.T) {
 			t.Fatalf("verified=%v connected=%v closed=%v, want all true", verified, target.connected, target.closed)
 		}
 	})
+
+	t.Run("Processor.SetProviderFactory supplies verification target when NewTargetProvider is nil", func(t *testing.T) {
+		target := &minimalConnectableVerificationTarget{
+			minimalVerificationTarget: minimalVerificationTarget{
+				hash: "SHA1:deadbeef",
+				size: 12,
+				mode: storage.VerificationCryptographicHash,
+			},
+		}
+		factoryCalled := false
+		verified := false
+		p := &Processor{}
+		p.SetProviderFactory(func(context.Context, string, string, string, string) (PooledProvider, error) {
+			factoryCalled = true
+			return target, nil
+		})
+		p.runVerificationPass(context.Background(), verificationPassConfig{
+			EntityType: "Migration", EntityID: "mig-factory", TargetProvider: "nextcloud", Threads: 1,
+			GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+			ReconcileProgress: func() error { return nil },
+			MarkVerified:      func(context.Context, *db.Task, string) (bool, error) { verified = true; return true, nil },
+			MarkMismatch:      func(context.Context, *db.Task) (bool, error) { t.Fatal("unexpected mismatch"); return true, nil },
+		})
+		if !factoryCalled || !verified || !target.connected || !target.closed {
+			t.Fatalf("factoryCalled=%v verified=%v connected=%v closed=%v, want all true", factoryCalled, verified, target.connected, target.closed)
+		}
+	})
 }

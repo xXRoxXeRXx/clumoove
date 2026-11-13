@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"backend/internal/backuprepo"
+	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/storage"
 )
@@ -489,7 +490,21 @@ func (*minimalWorkflowRestoreTarget) GetFileHash(context.Context, string, string
 }
 
 func TestRestoreCoordinatorFactoriesAcceptMinimalAdapters(t *testing.T) {
-	c := &Coordinator{}
+	const encKey = "test-restore-encryption-key"
+	previewSecretEnc, err := crypto.EncryptWithDomain("preview-plaintext", encKey, crypto.ConnectionCredentialDomain(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoSecretEnc, err := crypto.EncryptWithDomain("repo-plaintext", encKey, crypto.ConnectionCredentialDomain(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetSecretEnc, err := crypto.EncryptWithDomain("target-plaintext", encKey, crypto.ConnectionCredentialDomain(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := &Coordinator{encryptionKey: encKey}
 	previewClient := &minimalWorkflowPreviewTarget{
 		minimalPreviewReader: minimalPreviewReader{
 			files: map[string]bool{"/restore": true},
@@ -498,13 +513,17 @@ func TestRestoreCoordinatorFactoriesAcceptMinimalAdapters(t *testing.T) {
 			},
 		},
 	}
-	c.SetPreviewTargetFactory(func(context.Context, string, string, string, string) (PreviewTargetClient, error) {
+	var gotPreviewPassword, gotRepoPassword, gotTargetPassword string
+	c.SetPreviewTargetFactory(func(_ context.Context, _, _, _, password string) (PreviewTargetClient, error) {
+		gotPreviewPassword = password
 		return previewClient, nil
 	})
-	c.SetRepositorySourceFactory(func(context.Context, string, string, string, string) (RepositorySource, error) {
+	c.SetRepositorySourceFactory(func(_ context.Context, _, _, _, password string) (RepositorySource, error) {
+		gotRepoPassword = password
 		return &minimalRepositorySource{}, nil
 	})
-	c.SetRestoreTargetFactory(func(context.Context, string, string, string, string) (RestoreTarget, error) {
+	c.SetRestoreTargetFactory(func(_ context.Context, _, _, _, password string) (RestoreTarget, error) {
+		gotTargetPassword = password
 		return &minimalWorkflowRestoreTarget{}, nil
 	})
 
@@ -512,7 +531,7 @@ func TestRestoreCoordinatorFactoriesAcceptMinimalAdapters(t *testing.T) {
 		TargetProvider:          "webdav",
 		TargetRoot:              "/restore",
 		ConflictStrategy:        "OVERWRITE",
-		TargetPasswordEncrypted: sql.NullString{String: "dummy", Valid: true},
+		TargetPasswordEncrypted: sql.NullString{String: previewSecretEnc, Valid: true},
 	}, []db.RestorePreviewItem{
 		{RelativePath: "a.txt", SizeBytes: 10, State: "AVAILABLE"},
 	})
@@ -522,16 +541,25 @@ func TestRestoreCoordinatorFactoriesAcceptMinimalAdapters(t *testing.T) {
 	if !previewClient.connected || !previewClient.closed || stats.Files != 1 || stats.ExistingFiles != 1 {
 		t.Fatalf("previewTargetWithItems() stats=%+v connected=%v closed=%v", stats, previewClient.connected, previewClient.closed)
 	}
+	if gotPreviewPassword != "preview-plaintext" {
+		t.Fatalf("preview factory received %q, want decrypted preview-plaintext", gotPreviewPassword)
+	}
 
-	repoClient, err := c.newRepositorySource(context.Background(), "s3", "https://repo.test", "u", "")
+	repoClient, err := c.newRepositorySource(context.Background(), "s3", "https://repo.test", "u", repoSecretEnc)
 	if err != nil {
 		t.Fatalf("newRepositorySource() error = %v", err)
 	}
 	_ = repoClient.Close()
+	if gotRepoPassword != "repo-plaintext" {
+		t.Fatalf("repository factory received %q, want decrypted repo-plaintext", gotRepoPassword)
+	}
 
-	tgtClient, err := c.newRestoreTarget(context.Background(), "nextcloud", "https://target.test", "u", "")
+	tgtClient, err := c.newRestoreTarget(context.Background(), "nextcloud", "https://target.test", "u", targetSecretEnc)
 	if err != nil {
 		t.Fatalf("newRestoreTarget() error = %v", err)
 	}
 	_ = tgtClient.Close()
+	if gotTargetPassword != "target-plaintext" {
+		t.Fatalf("restore target factory received %q, want decrypted target-plaintext", gotTargetPassword)
+	}
 }
