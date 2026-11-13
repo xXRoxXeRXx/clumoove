@@ -41,21 +41,18 @@ type ProviderOption func(*ProviderOptions)
 // WithProviderMegaSession attaches MEGA session material explicitly for
 // provider construction instead of passing secrets via context.Context.
 // Passing an incomplete session (empty ID or MasterKey) is a no-op.
-// The returned option transfers its internal key copy on invocation so NewProvider
-// can zero it immediately after construction.
+// The caller retains ownership of session.MasterKey and must clear it
+// immediately after provider construction returns.
 func WithProviderMegaSession(session MegaSession) ProviderOption {
 	if session.ID == "" || len(session.MasterKey) == 0 {
 		return func(*ProviderOptions) {}
 	}
-	key := append([]byte(nil), session.MasterKey...)
-	sessionID := session.ID
 	return func(opts *ProviderOptions) {
 		clear(opts.MegaSession.MasterKey)
 		opts.MegaSession = MegaSession{
-			ID:        sessionID,
-			MasterKey: key,
+			ID:        session.ID,
+			MasterKey: append([]byte(nil), session.MasterKey...),
 		}
-		key = nil
 	}
 }
 

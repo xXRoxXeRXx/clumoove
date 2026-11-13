@@ -563,3 +563,45 @@ func TestRestoreCoordinatorFactoriesAcceptMinimalAdapters(t *testing.T) {
 		t.Fatalf("restore target factory received %q, want decrypted target-plaintext", gotTargetPassword)
 	}
 }
+
+func TestOpenWithMegaCredentialsOrdersPasswordBeforeSessionDecode(t *testing.T) {
+	c := &Coordinator{encryptionKey: "01234567890123456789012345678901"}
+	sessionIDEnc, err := crypto.EncryptWithDomain("mega-session-id", c.encryptionKey, crypto.DomainMegaSessionID)
+	if err != nil {
+		t.Fatalf("encrypt session id: %v", err)
+	}
+	passEnc, err := crypto.EncryptWithDomain("mega-password", c.encryptionKey, crypto.ConnectionCredentialDomain(false))
+	if err != nil {
+		t.Fatalf("encrypt password: %v", err)
+	}
+
+	// Corrupt encrypted master key: when password decryption fails, session decoding must not even execute.
+	factoryCalled := false
+	_, err = openWithMegaCredentials(c, context.Background(), "mega", "", "user@example.test", "not-valid-ciphertext", encryptedMegaSession{
+		id:        sessionIDEnc,
+		masterKey: "corrupt-master-key",
+		errLabel:  "load restore target mega session",
+	}, func(_ context.Context, _, _, _, _ string, _ ...storage.ProviderOption) (PreviewTargetClient, error) {
+		factoryCalled = true
+		return nil, nil
+	})
+	if err == nil || factoryCalled {
+		t.Fatalf("expected password error without factory call, got err=%v factoryCalled=%v", err, factoryCalled)
+	}
+	if err.Error() == "" || errors.Is(err, context.Canceled) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Valid password + invalid MEGA session should report the wrapped MEGA session error.
+	_, err = openWithMegaCredentials(c, context.Background(), "mega", "", "user@example.test", passEnc, encryptedMegaSession{
+		id:        sessionIDEnc,
+		masterKey: "corrupt-master-key",
+		errLabel:  "load restore target mega session",
+	}, func(_ context.Context, _, _, _, _ string, _ ...storage.ProviderOption) (PreviewTargetClient, error) {
+		factoryCalled = true
+		return nil, nil
+	})
+	if err == nil || factoryCalled {
+		t.Fatalf("expected wrapped MEGA error without factory call, got err=%v factoryCalled=%v", err, factoryCalled)
+	}
+}

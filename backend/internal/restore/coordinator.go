@@ -230,13 +230,10 @@ func (c *Coordinator) previewTargetWithItems(ctx context.Context, preview *db.Re
 		return db.RestorePreviewStats{}, errors.New("restore preview target credential is unavailable")
 	}
 	providerCtx := storage.WithLocalUserScope(ctx, preview.UserID)
-	targetMegaSession, err := megasecret.DecodeProviderMegaSession(preview.TargetProvider, preview.TargetMegaSessionIDEncrypted.String, preview.TargetMegaMasterKeyEncrypted.String, c.encryptionKey)
-	if err != nil {
-		return db.RestorePreviewStats{}, err
-	}
-	defer clear(targetMegaSession.MasterKey)
-	target, err := c.newPreviewTarget(providerCtx, preview.TargetProvider, preview.TargetURL, preview.TargetUsername, preview.TargetPasswordEncrypted.String, storage.WithProviderMegaSession(targetMegaSession))
-	clear(targetMegaSession.MasterKey)
+	target, err := openWithMegaCredentials(c, providerCtx, preview.TargetProvider, preview.TargetURL, preview.TargetUsername, preview.TargetPasswordEncrypted.String, encryptedMegaSession{
+		id:        preview.TargetMegaSessionIDEncrypted.String,
+		masterKey: preview.TargetMegaMasterKeyEncrypted.String,
+	}, c.previewFactory())
 	if err != nil {
 		return db.RestorePreviewStats{}, err
 	}
@@ -542,24 +539,20 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 		return err
 	}
 	ctx = storage.WithLocalUserScope(ctx, repository.UserID)
-	repositoryMegaSession, err := megasecret.DecodeProviderMegaSession(repository.Provider, repository.MegaSessionIDEncrypted.String, repository.MegaMasterKeyEncrypted.String, c.encryptionKey)
-	if err != nil {
-		return fmt.Errorf("load repository mega session: %w", err)
-	}
-	defer clear(repositoryMegaSession.MasterKey)
-	repositoryProvider, err := c.newRepositorySource(ctx, repository.Provider, repository.URL, repository.Username, repository.PasswordEncrypted, storage.WithProviderMegaSession(repositoryMegaSession))
-	clear(repositoryMegaSession.MasterKey)
+	repositoryProvider, err := openWithMegaCredentials(c, ctx, repository.Provider, repository.URL, repository.Username, repository.PasswordEncrypted, encryptedMegaSession{
+		id:        repository.MegaSessionIDEncrypted.String,
+		masterKey: repository.MegaMasterKeyEncrypted.String,
+		errLabel:  "load repository mega session",
+	}, c.repositoryFactory())
 	if err != nil {
 		return err
 	}
 	defer repositoryProvider.Close()
-	targetMegaSession, err := megasecret.DecodeProviderMegaSession(targetProviderType, targetMegaSessionEncrypted.String, targetMegaMasterKeyEncrypted.String, c.encryptionKey)
-	if err != nil {
-		return fmt.Errorf("load restore target mega session: %w", err)
-	}
-	defer clear(targetMegaSession.MasterKey)
-	targetProvider, err := c.newRestoreTarget(ctx, targetProviderType, targetURL, targetUsername, targetPasswordEncrypted, storage.WithProviderMegaSession(targetMegaSession))
-	clear(targetMegaSession.MasterKey)
+	targetProvider, err := openWithMegaCredentials(c, ctx, targetProviderType, targetURL, targetUsername, targetPasswordEncrypted, encryptedMegaSession{
+		id:        targetMegaSessionEncrypted.String,
+		masterKey: targetMegaMasterKeyEncrypted.String,
+		errLabel:  "load restore target mega session",
+	}, c.restoreFactory())
 	if err != nil {
 		return err
 	}
@@ -971,34 +964,73 @@ func trimExtension(name string) string {
 	return name[:len(name)-len(extension)]
 }
 
-func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string, opts ...storage.ProviderOption) (RepositorySource, error) {
-	factory := c.repositorySourceFactory
-	if factory == nil {
-		factory = func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RepositorySource, error) {
-			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
-		}
+type encryptedMegaSession struct {
+	id        string
+	masterKey string
+	errLabel  string
+}
+
+func (c *Coordinator) repositoryFactory() RepositorySourceFactoryFunc {
+	if c.repositorySourceFactory != nil {
+		return c.repositorySourceFactory
 	}
-	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory, opts...)
+	return func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RepositorySource, error) {
+		return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
+	}
+}
+
+func (c *Coordinator) previewFactory() PreviewTargetFactoryFunc {
+	if c.previewTargetFactory != nil {
+		return c.previewTargetFactory
+	}
+	return func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (PreviewTargetClient, error) {
+		return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
+	}
+}
+
+func (c *Coordinator) restoreFactory() RestoreTargetFactoryFunc {
+	if c.restoreTargetFactory != nil {
+		return c.restoreTargetFactory
+	}
+	return func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RestoreTarget, error) {
+		return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
+	}
+}
+
+func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string, opts ...storage.ProviderOption) (RepositorySource, error) {
+	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, c.repositoryFactory(), opts...)
 }
 
 func (c *Coordinator) newPreviewTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, opts ...storage.ProviderOption) (PreviewTargetClient, error) {
-	factory := c.previewTargetFactory
-	if factory == nil {
-		factory = func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (PreviewTargetClient, error) {
-			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
-		}
-	}
-	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory, opts...)
+	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, c.previewFactory(), opts...)
 }
 
 func (c *Coordinator) newRestoreTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, opts ...storage.ProviderOption) (RestoreTarget, error) {
-	factory := c.restoreTargetFactory
-	if factory == nil {
-		factory = func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RestoreTarget, error) {
-			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
-		}
-	}
-	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, factory, opts...)
+	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword, c.restoreFactory(), opts...)
+}
+
+func openWithMegaCredentials[T any](
+	c *Coordinator,
+	ctx context.Context,
+	provider, endpoint, username, encryptedPassword string,
+	mega encryptedMegaSession,
+	factory func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error),
+) (T, error) {
+	// Decrypt the password before decoding MEGA session material so failed
+	// password decryption never creates or retains a decrypted master-key buffer.
+	return openWithDecryptedPassword(c, ctx, provider, endpoint, username, encryptedPassword,
+		func(ctx context.Context, provider, endpoint, username, password string, _ ...storage.ProviderOption) (T, error) {
+			session, err := megasecret.DecodeProviderMegaSession(provider, mega.id, mega.masterKey, c.encryptionKey)
+			if err != nil {
+				var zero T
+				if mega.errLabel != "" {
+					return zero, fmt.Errorf("%s: %w", mega.errLabel, err)
+				}
+				return zero, err
+			}
+			defer clear(session.MasterKey)
+			return factory(ctx, provider, endpoint, username, password, storage.WithProviderMegaSession(session))
+		})
 }
 
 func openWithDecryptedPassword[T any](
