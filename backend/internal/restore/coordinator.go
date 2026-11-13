@@ -996,35 +996,25 @@ type encryptedMegaSession struct {
 	errLabel  string
 }
 
-func defaultProviderAdapter[T any](
-	custom func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error),
-	fallback func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error),
-) func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error) {
-	if custom != nil {
-		return custom
-	}
-	return fallback
-}
-
 func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (RepositorySource, error) {
 	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
-		defaultProviderAdapter(c.repositorySourceFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RepositorySource, error) {
+		c.repositorySourceFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RepositorySource, error) {
 			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
-		}))
+		})
 }
 
 func (c *Coordinator) newPreviewTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (PreviewTargetClient, error) {
 	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
-		defaultProviderAdapter(c.previewTargetFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (PreviewTargetClient, error) {
+		c.previewTargetFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (PreviewTargetClient, error) {
 			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
-		}))
+		})
 }
 
 func (c *Coordinator) newRestoreTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (RestoreTarget, error) {
 	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
-		defaultProviderAdapter(c.restoreTargetFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RestoreTarget, error) {
+		c.restoreTargetFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RestoreTarget, error) {
 			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
-		}))
+		})
 }
 
 func openWithDecryptedCredentials[T any](
@@ -1033,7 +1023,11 @@ func openWithDecryptedCredentials[T any](
 	provider, endpoint, username, encryptedPassword string,
 	mega encryptedMegaSession,
 	factory func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error),
+	fallback func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error),
 ) (T, error) {
+	if factory == nil {
+		factory = fallback
+	}
 	password, err := crypto.DecryptWithDomain(encryptedPassword, c.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(provider)))
 	if err != nil {
 		var zero T

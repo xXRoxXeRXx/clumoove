@@ -14,7 +14,6 @@ type mockStorageProvider struct {
 	inspectCount int
 }
 
-func (m *mockStorageProvider) Close() error { return nil }
 func (m *mockStorageProvider) Connect(ctx context.Context) (bool, error) { return true, nil }
 func (m *mockStorageProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
 	if m.listingFn != nil {
@@ -41,16 +40,7 @@ func (m *mockStorageProvider) StreamUpload(ctx context.Context, resourceType, fi
 func (m *mockStorageProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
 	return nil
 }
-func (m *mockStorageProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
-	return false, 0, nil
-}
 func (m *mockStorageProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
-	return nil
-}
-func (m *mockStorageProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
-	return "", nil
-}
-func (m *mockStorageProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
 	return nil
 }
 func (m *mockStorageProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
@@ -62,8 +52,6 @@ func (m *mockStorageProvider) RenameFile(ctx context.Context, resourceType, oldP
 	}
 	return nil
 }
-func (m *mockStorageProvider) SupportsAtomicRename() bool         { return true }
-func (m *mockStorageProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
 
 func TestCopyNativePathManagerItem_Success(t *testing.T) {
 	ctx := context.Background()

@@ -8,6 +8,21 @@ import (
 	"testing"
 )
 
+// catalogueTestProvider adds the registration-only operations to the manager stub.
+type catalogueTestProvider struct{ *mockStorageProvider }
+
+func (*catalogueTestProvider) Close() error { return nil }
+func (*catalogueTestProvider) FileExists(context.Context, string, string) (bool, int64, error) {
+	return false, 0, nil
+}
+func (*catalogueTestProvider) GetFileHash(context.Context, string, string) (string, error) {
+	return "", nil
+}
+func (*catalogueTestProvider) CreateParentDirectories(context.Context, string, string) error {
+	return nil
+}
+func (*catalogueTestProvider) SupportsAtomicRename() bool         { return true }
+func (*catalogueTestProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
 func TestIsValidProvider(t *testing.T) {
 	for _, p := range ValidProviders {
 		if !IsValidProvider(p) {
@@ -820,7 +835,7 @@ func TestProviderCatalogueManagerSeam(t *testing.T) {
 					return locator.Path == "/same/file.txt" && destination.Path == "/same"
 				},
 				Construct: func(context.Context, string, string, string) (StorageProvider, error) {
-					return &mockStorageProvider{}, nil
+					return &catalogueTestProvider{mockStorageProvider: &mockStorageProvider{}}, nil
 				},
 			},
 			{
@@ -833,7 +848,7 @@ func TestProviderCatalogueManagerSeam(t *testing.T) {
 				ManagerRootNativeID:       "custom-root",
 				ManagerDownloadByNativeID: true,
 				Construct: func(context.Context, string, string, string) (StorageProvider, error) {
-					return &mockStorageProvider{}, nil
+					return &catalogueTestProvider{mockStorageProvider: &mockStorageProvider{}}, nil
 				},
 			},
 			{
@@ -844,7 +859,7 @@ func TestProviderCatalogueManagerSeam(t *testing.T) {
 				WindowsManagerBlocked:  true,
 				ManagerPathMutation:    true,
 				Construct: func(context.Context, string, string, string) (StorageProvider, error) {
-					return &mockStorageProvider{}, nil
+					return &catalogueTestProvider{mockStorageProvider: &mockStorageProvider{}}, nil
 				},
 			},
 		})

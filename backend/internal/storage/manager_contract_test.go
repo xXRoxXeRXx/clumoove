@@ -2,23 +2,11 @@ package storage
 
 import (
 	"context"
-	"io"
 	"testing"
 )
 
-// managerOnlyProvider exposes only the operations needed by the manager.
-type managerTestOperations interface {
-	Connect(context.Context) (bool, error)
-	GetDirectoryListing(context.Context, string, string) ([]CloudResource, error)
-	InspectResource(context.Context, string, string) (CloudResource, error)
-	StreamDownload(context.Context, string, string) (io.ReadCloser, error)
-	StreamUpload(context.Context, string, string, io.Reader, int64) error
-	StreamUploadChunked(context.Context, string, string, io.Reader, int64, chan<- int64) error
-	DeleteFile(context.Context, string, string) error
-	CreateDirectory(context.Context, string, string) error
-	RenameFile(context.Context, string, string, string) error
-}
-type managerOnlyProvider struct{ managerTestOperations }
+// managerOnlyProvider exposes the manager operations without transfer capabilities.
+type managerOnlyProvider struct{ ManagerProvider }
 
 func TestFileManagerAcceptsManagerOnlyProvider(t *testing.T) {
 	p := newAdapterTestProvider()

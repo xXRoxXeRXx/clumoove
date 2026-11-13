@@ -6,7 +6,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"sync"
@@ -462,7 +461,7 @@ type resolvingIndexFolderProvider struct {
 }
 
 type parallelIndexFolderProvider struct {
-	// Embed the no-op StorageProvider stubs; only directory listing behaviour is
+	// Embed the index source stub; only directory listing behaviour is
 	// relevant to these concurrency tests.
 	indexFolderTestProvider
 	listings   map[string][]storage.CloudResource
@@ -522,38 +521,6 @@ func (p indexFolderTestProvider) GetDirectoryListing(context.Context, string, st
 }
 func (p indexFolderTestProvider) InspectResource(context.Context, string, string) (storage.CloudResource, error) {
 	return storage.CloudResource{}, errors.New("not implemented")
-}
-func (p indexFolderTestProvider) StreamDownload(context.Context, string, string) (io.ReadCloser, error) {
-	return nil, errors.New("not implemented")
-}
-func (p indexFolderTestProvider) StreamUpload(context.Context, string, string, io.Reader, int64) error {
-	return errors.New("not implemented")
-}
-func (p indexFolderTestProvider) StreamUploadChunked(context.Context, string, string, io.Reader, int64, chan<- int64) error {
-	return errors.New("not implemented")
-}
-func (p indexFolderTestProvider) FileExists(context.Context, string, string) (bool, int64, error) {
-	return false, 0, errors.New("not implemented")
-}
-func (p indexFolderTestProvider) DeleteFile(context.Context, string, string) error {
-	return errors.New("not implemented")
-}
-func (p indexFolderTestProvider) GetFileHash(context.Context, string, string) (string, error) {
-	return "", errors.New("not implemented")
-}
-func (p indexFolderTestProvider) CreateParentDirectories(context.Context, string, string) error {
-	return errors.New("not implemented")
-}
-func (p indexFolderTestProvider) CreateDirectory(context.Context, string, string) error {
-	return errors.New("not implemented")
-}
-func (p indexFolderTestProvider) RenameFile(context.Context, string, string, string) error {
-	return errors.New("not implemented")
-}
-func (p indexFolderTestProvider) SupportsAtomicRename() bool { return true }
-func (p indexFolderTestProvider) VerificationMode() storage.VerificationMode {
-	// Verification is not exercised by indexer tests; this only satisfies the interface.
-	return storage.VerificationSizeOnly
 }
 
 var (
