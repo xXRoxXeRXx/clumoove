@@ -80,6 +80,9 @@ func (p *legacyFileManagerTestProvider) DeleteFile(_ context.Context, _ string, 
 	p.deleted = append(p.deleted, filePath)
 	return nil
 }
+func (p *legacyFileManagerTestProvider) DeleteManagerItem(ctx context.Context, locator storage.ManagerLocator, _ bool) error {
+	return p.DeleteFile(ctx, "files", locator.Path)
+}
 func (p *legacyFileManagerTestProvider) GetFileHash(context.Context, string, string) (string, error) {
 	return "", nil
 }

@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log/slog"
+	"path"
 	"runtime"
 	"strings"
 	"testing"
@@ -677,12 +680,15 @@ func TestFileManagerInspectDownloadUploadAndMkdir(t *testing.T) {
 			t.Fatalf("expected atomic promote sequence, content=%q renames=%v deletes=%v", string(ftpStub.files["/note.txt"]), ftpStub.renameCalls, ftpStub.deleteFileCalls)
 		}
 
-		// Atomic rollback restores original file even when caller ctx cancels during failed promote,
-		// and backup-delete failure after promote does not fail a committed upload.
+		// Atomic rollback restores original file even when caller ctx cancels or upload exceeds cleanupTimeout.
 		rollbackStub := newAdapterTestProvider()
 		rollbackStub.atomicRename = true
 		rollbackStub.listings["/"] = []CloudResource{{Path: "/note.txt", Name: "note.txt", Size: 2}}
 		rollbackStub.files["/note.txt"] = []byte("v1")
+		rollbackStub.uploadFn = func(context.Context, string, string, io.Reader, int64) error {
+			time.Sleep(60 * time.Millisecond)
+			return nil
+		}
 		cancelCtx, cancelUpload := context.WithCancel(context.Background())
 		var rollbackHadActiveCtx bool
 		rollbackStub.renameFn = func(rCtx context.Context, _ string, oldPath, newPath string) error {
@@ -703,18 +709,51 @@ func TestFileManagerInspectDownloadUploadAndMkdir(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewFileManager(mega) error = %v", err)
 		}
+		rollbackFM.(*fileManagerAdapter).cleanupTimeout = 30 * time.Millisecond
 		if _, err := rollbackFM.UploadManager(cancelCtx, ManagerLocator{Path: "/"}, "note.txt", strings.NewReader("v2"), 2, ManagerUploadOptions{ConflictStrategy: "OVERWRITE"}); err == nil {
 			t.Fatal("expected promote failure to return error")
 		}
 		if !rollbackHadActiveCtx || string(rollbackStub.files["/note.txt"]) != "v1" {
-			t.Fatalf("expected original file restored with non-cancelled rollback ctx (active=%v content=%q)", rollbackHadActiveCtx, string(rollbackStub.files["/note.txt"]))
+			t.Fatalf("expected original file restored with fresh rollback ctx (active=%v content=%q)", rollbackHadActiveCtx, string(rollbackStub.files["/note.txt"]))
 		}
 
-		// Backup-delete error after promote is non-fatal.
+		// Overwriting valid long 255-byte ASCII & multi-byte UTF-8 filenames uses bounded sibling names (<=255 bytes).
+		for _, longName := range []string{
+			strings.Repeat("a", 251) + ".txt",
+			strings.Repeat("é", 127),
+		} {
+			longStub := newAdapterTestProvider()
+			longStub.atomicRename = true
+			longStub.listings["/"] = []CloudResource{{Path: "/" + longName, Name: longName, Size: 2}}
+			longStub.files["/"+longName] = []byte("v1")
+			longFM, err := NewFileManager("ftp", longStub)
+			if err != nil {
+				t.Fatalf("NewFileManager(ftp) error = %v", err)
+			}
+			if _, err := longFM.UploadManager(context.Background(), ManagerLocator{Path: "/"}, longName, strings.NewReader("v2"), 2, ManagerUploadOptions{ConflictStrategy: "OVERWRITE"}); err != nil {
+				t.Fatalf("long atomic Upload(len=%d) error = %v", len(longName), err)
+			}
+			if string(longStub.files["/"+longName]) != "v2" {
+				t.Fatalf("long filename content = %q, want v2", string(longStub.files["/"+longName]))
+			}
+			for _, stagedPath := range append(append([]string(nil), longStub.uploadCalls...), longStub.deleteFileCalls...) {
+				base := path.Base(stagedPath)
+				if len(base) > 255 || !ValidManagerEntryName(base) {
+					t.Fatalf("staged sibling name invalid or too long: len=%d name=%q", len(base), base)
+				}
+			}
+		}
+
+		// Backup-delete error after promote is non-fatal and WARN logs omit file paths.
+		var logBuf bytes.Buffer
+		prevLogger := slog.Default()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+		t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
 		backupErrStub := newAdapterTestProvider()
 		backupErrStub.atomicRename = true
-		backupErrStub.listings["/"] = []CloudResource{{Path: "/note.txt", Name: "note.txt", Size: 2}}
-		backupErrStub.files["/note.txt"] = []byte("v1")
+		backupErrStub.listings["/"] = []CloudResource{{Path: "/secret-note.txt", Name: "secret-note.txt", Size: 2}}
+		backupErrStub.files["/secret-note.txt"] = []byte("v1")
 		backupErrStub.deleteFileFn = func(_ context.Context, _ string, filePath string) error {
 			if strings.Contains(filePath, ".bak.") {
 				return errors.New("transient backup delete error")
@@ -726,8 +765,11 @@ func TestFileManagerInspectDownloadUploadAndMkdir(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewFileManager(ftp) error = %v", err)
 		}
-		if _, err := backupErrFM.UploadManager(context.Background(), ManagerLocator{Path: "/"}, "note.txt", strings.NewReader("v2"), 2, ManagerUploadOptions{ConflictStrategy: "OVERWRITE"}); err != nil || string(backupErrStub.files["/note.txt"]) != "v2" {
-			t.Fatalf("expected committed overwrite despite backup delete failure, got err=%v content=%q", err, string(backupErrStub.files["/note.txt"]))
+		if _, err := backupErrFM.UploadManager(context.Background(), ManagerLocator{Path: "/"}, "secret-note.txt", strings.NewReader("v2"), 2, ManagerUploadOptions{ConflictStrategy: "OVERWRITE"}); err != nil || string(backupErrStub.files["/secret-note.txt"]) != "v2" {
+			t.Fatalf("expected committed overwrite despite backup delete failure, got err=%v content=%q", err, string(backupErrStub.files["/secret-note.txt"]))
+		}
+		if strings.Contains(logBuf.String(), "secret-note.txt") {
+			t.Fatalf("expected WARN log to omit file path, got: %s", logBuf.String())
 		}
 
 		// RENAME exhaustion (>100 existing suffixed siblings) -> ErrManagerConflict.
@@ -796,9 +838,35 @@ func TestFileManagerInspectDownloadUploadAndMkdir(t *testing.T) {
 	})
 }
 
+type nativeFileOnlyDeleterStub struct {
+	*adapterTestProvider
+}
+
+func (n *nativeFileOnlyDeleterStub) DeleteManagerItem(ctx context.Context, locator ManagerLocator, recursive bool) error {
+	return deleteManagerFileOnly(ctx, n.adapterTestProvider, locator, recursive)
+}
+
+type nativePathDeleterStub struct {
+	*adapterTestProvider
+}
+
+func (n *nativePathDeleterStub) DeleteManagerItem(ctx context.Context, locator ManagerLocator, recursive bool) error {
+	return deleteManagerPathItem(ctx, n.adapterTestProvider, locator, recursive)
+}
+
 func TestFileManagerDeleteMutateThumbnailAndProviderMatrix(t *testing.T) {
-	t.Run("delete enforces capability, file-only restriction, and root refusal", func(t *testing.T) {
-		s3Stub := newAdapterTestProvider()
+	t.Run("delete requires ManagerDeleter and enforces capability and root refusal", func(t *testing.T) {
+		noDeleterStub := newAdapterTestProvider()
+		noDeleterStub.files["/file.txt"] = []byte("data")
+		noDeleterFM, err := NewFileManager("s3", noDeleterStub)
+		if err != nil {
+			t.Fatalf("NewFileManager(s3 without ManagerDeleter) error = %v", err)
+		}
+		if err := noDeleterFM.DeleteManagerItem(context.Background(), ManagerLocator{Path: "/file.txt"}, false); !errors.Is(err, ErrManagerUnsupported) || len(noDeleterStub.deleteFileCalls) != 0 {
+			t.Fatalf("DeleteManagerItem(without ManagerDeleter) = (%v, deletes=%v), want ErrManagerUnsupported with 0 deletes", err, noDeleterStub.deleteFileCalls)
+		}
+
+		s3Stub := &nativeFileOnlyDeleterStub{adapterTestProvider: newAdapterTestProvider()}
 		s3Stub.listings["/"] = []CloudResource{
 			{Path: "/folder", Name: "folder", IsDir: true},
 			{Path: "/file.txt", Name: "file.txt", Size: 4},
@@ -824,11 +892,14 @@ func TestFileManagerDeleteMutateThumbnailAndProviderMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewFileManager(nextcloud) error = %v", err)
 		}
+		if err := nextcloudFM.DeleteManagerItem(context.Background(), ManagerLocator{Path: "/"}, false); !errors.Is(err, ErrManagerUnsupported) || native.deleted {
+			t.Fatalf("nextcloud DeleteManagerItem(/) = (%v, deleted=%v), want ErrManagerUnsupported", err, native.deleted)
+		}
 		if err := nextcloudFM.DeleteManagerItem(context.Background(), ManagerLocator{Path: "/item.txt"}, false); err != nil || !native.deleted {
 			t.Fatalf("expected native DeleteManagerItem, deleted=%v err=%v", native.deleted, err)
 		}
 
-		smbStub := newAdapterTestProvider()
+		smbStub := &nativePathDeleterStub{adapterTestProvider: newAdapterTestProvider()}
 		smbStub.listings["/"] = []CloudResource{{Path: "/nonempty", Name: "nonempty", IsDir: true}}
 		smbStub.listings["/nonempty"] = []CloudResource{{Path: "/nonempty/child.txt", Name: "child.txt", Size: 1}}
 		smbFM, err := NewFileManager("smb", smbStub)

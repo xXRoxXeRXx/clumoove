@@ -27,10 +27,11 @@ type emulatedManagerCursor struct {
 }
 
 type fileManagerAdapter struct {
-	providerType string
-	provider     StorageProvider
-	capabilities ManagerCapabilities
-	pathSafe     bool
+	providerType   string
+	provider       StorageProvider
+	capabilities   ManagerCapabilities
+	pathSafe       bool
+	cleanupTimeout time.Duration
 }
 
 // NewFileManager wraps a constructed StorageProvider in a unified, storage-owned
@@ -41,10 +42,11 @@ func NewFileManager(providerType string, provider StorageProvider) (FileManager,
 		return nil, ErrManagerUnsupported
 	}
 	return &fileManagerAdapter{
-		providerType: providerType,
-		provider:     provider,
-		capabilities: ManagerCapabilitiesFor(providerType),
-		pathSafe:     managerPathMutationProviders[providerType],
+		providerType:   providerType,
+		provider:       provider,
+		capabilities:   ManagerCapabilitiesFor(providerType),
+		pathSafe:       managerPathMutationProviders[providerType],
+		cleanupTimeout: managerCleanupTimeout,
 	}, nil
 }
 
@@ -251,7 +253,7 @@ func (m *fileManagerAdapter) DeleteManagerItem(ctx context.Context, locator Mana
 		return err
 	}
 	deleter, hasDeleter := m.provider.(ManagerDeleter)
-	if !hasDeleter && !m.pathSafe {
+	if !hasDeleter {
 		return ErrManagerUnsupported
 	}
 	if m.IsRootLocator(locator) {
@@ -263,13 +265,7 @@ func (m *fileManagerAdapter) DeleteManagerItem(ctx context.Context, locator Mana
 	if m.pathSafe && locator.Path == "" {
 		return ErrManagerUnsupported
 	}
-	if hasDeleter {
-		return deleter.DeleteManagerItem(ctx, locator, recursive)
-	}
-	if !m.capabilities.DeleteEmptyDirectory && !m.capabilities.DeleteRecursiveDirectory {
-		return deleteManagerFileOnly(ctx, m.provider, locator, recursive)
-	}
-	return deleteManagerPathItem(ctx, m.provider, locator, recursive)
+	return deleter.DeleteManagerItem(ctx, locator, recursive)
 }
 
 func (m *fileManagerAdapter) RenameManagerItem(ctx context.Context, locator, parent ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
@@ -649,32 +645,84 @@ func (m *fileManagerAdapter) uploadPathFallback(ctx context.Context, parent Mana
 }
 
 func (m *fileManagerAdapter) uploadAtomicOverwrite(ctx context.Context, finalPath string, stream io.Reader, size int64) error {
-	suffix := time.Now().UnixNano()
-	tmpPath := fmt.Sprintf("%s.tmp.%d", finalPath, suffix)
-	backupPath := fmt.Sprintf("%s.bak.%d", finalPath, suffix)
-
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), managerCleanupTimeout)
-	defer cancel()
+	tmpPath, backupPath := boundedSiblingPaths(finalPath, time.Now().UnixNano())
 
 	if err := m.streamUploadBySize(ctx, tmpPath, stream, size); err != nil {
-		_ = m.provider.DeleteFile(cleanupCtx, "files", tmpPath)
+		_ = m.runCleanup(ctx, func(c context.Context) error {
+			return m.provider.DeleteFile(c, "files", tmpPath)
+		})
 		return err
 	}
 	if err := m.provider.RenameFile(ctx, "files", finalPath, backupPath); err != nil {
-		_ = m.provider.DeleteFile(cleanupCtx, "files", tmpPath)
+		_ = m.runCleanup(ctx, func(c context.Context) error {
+			return m.provider.DeleteFile(c, "files", tmpPath)
+		})
 		return err
 	}
 	if err := m.provider.RenameFile(ctx, "files", tmpPath, finalPath); err != nil {
-		_ = m.provider.DeleteFile(cleanupCtx, "files", tmpPath)
-		if rollbackErr := m.provider.RenameFile(cleanupCtx, "files", backupPath, finalPath); rollbackErr != nil {
+		_ = m.runCleanup(ctx, func(c context.Context) error {
+			return m.provider.DeleteFile(c, "files", tmpPath)
+		})
+		if rollbackErr := m.runCleanup(ctx, func(c context.Context) error {
+			return m.provider.RenameFile(c, "files", backupPath, finalPath)
+		}); rollbackErr != nil {
 			return fmt.Errorf("promote upload failed: %w; rollback failed: %v", err, rollbackErr)
 		}
 		return err
 	}
-	if delErr := m.provider.DeleteFile(cleanupCtx, "files", backupPath); delErr != nil {
-		slog.WarnContext(cleanupCtx, "failed to remove atomic overwrite backup", "provider", m.providerType, "backup_path", backupPath, "error", delErr)
+	if delErr := m.runCleanup(ctx, func(c context.Context) error {
+		return m.provider.DeleteFile(c, "files", backupPath)
+	}); delErr != nil {
+		slog.WarnContext(context.WithoutCancel(ctx), "failed to remove atomic overwrite backup", "provider", m.providerType, "error", delErr)
 	}
 	return nil
+}
+
+func (m *fileManagerAdapter) runCleanup(ctx context.Context, op func(context.Context) error) error {
+	timeout := m.cleanupTimeout
+	if timeout <= 0 {
+		timeout = managerCleanupTimeout
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	return op(cleanupCtx)
+}
+
+func boundedSiblingPaths(finalPath string, suffix int64) (tmpPath, backupPath string) {
+	dir, base := path.Split(finalPath)
+	if dir == "" {
+		dir = "/"
+	}
+	tmpSuffix := fmt.Sprintf(".tmp.%d", suffix)
+	bakSuffix := fmt.Sprintf(".bak.%d", suffix)
+	maxSuffixLen := len(tmpSuffix)
+	if len(bakSuffix) > maxSuffixLen {
+		maxSuffixLen = len(bakSuffix)
+	}
+	maxBaseLen := 255 - maxSuffixLen
+	if len(base) > maxBaseLen {
+		sum := sha256.Sum256([]byte(base))
+		hashTag := "." + hex.EncodeToString(sum[:6])
+		base = truncateUTF8Bytes(base, maxBaseLen-len(hashTag)) + hashTag
+	}
+	return path.Join(dir, base+tmpSuffix), path.Join(dir, base+bakSuffix)
+}
+
+func truncateUTF8Bytes(s string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(s) <= maxBytes {
+		return s
+	}
+	for len(s) > maxBytes {
+		_, size := utf8.DecodeLastRuneInString(s)
+		if size <= 0 {
+			return s[:maxBytes]
+		}
+		s = s[:len(s)-size]
+	}
+	return s
 }
 
 func (m *fileManagerAdapter) streamUploadBySize(ctx context.Context, targetPath string, stream io.Reader, size int64) error {
