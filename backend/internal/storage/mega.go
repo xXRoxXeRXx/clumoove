@@ -552,5 +552,10 @@ func (p *MegaProvider) RenameFile(ctx context.Context, resourceType, oldPath, ne
 	return nil
 }
 
-func (*MegaProvider) SupportsAtomicRename() bool         { return true }
-func (*MegaProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
+func (*MegaProvider) SupportsAtomicRename() bool {
+	return defaultProviderCatalogue.supportsAtomicRename("mega")
+}
+
+func (*MegaProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("mega")
+}

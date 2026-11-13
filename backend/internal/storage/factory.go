@@ -29,15 +29,15 @@ var (
 )
 
 type providerRegistration struct {
-	Type                     string
-	RequiresHost             bool
-	RequiresHTTPS            bool
-	RequiresEgressValidation bool
-	RejectsURLUserinfo       bool
-	IsVirtual                bool
-	SupportedResourceTypes   map[string]bool
-	SupportsAtomicRename     bool
-	VerificationMode         VerificationMode
+	Type                      string
+	RequiresHost              bool
+	RequiresHTTPS             bool
+	RequiresEgressValidation  bool
+	RejectsURLUserinfo        bool
+	IsVirtual                 bool
+	SupportedResourceTypes    map[string]bool
+	SupportsAtomicRename      bool
+	VerificationMode          VerificationMode
 	ManagerCapabilities       ManagerCapabilities
 	WindowsManagerBlocked     bool
 	ManagerPathMutation       bool
@@ -132,6 +132,19 @@ func (c *providerCatalogue) validateProviderURL(providerType, urlStr string) err
 	return nil
 }
 
+func (c *providerCatalogue) supportsAtomicRename(providerType string) bool {
+	entry, ok := c.lookup(providerType)
+	return ok && entry.SupportsAtomicRename
+}
+
+func (c *providerCatalogue) verificationMode(providerType string) VerificationMode {
+	entry, ok := c.lookup(providerType)
+	if !ok {
+		return VerificationNone
+	}
+	return entry.VerificationMode
+}
+
 func (c *providerCatalogue) newProvider(ctx context.Context, providerType, urlStr, username, password string) (StorageProvider, error) {
 	entry, exists := c.lookup(providerType)
 	if !exists {
@@ -224,14 +237,15 @@ func (c *providerCatalogue) newFileManager(providerType string, provider Storage
 		return nil, ErrManagerUnsupported
 	}
 	return &fileManagerAdapter{
-		catalogue:          c,
-		providerType:       providerType,
-		provider:           provider,
-		capabilities:       c.managerCapabilitiesFor(providerType),
-		pathSafe:           entry.ManagerPathMutation,
-		rootNativeID:       entry.ManagerRootNativeID,
-		downloadByNativeID: entry.ManagerDownloadByNativeID,
-		cleanupTimeout:     managerCleanupTimeout,
+		catalogue:            c,
+		providerType:         providerType,
+		provider:             provider,
+		capabilities:         c.managerCapabilitiesFor(providerType),
+		pathSafe:             entry.ManagerPathMutation,
+		supportsAtomicRename: entry.SupportsAtomicRename,
+		rootNativeID:         entry.ManagerRootNativeID,
+		downloadByNativeID:   entry.ManagerDownloadByNativeID,
+		cleanupTimeout:       managerCleanupTimeout,
 	}, nil
 }
 

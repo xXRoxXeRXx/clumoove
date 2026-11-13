@@ -30,14 +30,15 @@ type emulatedManagerCursor struct {
 }
 
 type fileManagerAdapter struct {
-	catalogue          *providerCatalogue
-	providerType       string
-	provider           StorageProvider
-	capabilities       ManagerCapabilities
-	pathSafe           bool
-	rootNativeID       string
-	downloadByNativeID bool
-	cleanupTimeout     time.Duration
+	catalogue            *providerCatalogue
+	providerType         string
+	provider             StorageProvider
+	capabilities         ManagerCapabilities
+	pathSafe             bool
+	supportsAtomicRename bool
+	rootNativeID         string
+	downloadByNativeID   bool
+	cleanupTimeout       time.Duration
 }
 
 // NewFileManager wraps a constructed StorageProvider in a unified, storage-owned
@@ -629,7 +630,7 @@ func (m *fileManagerAdapter) uploadPathFallback(ctx context.Context, parent Mana
 	}
 
 	finalPath := path.Join(parentPath, finalName)
-	if ManagerConflictStrategy(options.ConflictStrategy) == ManagerConflictOverwrite && existing != nil && m.provider.SupportsAtomicRename() {
+	if ManagerConflictStrategy(options.ConflictStrategy) == ManagerConflictOverwrite && existing != nil && m.supportsAtomicRename {
 		if err := m.uploadAtomicOverwrite(ctx, finalPath, stream, size); err != nil {
 			return ManagerUploadResult{}, err
 		}

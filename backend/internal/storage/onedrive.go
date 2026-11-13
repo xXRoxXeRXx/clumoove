@@ -936,8 +936,13 @@ func (p *OneDriveProvider) itemID(ctx context.Context, filePath string) (string,
 	return item.ID, nil
 }
 
-func (p *OneDriveProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
-func (p *OneDriveProvider) SupportsAtomicRename() bool         { return true }
+func (p *OneDriveProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("onedrive")
+}
+
+func (p *OneDriveProvider) SupportsAtomicRename() bool {
+	return defaultProviderCatalogue.supportsAtomicRename("onedrive")
+}
 
 func isLocalTestingEndpoint(endpoint string) bool {
 	return strings.HasPrefix(endpoint, "http://127.0.0.1") ||

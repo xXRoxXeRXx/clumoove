@@ -51,6 +51,14 @@ type MagentacloudProvider struct {
 
 var _ StorageProvider = (*MagentacloudProvider)(nil)
 
+func (p *MagentacloudProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("magentacloud")
+}
+
+func (p *MagentacloudProvider) SupportsAtomicRename() bool {
+	return defaultProviderCatalogue.supportsAtomicRename("magentacloud")
+}
+
 func NewMagentacloudProvider(username, password string) (*MagentacloudProvider, error) {
 	return &MagentacloudProvider{
 		davProvider: &davProvider{

@@ -49,6 +49,14 @@ type OpenCloudProvider struct {
 
 var _ StorageProvider = (*OpenCloudProvider)(nil)
 
+func (p *OpenCloudProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("opencloud")
+}
+
+func (p *OpenCloudProvider) SupportsAtomicRename() bool {
+	return defaultProviderCatalogue.supportsAtomicRename("opencloud")
+}
+
 // NewOpenCloudProvider initializes an OpenCloudProvider with host URL and credentials.
 func NewOpenCloudProvider(rawURL, username, password string) (*OpenCloudProvider, error) {
 	baseURL := strings.TrimSuffix(rawURL, "/")

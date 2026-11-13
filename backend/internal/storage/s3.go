@@ -640,10 +640,12 @@ func (p *S3Provider) copyPrefix(ctx context.Context, sourceKey, targetKey string
 // only after the upload succeeds.
 // VerificationMode is size_only: an S3 ETag is MD5 only for single-part
 // uploads and is a non-comparable composite value for multipart uploads.
-func (p *S3Provider) VerificationMode() VerificationMode { return VerificationSizeOnly }
+func (p *S3Provider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("s3")
+}
 
 func (p *S3Provider) SupportsAtomicRename() bool {
-	return false
+	return defaultProviderCatalogue.supportsAtomicRename("s3")
 }
 
 func (p *S3Provider) multipartCopy(ctx context.Context, srcKey, dstKey string, size int64) error {

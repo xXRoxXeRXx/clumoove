@@ -880,10 +880,12 @@ func (p *GoogleProvider) findExactDriveFileID(ctx context.Context, parentID, nam
 	return "", nil
 }
 
-// SupportsAtomicRename is true: Google Drive supports file rename.
-func (p *GoogleProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
+func (p *GoogleProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("google")
+}
+
 func (p *GoogleProvider) SupportsAtomicRename() bool {
-	return true
+	return defaultProviderCatalogue.supportsAtomicRename("google")
 }
 
 func (p *GoogleProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

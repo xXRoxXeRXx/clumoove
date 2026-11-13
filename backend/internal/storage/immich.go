@@ -52,8 +52,13 @@ func NewImmichProvider(baseURL, apiKey string) (*ImmichProvider, error) {
 // asset metadata (fileCreatedAt, fileModifiedAt) inline during StreamUpload (POST /assets),
 // so no post-upload metadata step is required.
 func (p *ImmichProvider) Close() error                       { p.HTTPClient.CloseIdleConnections(); return nil }
-func (p *ImmichProvider) SupportsAtomicRename() bool         { return false }
-func (p *ImmichProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
+func (p *ImmichProvider) SupportsAtomicRename() bool {
+	return defaultProviderCatalogue.supportsAtomicRename("immich")
+}
+
+func (p *ImmichProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("immich")
+}
 func (p *ImmichProvider) UsesNativeDuplicateDetection() bool { return true }
 func (p *ImmichProvider) checkType(t string) error {
 	if t != "files" {

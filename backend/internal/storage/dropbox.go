@@ -927,10 +927,12 @@ func (p *DropboxProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 	return nil
 }
 
-// SupportsAtomicRename is true: Dropbox move_v2 is supported.
-func (p *DropboxProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
+func (p *DropboxProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("dropbox")
+}
+
 func (p *DropboxProvider) SupportsAtomicRename() bool {
-	return true
+	return defaultProviderCatalogue.supportsAtomicRename("dropbox")
 }
 
 func (p *DropboxProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

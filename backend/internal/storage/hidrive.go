@@ -746,10 +746,12 @@ func (p *HiDriveProvider) CreateDirectory(ctx context.Context, resourceType, dir
 	return nil
 }
 
-func (p *HiDriveProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
+func (p *HiDriveProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("hidrive")
+}
 
 func (p *HiDriveProvider) SupportsAtomicRename() bool {
-	return true
+	return defaultProviderCatalogue.supportsAtomicRename("hidrive")
 }
 
 func (p *HiDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {

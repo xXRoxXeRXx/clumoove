@@ -1347,10 +1347,19 @@ func (p *davProvider) CopyManagerItem(ctx context.Context, locator, destination 
 	})
 }
 
-// SupportsAtomicRename is true: WebDAV/Nextcloud MOVE is supported.
-func (p *davProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
+func (p *davProvider) davProviderName() string {
+	if p != nil && p.providerName != "" {
+		return p.providerName
+	}
+	return "nextcloud"
+}
+
+func (p *davProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode(p.davProviderName())
+}
+
 func (p *davProvider) SupportsAtomicRename() bool {
-	return true
+	return defaultProviderCatalogue.supportsAtomicRename(p.davProviderName())
 }
 
 func (p *davProvider) ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error {
@@ -1446,3 +1455,11 @@ type NextcloudProvider struct {
 
 var _ StorageProvider = (*NextcloudProvider)(nil)
 var _ ManagerCopier = (*NextcloudProvider)(nil)
+
+func (p *NextcloudProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("nextcloud")
+}
+
+func (p *NextcloudProvider) SupportsAtomicRename() bool {
+	return defaultProviderCatalogue.supportsAtomicRename("nextcloud")
+}

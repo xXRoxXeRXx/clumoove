@@ -749,10 +749,12 @@ func (p *SFTPProvider) RenameFile(ctx context.Context, resourceType, oldPath, ne
 	return nil
 }
 
-// SupportsAtomicRename is true: SFTP rename is supported.
-func (p *SFTPProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
+func (p *SFTPProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("sftp")
+}
+
 func (p *SFTPProvider) SupportsAtomicRename() bool {
-	return true
+	return defaultProviderCatalogue.supportsAtomicRename("sftp")
 }
 
 func (p *SFTPProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

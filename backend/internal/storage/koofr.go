@@ -407,9 +407,13 @@ func (p *KoofrProvider) RenameFile(ctx context.Context, resourceType, oldPath, n
 	return err
 }
 
-func (p *KoofrProvider) SupportsAtomicRename() bool { return false }
+func (p *KoofrProvider) SupportsAtomicRename() bool {
+	return defaultProviderCatalogue.supportsAtomicRename("koofr")
+}
 
-func (p *KoofrProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
+func (p *KoofrProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("koofr")
+}
 
 func (p *KoofrProvider) requireFiles(resourceType string) error {
 	if resourceType != "files" {

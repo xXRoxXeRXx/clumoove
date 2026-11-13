@@ -1262,9 +1262,9 @@ func (p *SeafileProvider) GetFileHash(ctx context.Context, resourceType, filePat
 }
 
 func (p *SeafileProvider) SupportsAtomicRename() bool {
-	return false
+	return defaultProviderCatalogue.supportsAtomicRename("seafile")
 }
 
 func (p *SeafileProvider) VerificationMode() VerificationMode {
-	return VerificationSizeOnly
+	return defaultProviderCatalogue.verificationMode("seafile")
 }

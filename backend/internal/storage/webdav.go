@@ -634,10 +634,12 @@ func (p *WebDAVProvider) CopyManagerItem(ctx context.Context, locator, destinati
 	})
 }
 
-// SupportsAtomicRename is true: WebDAV MOVE is supported.
-func (p *WebDAVProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
+func (p *WebDAVProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("webdav")
+}
+
 func (p *WebDAVProvider) SupportsAtomicRename() bool {
-	return true
+	return defaultProviderCatalogue.supportsAtomicRename("webdav")
 }
 
 func (p *WebDAVProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

@@ -875,3 +875,100 @@ func TestProviderCatalogueManagerSeam(t *testing.T) {
 		}
 	})
 }
+
+func TestProviderCatalogueMigrationTraitsAreAuthoritative(t *testing.T) {
+	t.Setenv("LOCAL_STORAGE_ROOT", t.TempDir())
+	ctx := WithLocalUserScope(context.Background(), "trait-test-user")
+
+	// Verify that changing an entry's migration traits in the catalogue
+	// directly changes the runtime behavior of constructed providers across all
+	// 17 registered providers.
+	testInputs := map[string]struct {
+		url, username, password string
+	}{
+		"nextcloud":    {"https://1.1.1.1", "user", "secret"},
+		"opencloud":    {"https://1.1.1.1", "user", "secret"},
+		"webdav":       {"https://1.1.1.1/dav", "user", "secret"},
+		"dropbox":      {"", "", "token"},
+		"google":       {"", "", "token"},
+		"onedrive":     {"", "", "token"},
+		"hidrive":      {"", "", "token"},
+		"smb":          {"smb://1.1.1.1/share", "user", "secret"},
+		"s3":           {"s3://bucket", "key", "secret"},
+		"sftp":         {"sftp://1.1.1.1/?host_key=SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "user", "secret"},
+		"ftp":          {"ftps://1.1.1.1", "user", "secret"},
+		"magentacloud": {"", "user", "secret"},
+		"koofr":        {"", "user", "secret"},
+		"local":        {"", "", ""},
+		"immich":       {"https://1.1.1.1", "", "key"},
+		"seafile":      {"https://1.1.1.1", "user", "secret"},
+		"mega":         {"", "user@example.com", "secret"},
+	}
+
+	for _, providerType := range ValidProviders {
+		t.Run(providerType, func(t *testing.T) {
+			in, ok := testInputs[providerType]
+			if !ok {
+				t.Fatalf("missing test input for %q", providerType)
+			}
+			orig := defaultProviderCatalogue.entries[providerType]
+			t.Cleanup(func() {
+				defaultProviderCatalogue.entries[providerType] = orig
+			})
+
+			flipped := orig
+			flipped.SupportsAtomicRename = !orig.SupportsAtomicRename
+			if orig.VerificationMode == VerificationSizeOnly {
+				flipped.VerificationMode = VerificationCryptographicHash
+			} else {
+				flipped.VerificationMode = VerificationSizeOnly
+			}
+			defaultProviderCatalogue.entries[providerType] = flipped
+
+			var provider StorageProvider
+			if providerType == "local" && runtime.GOOS == "windows" {
+				provider = &LocalProvider{}
+			} else {
+				var err error
+				provider, err = NewProvider(ctx, providerType, in.url, in.username, in.password)
+				if err != nil {
+					t.Fatalf("NewProvider(%q) error = %v", providerType, err)
+				}
+				defer provider.Close()
+			}
+
+			if got := provider.SupportsAtomicRename(); got != flipped.SupportsAtomicRename {
+				t.Fatalf("%s SupportsAtomicRename() = %t, want authoritative catalogue value %t", providerType, got, flipped.SupportsAtomicRename)
+			}
+			if got := provider.VerificationMode(); got != flipped.VerificationMode {
+				t.Fatalf("%s VerificationMode() = %q, want authoritative catalogue value %q", providerType, got, flipped.VerificationMode)
+			}
+		})
+	}
+
+	t.Run("file_manager_atomic_overwrite_follows_catalogue", func(t *testing.T) {
+		orig := defaultProviderCatalogue.entries["s3"]
+		t.Cleanup(func() {
+			defaultProviderCatalogue.entries["s3"] = orig
+		})
+		flipped := orig
+		flipped.SupportsAtomicRename = true
+		defaultProviderCatalogue.entries["s3"] = flipped
+
+		stub := newAdapterTestProvider()
+		stub.atomicRename = false
+		stub.listings["/"] = []CloudResource{{Path: "/note.txt", Name: "note.txt", Size: 2}}
+		stub.files["/note.txt"] = []byte("v1")
+
+		fm, err := NewFileManager("s3", stub)
+		if err != nil {
+			t.Fatalf("NewFileManager(s3) error = %v", err)
+		}
+		if _, err := fm.UploadManager(ctx, ManagerLocator{Path: "/"}, "note.txt", strings.NewReader("v2"), 2, ManagerUploadOptions{ConflictStrategy: "OVERWRITE"}); err != nil {
+			t.Fatalf("UploadManager(OVERWRITE) error = %v", err)
+		}
+		if string(stub.files["/note.txt"]) != "v2" || len(stub.renameCalls) != 2 {
+			t.Fatalf("expected atomic overwrite path from catalogue SupportsAtomicRename=true, got content=%q renameCalls=%v", string(stub.files["/note.txt"]), stub.renameCalls)
+		}
+	})
+}

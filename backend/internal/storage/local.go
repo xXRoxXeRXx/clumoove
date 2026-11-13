@@ -422,10 +422,12 @@ func localPathComponents(rel string) ([]string, error) {
 	return parts, nil
 }
 
-// SupportsAtomicRename is true: the local provider can rename files.
-func (p *LocalProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
+func (p *LocalProvider) VerificationMode() VerificationMode {
+	return defaultProviderCatalogue.verificationMode("local")
+}
+
 func (p *LocalProvider) SupportsAtomicRename() bool {
-	return true
+	return defaultProviderCatalogue.supportsAtomicRename("local")
 }
 
 func (p *LocalProvider) localRoot() (*localRoot, error) {
