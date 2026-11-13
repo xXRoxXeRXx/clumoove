@@ -26,6 +26,7 @@ const (
 
 // OneDriveProvider accesses a personal OneDrive through Microsoft Graph.
 type OneDriveProvider struct {
+	catalogueTraits
 	accessToken string
 	apiBase     string
 	httpClient  *http.Client
@@ -937,11 +938,17 @@ func (p *OneDriveProvider) itemID(ctx context.Context, filePath string) (string,
 }
 
 func (p *OneDriveProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("onedrive")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("onedrive")
+	}
+	return p.catalogueTraits.verificationMode("onedrive")
 }
 
 func (p *OneDriveProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("onedrive")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("onedrive")
+	}
+	return p.catalogueTraits.supportsAtomicRename("onedrive")
 }
 
 func isLocalTestingEndpoint(endpoint string) bool {

@@ -49,12 +49,25 @@ type OpenCloudProvider struct {
 
 var _ StorageProvider = (*OpenCloudProvider)(nil)
 
+func (p *OpenCloudProvider) bindCatalogueTraits(c *providerCatalogue, providerType string) {
+	if p == nil || p.davProvider == nil {
+		return
+	}
+	p.davProvider.bindCatalogueTraits(c, providerType)
+}
+
 func (p *OpenCloudProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("opencloud")
+	if p == nil || p.davProvider == nil {
+		return defaultProviderCatalogue.verificationMode("opencloud")
+	}
+	return p.davProvider.catalogueTraits.verificationMode("opencloud")
 }
 
 func (p *OpenCloudProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("opencloud")
+	if p == nil || p.davProvider == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("opencloud")
+	}
+	return p.davProvider.catalogueTraits.supportsAtomicRename("opencloud")
 }
 
 // NewOpenCloudProvider initializes an OpenCloudProvider with host URL and credentials.

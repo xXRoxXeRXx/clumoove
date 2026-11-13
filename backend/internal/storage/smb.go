@@ -18,6 +18,7 @@ import (
 )
 
 type SMBProvider struct {
+	catalogueTraits
 	Host     string
 	Port     string
 	Share    string
@@ -610,11 +611,17 @@ func (p *SMBProvider) RenameFile(ctx context.Context, resourceType, oldPath, new
 }
 
 func (p *SMBProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("smb")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("smb")
+	}
+	return p.catalogueTraits.verificationMode("smb")
 }
 
 func (p *SMBProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("smb")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("smb")
+	}
+	return p.catalogueTraits.supportsAtomicRename("smb")
 }
 
 func (p *SMBProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

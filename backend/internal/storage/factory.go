@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"reflect"
 	"runtime"
 )
 
@@ -145,6 +146,44 @@ func (c *providerCatalogue) verificationMode(providerType string) VerificationMo
 	return entry.VerificationMode
 }
 
+type catalogueTraits struct {
+	catalogue    *providerCatalogue
+	providerType string
+}
+
+type catalogueTraitsBinder interface {
+	bindCatalogueTraits(*providerCatalogue, string)
+}
+
+func (t *catalogueTraits) bindCatalogueTraits(c *providerCatalogue, providerType string) {
+	if t == nil {
+		return
+	}
+	t.catalogue = c
+	t.providerType = providerType
+}
+
+func (t *catalogueTraits) resolveCatalogueProvider(fallback string) (*providerCatalogue, string) {
+	c := defaultProviderCatalogue
+	if t != nil && t.catalogue != nil {
+		c = t.catalogue
+	}
+	if t != nil && t.providerType != "" {
+		return c, t.providerType
+	}
+	return c, fallback
+}
+
+func (t *catalogueTraits) supportsAtomicRename(fallback string) bool {
+	c, providerType := t.resolveCatalogueProvider(fallback)
+	return c.supportsAtomicRename(providerType)
+}
+
+func (t *catalogueTraits) verificationMode(fallback string) VerificationMode {
+	c, providerType := t.resolveCatalogueProvider(fallback)
+	return c.verificationMode(providerType)
+}
+
 func (c *providerCatalogue) newProvider(ctx context.Context, providerType, urlStr, username, password string) (StorageProvider, error) {
 	entry, exists := c.lookup(providerType)
 	if !exists {
@@ -180,7 +219,16 @@ func (c *providerCatalogue) newProvider(ctx context.Context, providerType, urlSt
 		}
 	}
 
-	return entry.Construct(ctx, urlStr, username, password)
+	provider, err := entry.Construct(ctx, urlStr, username, password)
+	if err != nil {
+		return nil, err
+	}
+	if binder, ok := provider.(catalogueTraitsBinder); ok {
+		if v := reflect.ValueOf(provider); v.IsValid() && (v.Kind() != reflect.Ptr || !v.IsNil()) {
+			binder.bindCatalogueTraits(c, providerType)
+		}
+	}
+	return provider, nil
 }
 
 func (c *providerCatalogue) managerCapabilitiesFor(providerType string) ManagerCapabilities {

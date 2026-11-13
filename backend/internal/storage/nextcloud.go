@@ -31,6 +31,7 @@ type pathBuilder interface {
 // supply a pathBuilder plus transport configuration. Behaviour of
 // NextcloudProvider is unchanged by this extraction.
 type davProvider struct {
+	catalogueTraits
 	providerName         string
 	BaseURL              string
 	baseURLMu            sync.RWMutex
@@ -1355,11 +1356,17 @@ func (p *davProvider) davProviderName() string {
 }
 
 func (p *davProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode(p.davProviderName())
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("nextcloud")
+	}
+	return p.catalogueTraits.verificationMode(p.davProviderName())
 }
 
 func (p *davProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename(p.davProviderName())
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("nextcloud")
+	}
+	return p.catalogueTraits.supportsAtomicRename(p.davProviderName())
 }
 
 func (p *davProvider) ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error {
@@ -1456,10 +1463,23 @@ type NextcloudProvider struct {
 var _ StorageProvider = (*NextcloudProvider)(nil)
 var _ ManagerCopier = (*NextcloudProvider)(nil)
 
+func (p *NextcloudProvider) bindCatalogueTraits(c *providerCatalogue, providerType string) {
+	if p == nil || p.davProvider == nil {
+		return
+	}
+	p.davProvider.bindCatalogueTraits(c, providerType)
+}
+
 func (p *NextcloudProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("nextcloud")
+	if p == nil || p.davProvider == nil {
+		return defaultProviderCatalogue.verificationMode("nextcloud")
+	}
+	return p.davProvider.catalogueTraits.verificationMode("nextcloud")
 }
 
 func (p *NextcloudProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("nextcloud")
+	if p == nil || p.davProvider == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("nextcloud")
+	}
+	return p.davProvider.catalogueTraits.supportsAtomicRename("nextcloud")
 }

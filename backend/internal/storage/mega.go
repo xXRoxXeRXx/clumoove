@@ -18,6 +18,7 @@ import (
 // A provider is task-scoped: its in-memory tree and cleartext session material
 // are never shared across accounts or operations.
 type MegaProvider struct {
+	catalogueTraits
 	email      string
 	password   string
 	session    MegaSession
@@ -552,10 +553,16 @@ func (p *MegaProvider) RenameFile(ctx context.Context, resourceType, oldPath, ne
 	return nil
 }
 
-func (*MegaProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("mega")
+func (p *MegaProvider) SupportsAtomicRename() bool {
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("mega")
+	}
+	return p.catalogueTraits.supportsAtomicRename("mega")
 }
 
-func (*MegaProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("mega")
+func (p *MegaProvider) VerificationMode() VerificationMode {
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("mega")
+	}
+	return p.catalogueTraits.verificationMode("mega")
 }

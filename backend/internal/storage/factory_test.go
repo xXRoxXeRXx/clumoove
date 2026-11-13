@@ -971,4 +971,139 @@ func TestProviderCatalogueMigrationTraitsAreAuthoritative(t *testing.T) {
 			t.Fatalf("expected atomic overwrite path from catalogue SupportsAtomicRename=true, got content=%q renameCalls=%v", string(stub.files["/note.txt"]), stub.renameCalls)
 		}
 	})
+
+	t.Run("embedded_provider_uses_registered_catalogue_traits", func(t *testing.T) {
+		type embeddedNextcloud struct {
+			*NextcloudProvider
+		}
+		type embeddedWebDAV struct {
+			*WebDAVProvider
+		}
+
+		cat, err := newProviderCatalogue([]providerRegistration{
+			{
+				Type:                   "custom_nc",
+				SupportedResourceTypes: map[string]bool{"files": true},
+				SupportsAtomicRename:   false,
+				VerificationMode:       VerificationCryptographicHash,
+				Construct: func(_ context.Context, urlStr, username, password string) (StorageProvider, error) {
+					nc, err := NewNextcloudProvider(urlStr, username, password)
+					if err != nil {
+						return nil, err
+					}
+					return &embeddedNextcloud{NextcloudProvider: nc}, nil
+				},
+			},
+			{
+				Type:                   "custom_webdav",
+				SupportedResourceTypes: map[string]bool{"files": true},
+				SupportsAtomicRename:   false,
+				VerificationMode:       VerificationNone,
+				Construct: func(_ context.Context, urlStr, username, password string) (StorageProvider, error) {
+					wd, err := NewWebDAVProvider(urlStr, username, password)
+					if err != nil {
+						return nil, err
+					}
+					return &embeddedWebDAV{WebDAVProvider: wd}, nil
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("newProviderCatalogue error = %v", err)
+		}
+
+		ncProvider, err := cat.newProvider(ctx, "custom_nc", "https://1.1.1.1", "user", "secret")
+		if err != nil {
+			t.Fatalf("cat.newProvider(custom_nc) error = %v", err)
+		}
+		defer ncProvider.Close()
+
+		if ncProvider.SupportsAtomicRename() {
+			t.Fatalf("embeddedNextcloud SupportsAtomicRename() = true, want registered false")
+		}
+		if got := ncProvider.VerificationMode(); got != VerificationCryptographicHash {
+			t.Fatalf("embeddedNextcloud VerificationMode() = %q, want registered %q", got, VerificationCryptographicHash)
+		}
+
+		wdProvider, err := cat.newProvider(ctx, "custom_webdav", "https://1.1.1.1/dav", "user", "secret")
+		if err != nil {
+			t.Fatalf("cat.newProvider(custom_webdav) error = %v", err)
+		}
+		defer wdProvider.Close()
+
+		if wdProvider.SupportsAtomicRename() {
+			t.Fatalf("embeddedWebDAV SupportsAtomicRename() = true, want registered false")
+		}
+		if got := wdProvider.VerificationMode(); got != VerificationNone {
+			t.Fatalf("embeddedWebDAV VerificationMode() = %q, want registered %q", got, VerificationNone)
+		}
+	})
+
+	t.Run("nil_receiver_traits_fall_back_safely", func(t *testing.T) {
+		nilProviders := map[string]StorageProvider{
+			"nextcloud":    (*NextcloudProvider)(nil),
+			"opencloud":    (*OpenCloudProvider)(nil),
+			"webdav":       (*WebDAVProvider)(nil),
+			"dropbox":      (*DropboxProvider)(nil),
+			"google":       (*GoogleProvider)(nil),
+			"onedrive":     (*OneDriveProvider)(nil),
+			"hidrive":      (*HiDriveProvider)(nil),
+			"smb":          (*SMBProvider)(nil),
+			"s3":           (*S3Provider)(nil),
+			"sftp":         (*SFTPProvider)(nil),
+			"ftp":          (*FTPProvider)(nil),
+			"magentacloud": (*MagentacloudProvider)(nil),
+			"koofr":        (*KoofrProvider)(nil),
+			"local":        (*LocalProvider)(nil),
+			"immich":       (*ImmichProvider)(nil),
+			"seafile":      (*SeafileProvider)(nil),
+			"mega":         (*MegaProvider)(nil),
+		}
+		for _, providerType := range ValidProviders {
+			p := nilProviders[providerType]
+			want := defaultProviderCatalogue.entries[providerType]
+			if got := p.SupportsAtomicRename(); got != want.SupportsAtomicRename {
+				t.Fatalf("nil %s SupportsAtomicRename() = %t, want %t", providerType, got, want.SupportsAtomicRename)
+			}
+			if got := p.VerificationMode(); got != want.VerificationMode {
+				t.Fatalf("nil %s VerificationMode() = %q, want %q", providerType, got, want.VerificationMode)
+			}
+		}
+
+		// Wrapper structs with nil embedded *davProvider also safely avoid panics when bound or queried.
+		nilDAVCat, err := newProviderCatalogue([]providerRegistration{
+			{
+				Type:                   "nil_nc",
+				SupportedResourceTypes: map[string]bool{"files": true},
+				SupportsAtomicRename:   true,
+				VerificationMode:       VerificationSizeOnly,
+				Construct: func(context.Context, string, string, string) (StorageProvider, error) {
+					return &NextcloudProvider{}, nil
+				},
+			},
+			{
+				Type:                   "typed_nil_webdav",
+				SupportedResourceTypes: map[string]bool{"files": true},
+				SupportsAtomicRename:   true,
+				VerificationMode:       VerificationSizeOnly,
+				Construct: func(context.Context, string, string, string) (StorageProvider, error) {
+					return (*WebDAVProvider)(nil), nil
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("newProviderCatalogue error = %v", err)
+		}
+		for _, name := range []string{"nil_nc", "typed_nil_webdav"} {
+			p, err := nilDAVCat.newProvider(ctx, name, "", "", "")
+			if err != nil {
+				t.Fatalf("newProvider(%q) error = %v", name, err)
+			}
+			_ = p.SupportsAtomicRename()
+			_ = p.VerificationMode()
+		}
+		if (&OpenCloudProvider{}).VerificationMode() != VerificationSizeOnly || (&MagentacloudProvider{}).VerificationMode() != VerificationSizeOnly {
+			t.Fatalf("wrapper structs with nil davProvider should fall back to their catalogue verification modes")
+		}
+	})
 }

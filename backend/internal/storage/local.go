@@ -19,6 +19,7 @@ import (
 // tenant root and verified to stay within it (rejecting ".." traversal and
 // symlink-based escapes).
 type LocalProvider struct {
+	catalogueTraits
 	root string
 	// rootHandle keeps an open descriptor for the tenant root. Mutating
 	// operations are resolved relative to it, never by re-opening p.root.
@@ -423,11 +424,17 @@ func localPathComponents(rel string) ([]string, error) {
 }
 
 func (p *LocalProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("local")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("local")
+	}
+	return p.catalogueTraits.verificationMode("local")
 }
 
 func (p *LocalProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("local")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("local")
+	}
+	return p.catalogueTraits.supportsAtomicRename("local")
 }
 
 func (p *LocalProvider) localRoot() (*localRoot, error) {

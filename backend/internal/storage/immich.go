@@ -21,6 +21,7 @@ import (
 // ImmichProvider implements the stable v2 Immich API subset. It deliberately
 // uses asset IDs, never filenames, for source operations.
 type ImmichProvider struct {
+	catalogueTraits
 	BaseURL      string
 	APIKey       string
 	HTTPClient   *http.Client
@@ -53,11 +54,17 @@ func NewImmichProvider(baseURL, apiKey string) (*ImmichProvider, error) {
 // so no post-upload metadata step is required.
 func (p *ImmichProvider) Close() error                       { p.HTTPClient.CloseIdleConnections(); return nil }
 func (p *ImmichProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("immich")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("immich")
+	}
+	return p.catalogueTraits.supportsAtomicRename("immich")
 }
 
 func (p *ImmichProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("immich")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("immich")
+	}
+	return p.catalogueTraits.verificationMode("immich")
 }
 func (p *ImmichProvider) UsesNativeDuplicateDetection() bool { return true }
 func (p *ImmichProvider) checkType(t string) error {

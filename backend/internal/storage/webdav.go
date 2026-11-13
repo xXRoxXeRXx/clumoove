@@ -21,6 +21,7 @@ var (
 )
 
 type WebDAVProvider struct {
+	catalogueTraits
 	BaseURL     string
 	Username    string
 	Password    string
@@ -635,11 +636,17 @@ func (p *WebDAVProvider) CopyManagerItem(ctx context.Context, locator, destinati
 }
 
 func (p *WebDAVProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("webdav")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("webdav")
+	}
+	return p.catalogueTraits.verificationMode("webdav")
 }
 
 func (p *WebDAVProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("webdav")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("webdav")
+	}
+	return p.catalogueTraits.supportsAtomicRename("webdav")
 }
 
 func (p *WebDAVProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

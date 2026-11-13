@@ -22,6 +22,7 @@ import (
 )
 
 type SFTPProvider struct {
+	catalogueTraits
 	Host        string
 	Port        string
 	Username    string
@@ -750,11 +751,17 @@ func (p *SFTPProvider) RenameFile(ctx context.Context, resourceType, oldPath, ne
 }
 
 func (p *SFTPProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("sftp")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("sftp")
+	}
+	return p.catalogueTraits.verificationMode("sftp")
 }
 
 func (p *SFTPProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("sftp")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("sftp")
+	}
+	return p.catalogueTraits.supportsAtomicRename("sftp")
 }
 
 func (p *SFTPProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

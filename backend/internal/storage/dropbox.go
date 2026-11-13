@@ -85,6 +85,7 @@ func (dh *DropboxHasher) BlockSize() int {
 
 // DropboxProvider implements StorageProvider for Dropbox.
 type DropboxProvider struct {
+	catalogueTraits
 	AccessToken string
 	HTTPClient  *http.Client
 }
@@ -928,11 +929,17 @@ func (p *DropboxProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 }
 
 func (p *DropboxProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("dropbox")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("dropbox")
+	}
+	return p.catalogueTraits.verificationMode("dropbox")
 }
 
 func (p *DropboxProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("dropbox")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("dropbox")
+	}
+	return p.catalogueTraits.supportsAtomicRename("dropbox")
 }
 
 func (p *DropboxProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

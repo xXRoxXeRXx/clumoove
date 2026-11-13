@@ -23,6 +23,7 @@ import (
 )
 
 type GoogleProvider struct {
+	catalogueTraits
 	driveService    *drive.Service
 	calendarService *calendar.Service
 	peopleService   *people.Service
@@ -881,11 +882,17 @@ func (p *GoogleProvider) findExactDriveFileID(ctx context.Context, parentID, nam
 }
 
 func (p *GoogleProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("google")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("google")
+	}
+	return p.catalogueTraits.verificationMode("google")
 }
 
 func (p *GoogleProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("google")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("google")
+	}
+	return p.catalogueTraits.supportsAtomicRename("google")
 }
 
 func (p *GoogleProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

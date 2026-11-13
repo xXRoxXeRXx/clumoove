@@ -14,6 +14,7 @@ import (
 )
 
 type HiDriveProvider struct {
+	catalogueTraits
 	AccessToken string
 	BaseURL     string
 	HTTPClient  *http.Client
@@ -747,11 +748,17 @@ func (p *HiDriveProvider) CreateDirectory(ctx context.Context, resourceType, dir
 }
 
 func (p *HiDriveProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("hidrive")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("hidrive")
+	}
+	return p.catalogueTraits.verificationMode("hidrive")
 }
 
 func (p *HiDriveProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("hidrive")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("hidrive")
+	}
+	return p.catalogueTraits.supportsAtomicRename("hidrive")
 }
 
 func (p *HiDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {

@@ -21,6 +21,7 @@ const koofrBaseURL = "https://app.koofr.net"
 // It is deliberately task-scoped: credentials and the selected primary mount
 // live only for the lifetime of the provider instance.
 type KoofrProvider struct {
+	catalogueTraits
 	BaseURL    string
 	Username   string
 	Password   string
@@ -408,11 +409,17 @@ func (p *KoofrProvider) RenameFile(ctx context.Context, resourceType, oldPath, n
 }
 
 func (p *KoofrProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("koofr")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("koofr")
+	}
+	return p.catalogueTraits.supportsAtomicRename("koofr")
 }
 
 func (p *KoofrProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("koofr")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("koofr")
+	}
+	return p.catalogueTraits.verificationMode("koofr")
 }
 
 func (p *KoofrProvider) requireFiles(resourceType string) error {

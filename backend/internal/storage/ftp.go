@@ -33,6 +33,7 @@ const (
 // FTPProvider supports only FTPS. Its mutex serializes the FTP control channel;
 // a download retains that mutex until Response.Close reads the final FTP status.
 type FTPProvider struct {
+	catalogueTraits
 	Host      string
 	Port      string
 	Username  string
@@ -609,9 +610,15 @@ func (p *FTPProvider) RenameFile(ctx context.Context, resourceType, oldPath, new
 }
 
 func (p *FTPProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("ftp")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("ftp")
+	}
+	return p.catalogueTraits.verificationMode("ftp")
 }
 
 func (p *FTPProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("ftp")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("ftp")
+	}
+	return p.catalogueTraits.supportsAtomicRename("ftp")
 }

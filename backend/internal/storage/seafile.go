@@ -18,6 +18,7 @@ import (
 
 // SeafileProvider implements StorageProvider for Seafile Web API v2.1.
 type SeafileProvider struct {
+	catalogueTraits
 	BaseURL    string
 	Username   string
 	Password   string
@@ -1262,9 +1263,15 @@ func (p *SeafileProvider) GetFileHash(ctx context.Context, resourceType, filePat
 }
 
 func (p *SeafileProvider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("seafile")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("seafile")
+	}
+	return p.catalogueTraits.supportsAtomicRename("seafile")
 }
 
 func (p *SeafileProvider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("seafile")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("seafile")
+	}
+	return p.catalogueTraits.verificationMode("seafile")
 }

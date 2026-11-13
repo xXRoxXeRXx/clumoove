@@ -26,6 +26,7 @@ import (
 )
 
 type S3Provider struct {
+	catalogueTraits
 	client     *s3.Client
 	bucket     string
 	httpClient *http.Client
@@ -641,11 +642,17 @@ func (p *S3Provider) copyPrefix(ctx context.Context, sourceKey, targetKey string
 // VerificationMode is size_only: an S3 ETag is MD5 only for single-part
 // uploads and is a non-comparable composite value for multipart uploads.
 func (p *S3Provider) VerificationMode() VerificationMode {
-	return defaultProviderCatalogue.verificationMode("s3")
+	if p == nil {
+		return defaultProviderCatalogue.verificationMode("s3")
+	}
+	return p.catalogueTraits.verificationMode("s3")
 }
 
 func (p *S3Provider) SupportsAtomicRename() bool {
-	return defaultProviderCatalogue.supportsAtomicRename("s3")
+	if p == nil {
+		return defaultProviderCatalogue.supportsAtomicRename("s3")
+	}
+	return p.catalogueTraits.supportsAtomicRename("s3")
 }
 
 func (p *S3Provider) multipartCopy(ctx context.Context, srcKey, dstKey string, size int64) error {
