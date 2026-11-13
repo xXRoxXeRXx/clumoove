@@ -12,7 +12,7 @@ import (
 	"backend/internal/storage"
 )
 
-func archiveTestResolved(provider storage.StorageProvider) *resolvedFileProfile {
+func archiveTestResolved(provider storage.ManagerProvider) *resolvedFileProfile {
 	manager, err := storage.NewFileManager("nextcloud", provider)
 	if err != nil {
 		panic(err)

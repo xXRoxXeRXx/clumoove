@@ -44,7 +44,7 @@ func (c *profileCreds) clear() {
 // It deliberately has no HTTP request or response knowledge.
 type profileProvider interface {
 	storage.ManagerProvider
-	Close() error
+	storage.ProviderLifecycle
 }
 
 type profileConnection struct {

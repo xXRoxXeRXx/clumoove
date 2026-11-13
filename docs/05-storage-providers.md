@@ -1,8 +1,8 @@
 # 05 – Storage Providers
 
-All source/target storage is abstracted behind the `StorageProvider` interface
-(`backend/internal/storage/provider.go`). New providers must implement that interface and be registered
-in `NewProvider` (`factory.go`). Only whitelisted provider strings may reach `NewProvider`.
+Registered storage providers implement the composed `StorageProvider` interface
+(`backend/internal/storage/provider.go`). Workflows use focused interfaces for the operations they need.
+New providers must be registered in the catalogue (`factory.go`); only whitelisted provider strings may reach `NewProvider`.
 
 ## Cloud File Manager Capabilities
 
@@ -14,29 +14,18 @@ in `NewProvider` (`factory.go`). Only whitelisted provider strings may reach `Ne
 
 ```go
 type StorageProvider interface {
-    Close() error
-    Connect(ctx context.Context) (bool, error)
-    GetDirectoryListing(ctx, resourceType, dirPath) ([]CloudResource, error)
-    InspectResource(ctx, resourceType, path) (CloudResource, error)
-    StreamDownload(ctx, resourceType, filePath) (io.ReadCloser, error)
-    StreamUpload(ctx, resourceType, filePath, stream, size) error
-    StreamUploadChunked(ctx, resourceType, filePath, stream, size, progressChan) error
-    FileExists(ctx, resourceType, filePath) (bool, int64, error)
-    DeleteFile(ctx, resourceType, filePath) error
-    GetFileHash(ctx, resourceType, filePath) (string, error)
-    CreateParentDirectories(ctx, resourceType, filePath) error
-    CreateDirectory(ctx, resourceType, dirPath) error
-    RenameFile(ctx, resourceType, oldPath, newPath) error
-    SupportsAtomicRename() bool
-    VerificationMode() VerificationMode
+    ManagerProvider
+    ProviderLifecycle
+    TransferCapabilities
 }
 ```
 
 > **Interface contract — required method.** `SupportsAtomicRename()` is a **mandatory** part of the
 > interface. Every concrete provider **must** implement it, or the package will fail to compile with
 > `does not implement storage.StorageProvider (missing method SupportsAtomicRename)`. There is no
-> default; the compiler enforces it for *all* implementers, including test mocks. When adding a new
-> provider, add this method alongside the others.
+> default; the compiler enforces it for values assigned to `StorageProvider`. Workflow test doubles
+> need only implement the narrower interface used by that workflow. When adding a new provider, add
+> this method alongside the others.
 >
 > - Return `true` only when the provider can atomically promote a staged `<path>.tmp` upload to `<path>`.
 > - Return `false` when that promotion is not atomic (including S3, Seafile, and Koofr) or unsupported (Immich).
@@ -235,14 +224,14 @@ computes a second (target) hasher when algorithms differ (CPU optimization).
    applicable).
 2. **Implement `SupportsAtomicRename() bool` and `VerificationMode() VerificationMode`.** These are required interface methods (no default). Forgetting
    it produces a compile error `does not implement storage.StorageProvider (missing method
-   SupportsAtomicRename)` for *every* implementer, including test mocks — so add it together with the other
+   SupportsAtomicRename)` for each value required to implement `StorageProvider` — so add it together with the other
    methods. Return `true` when the provider supports an atomic "upload to `<path>.tmp` then rename"
    overwrite (standard file providers), or `false` when it cannot rename/delete (e.g. Immich).
    Return `cryptographic_hash` only for a comparable target hash; ETag-only and hashless targets must
    return `size_only` so verification makes only the required existence/size query.
-3. Add the provider value to the whitelist in `internal/storage/factory.go` (`ValidProviders`) **and** the frontend
-   provider selector.
-4. Register it in `NewProvider` (`factory.go`), including any SSRF egress validation for
-   user-supplied hosts.
+3. Add one provider registration in `internal/storage/factory.go`, including construction,
+   capabilities, validation rules and SSRF egress validation for user-supplied hosts. The
+   `ValidProviders` whitelist is derived from the catalogue.
+4. Add the provider to the frontend provider selector.
 5. If it is an OAuth provider, wire token refresh in `internal/oauth` and the rotation daemon.
 6. Update [Storage Providers](./05-storage-providers.md) and the README provider table.

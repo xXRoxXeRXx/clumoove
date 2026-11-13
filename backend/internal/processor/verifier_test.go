@@ -44,6 +44,8 @@ type connectableVerifierProvider struct {
 	connects   int
 }
 
+func (*connectableVerifierProvider) Close() error { return nil }
+
 func (p *connectableVerifierProvider) Connect(context.Context) (bool, error) {
 	p.connects++
 	return p.connected, p.connectErr

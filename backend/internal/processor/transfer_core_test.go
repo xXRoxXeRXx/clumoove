@@ -162,7 +162,8 @@ func TestRecoveryCursorKeepsMigrationAndSyncQueuesIndependent(t *testing.T) {
 	}
 }
 
-var _ storage.StorageProvider = (*memoryTransferProvider)(nil)
+var _ transferSource = (*memoryTransferProvider)(nil)
+var _ transferTarget = (*memoryTransferProvider)(nil)
 var _ transferSource = (storage.StorageProvider)(nil)
 var _ transferTarget = (storage.StorageProvider)(nil)
 
