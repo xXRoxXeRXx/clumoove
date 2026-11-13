@@ -94,6 +94,8 @@ func (p *KoofrProvider) ListManager(ctx context.Context, locator ManagerLocator,
 		return ManagerPage{}, ErrManagerDirectoryTooLarge
 	}
 
+	sortManagerItems(items)
+
 	totalItems := len(items)
 	if offset > totalItems {
 		return ManagerPage{Items: nil, NextCursor: ""}, nil

@@ -15,10 +15,10 @@ var (
 )
 
 type resolvedFileProfile struct {
-	profile  *db.ConnectionProfile
-	provider storage.StorageProvider
-	ctx      context.Context
-	close    func()
+	profile *db.ConnectionProfile
+	manager storage.FileManager
+	ctx     context.Context
+	close   func()
 }
 
 func mapFileProfileError(err error) error {
@@ -53,13 +53,13 @@ func (s *APIServer) resolveFileProfile(ctx context.Context, userID, profileID st
 		}
 	}()
 
-	connectCtx, cancel := context.WithTimeout(connection.ctx, 30*time.Second)
-	connected := false
-	if managerConnector, ok := connection.provider.(storage.ManagerConnector); ok {
-		connected, err = managerConnector.ConnectManager(connectCtx)
-	} else {
-		connected, err = connection.provider.Connect(connectCtx)
+	manager, err := storage.NewFileManager(connection.profile.Provider, connection.provider)
+	if err != nil {
+		return nil, err
 	}
+
+	connectCtx, cancel := context.WithTimeout(connection.ctx, 30*time.Second)
+	connected, err := manager.ConnectManager(connectCtx)
 	cancel()
 	if err != nil || !connected {
 		return nil, errFileProviderUnavailable
@@ -69,10 +69,10 @@ func (s *APIServer) resolveFileProfile(ctx context.Context, userID, profileID st
 	}
 
 	resolved := &resolvedFileProfile{
-		profile:  connection.profile,
-		provider: connection.provider,
-		ctx:      connection.ctx,
-		close:    connection.close,
+		profile: connection.profile,
+		manager: manager,
+		ctx:     connection.ctx,
+		close:   connection.close,
 	}
 	connection = nil
 	return resolved, nil

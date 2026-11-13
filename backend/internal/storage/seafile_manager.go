@@ -149,6 +149,8 @@ func (p *SeafileProvider) ListManager(ctx context.Context, locator ManagerLocato
 		return ManagerPage{}, ErrManagerDirectoryTooLarge
 	}
 
+	sortManagerItems(items)
+
 	totalItems := len(items)
 	if offset > totalItems {
 		return ManagerPage{Items: nil, NextCursor: ""}, nil

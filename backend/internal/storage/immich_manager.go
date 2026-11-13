@@ -156,11 +156,10 @@ func (p *ImmichProvider) ListManager(ctx context.Context, locator ManagerLocator
 }
 
 // DownloadManager retrieves an original asset stream directly from Immich.
+// Manager locators must never fall back to their display path because paths are
+// not asset identities in Immich's flat library.
 func (p *ImmichProvider) DownloadManager(ctx context.Context, locator ManagerLocator) (ManagerDownload, error) {
 	assetID := locator.NativeID
-	if assetID == "" {
-		assetID = immichAssetID(locator.Path)
-	}
 	if assetID == "" || assetID == "/" {
 		return ManagerDownload{}, fmt.Errorf("immich manager download: %w", ErrNotFound)
 	}
@@ -214,11 +213,10 @@ func (p *ImmichProvider) ResolveManagerPath(ctx context.Context, value string) (
 }
 
 // ThumbnailManager retrieves a thumbnail image stream from Immich for the specified asset.
+// Manager locators must never fall back to their display path because paths are
+// not asset identities in Immich's flat library.
 func (p *ImmichProvider) ThumbnailManager(ctx context.Context, locator ManagerLocator, width, height int) (io.ReadCloser, string, error) {
 	assetID := locator.NativeID
-	if assetID == "" {
-		assetID = immichAssetID(locator.Path)
-	}
 	if assetID == "" || assetID == "/" {
 		return nil, "", fmt.Errorf("immich thumbnail: %w", ErrNotFound)
 	}

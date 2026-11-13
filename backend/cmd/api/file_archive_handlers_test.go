@@ -13,11 +13,15 @@ import (
 )
 
 func archiveTestResolved(provider storage.StorageProvider) *resolvedFileProfile {
+	manager, err := storage.NewFileManager("nextcloud", provider)
+	if err != nil {
+		panic(err)
+	}
 	return &resolvedFileProfile{
-		profile:  &db.ConnectionProfile{Provider: "nextcloud"},
-		provider: provider,
-		ctx:      context.Background(),
-		close:    func() {},
+		profile: &db.ConnectionProfile{Provider: "nextcloud"},
+		manager: manager,
+		ctx:     context.Background(),
+		close:   func() {},
 	}
 }
 

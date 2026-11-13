@@ -55,8 +55,9 @@ type ManagerListOptions struct {
 }
 
 type ManagerPage struct {
-	Items      []ManagerItem
-	NextCursor string
+	Items          []ManagerItem
+	NextCursor     string
+	PaginationMode string
 }
 
 // ManagerDownload carries both a verified item description and its content
@@ -165,7 +166,37 @@ var (
 	ErrManagerDirectoryCycle     = errors.New("file manager directory cycle")
 	ErrManagerNoop               = errors.New("file manager operation is a no-op")
 	ErrManagerPartial            = errors.New("file manager operation partially completed")
+	ErrManagerDirectoryChanged   = errors.New("file manager directory changed")
 )
+
+// FileManager exposes one storage-owned file-manager contract across providers.
+type FileManager interface {
+	Capabilities() ManagerCapabilities
+	IsRootLocator(locator ManagerLocator) bool
+	InspectManagerItem(ctx context.Context, locator ManagerLocator) (ManagerItem, error)
+	ManagerConnector
+	ManagerLister
+	ManagerPathResolver
+	ManagerDownloader
+	ManagerUploader
+	ManagerDirectoryCreator
+	ManagerDeleter
+	ManagerRenamer
+	ManagerMover
+	ManagerCopier
+	ManagerThumbnailer
+}
+
+// ManagerLocatorKey returns a stable key identifying a ManagerLocator.
+func ManagerLocatorKey(loc ManagerLocator) string {
+	return managerLocatorKey(loc)
+}
+
+// SortManagerItems sorts ManagerItems consistently with directories first,
+// then case-insensitive name, then locator key.
+func SortManagerItems(items []ManagerItem) {
+	sortManagerItems(items)
+}
 
 // managerLocatorKey returns a stable sort key for a ManagerLocator, consistent
 // with the handler-side managedLocatorIdentity used by sortManagedEntries.

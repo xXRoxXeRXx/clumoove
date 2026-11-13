@@ -189,6 +189,10 @@ func TestImmichManager(t *testing.T) {
 		if string(body) != "original-image-content" {
 			t.Errorf("dl.Stream = %q, want original-image-content", string(body))
 		}
+
+		if _, err := provider.DownloadManager(context.Background(), ManagerLocator{Path: "/asset-101"}); !errors.Is(err, ErrNotFound) {
+			t.Errorf("DownloadManager(path-only) error = %v, want ErrNotFound", err)
+		}
 	})
 
 	t.Run("ThumbnailManager Success Thumbnail", func(t *testing.T) {
@@ -234,6 +238,10 @@ func TestImmichManager(t *testing.T) {
 		_, _, err := provider.ThumbnailManager(context.Background(), ManagerLocator{NativeID: "asset-401"}, 128, 128)
 		if !errors.Is(err, ErrAuth) {
 			t.Errorf("ThumbnailManager(401) error = %v, want ErrAuth", err)
+		}
+
+		if _, _, err := provider.ThumbnailManager(context.Background(), ManagerLocator{Path: "/asset-101"}, 128, 128); !errors.Is(err, ErrNotFound) {
+			t.Errorf("ThumbnailManager(path-only) error = %v, want ErrNotFound", err)
 		}
 	})
 

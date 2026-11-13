@@ -49,33 +49,30 @@ func validArchiveName(name string) bool {
 }
 
 func listArchiveDirectory(ctx *resolvedFileProfile, locator storage.ManagerLocator) (storage.ManagerPage, error) {
-	if lister, ok := ctx.provider.(storage.ManagerLister); ok {
-		items := make([]storage.ManagerItem, 0)
-		cursor := ""
-		seenCursors := make(map[string]struct{})
-		for {
-			page, err := lister.ListManager(ctx.ctx, locator, storage.ManagerListOptions{Cursor: cursor, Limit: fileMaximumPageSize})
-			if err != nil {
-				return storage.ManagerPage{}, err
-			}
-			if len(page.Items) == 0 && page.NextCursor != "" {
-				return storage.ManagerPage{}, storage.ErrManagerDirectoryTooLarge
-			}
-			if len(items) > fileArchiveMaximumFiles-len(page.Items) {
-				return storage.ManagerPage{}, storage.ErrManagerDirectoryTooLarge
-			}
-			items = append(items, page.Items...)
-			if page.NextCursor == "" {
-				return storage.ManagerPage{Items: items}, nil
-			}
-			if _, seen := seenCursors[page.NextCursor]; seen {
-				return storage.ManagerPage{}, storage.ErrManagerDirectoryTooLarge
-			}
-			seenCursors[page.NextCursor] = struct{}{}
-			cursor = page.NextCursor
+	items := make([]storage.ManagerItem, 0)
+	cursor := ""
+	seenCursors := make(map[string]struct{})
+	for {
+		page, err := ctx.manager.ListManager(ctx.ctx, locator, storage.ManagerListOptions{Cursor: cursor, Limit: fileMaximumPageSize})
+		if err != nil {
+			return storage.ManagerPage{}, err
 		}
+		if len(page.Items) == 0 && page.NextCursor != "" {
+			return storage.ManagerPage{}, storage.ErrManagerDirectoryTooLarge
+		}
+		if len(items) > fileArchiveMaximumFiles-len(page.Items) {
+			return storage.ManagerPage{}, storage.ErrManagerDirectoryTooLarge
+		}
+		items = append(items, page.Items...)
+		if page.NextCursor == "" {
+			return storage.ManagerPage{Items: items}, nil
+		}
+		if _, seen := seenCursors[page.NextCursor]; seen {
+			return storage.ManagerPage{}, storage.ErrManagerDirectoryTooLarge
+		}
+		seenCursors[page.NextCursor] = struct{}{}
+		cursor = page.NextCursor
 	}
-	return listLegacyManager(ctx.ctx, ctx.provider, locator, "", fileMaximumDirectoryItems)
 }
 
 // planFileArchive walks manager locators breadth-first. All limits are checked
@@ -136,7 +133,7 @@ func planFileArchive(resolved *resolvedFileProfile, items []batchReference) ([]f
 		if current.depth > fileArchiveMaximumDepth {
 			return nil, storage.ErrManagerDirectoryTooLarge
 		}
-		key := managedLocatorIdentity(current.locator)
+		key := storage.ManagerLocatorKey(current.locator)
 		if _, exists := visited[key]; exists {
 			return nil, storage.ErrManagerDirectoryCycle
 		}
@@ -148,7 +145,7 @@ func planFileArchive(resolved *resolvedFileProfile, items []batchReference) ([]f
 			}
 			return nil, err
 		}
-		sortManagedEntries(page.Items)
+		storage.SortManagerItems(page.Items)
 		for _, child := range page.Items {
 			if !validArchiveName(child.Name) {
 				return nil, errors.New("invalid archive item name")
@@ -171,11 +168,10 @@ func planFileArchive(resolved *resolvedFileProfile, items []batchReference) ([]f
 
 func inspectArchiveFile(resolved *resolvedFileProfile, locator storage.ManagerLocator) (storage.ManagerItem, error) {
 	if locator.NativeID == "" {
-		resource, err := resolved.provider.InspectResource(resolved.ctx, "files", locator.Path)
+		item, err := resolved.manager.InspectManagerItem(resolved.ctx, locator)
 		if err != nil {
 			return storage.ManagerItem{}, err
 		}
-		item := managerItemFromCloudResource(resource)
 		if item.IsDir {
 			return storage.ManagerItem{}, storage.ErrNotFound
 		}
@@ -219,12 +215,12 @@ func (s *APIServer) handleFileArchiveTicket(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer resolved.close()
-	if !storage.ManagerCapabilitiesFor(resolved.profile.Provider).Archive {
+	if !resolved.manager.Capabilities().Archive {
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
 	}
 	for _, item := range items {
-		if isManagedRootLocator(resolved.profile.Provider, item.reference.Locator) {
+		if resolved.manager.IsRootLocator(item.reference.Locator) {
 			writeValidationError(w, ErrFilesRootMutationForbidden)
 			return
 		}
@@ -334,10 +330,7 @@ func writeFileArchive(output io.Writer, resolved *resolvedFileProfile, members [
 }
 
 func downloadArchiveMember(resolved *resolvedFileProfile, locator storage.ManagerLocator) (storage.ManagerDownload, error) {
-	if downloader, ok := resolved.provider.(storage.ManagerDownloader); ok {
-		return downloader.DownloadManager(resolved.ctx, locator)
-	}
-	return downloadLegacyManager(resolved.ctx, resolved.provider, locator)
+	return resolved.manager.DownloadManager(resolved.ctx, locator)
 }
 
 func fileArchiveTicketRedisKey(ticket string) string {

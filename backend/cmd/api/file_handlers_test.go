@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"backend/internal/auth"
+	"backend/internal/crypto"
 	"backend/internal/storage"
 )
 
@@ -31,6 +34,8 @@ type legacyFileManagerTestProvider struct {
 	listings        map[string][]storage.CloudResource
 	downloadContent string
 	downloadErr     error
+	deleted         []string
+	renamed         [][2]string
 }
 
 func (p *legacyFileManagerTestProvider) Close() error { return nil }
@@ -60,16 +65,19 @@ func (p *legacyFileManagerTestProvider) StreamDownload(context.Context, string, 
 	}
 	return io.NopCloser(strings.NewReader(content)), nil
 }
-func (p *legacyFileManagerTestProvider) StreamUpload(context.Context, string, string, io.Reader, int64) error {
-	return nil
+func (p *legacyFileManagerTestProvider) StreamUpload(_ context.Context, _ string, _ string, stream io.Reader, _ int64) error {
+	_, err := io.Copy(io.Discard, stream)
+	return err
 }
-func (p *legacyFileManagerTestProvider) StreamUploadChunked(context.Context, string, string, io.Reader, int64, chan<- int64) error {
-	return nil
+func (p *legacyFileManagerTestProvider) StreamUploadChunked(_ context.Context, _ string, _ string, stream io.Reader, _ int64, _ chan<- int64) error {
+	_, err := io.Copy(io.Discard, stream)
+	return err
 }
 func (p *legacyFileManagerTestProvider) FileExists(context.Context, string, string) (bool, int64, error) {
 	return false, 0, nil
 }
-func (p *legacyFileManagerTestProvider) DeleteFile(context.Context, string, string) error {
+func (p *legacyFileManagerTestProvider) DeleteFile(_ context.Context, _ string, filePath string) error {
+	p.deleted = append(p.deleted, filePath)
 	return nil
 }
 func (p *legacyFileManagerTestProvider) GetFileHash(context.Context, string, string) (string, error) {
@@ -81,7 +89,8 @@ func (p *legacyFileManagerTestProvider) CreateParentDirectories(context.Context,
 func (p *legacyFileManagerTestProvider) CreateDirectory(context.Context, string, string) error {
 	return nil
 }
-func (p *legacyFileManagerTestProvider) RenameFile(context.Context, string, string, string) error {
+func (p *legacyFileManagerTestProvider) RenameFile(_ context.Context, _ string, oldPath, newPath string) error {
+	p.renamed = append(p.renamed, [2]string{oldPath, newPath})
 	return nil
 }
 func (p *legacyFileManagerTestProvider) SupportsAtomicRename() bool { return false }
@@ -128,11 +137,19 @@ func TestManagedRootLocatorRecognizesPathAndGoogleRoots(t *testing.T) {
 		{"webdav", storage.ManagerLocator{Path: "/"}},
 		{"google", storage.ManagerLocator{NativeID: "root"}},
 	} {
-		if !isManagedRootLocator(test.provider, test.locator) {
+		fm, err := storage.NewFileManager(test.provider, &legacyFileManagerTestProvider{})
+		if err != nil {
+			t.Fatalf("NewFileManager(%q) error = %v", test.provider, err)
+		}
+		if !fm.IsRootLocator(test.locator) {
 			t.Fatalf("root locator was not rejected: %#v", test.locator)
 		}
 	}
-	if isManagedRootLocator("google", storage.ManagerLocator{NativeID: "file-id"}) {
+	googleFM, err := storage.NewFileManager("google", &legacyFileManagerTestProvider{})
+	if err != nil {
+		t.Fatalf("NewFileManager(google) error = %v", err)
+	}
+	if googleFM.IsRootLocator(storage.ManagerLocator{NativeID: "file-id"}) {
 		t.Fatal("ordinary native ID treated as root")
 	}
 }
@@ -253,91 +270,6 @@ func TestValidManagedPath(t *testing.T) {
 		if validManagedPath(value) {
 			t.Errorf("validManagedPath(%q) = true", value)
 		}
-	}
-}
-
-func TestSortManagedEntriesUsesStableNativeIdentity(t *testing.T) {
-	resources := []storage.ManagerItem{
-		{Name: "report", Locator: storage.ManagerLocator{NativeID: "b"}},
-		{Name: "report", Locator: storage.ManagerLocator{NativeID: "a"}},
-	}
-	sortManagedEntries(resources)
-	if got := resources[0].Locator.NativeID; got != "a" {
-		t.Fatalf("first stable ID = %q, want a", got)
-	}
-}
-
-func TestLegacyManagerPaginatesAndDetectsDirectoryChanges(t *testing.T) {
-	provider := &legacyFileManagerTestProvider{listings: map[string][]storage.CloudResource{
-		"/": {
-			{Path: "/c.txt", Name: "c.txt"},
-			{Path: "/a.txt", Name: "a.txt"},
-			{Path: "/b.txt", Name: "b.txt"},
-		},
-	}}
-	page, err := listLegacyManager(context.Background(), provider, storage.ManagerLocator{Path: "/"}, "", 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(page.Items) != 2 || page.Items[0].Name != "a.txt" || page.Items[1].Name != "b.txt" || page.NextCursor == "" {
-		t.Fatalf("first page = %#v", page)
-	}
-	next, err := listLegacyManager(context.Background(), provider, storage.ManagerLocator{Path: "/"}, page.NextCursor, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(next.Items) != 1 || next.Items[0].Name != "c.txt" {
-		t.Fatalf("next page = %#v", next)
-	}
-	provider.listings["/"] = append(provider.listings["/"], storage.CloudResource{Path: "/d.txt", Name: "d.txt"})
-	if _, err := listLegacyManager(context.Background(), provider, storage.ManagerLocator{Path: "/"}, page.NextCursor, 2); !errors.Is(err, errManagerDirectoryChanged) {
-		t.Fatalf("changed page error = %v, want directory changed", err)
-	}
-}
-
-func TestLegacyManagerPathResolveFallsBackToExistingParent(t *testing.T) {
-	provider := &legacyFileManagerTestProvider{listings: map[string][]storage.CloudResource{
-		"/":     {{Path: "/docs", Name: "docs", IsDir: true}},
-		"/docs": {{Path: "/docs/current", Name: "current", IsDir: true}},
-	}}
-	locator, breadcrumbs, fallback, err := resolveLegacyManagerPath(context.Background(), provider, "/docs/missing")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !fallback || locator.Path != "/docs" || len(breadcrumbs) != 1 || breadcrumbs[0].Name != "docs" {
-		t.Fatalf("resolve result = (%#v, %#v, %t)", locator, breadcrumbs, fallback)
-	}
-}
-
-func TestLegacyManagerUpload(t *testing.T) {
-	provider := &legacyFileManagerTestProvider{listings: map[string][]storage.CloudResource{
-		"/": {
-			{Path: "/existing.txt", Name: "existing.txt"},
-		},
-	}}
-
-	// SKIP
-	res, err := uploadLegacyManager(context.Background(), provider, storage.ManagerLocator{Path: "/"}, "existing.txt", strings.NewReader("content"), 7, storage.ManagerUploadOptions{ConflictStrategy: "SKIP"})
-	if err != nil || res.Status != "skipped" || res.FinalName != "existing.txt" {
-		t.Fatalf("uploadLegacyManager SKIP = (%#v, %v), want skipped", res, err)
-	}
-
-	// OVERWRITE
-	res, err = uploadLegacyManager(context.Background(), provider, storage.ManagerLocator{Path: "/"}, "existing.txt", strings.NewReader("content"), 7, storage.ManagerUploadOptions{ConflictStrategy: "OVERWRITE"})
-	if err != nil || res.Status != "uploaded" || res.FinalName != "existing.txt" {
-		t.Fatalf("uploadLegacyManager OVERWRITE = (%#v, %v), want uploaded", res, err)
-	}
-
-	// RENAME
-	res, err = uploadLegacyManager(context.Background(), provider, storage.ManagerLocator{Path: "/"}, "existing.txt", strings.NewReader("content"), 7, storage.ManagerUploadOptions{ConflictStrategy: "RENAME"})
-	if err != nil || res.Status != "renamed" || res.FinalName != "existing (1).txt" {
-		t.Fatalf("uploadLegacyManager RENAME = (%#v, %v), want renamed to existing (1).txt", res, err)
-	}
-
-	// NEW FILE
-	res, err = uploadLegacyManager(context.Background(), provider, storage.ManagerLocator{Path: "/"}, "new.txt", strings.NewReader("content"), 7, storage.ManagerUploadOptions{ConflictStrategy: "SKIP"})
-	if err != nil || res.Status != "uploaded" || res.FinalName != "new.txt" {
-		t.Fatalf("uploadLegacyManager NEW = (%#v, %v), want uploaded", res, err)
 	}
 }
 
@@ -682,12 +614,12 @@ func TestFileProviderErrorMapping(t *testing.T) {
 		wantCode   APIErrorCode
 	}{
 		{
-			err:        errManagerDirectoryChanged,
+			err:        storage.ErrManagerDirectoryChanged,
 			wantStatus: http.StatusConflict,
 			wantCode:   ErrFilesDirectoryChanged,
 		},
 		{
-			err:        errManagerDirectoryTooLarge,
+			err:        storage.ErrManagerDirectoryTooLarge,
 			wantStatus: http.StatusRequestEntityTooLarge,
 			wantCode:   ErrFilesDirectoryTooLarge,
 		},
@@ -700,6 +632,26 @@ func TestFileProviderErrorMapping(t *testing.T) {
 			err:        storage.ErrAmbiguousPath,
 			wantStatus: http.StatusConflict,
 			wantCode:   ErrFilesPathAmbiguous,
+		},
+		{
+			err:        storage.ErrManagerUnsupported,
+			wantStatus: http.StatusNotImplemented,
+			wantCode:   ErrFilesUnsupportedOperation,
+		},
+		{
+			err:        storage.ErrManagerDirectoryNotEmpty,
+			wantStatus: http.StatusConflict,
+			wantCode:   ErrFilesDirectoryNotEmpty,
+		},
+		{
+			err:        storage.ErrManagerInvalidDestination,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   ErrFilesInvalidDestination,
+		},
+		{
+			err:        storage.ErrPathEscapesRoot,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   ErrFilesInvalidRef,
 		},
 		{
 			err:        errors.New("network disconnect"),
@@ -1028,5 +980,150 @@ func TestHandleFileRenameValidations(t *testing.T) {
 	server.handleFileEntryRename(recSlash, reqSlash)
 	if recSlash.Code != http.StatusBadRequest || !strings.Contains(recSlash.Body.String(), string(ErrInvalidBody)) {
 		t.Fatalf("status = %d, body = %s, want 400 ErrInvalidBody", recSlash.Code, recSlash.Body.String())
+	}
+}
+
+func TestFileHandlersUseStorageManagerAdapter(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	password, err := crypto.EncryptWithDomain("saved-secret", key, crypto.ConnectionCredentialDomain(false))
+	if err != nil {
+		t.Fatalf("encrypt password: %v", err)
+	}
+	database, _ := newBackupProfileConnectionTestDB(t, map[string][]driver.Value{
+		"p-webdav": profileTestRow("p-webdav", "u1", "webdav", "https://dav.example.test", "user", password),
+		"p-immich": profileTestRow("p-immich", "u1", "immich", "https://immich.example.test", "user", password),
+	})
+
+	stub := &legacyFileManagerTestProvider{listings: map[string][]storage.CloudResource{
+		"/": {
+			{Path: "/docs", Name: "docs", IsDir: true},
+			{Path: "/b.txt", Name: "b.txt", Size: 2},
+			{Path: "/a.txt", Name: "a.txt", Size: 1},
+		},
+		"/docs": {
+			{Path: "/docs/existing", Name: "existing", IsDir: true},
+		},
+	}}
+
+	server := &APIServer{
+		db:            database,
+		rateLimiter:   allowAllFileRateLimiter{},
+		encryptionKey: key,
+		providerFactory: func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+			return stub, nil
+		},
+	}
+
+	authedRequest := func(method, target, profileID, body string) *http.Request {
+		req := httptest.NewRequest(method, target, strings.NewReader(body))
+		req.SetPathValue("profileID", profileID)
+		return req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
+	}
+
+	// 1. Emulated list pagination via storage.FileManager, then 409 when dir mutates.
+	rec1 := httptest.NewRecorder()
+	server.handleFileEntriesList(rec1, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:list", "p-webdav", `{"resource_type":"files","limit":2}`))
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("list page 1 status = %d, body = %s", rec1.Code, rec1.Body.String())
+	}
+	var listResp struct {
+		PaginationMode string                   `json:"pagination_mode"`
+		NextCursor     string                   `json:"next_cursor"`
+		Entries        []map[string]interface{} `json:"entries"`
+	}
+	if err := json.Unmarshal(rec1.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if listResp.PaginationMode != "emulated" || len(listResp.Entries) != 2 || listResp.NextCursor == "" {
+		t.Fatalf("unexpected list response: %+v", listResp)
+	}
+
+	stub.listings["/"] = append(stub.listings["/"], storage.CloudResource{Path: "/c.txt", Name: "c.txt"})
+	recChanged := httptest.NewRecorder()
+	server.handleFileEntriesList(recChanged, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:list", "p-webdav", `{"resource_type":"files","limit":2,"cursor":"`+listResp.NextCursor+`"}`))
+	if recChanged.Code != http.StatusConflict || !strings.Contains(recChanged.Body.String(), string(ErrFilesDirectoryChanged)) {
+		t.Fatalf("mutated dir cursor status = %d, body = %s, want 409 %s", recChanged.Code, recChanged.Body.String(), ErrFilesDirectoryChanged)
+	}
+
+	// 2. Path resolution fallback via storage.FileManager.
+	recResolve := httptest.NewRecorder()
+	server.handleFileEntriesResolve(recResolve, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:resolve", "p-webdav", `{"resource_type":"files","path":"/docs/missing"}`))
+	if recResolve.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d, body = %s", recResolve.Code, recResolve.Body.String())
+	}
+	var resolveResp struct {
+		Fallback    bool             `json:"fallback"`
+		Breadcrumbs []fileBreadcrumb `json:"breadcrumbs"`
+	}
+	if err := json.Unmarshal(recResolve.Body.Bytes(), &resolveResp); err != nil {
+		t.Fatalf("decode resolve response: %v", err)
+	}
+	if !resolveResp.Fallback || len(resolveResp.Breadcrumbs) != 2 || resolveResp.Breadcrumbs[1].Name != "docs" {
+		t.Fatalf("unexpected resolve response: %+v", resolveResp)
+	}
+
+	// 3. Directory creation conflict via storage.FileManager.
+	parentRef, _ := sealFileReference(fileReference{
+		UserID: "u1", ProfileID: "p-webdav", ResourceType: "files", Kind: "directory", Locator: storage.ManagerLocator{Path: "/docs"},
+	}, key)
+	recMkdir := httptest.NewRecorder()
+	server.handleFileDirectoryCreate(recMkdir, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/directories", "p-webdav", `{"parent_ref":"`+parentRef+`","name":"existing"}`))
+	if recMkdir.Code != http.StatusConflict || !strings.Contains(recMkdir.Body.String(), string(ErrFilesConflict)) {
+		t.Fatalf("mkdir conflict status = %d, body = %s, want 409 %s", recMkdir.Code, recMkdir.Body.String(), ErrFilesConflict)
+	}
+
+	// 4. Virtual provider stub never falls back to path operations (returns 501).
+	recUnsupported := httptest.NewRecorder()
+	server.handleFileEntriesList(recUnsupported, authedRequest(http.MethodPost, "/api/files/profiles/p-immich/entries:list", "p-immich", `{"resource_type":"files","limit":10}`))
+	if recUnsupported.Code != http.StatusNotImplemented || !strings.Contains(recUnsupported.Body.String(), string(ErrFilesUnsupportedOperation)) {
+		t.Fatalf("incomplete virtual list status = %d, body = %s, want 501 %s", recUnsupported.Code, recUnsupported.Body.String(), ErrFilesUnsupportedOperation)
+	}
+
+	// 5. Delete & rename through storage.FileManager (plus root refusal).
+	fileRef, _ := sealFileReference(fileReference{
+		UserID: "u1", ProfileID: "p-webdav", ResourceType: "files", Kind: "file", Name: "b.txt", Locator: storage.ManagerLocator{Path: "/b.txt"},
+	}, key)
+	rootRef, _ := sealFileReference(fileReference{
+		UserID: "u1", ProfileID: "p-webdav", ResourceType: "files", Kind: "directory", Name: "/", Locator: storage.ManagerLocator{Path: "/"},
+	}, key)
+
+	recRename := httptest.NewRecorder()
+	server.handleFileEntryRename(recRename, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:rename", "p-webdav", `{"ref":"`+fileRef+`","new_name":"b2.txt"}`))
+	if recRename.Code != http.StatusOK || len(stub.renamed) != 1 || stub.renamed[0] != [2]string{"/b.txt", "/b2.txt"} {
+		t.Fatalf("rename status = %d, body = %s, renamed = %v", recRename.Code, recRename.Body.String(), stub.renamed)
+	}
+
+	recDeleteRoot := httptest.NewRecorder()
+	server.handleFileEntryDelete(recDeleteRoot, authedRequest(http.MethodDelete, "/api/files/profiles/p-webdav/entries", "p-webdav", `{"ref":"`+rootRef+`"}`))
+	if recDeleteRoot.Code != http.StatusBadRequest || !strings.Contains(recDeleteRoot.Body.String(), string(ErrFilesRootMutationForbidden)) {
+		t.Fatalf("delete root status = %d, body = %s, want 400 %s", recDeleteRoot.Code, recDeleteRoot.Body.String(), ErrFilesRootMutationForbidden)
+	}
+
+	recDelete := httptest.NewRecorder()
+	server.handleFileEntryDelete(recDelete, authedRequest(http.MethodDelete, "/api/files/profiles/p-webdav/entries", "p-webdav", `{"ref":"`+fileRef+`"}`))
+	if recDelete.Code != http.StatusNoContent || len(stub.deleted) != 1 || stub.deleted[0] != "/b.txt" {
+		t.Fatalf("delete status = %d, body = %s, deleted = %v", recDelete.Code, recDelete.Body.String(), stub.deleted)
+	}
+
+	// 6. Batch handlers delegate cleanly through storage.FileManager and reject root/unsupported ops.
+	recBatchDel := httptest.NewRecorder()
+	server.handleFileEntriesBatchDelete(recBatchDel, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:batch-delete", "p-webdav", `{"items":[{"ref":"`+fileRef+`"}]}`))
+	if recBatchDel.Code != http.StatusOK || len(stub.deleted) != 2 {
+		t.Fatalf("batch delete status = %d, body = %s, deleted = %v", recBatchDel.Code, recBatchDel.Body.String(), stub.deleted)
+	}
+
+	recBatchDelRoot := httptest.NewRecorder()
+	server.handleFileEntriesBatchDelete(recBatchDelRoot, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:batch-delete", "p-webdav", `{"items":[{"ref":"`+rootRef+`"}]}`))
+	if recBatchDelRoot.Code != http.StatusNotImplemented || !strings.Contains(recBatchDelRoot.Body.String(), string(ErrFilesUnsupportedOperation)) {
+		t.Fatalf("batch delete root status = %d, body = %s, want 501 %s", recBatchDelRoot.Code, recBatchDelRoot.Body.String(), ErrFilesUnsupportedOperation)
+	}
+
+	immichFileRef, _ := sealFileReference(fileReference{
+		UserID: "u1", ProfileID: "p-immich", ResourceType: "files", Kind: "file", Name: "img.jpg", Locator: storage.ManagerLocator{NativeID: "asset-1"},
+	}, key)
+	recBatchMoveUnsupported := httptest.NewRecorder()
+	server.handleFileEntriesBatchMove(recBatchMoveUnsupported, authedRequest(http.MethodPost, "/api/files/profiles/p-immich/entries:batch-move", "p-immich", `{"refs":["`+immichFileRef+`"]}`))
+	if recBatchMoveUnsupported.Code != http.StatusNotImplemented || !strings.Contains(recBatchMoveUnsupported.Body.String(), string(ErrFilesUnsupportedOperation)) {
+		t.Fatalf("immich batch move status = %d, body = %s, want 501 %s", recBatchMoveUnsupported.Code, recBatchMoveUnsupported.Body.String(), ErrFilesUnsupportedOperation)
 	}
 }

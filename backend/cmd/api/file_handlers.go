@@ -2,17 +2,13 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,10 +26,9 @@ const (
 	fileUploadRateLimit       = 600
 	fileThumbnailRateLimit    = 3600
 	fileRateWindow            = time.Minute
-	fileDefaultPageSize       = 500
-	fileMaximumPageSize       = 1000
-	fileMaximumDirectoryItems = 10000
-	fileTicketTTL             = time.Minute
+	fileDefaultPageSize    = 500
+	fileMaximumPageSize    = 1000
+	fileTicketTTL          = time.Minute
 	fileStreamLease           = 2 * time.Minute
 	fileMaxStreamsPerUser     = 4
 )
@@ -129,11 +124,6 @@ type fileBreadcrumb struct {
 	Name string `json:"name"`
 }
 
-type legacyManagerCursor struct {
-	Offset      int    `json:"offset"`
-	Fingerprint string `json:"fingerprint"`
-}
-
 // fileProfileSummary intentionally excludes endpoint and credential-adjacent
 // profile fields. The file-manager API only needs identity and display data.
 type fileProfileSummary struct {
@@ -172,11 +162,6 @@ redis.call('ZADD', KEYS[1], ARGV[2], ARGV[4])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `)
-
-var (
-	errManagerDirectoryChanged  = errors.New("file manager directory changed")
-	errManagerDirectoryTooLarge = errors.New("file manager directory too large")
-)
 
 func (s *APIServer) fileRateKey(r *http.Request, userID string) string {
 	return userID + "|" + s.clientIP(r)
@@ -243,13 +228,7 @@ func validManagedPath(value string) bool {
 func managedRootPath() string { return "/" }
 
 func canonicalManagedPath(value string) string {
-	if value == "" {
-		return managedRootPath()
-	}
-	if !strings.HasPrefix(value, "/") {
-		value = "/" + value
-	}
-	return path.Clean(value)
+	return storage.CanonicalManagerPath(value)
 }
 
 func validManagedLocator(locator storage.ManagerLocator) bool {
@@ -265,245 +244,6 @@ func validManagedCursorParent(locator storage.ManagerLocator) bool {
 
 func sameManagedLocator(left, right storage.ManagerLocator) bool {
 	return left.NativeID == right.NativeID && left.Path == right.Path && left.Library == right.Library
-}
-
-func sortManagedEntries(resources []storage.ManagerItem) {
-	sort.Slice(resources, func(i, j int) bool {
-		if resources[i].IsDir != resources[j].IsDir {
-			return resources[i].IsDir
-		}
-		left, right := strings.ToLower(strings.TrimSpace(resources[i].Name)), strings.ToLower(strings.TrimSpace(resources[j].Name))
-		if left != right {
-			return left < right
-		}
-		return managedLocatorIdentity(resources[i].Locator) < managedLocatorIdentity(resources[j].Locator)
-	})
-}
-
-func managedLocatorIdentity(locator storage.ManagerLocator) string {
-	if locator.NativeID != "" {
-		return "id:" + locator.NativeID
-	}
-	return "path:" + locator.Library + ":" + locator.Path
-}
-
-func managerItemFromCloudResource(resource storage.CloudResource) storage.ManagerItem {
-	itemPath := canonicalManagedPath(resource.Path)
-	if resource.Name == "" && itemPath != managedRootPath() {
-		resource.Name = path.Base(itemPath)
-	}
-	return storage.ManagerItem{
-		Locator:  storage.ManagerLocator{Path: itemPath},
-		Name:     resource.Name,
-		IsDir:    resource.IsDir,
-		Size:     resource.Size,
-		Modified: resource.LastModified,
-		MIMEType: "",
-	}
-}
-
-func managerListingFingerprint(items []storage.ManagerItem) string {
-	type fingerprintItem struct {
-		Locator  storage.ManagerLocator `json:"locator"`
-		Name     string                 `json:"name"`
-		IsDir    bool                   `json:"is_dir"`
-		Size     int64                  `json:"size"`
-		Modified time.Time              `json:"modified"`
-	}
-	values := make([]fingerprintItem, 0, len(items))
-	for _, item := range items {
-		values = append(values, fingerprintItem{Locator: item.Locator, Name: item.Name, IsDir: item.IsDir, Size: item.Size, Modified: item.Modified.UTC()})
-	}
-	payload, _ := json.Marshal(values)
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
-}
-
-func listLegacyManager(ctx context.Context, provider storage.StorageProvider, parent storage.ManagerLocator, cursor string, limit int) (storage.ManagerPage, error) {
-	resources, err := provider.GetDirectoryListing(ctx, "files", parent.Path)
-	if err != nil {
-		return storage.ManagerPage{}, err
-	}
-	if len(resources) > fileMaximumDirectoryItems {
-		return storage.ManagerPage{}, errManagerDirectoryTooLarge
-	}
-	items := make([]storage.ManagerItem, 0, len(resources))
-	for _, resource := range resources {
-		items = append(items, managerItemFromCloudResource(resource))
-	}
-	sortManagedEntries(items)
-	fingerprint := managerListingFingerprint(items)
-	offset := 0
-	if cursor != "" {
-		var decoded legacyManagerCursor
-		if json.Unmarshal([]byte(cursor), &decoded) != nil || decoded.Offset < 0 || decoded.Fingerprint == "" {
-			return storage.ManagerPage{}, errManagerDirectoryChanged
-		}
-		if decoded.Fingerprint != fingerprint || decoded.Offset > len(items) {
-			return storage.ManagerPage{}, errManagerDirectoryChanged
-		}
-		offset = decoded.Offset
-	}
-	end := offset + limit
-	if end > len(items) {
-		end = len(items)
-	}
-	page := storage.ManagerPage{Items: items[offset:end]}
-	if end < len(items) {
-		encoded, _ := json.Marshal(legacyManagerCursor{Offset: end, Fingerprint: fingerprint})
-		page.NextCursor = string(encoded)
-	}
-	return page, nil
-}
-
-func resolveLegacyManagerPath(ctx context.Context, provider storage.StorageProvider, value string) (storage.ManagerLocator, []storage.ManagerBreadcrumb, bool, error) {
-	clean := strings.Trim(canonicalManagedPath(value), "/")
-	if clean == "" {
-		return storage.ManagerLocator{Path: managedRootPath()}, nil, false, nil
-	}
-	current := storage.ManagerLocator{Path: managedRootPath()}
-	breadcrumbs := make([]storage.ManagerBreadcrumb, 0, strings.Count(clean, "/")+1)
-	for _, segment := range strings.Split(clean, "/") {
-		resources, err := provider.GetDirectoryListing(ctx, "files", current.Path)
-		if err != nil {
-			return storage.ManagerLocator{}, nil, false, err
-		}
-		matches := make([]storage.CloudResource, 0, 1)
-		for _, resource := range resources {
-			if resource.IsDir && resource.Name == segment {
-				matches = append(matches, resource)
-			}
-		}
-		switch len(matches) {
-		case 0:
-			return current, breadcrumbs, true, nil
-		case 1:
-			current = managerItemFromCloudResource(matches[0]).Locator
-			breadcrumbs = append(breadcrumbs, storage.ManagerBreadcrumb{Name: matches[0].Name, Locator: current})
-		default:
-			return storage.ManagerLocator{}, nil, false, storage.ErrAmbiguousPath
-		}
-	}
-	return current, breadcrumbs, false, nil
-}
-
-func downloadLegacyManager(ctx context.Context, provider storage.StorageProvider, locator storage.ManagerLocator) (storage.ManagerDownload, error) {
-	if locator.Path == "" {
-		return storage.ManagerDownload{}, storage.ErrNotFound
-	}
-	resource, err := provider.InspectResource(ctx, "files", locator.Path)
-	if err != nil {
-		return storage.ManagerDownload{}, err
-	}
-	if resource.IsDir {
-		return storage.ManagerDownload{}, storage.ErrNotFound
-	}
-	stream, err := provider.StreamDownload(ctx, "files", locator.Path)
-	if err != nil {
-		return storage.ManagerDownload{}, err
-	}
-	return storage.ManagerDownload{Item: managerItemFromCloudResource(resource), Stream: stream}, nil
-}
-
-func managerRenamedName(name string, suffix int) string {
-	lastDot := strings.LastIndex(name, ".")
-	if lastDot > 0 {
-		return fmt.Sprintf("%s (%d)%s", name[:lastDot], suffix, name[lastDot:])
-	}
-	return fmt.Sprintf("%s (%d)", name, suffix)
-}
-
-func uploadLegacyManager(ctx context.Context, provider storage.StorageProvider, parent storage.ManagerLocator, name string, stream io.Reader, size int64, options storage.ManagerUploadOptions) (storage.ManagerUploadResult, error) {
-	parentPath := parent.Path
-	if parentPath == "" {
-		parentPath = managedRootPath()
-	}
-	resources, err := provider.GetDirectoryListing(ctx, "files", parentPath)
-	if err != nil {
-		return storage.ManagerUploadResult{}, err
-	}
-	var existing *storage.CloudResource
-	existingNames := make(map[string]bool, len(resources))
-	for i := range resources {
-		existingNames[resources[i].Name] = true
-		if resources[i].Name == name {
-			existing = &resources[i]
-		}
-	}
-
-	finalName := name
-	switch options.ConflictStrategy {
-	case "SKIP":
-		if existing != nil {
-			return storage.ManagerUploadResult{Status: "skipped", FinalName: name}, nil
-		}
-	case "OVERWRITE":
-		if existing != nil && existing.IsDir {
-			return storage.ManagerUploadResult{}, storage.ErrManagerConflict
-		}
-	case "RENAME":
-		if existing != nil {
-			found := false
-			for suffix := 1; suffix <= 100; suffix++ {
-				candidate := managerRenamedName(name, suffix)
-				if !existingNames[candidate] {
-					finalName = candidate
-					found = true
-					break
-				}
-			}
-			if !found {
-				return storage.ManagerUploadResult{}, storage.ErrManagerConflict
-			}
-		}
-	default:
-		return storage.ManagerUploadResult{}, errors.New("invalid manager upload conflict strategy")
-	}
-
-	cleanParent := strings.TrimSuffix(parentPath, "/")
-	if cleanParent == "" {
-		cleanParent = "/"
-	}
-	targetPath := path.Join(cleanParent, finalName)
-	if !strings.HasPrefix(targetPath, "/") {
-		targetPath = "/" + targetPath
-	}
-
-	if err := provider.StreamUpload(ctx, "files", targetPath, stream, size); err != nil {
-		return storage.ManagerUploadResult{}, err
-	}
-	status := "uploaded"
-	if finalName != name {
-		status = "renamed"
-	}
-	return storage.ManagerUploadResult{Status: status, FinalName: finalName}, nil
-}
-
-func createDirectoryLegacyManager(ctx context.Context, provider storage.StorageProvider, parent storage.ManagerLocator, name string) error {
-	parentPath := parent.Path
-	if parentPath == "" {
-		parentPath = managedRootPath()
-	}
-	resources, err := provider.GetDirectoryListing(ctx, "files", parentPath)
-	if err != nil {
-		return err
-	}
-	for i := range resources {
-		if resources[i].Name == name {
-			return storage.ErrManagerConflict
-		}
-	}
-
-	cleanParent := strings.TrimSuffix(parentPath, "/")
-	if cleanParent == "" {
-		cleanParent = "/"
-	}
-	targetPath := path.Join(cleanParent, name)
-	if !strings.HasPrefix(targetPath, "/") {
-		targetPath = "/" + targetPath
-	}
-
-	return provider.CreateDirectory(ctx, "files", targetPath)
 }
 
 func allowedFileActions(capabilities storage.ManagerCapabilities, isDir bool) []string {
@@ -527,13 +267,6 @@ func allowedFileActions(capabilities storage.ManagerCapabilities, isDir bool) []
 		actions = append(actions, "copy")
 	}
 	return actions
-}
-
-func isManagedRootLocator(provider string, locator storage.ManagerLocator) bool {
-	if locator.NativeID == "" {
-		return locator.Path == "" || canonicalManagedPath(locator.Path) == managedRootPath()
-	}
-	return provider == "google" && locator.NativeID == "root"
 }
 
 func (s *APIServer) handleFileEntryDelete(w http.ResponseWriter, r *http.Request) {
@@ -561,11 +294,11 @@ func (s *APIServer) handleFileEntryDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer resolved.close()
-	if isManagedRootLocator(resolved.profile.Provider, reference.Locator) {
+	if resolved.manager.IsRootLocator(reference.Locator) {
 		writeValidationError(w, ErrFilesRootMutationForbidden)
 		return
 	}
-	capabilities := storage.ManagerCapabilitiesFor(resolved.profile.Provider)
+	capabilities := resolved.manager.Capabilities()
 	supported := (reference.Kind == "file" && capabilities.DeleteFile) ||
 		(reference.Kind == "directory" && !request.Recursive && capabilities.DeleteEmptyDirectory) ||
 		(reference.Kind == "directory" && request.Recursive && capabilities.DeleteRecursiveDirectory)
@@ -573,12 +306,7 @@ func (s *APIServer) handleFileEntryDelete(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
 	}
-	deleter, ok := resolved.provider.(storage.ManagerDeleter)
-	if !ok {
-		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
-		return
-	}
-	if err := deleter.DeleteManagerItem(resolved.ctx, reference.Locator, request.Recursive); err != nil {
+	if err := resolved.manager.DeleteManagerItem(resolved.ctx, reference.Locator, request.Recursive); err != nil {
 		s.writeFileProviderError(w, err)
 		return
 	}
@@ -647,22 +375,25 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer resolved.close()
-	if isManagedRootLocator(resolved.profile.Provider, source.Locator) {
+	if resolved.manager.IsRootLocator(source.Locator) {
 		writeValidationError(w, ErrFilesRootMutationForbidden)
 		return
 	}
 	if operation == "rename" {
-		// Renames keep the item in its existing folder. For path-based providers,
-		// we derive destination from the source's parent directory, intentionally
-		// overriding any client-supplied DestinationParentRef.
-		destination = storage.ManagerLocator{Path: path.Dir(canonicalManagedPath(source.Locator.Path))}
-		if resolved.profile.Provider == "google" && request.DestinationParentRef == "" {
+		if resolved.profile.Provider == "google" {
 			// Google rename requests without an explicit parent retain the source's
 			// immutable parent instead of deriving it from a display path.
-			destination = storage.ManagerLocator{}
+			if request.DestinationParentRef == "" {
+				destination = storage.ManagerLocator{}
+			}
+		} else {
+			// Renames keep the item in its existing folder. For path-based providers,
+			// we derive destination from the source's parent directory, intentionally
+			// overriding any client-supplied DestinationParentRef.
+			destination = storage.ManagerLocator{Path: path.Dir(canonicalManagedPath(source.Locator.Path))}
 		}
 	}
-	capabilities := storage.ManagerCapabilitiesFor(resolved.profile.Provider)
+	capabilities := resolved.manager.Capabilities()
 	if (operation == "rename" && !capabilities.Rename) || (operation == "move" && !capabilities.Move) || (operation == "copy" && !capabilities.Copy) {
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
@@ -687,26 +418,11 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 	}
 	switch operation {
 	case "rename":
-		renamer, supported := storage.NewManagerRenamer(resolved.profile.Provider, resolved.provider)
-		if !supported {
-			writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
-			return
-		}
-		result, err = renamer.RenameManagerItem(resolved.ctx, source.Locator, destination, name, options)
+		result, err = resolved.manager.RenameManagerItem(resolved.ctx, source.Locator, destination, name, options)
 	case "copy":
-		copier, supported := storage.NewManagerCopier(resolved.profile.Provider, resolved.provider)
-		if !supported {
-			writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
-			return
-		}
-		result, err = copier.CopyManagerItem(resolved.ctx, source.Locator, destination, name, options)
+		result, err = resolved.manager.CopyManagerItem(resolved.ctx, source.Locator, destination, name, options)
 	case "move":
-		mover, supported := storage.NewManagerMover(resolved.profile.Provider, resolved.provider)
-		if !supported {
-			writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
-			return
-		}
-		result, err = mover.MoveManagerItem(resolved.ctx, source.Locator, destination, name, options)
+		result, err = resolved.manager.MoveManagerItem(resolved.ctx, source.Locator, destination, name, options)
 	}
 	if err != nil {
 		s.writeFileMutationError(w, err, capabilities)
@@ -847,15 +563,7 @@ func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request
 		providerCursor = cursor.ProviderCursor
 	}
 
-	paginationMode := "emulated"
-	var page storage.ManagerPage
-	var listErr error
-	if lister, supported := resolved.provider.(storage.ManagerLister); supported {
-		page, listErr = lister.ListManager(resolved.ctx, parent, storage.ManagerListOptions{Cursor: providerCursor, Limit: request.Limit})
-		paginationMode = "native"
-	} else {
-		page, listErr = listLegacyManager(resolved.ctx, resolved.provider, parent, providerCursor, request.Limit)
-	}
+	page, listErr := resolved.manager.ListManager(resolved.ctx, parent, storage.ManagerListOptions{Cursor: providerCursor, Limit: request.Limit})
 	if listErr != nil {
 		s.writeFileProviderError(w, listErr)
 		return
@@ -864,7 +572,7 @@ func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
 		return
 	}
-	sortManagedEntries(page.Items)
+	paginationMode := page.PaginationMode
 	entries := make([]fileEntry, 0, len(page.Items))
 	for _, resource := range page.Items {
 		kind := "file"
@@ -949,15 +657,7 @@ func (s *APIServer) handleFileEntriesResolve(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer resolved.close()
-	var locator storage.ManagerLocator
-	var breadcrumbs []storage.ManagerBreadcrumb
-	var fallback bool
-	var resolveErr error
-	if resolver, supported := resolved.provider.(storage.ManagerPathResolver); supported {
-		locator, breadcrumbs, fallback, resolveErr = resolver.ResolveManagerPath(resolved.ctx, request.Path)
-	} else {
-		locator, breadcrumbs, fallback, resolveErr = resolveLegacyManagerPath(resolved.ctx, resolved.provider, request.Path)
-	}
+	locator, breadcrumbs, fallback, resolveErr := resolved.manager.ResolveManagerPath(resolved.ctx, request.Path)
 	if resolveErr != nil {
 		s.writeFileProviderError(w, resolveErr)
 		return
@@ -1077,15 +777,9 @@ func (s *APIServer) handleFileThumbnail(w http.ResponseWriter, r *http.Request) 
 	}
 	defer resolved.close()
 
-	thumbnailer, supported := resolved.provider.(storage.ManagerThumbnailer)
-	if !supported {
-		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
-		return
-	}
-
 	width, height := computeThumbnailDimensions(request.Width, request.Height)
 
-	stream, contentType, thumbnailErr := thumbnailer.ThumbnailManager(resolved.ctx, reference.Locator, width, height)
+	stream, contentType, thumbnailErr := resolved.manager.ThumbnailManager(resolved.ctx, reference.Locator, width, height)
 	if thumbnailErr != nil {
 		if errors.Is(thumbnailErr, storage.ErrUnsupportedMedia) {
 			writeError(w, http.StatusUnsupportedMediaType, ErrFilesUnsupportedOperation)
@@ -1210,14 +904,8 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	_ = controller.SetReadDeadline(time.Time{})
 	_ = controller.SetWriteDeadline(time.Time{})
 	stream := storage.NewExactSizeReader(r.Body, r.ContentLength)
-	var result storage.ManagerUploadResult
-	var uploadErr error
-	if uploader, supported := resolved.provider.(storage.ManagerUploader); supported {
-		result, uploadErr = uploader.UploadManager(resolved.ctx, parent, name, stream, r.ContentLength, options)
-	} else {
-		result, uploadErr = uploadLegacyManager(resolved.ctx, resolved.provider, parent, name, stream, r.ContentLength, options)
-	}
-	if uploadErr == nil {
+	result, uploadErr := resolved.manager.UploadManager(resolved.ctx, parent, name, stream, r.ContentLength, options)
+	if uploadErr == nil && result.Status != "skipped" {
 		uploadErr = stream.Verify()
 	}
 	if uploadErr != nil {
@@ -1296,12 +984,7 @@ func (s *APIServer) handleFileDirectoryCreate(w http.ResponseWriter, r *http.Req
 	}
 	defer resolved.close()
 
-	var createErr error
-	if creator, supported := resolved.provider.(storage.ManagerDirectoryCreator); supported {
-		createErr = creator.CreateManagerDirectory(resolved.ctx, parent, name)
-	} else {
-		createErr = createDirectoryLegacyManager(resolved.ctx, resolved.provider, parent, name)
-	}
+	createErr := resolved.manager.CreateManagerDirectory(resolved.ctx, parent, name)
 
 	if createErr != nil {
 		switch {
@@ -1333,18 +1016,7 @@ func decodeUploadFileName(value string) (string, error) {
 }
 
 func validManagerUploadName(name string) bool {
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") || strings.ContainsRune(name, 0) {
-		return false
-	}
-	if len(name) > 255 {
-		return false
-	}
-	for _, value := range name {
-		if value < 0x20 || value == 0x7f {
-			return false
-		}
-	}
-	return utf8.ValidString(name)
+	return storage.ValidManagerEntryName(name)
 }
 
 func parseManagerUploadOptions(value string, capabilities storage.ManagerCapabilities) (storage.ManagerUploadOptions, error) {
@@ -1402,13 +1074,7 @@ func (s *APIServer) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resolved.close()
-	var download storage.ManagerDownload
-	var downloadErr error
-	if downloader, supported := resolved.provider.(storage.ManagerDownloader); supported {
-		download, downloadErr = downloader.DownloadManager(resolved.ctx, reference.Locator)
-	} else {
-		download, downloadErr = downloadLegacyManager(resolved.ctx, resolved.provider, reference.Locator)
-	}
+	download, downloadErr := resolved.manager.DownloadManager(resolved.ctx, reference.Locator)
 	if downloadErr != nil {
 		s.writeFileProviderError(w, downloadErr)
 		return
@@ -1485,19 +1151,27 @@ func (s *APIServer) writeFileProfileError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
+	if errors.Is(err, storage.ErrManagerUnsupported) {
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+		return
+	}
 	writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
 }
 
 func (s *APIServer) writeFileProviderError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, errManagerDirectoryChanged):
+	case errors.Is(err, storage.ErrManagerDirectoryChanged):
 		writeConflictError(w, ErrFilesDirectoryChanged)
-	case errors.Is(err, errManagerDirectoryTooLarge):
+	case errors.Is(err, storage.ErrManagerDirectoryTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, ErrFilesDirectoryTooLarge)
 	case errors.Is(err, storage.ErrManagerUnsupported):
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 	case errors.Is(err, storage.ErrManagerDirectoryNotEmpty):
 		writeConflictError(w, ErrFilesDirectoryNotEmpty)
+	case errors.Is(err, storage.ErrManagerInvalidDestination):
+		writeValidationError(w, ErrFilesInvalidDestination)
+	case errors.Is(err, storage.ErrPathEscapesRoot):
+		writeValidationError(w, ErrFilesInvalidRef)
 	case errors.Is(err, storage.ErrNotFound):
 		writeError(w, http.StatusNotFound, ErrFilesNotFound)
 	case errors.Is(err, storage.ErrAmbiguousPath):

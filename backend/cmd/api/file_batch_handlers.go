@@ -65,7 +65,7 @@ func (s *APIServer) openBatchReferences(refs []string, userID, profileID string)
 		if err != nil {
 			return nil, err
 		}
-		identity := managedLocatorIdentity(reference.Locator)
+		identity := storage.ManagerLocatorKey(reference.Locator)
 		if _, ok := seenLocators[identity]; ok {
 			return nil, errors.New("duplicate locator")
 		}
@@ -158,15 +158,10 @@ func (s *APIServer) handleFileEntriesBatchDelete(w http.ResponseWriter, r *http.
 		return
 	}
 	defer resolved.close()
-	capabilities := storage.ManagerCapabilitiesFor(resolved.profile.Provider)
-	deleter, supported := resolved.provider.(storage.ManagerDeleter)
-	if !supported {
-		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
-		return
-	}
+	capabilities := resolved.manager.Capabilities()
 	for _, item := range items {
 		allowed := (item.reference.Kind == "file" && capabilities.DeleteFile) || (item.reference.Kind == "directory" && item.recursive && capabilities.DeleteRecursiveDirectory) || (item.reference.Kind == "directory" && !item.recursive && capabilities.DeleteEmptyDirectory)
-		if isManagedRootLocator(resolved.profile.Provider, item.reference.Locator) || !allowed {
+		if resolved.manager.IsRootLocator(item.reference.Locator) || !allowed {
 			writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 			return
 		}
@@ -180,7 +175,7 @@ func (s *APIServer) handleFileEntriesBatchDelete(w http.ResponseWriter, r *http.
 			break
 		}
 		result := fileBatchItemResult{Ref: item.ref, Status: "deleted"}
-		if err := deleter.DeleteManagerItem(resolved.ctx, item.reference.Locator, item.recursive); err != nil {
+		if err := resolved.manager.DeleteManagerItem(resolved.ctx, item.reference.Locator, item.recursive); err != nil {
 			result.Status, result.ErrorCode = "failed", fileBatchError(err)
 		}
 		s.writeAudit(r, db.AuditFileItemDeleted, profileID, userID, map[string]interface{}{"provider": resolved.profile.Provider, "item_kind": item.reference.Kind, "recursive": item.recursive, "outcome": result.Status})
@@ -235,13 +230,13 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 		return
 	}
 	defer resolved.close()
-	capabilities := storage.ManagerCapabilitiesFor(resolved.profile.Provider)
+	capabilities := resolved.manager.Capabilities()
 	if (operation == "copy" && !capabilities.Copy) || (operation == "move" && !capabilities.Move) {
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
 	}
 	for _, item := range items {
-		if isManagedRootLocator(resolved.profile.Provider, item.reference.Locator) {
+		if resolved.manager.IsRootLocator(item.reference.Locator) {
 			writeValidationError(w, ErrFilesRootMutationForbidden)
 			return
 		}
@@ -257,21 +252,6 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 			return
 		}
 		defer s.releaseFileStream(r.Context(), userID, "batch-mutation", streamID)
-	}
-	var mover storage.ManagerMover
-	var copier storage.ManagerCopier
-	if operation == "copy" {
-		copier, _ = storage.NewManagerCopier(resolved.profile.Provider, resolved.provider)
-		if copier == nil {
-			writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
-			return
-		}
-	} else {
-		mover, _ = storage.NewManagerMover(resolved.profile.Provider, resolved.provider)
-		if mover == nil {
-			writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
-			return
-		}
 	}
 	results := make([]fileBatchItemResult, 0, len(items))
 	for i, item := range items {
@@ -292,9 +272,9 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 		var mutationErr error
 		var mutationResult storage.ManagerMutationResult
 		if operation == "copy" {
-			mutationResult, mutationErr = copier.CopyManagerItem(resolved.ctx, item.reference.Locator, destination, name, storage.ManagerMutationOptions{ConflictStrategy: strategy})
+			mutationResult, mutationErr = resolved.manager.CopyManagerItem(resolved.ctx, item.reference.Locator, destination, name, storage.ManagerMutationOptions{ConflictStrategy: strategy})
 		} else {
-			mutationResult, mutationErr = mover.MoveManagerItem(resolved.ctx, item.reference.Locator, destination, name, storage.ManagerMutationOptions{ConflictStrategy: strategy})
+			mutationResult, mutationErr = resolved.manager.MoveManagerItem(resolved.ctx, item.reference.Locator, destination, name, storage.ManagerMutationOptions{ConflictStrategy: strategy})
 		}
 		status := "copied"
 		if operation == "move" {
