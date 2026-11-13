@@ -55,6 +55,11 @@ type openedSyncEndpoint[T any] struct {
 	closeFn  func()
 }
 
+type syncOAuthProviderRefreshError struct{ err error }
+
+func (e syncOAuthProviderRefreshError) Error() string { return e.err.Error() }
+func (e syncOAuthProviderRefreshError) Unwrap() error { return e.err }
+
 func (e *openedSyncEndpoint[T]) Close() {
 	if e != nil && e.closeFn != nil {
 		e.closeFn()
@@ -122,6 +127,13 @@ func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, r
 				UserID:        userID,
 				Provider:      creds.provider,
 				RefreshToken:  refreshToken,
+				Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
+					token, rerr := oauth.RefreshToken(refreshCtx, prov, tok)
+					if rerr != nil {
+						return nil, syncOAuthProviderRefreshError{err: rerr}
+					}
+					return token, nil
+				},
 				OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
 					latestJob, lerr := db.GetSyncJobContext(lockCtx, s.db, id)
 					if lerr != nil {
@@ -187,9 +199,9 @@ func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, r
 				} else if res.Token != nil {
 					creds.password = res.Token.AccessToken
 				}
-			} else if !errors.Is(rerr, oauth.ErrRefreshTokenInvalid) {
-				// Preserve DB/persistence error behavior while allowing downstream provider open on transient refresh issues.
-				if strings.Contains(rerr.Error(), "persist oauth token rotation") || strings.Contains(rerr.Error(), "database") {
+			} else {
+				var providerErr syncOAuthProviderRefreshError
+				if !errors.As(rerr, &providerErr) {
 					creds.clear()
 					return nil, rerr
 				}

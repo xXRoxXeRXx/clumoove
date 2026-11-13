@@ -317,12 +317,13 @@ type profileSpyRotation struct {
 }
 
 type profileSpyState struct {
-	mu              sync.Mutex
-	profiles        map[string][]driver.Value
-	rotations       map[string]profileSpyRotation
-	execCalls       int
-	execErr         error
-	rotationExecErr error
+	mu               sync.Mutex
+	profiles         map[string][]driver.Value
+	rotations        map[string]profileSpyRotation
+	execCalls        int
+	execErr          error
+	rotationExecErr  error
+	rotationQueryErr error
 }
 
 type profileSpyConnector struct{ state *profileSpyState }
@@ -378,6 +379,9 @@ func (c profileSpyConn) QueryContext(_ context.Context, query string, args []dri
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	if strings.Contains(query, "FROM oauth_token_rotations") {
+		if c.state.rotationQueryErr != nil {
+			return nil, c.state.rotationQueryErr
+		}
 		key := fmt.Sprintf("%v\x00%v\x00%v", args[0].Value, args[1].Value, args[2].Value)
 		rot, ok := c.state.rotations[key]
 		if !ok {
@@ -584,9 +588,9 @@ func TestOwnedProfileAccessRotationDurabilityChainsAndConcurrency(t *testing.T) 
 		}
 	})
 
-	t.Run("rotation history DB write failure aborts foreign token refresh loudly", func(t *testing.T) {
+	t.Run("rotation history DB write failure preserves profile copy and aborts loudly", func(t *testing.T) {
 		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{"profile-oauth": makeRow()})
-		spyState.rotationExecErr = errors.New("rotation table offline")
+		spyState.rotationExecErr = errors.New("pq: permission denied")
 		access := &ownedProfileAccess{
 			db:             spyDB,
 			encryptionKey:  key,
@@ -600,7 +604,17 @@ func TestOwnedProfileAccessRotationDurabilityChainsAndConcurrency(t *testing.T) 
 			ProfileID:    "profile-oauth",
 			RefreshToken: "foreign-A",
 		}); err == nil {
-			t.Fatal("SnapshotRequest() error = nil, want rotation persistence failure")
+			t.Fatal("SnapshotRequest(foreign) error = nil, want rotation persistence failure")
+		}
+
+		// Profile token must still be persisted to connection_profiles so retries never re-use invalidated saved-refresh.
+		if _, err := access.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+			ProfileID: "profile-oauth",
+		}); err == nil {
+			t.Fatal("SnapshotRequest(profile) error = nil, want rotation persistence failure")
+		}
+		if spyState.execCalls != 1 {
+			t.Fatalf("connection_profiles execCalls = %d, want 1 (profile copy preserved despite history write error)", spyState.execCalls)
 		}
 	})
 
@@ -668,6 +682,37 @@ func TestOwnedProfileAccessRotationDurabilityChainsAndConcurrency(t *testing.T) 
 			t.Fatalf("final refresh token = %q, want after-worker-refresh", dec)
 		}
 	})
+}
+
+func TestOpenSyncJobEndpointDoesNotSwallowNonDatabaseStringPersistenceErrors(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	expiredAccessEnc, _ := crypto.EncryptWithDomain("expired-access", key, crypto.DomainOAuthAccessToken)
+	refreshEnc, _ := crypto.EncryptWithDomain("sync-refresh", key, crypto.DomainOAuthRefreshToken)
+	permErr := errors.New("pq: permission denied")
+	state := &profileSpyState{rotationQueryErr: permErr}
+	spyDB := sql.OpenDB(profileSpyConnector{state: state})
+	t.Cleanup(func() { _ = spyDB.Close() })
+
+	server := &APIServer{
+		db:            spyDB,
+		encryptionKey: key,
+		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
+			t.Fatal("providerFactory must not be called when OAuth rotation persistence/lookup fails")
+			return nil, nil
+		},
+	}
+	job := &db.SyncJob{
+		ID:                          "sync-1",
+		UserID:                      "user-1",
+		SourceProvider:              "google",
+		SourcePasswordEncrypted:     expiredAccessEnc,
+		SourceRefreshTokenEncrypted: sql.NullString{String: refreshEnc, Valid: true},
+		SourceTokenExpiresAt:        sql.NullTime{Time: time.Now().Add(-time.Hour), Valid: true},
+	}
+	_, err := openSyncJobEndpoint[profileProvider](server, context.Background(), "sync-1", "user-1", "source", job)
+	if !errors.Is(err, permErr) {
+		t.Fatalf("openSyncJobEndpoint() error = %v, want %v", err, permErr)
+	}
 }
 
 type profileSpyRows struct {

@@ -630,7 +630,11 @@ func (a *ownedProfileAccess) resolveAndRefreshOAuth(
 	defer crypto.ZeroString(&storedRefresh)
 
 	if !allowRefresh {
-		if rotated, ok := oauth.LookupRotatedRefreshToken(ctx, a.db, a.oauthRotations, a.encryptionKey, userID, creds.Provider, creds.RefreshToken, a.currentTime()); ok {
+		rotated, ok, err := oauth.LookupRotatedRefreshToken(ctx, a.db, a.oauthRotations, a.encryptionKey, userID, creds.Provider, creds.RefreshToken, a.currentTime())
+		if err != nil {
+			return creds, err
+		}
+		if ok {
 			resolvedFromRotation = rotated
 			creds.RefreshToken = rotated
 		}

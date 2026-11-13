@@ -20,9 +20,10 @@ type stubRotationRow struct {
 }
 
 type stubRotationDB struct {
-	mu      sync.Mutex
-	rows    map[string]stubRotationRow
-	execErr error
+	mu       sync.Mutex
+	rows     map[string]stubRotationRow
+	execErr  error
+	queryErr error
 }
 
 func (s *stubRotationDB) Connect(context.Context) (driver.Conn, error) {
@@ -58,6 +59,9 @@ func (c *stubRotationConn) QueryContext(_ context.Context, query string, args []
 	if strings.Contains(query, "FROM oauth_token_rotations") {
 		c.db.mu.Lock()
 		defer c.db.mu.Unlock()
+		if c.db.queryErr != nil {
+			return nil, c.db.queryErr
+		}
 		k := fmt.Sprintf("%v\x00%v\x00%v", args[0].Value, args[1].Value, args[2].Value)
 		v, ok := c.db.rows[k]
 		if !ok {
@@ -181,13 +185,14 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("rotation history DB write failure aborts loudly instead of silently caching", func(t *testing.T) {
-		dbErr := errors.New("db write failed")
+	t.Run("rotation history DB write failure still persists replacement elsewhere and caches fallback while failing", func(t *testing.T) {
+		dbErr := errors.New("pq: permission denied for table oauth_token_rotations")
 		state := &stubRotationDB{execErr: dbErr}
 		sqlDB := sql.OpenDB(state)
 		t.Cleanup(func() { _ = sqlDB.Close() })
 
 		cache := NewRotationCache()
+		var persistedTok string
 		_, err := RefreshWithRotationLock(context.Background(), RotationRefreshRequest{
 			DB:            sqlDB,
 			Cache:         cache,
@@ -199,12 +204,85 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 			Refresh: func(context.Context, string, string) (*TokenResponse, error) {
 				return &TokenResponse{AccessToken: "at-2", RefreshToken: "T2", ExpiresIn: 3600}, nil
 			},
+			Persist: func(_ context.Context, _ string, resp *TokenResponse) (string, bool, error) {
+				persistedTok = resp.RefreshToken
+				return "", false, nil
+			},
 		})
 		if !errors.Is(err, dbErr) {
 			t.Fatalf("RefreshWithRotationLock() error = %v, want %v", err, dbErr)
 		}
-		if _, ok := cache.Lookup("u1", "google", "T1", key, now); ok {
-			t.Fatal("cache must not record an unpersisted DB rotation on error")
+		if persistedTok != "T2" {
+			t.Fatalf("Persist did not run on history write failure: persistedTok=%q, want T2", persistedTok)
+		}
+		if got, ok, cerr := cache.Lookup("u1", "google", "T1", key, now); cerr != nil || !ok || got != "T2" {
+			t.Fatalf("cache.Lookup(T1) = (%q, %v, %v), want (T2, true, nil)", got, ok, cerr)
+		}
+	})
+
+	t.Run("history lookup and decryption errors abort instead of acting as absent history", func(t *testing.T) {
+		lookupErr := errors.New("pq: connection refused")
+		state := &stubRotationDB{queryErr: lookupErr}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		refreshCalled := false
+		_, err := RefreshWithRotationLock(context.Background(), RotationRefreshRequest{
+			DB:            sqlDB,
+			Cache:         NewRotationCache(),
+			EncryptionKey: key,
+			UserID:        "u1",
+			Provider:      "google",
+			RefreshToken:  "T1",
+			Now:           func() time.Time { return now },
+			Refresh: func(context.Context, string, string) (*TokenResponse, error) {
+				refreshCalled = true
+				return &TokenResponse{AccessToken: "at-2", RefreshToken: "T2", ExpiresIn: 3600}, nil
+			},
+		})
+		if !errors.Is(err, lookupErr) {
+			t.Fatalf("RefreshWithRotationLock(lookupErr) error = %v, want %v", err, lookupErr)
+		}
+		if refreshCalled {
+			t.Fatal("Refresh must not be called when rotation history lookup fails")
+		}
+
+		// Corrupt ciphertext in DB must also abort rather than submitting stale T1.
+		h1 := db.OAuthTokenRotationHash("u1", "google", "T1")
+		h2 := db.OAuthTokenRotationHash("u1", "google", "T2")
+		corruptState := &stubRotationDB{
+			rows: map[string]stubRotationRow{
+				fmt.Sprintf("u1\x00google\x00%s", h1): {nextHash: h2, encrypted: "not-valid-ciphertext"},
+			},
+		}
+		corruptDB := sql.OpenDB(corruptState)
+		t.Cleanup(func() { _ = corruptDB.Close() })
+
+		refreshCalled = false
+		_, err = RefreshWithRotationLock(context.Background(), RotationRefreshRequest{
+			DB:            corruptDB,
+			Cache:         NewRotationCache(),
+			EncryptionKey: key,
+			UserID:        "u1",
+			Provider:      "google",
+			RefreshToken:  "T1",
+			Now:           func() time.Time { return now },
+			Refresh: func(context.Context, string, string) (*TokenResponse, error) {
+				refreshCalled = true
+				return &TokenResponse{AccessToken: "at-2", RefreshToken: "T2", ExpiresIn: 3600}, nil
+			},
+		})
+		if !errors.Is(err, ErrRotationPersistence) {
+			t.Fatalf("RefreshWithRotationLock(corrupt) error = %v, want ErrRotationPersistence", err)
+		}
+		if refreshCalled {
+			t.Fatal("Refresh must not be called when rotation ciphertext fails to decrypt")
+		}
+	})
+
+	t.Run("lock wait budget exceeds 15s provider refresh timeout", func(t *testing.T) {
+		if tokenLockWaitTimeout <= 15*time.Second {
+			t.Fatalf("tokenLockWaitTimeout = %v, must exceed 15s provider refresh timeout", tokenLockWaitTimeout)
 		}
 	})
 }

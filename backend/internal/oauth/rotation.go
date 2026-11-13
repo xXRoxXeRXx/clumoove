@@ -18,9 +18,12 @@ const (
 	rotationCacheMaxSize = 1024
 	maxRotationHops      = 32
 	tokenLockTTL         = 30 * time.Second
-	tokenLockMaxAttempts = 50
+	tokenLockWaitTimeout = 20 * time.Second
 	tokenLockPollDelay   = 100 * time.Millisecond
 )
+
+// ErrRotationPersistence indicates a durable OAuth rotation-history operation failed.
+var ErrRotationPersistence = errors.New("oauth rotation persistence failed")
 
 // TokenLocker serializes distributed OAuth token refreshes across API and worker
 // processes. *queue.Queue implements this interface.
@@ -102,9 +105,9 @@ func NewRotationCache() *RotationCache {
 
 // Lookup resolves a potentially pre-rotation refresh token transitively through
 // any cached chain (A -> B -> C) with cycle protection.
-func (c *RotationCache) Lookup(userID, provider, refreshToken, encryptionKey string, now time.Time) (string, bool) {
+func (c *RotationCache) Lookup(userID, provider, refreshToken, encryptionKey string, now time.Time) (string, bool, error) {
 	if c == nil || refreshToken == "" || encryptionKey == "" {
-		return "", false
+		return "", false, nil
 	}
 	key := db.OAuthTokenRotationHash(userID, provider, refreshToken)
 	visited := map[string]struct{}{key: {}}
@@ -134,13 +137,16 @@ func (c *RotationCache) Lookup(userID, provider, refreshToken, encryptionKey str
 	}
 	c.mu.Unlock()
 	if !found {
-		return "", false
+		return "", false, nil
 	}
 	plain, err := crypto.DecryptWithDomain(latestEncrypted, encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil || plain == "" {
-		return "", false
+	if err != nil {
+		return "", false, fmt.Errorf("%w: decrypt cached oauth rotation: %w", ErrRotationPersistence, err)
 	}
-	return plain, true
+	if plain == "" {
+		return "", false, fmt.Errorf("%w: cached oauth rotation is empty", ErrRotationPersistence)
+	}
+	return plain, true, nil
 }
 
 // RecordEncrypted stores an already-encrypted rotation edge in the fallback cache.
@@ -179,19 +185,28 @@ func (c *RotationCache) RecordEncrypted(key, rotatedHash, encrypted string, now 
 }
 
 // LookupRotatedRefreshToken resolves a refresh token along any recorded rotation
-// chain in PostgreSQL first, falling back to cache when DB is absent or skipped.
-func LookupRotatedRefreshToken(ctx context.Context, database *sql.DB, cache *RotationCache, encryptionKey, userID, provider, refreshToken string, now time.Time) (string, bool) {
+// chain in PostgreSQL first, falling back to cache only when no database is
+// configured or a stub driver returns driver.ErrSkip.
+func LookupRotatedRefreshToken(ctx context.Context, database *sql.DB, cache *RotationCache, encryptionKey, userID, provider, refreshToken string, now time.Time) (string, bool, error) {
 	if refreshToken == "" || encryptionKey == "" {
-		return "", false
+		return "", false, nil
 	}
-	if database != nil && provider != "" {
+	if database != nil && provider != "" && userID != "" {
 		tokenHash := db.OAuthTokenRotationHash(userID, provider, refreshToken)
 		_, encrypted, found, err := db.LookupOAuthTokenRotation(ctx, database, userID, provider, tokenHash)
-		if err == nil && found {
-			plain, decErr := crypto.DecryptWithDomain(encrypted, encryptionKey, crypto.DomainOAuthRefreshToken)
-			if decErr == nil && plain != "" {
-				return plain, true
+		if err != nil {
+			if !errors.Is(err, driver.ErrSkip) {
+				return "", false, fmt.Errorf("%w: lookup oauth token rotation: %w", ErrRotationPersistence, err)
 			}
+		} else if found {
+			plain, decErr := crypto.DecryptWithDomain(encrypted, encryptionKey, crypto.DomainOAuthRefreshToken)
+			if decErr != nil {
+				return "", false, fmt.Errorf("%w: decrypt oauth token rotation: %w", ErrRotationPersistence, decErr)
+			}
+			if plain == "" {
+				return "", false, fmt.Errorf("%w: decrypted oauth token rotation is empty", ErrRotationPersistence)
+			}
+			return plain, true, nil
 		}
 	}
 	return cache.Lookup(userID, provider, refreshToken, encryptionKey, now)
@@ -199,6 +214,9 @@ func LookupRotatedRefreshToken(ctx context.Context, database *sql.DB, cache *Rot
 
 // RecordRotatedRefreshToken persists previous -> rotatedToken aliases encrypted at
 // rest in PostgreSQL (returning real DB errors rather than silently ignoring them).
+// The fallback in-memory cache is updated best-effort even when the DB write fails so
+// in-process callers do not lose a newly rotated token while the caller still receives
+// the persistence error.
 func RecordRotatedRefreshToken(ctx context.Context, database *sql.DB, cache *RotationCache, encryptionKey, userID, provider, rotatedToken string, now time.Time, previousTokens ...string) error {
 	if rotatedToken == "" {
 		return nil
@@ -219,23 +237,24 @@ func RecordRotatedRefreshToken(ctx context.Context, database *sql.DB, cache *Rot
 		return nil
 	}
 	if encryptionKey == "" {
-		return errors.New("encryption key unavailable for oauth rotation persistence")
+		return fmt.Errorf("%w: encryption key unavailable", ErrRotationPersistence)
 	}
 	encrypted, err := crypto.EncryptWithDomain(rotatedToken, encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
-		return fmt.Errorf("encrypt rotated oauth refresh token: %w", err)
+		return fmt.Errorf("%w: encrypt rotated oauth refresh token: %w", ErrRotationPersistence, err)
 	}
 	rotatedHash := db.OAuthTokenRotationHash(userID, provider, rotatedToken)
+	var persistErr error
 	for _, prev := range filtered {
 		prevHash := db.OAuthTokenRotationHash(userID, provider, prev)
-		if database != nil && userID != "" && provider != "" {
+		if persistErr == nil && database != nil && userID != "" && provider != "" {
 			if err := db.RecordOAuthTokenRotation(ctx, database, userID, provider, prevHash, rotatedHash, encrypted); err != nil && !errors.Is(err, driver.ErrSkip) {
-				return fmt.Errorf("persist oauth token rotation: %w", err)
+				persistErr = fmt.Errorf("%w: persist oauth token rotation: %w", ErrRotationPersistence, err)
 			}
 		}
 		cache.RecordEncrypted(prevHash, rotatedHash, encrypted, now)
 	}
-	return nil
+	return persistErr
 }
 
 // RotationRefreshRequest configures a token-locked, chain-aware OAuth refresh.
@@ -296,7 +315,11 @@ func RefreshWithRotationLock(ctx context.Context, req RotationRefreshRequest) (R
 
 	currentToken := req.RefreshToken
 	for hop := 0; hop < maxRotationHops; hop++ {
-		if rotated, ok := LookupRotatedRefreshToken(ctx, req.DB, req.Cache, req.EncryptionKey, req.UserID, req.Provider, currentToken, nowFn()); ok && rotated != "" {
+		rotated, ok, lookupErr := LookupRotatedRefreshToken(ctx, req.DB, req.Cache, req.EncryptionKey, req.UserID, req.Provider, currentToken, nowFn())
+		if lookupErr != nil {
+			return RotationRefreshResult{}, lookupErr
+		}
+		if ok && rotated != "" {
 			currentToken = rotated
 		}
 
@@ -317,7 +340,12 @@ func RefreshWithRotationLock(ctx context.Context, req RotationRefreshRequest) (R
 			return RotationRefreshResult{AdoptedAccess: waitAccess, Adopted: true}, nil
 		}
 
-		if rotated, ok := LookupRotatedRefreshToken(ctx, req.DB, req.Cache, req.EncryptionKey, req.UserID, req.Provider, target, nowFn()); ok && rotated != "" && rotated != target {
+		rotated, ok, lookupErr = LookupRotatedRefreshToken(ctx, req.DB, req.Cache, req.EncryptionKey, req.UserID, req.Provider, target, nowFn())
+		if lookupErr != nil {
+			releaseLocks()
+			return RotationRefreshResult{}, lookupErr
+		}
+		if ok && rotated != "" && rotated != target {
 			currentToken = rotated
 			releaseLocks()
 			continue
@@ -349,27 +377,43 @@ func RefreshWithRotationLock(ctx context.Context, req RotationRefreshRequest) (R
 			return RotationRefreshResult{}, errors.New("oauth refresh returned empty access token")
 		}
 
+		// Once the provider has consumed target and issued a replacement token,
+		// persist both history and caller-owned rows using a detached deadline so
+		// caller cancellation mid-exchange cannot drop the new credential.
+		persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		now := nowFn()
+		var recErr error
 		if tokenResp.RefreshToken != "" && tokenResp.RefreshToken != target {
 			aliases := []string{target, req.RefreshToken}
 			if req.ExtraAliases != nil {
 				aliases = append(aliases, req.ExtraAliases()...)
 			}
-			if recErr := RecordRotatedRefreshToken(ctx, req.DB, req.Cache, req.EncryptionKey, req.UserID, req.Provider, tokenResp.RefreshToken, now, aliases...); recErr != nil {
-				releaseLocks()
-				return RotationRefreshResult{}, recErr
-			}
+			recErr = RecordRotatedRefreshToken(persistCtx, req.DB, req.Cache, req.EncryptionKey, req.UserID, req.Provider, tokenResp.RefreshToken, now, aliases...)
 		}
 
 		if req.Persist != nil {
-			adoptedAccess, adopted, err := req.Persist(ctx, target, tokenResp)
-			if err != nil {
+			adoptedAccess, adopted, persistErr := req.Persist(persistCtx, target, tokenResp)
+			cancelPersist()
+			if persistErr != nil {
 				releaseLocks()
-				return RotationRefreshResult{}, err
+				if recErr != nil {
+					return RotationRefreshResult{}, errors.Join(recErr, persistErr)
+				}
+				return RotationRefreshResult{}, persistErr
+			}
+			if recErr != nil {
+				releaseLocks()
+				return RotationRefreshResult{}, recErr
 			}
 			if adopted {
 				releaseLocks()
 				return RotationRefreshResult{AdoptedAccess: adoptedAccess, Adopted: true}, nil
+			}
+		} else {
+			cancelPersist()
+			if recErr != nil {
+				releaseLocks()
+				return RotationRefreshResult{}, recErr
 			}
 		}
 
@@ -384,7 +428,8 @@ func acquireDistributedTokenLock(ctx context.Context, locker TokenLocker, lockKe
 	if locker == nil {
 		return func() {}, "", false, nil
 	}
-	for attempt := 0; attempt < tokenLockMaxAttempts; attempt++ {
+	waitDeadline := time.Now().Add(tokenLockWaitTimeout)
+	for {
 		lockToken, claimed, err := locker.TryClaimOAuthLock(ctx, "oauth-token", lockKey, "refresh", tokenLockTTL)
 		if err == nil && claimed {
 			return func() {
@@ -396,7 +441,15 @@ func acquireDistributedTokenLock(ctx context.Context, locker TokenLocker, lockKe
 		if err != nil {
 			return nil, "", false, err
 		}
-		timer := time.NewTimer(tokenLockPollDelay)
+		remaining := time.Until(waitDeadline)
+		if remaining <= 0 {
+			return nil, "", false, errors.New("lock contention: unable to claim OAuth token lock")
+		}
+		sleep := tokenLockPollDelay
+		if remaining < sleep {
+			sleep = remaining
+		}
+		timer := time.NewTimer(sleep)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -409,5 +462,4 @@ func acquireDistributedTokenLock(ctx context.Context, locker TokenLocker, lockKe
 			}
 		}
 	}
-	return nil, "", false, errors.New("lock contention: unable to claim OAuth token lock")
 }
