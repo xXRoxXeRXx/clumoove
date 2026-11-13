@@ -53,7 +53,11 @@ func (s *APIServer) resolveFileProfile(ctx context.Context, userID, profileID st
 		}
 	}()
 
-	manager, err := storage.NewFileManager(connection.profile.Provider, connection.provider)
+	managerProvider, ok := connection.provider.(storage.ManagerProvider)
+	if !ok {
+		return nil, errFileProviderUnavailable
+	}
+	manager, err := storage.NewFileManager(connection.profile.Provider, managerProvider)
 	if err != nil {
 		return nil, err
 	}

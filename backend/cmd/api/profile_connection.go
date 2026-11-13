@@ -43,8 +43,8 @@ func (c *profileCreds) clear() {
 // profileConnection owns task-scoped provider credentials and the provider.
 // It deliberately has no HTTP request or response knowledge.
 type profileProvider interface {
-	storage.ManagerProvider
 	storage.ProviderLifecycle
+	Connect(context.Context) (bool, error)
 }
 
 type profileConnection struct {
@@ -266,6 +266,23 @@ func (s *APIServer) newProvider(ctx context.Context, provider, url, username, pa
 		return storage.NewProvider(ctx, provider, url, username, password, opts...)
 	}
 	return factory(ctx, provider, url, username, password, opts...)
+}
+
+func newProfileProviderFor[T any](s *APIServer, ctx context.Context, provider, url, username, password string, opts ...storage.ProviderOption) (T, error) {
+	client, err := s.newProvider(ctx, provider, url, username, password, opts...)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	result, ok := any(client).(T)
+	if !ok {
+		if client != nil {
+			_ = client.Close()
+		}
+		var zero T
+		return zero, errProfileProvider
+	}
+	return result, nil
 }
 
 func newProfileConnection(ctx context.Context, userID string, profile *db.ConnectionProfile, creds profileCreds, factory profileProviderFactory) (*profileConnection, error) {

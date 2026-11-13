@@ -73,9 +73,6 @@ func (p *legacyFileManagerTestProvider) StreamUploadChunked(_ context.Context, _
 	_, err := io.Copy(io.Discard, stream)
 	return err
 }
-func (p *legacyFileManagerTestProvider) FileExists(context.Context, string, string) (bool, int64, error) {
-	return false, 0, nil
-}
 func (p *legacyFileManagerTestProvider) DeleteFile(_ context.Context, _ string, filePath string) error {
 	p.deleted = append(p.deleted, filePath)
 	return nil
@@ -83,22 +80,12 @@ func (p *legacyFileManagerTestProvider) DeleteFile(_ context.Context, _ string, 
 func (p *legacyFileManagerTestProvider) DeleteManagerItem(ctx context.Context, locator storage.ManagerLocator, _ bool) error {
 	return p.DeleteFile(ctx, "files", locator.Path)
 }
-func (p *legacyFileManagerTestProvider) GetFileHash(context.Context, string, string) (string, error) {
-	return "", nil
-}
-func (p *legacyFileManagerTestProvider) CreateParentDirectories(context.Context, string, string) error {
-	return nil
-}
 func (p *legacyFileManagerTestProvider) CreateDirectory(context.Context, string, string) error {
 	return nil
 }
 func (p *legacyFileManagerTestProvider) RenameFile(_ context.Context, _ string, oldPath, newPath string) error {
 	p.renamed = append(p.renamed, [2]string{oldPath, newPath})
 	return nil
-}
-func (p *legacyFileManagerTestProvider) SupportsAtomicRename() bool { return false }
-func (p *legacyFileManagerTestProvider) VerificationMode() storage.VerificationMode {
-	return storage.VerificationSizeOnly
 }
 
 func TestFileReferenceRoundTripBindsUserAndProfile(t *testing.T) {

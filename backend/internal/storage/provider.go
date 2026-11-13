@@ -231,8 +231,8 @@ type ProviderLifecycle interface {
 	Close() error
 }
 
-// TransferCapabilities are the additional operations required for transfers.
-type TransferCapabilities interface {
+// transferCapabilities are the additional operations required for transfers.
+type transferCapabilities interface {
 	FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error)
 	GetFileHash(ctx context.Context, resourceType, filePath string) (string, error)
 	CreateParentDirectories(ctx context.Context, resourceType, filePath string) error
@@ -253,7 +253,7 @@ type TransferCapabilities interface {
 type StorageProvider interface {
 	ManagerProvider
 	ProviderLifecycle
-	TransferCapabilities
+	transferCapabilities
 }
 
 // ProgressReader wraps an io.Reader and emits best-effort byte counts to

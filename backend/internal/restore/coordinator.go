@@ -998,23 +998,17 @@ type encryptedMegaSession struct {
 
 func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (RepositorySource, error) {
 	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
-		c.repositorySourceFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RepositorySource, error) {
-			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
-		})
+		c.repositorySourceFactory)
 }
 
 func (c *Coordinator) newPreviewTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (PreviewTargetClient, error) {
 	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
-		c.previewTargetFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (PreviewTargetClient, error) {
-			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
-		})
+		c.previewTargetFactory)
 }
 
 func (c *Coordinator) newRestoreTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (RestoreTarget, error) {
 	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
-		c.restoreTargetFactory, func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (RestoreTarget, error) {
-			return storage.NewProvider(ctx, provider, endpoint, username, password, opts...)
-		})
+		c.restoreTargetFactory)
 }
 
 func openWithDecryptedCredentials[T any](
@@ -1023,11 +1017,7 @@ func openWithDecryptedCredentials[T any](
 	provider, endpoint, username, encryptedPassword string,
 	mega encryptedMegaSession,
 	factory func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error),
-	fallback func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error),
 ) (T, error) {
-	if factory == nil {
-		factory = fallback
-	}
 	password, err := crypto.DecryptWithDomain(encryptedPassword, c.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(provider)))
 	if err != nil {
 		var zero T
@@ -1045,7 +1035,22 @@ func openWithDecryptedCredentials[T any](
 		return zero, err
 	}
 	defer clear(session.MasterKey)
-	return factory(ctx, provider, endpoint, username, password, storage.WithProviderMegaSession(session))
+	option := storage.WithProviderMegaSession(session)
+	if factory != nil {
+		return factory(ctx, provider, endpoint, username, password, option)
+	}
+	client, err := storage.NewProvider(ctx, provider, endpoint, username, password, option)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	result, ok := any(client).(T)
+	if !ok {
+		_ = client.Close()
+		var zero T
+		return zero, fmt.Errorf("provider %q does not support the requested restore operations", provider)
+	}
+	return result, nil
 }
 
 func (c *Coordinator) Run(ctx context.Context, interval time.Duration) error {

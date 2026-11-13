@@ -9,7 +9,7 @@ import (
 )
 
 // catalogueTestProvider adds the registration-only operations to the manager stub.
-type catalogueTestProvider struct{ *mockStorageProvider }
+type catalogueTestProvider struct{ *mockManagerProvider }
 
 func (*catalogueTestProvider) Close() error { return nil }
 func (*catalogueTestProvider) FileExists(context.Context, string, string) (bool, int64, error) {
@@ -419,7 +419,7 @@ func TestManagerMutationCapabilityRouting(t *testing.T) {
 		}
 	}
 
-	mockProvider := &mockStorageProvider{
+	mockProvider := &mockManagerProvider{
 		inspectFn: func(_ context.Context, _ string, p string) (CloudResource, error) {
 			switch p {
 			case "/from", "/to", "/folder", "/Library/from", "/Library/to", "/Library/folder":
@@ -835,7 +835,7 @@ func TestProviderCatalogueManagerSeam(t *testing.T) {
 					return locator.Path == "/same/file.txt" && destination.Path == "/same"
 				},
 				Construct: func(context.Context, string, string, string) (StorageProvider, error) {
-					return &catalogueTestProvider{mockStorageProvider: &mockStorageProvider{}}, nil
+					return &catalogueTestProvider{mockManagerProvider: &mockManagerProvider{}}, nil
 				},
 			},
 			{
@@ -848,7 +848,7 @@ func TestProviderCatalogueManagerSeam(t *testing.T) {
 				ManagerRootNativeID:       "custom-root",
 				ManagerDownloadByNativeID: true,
 				Construct: func(context.Context, string, string, string) (StorageProvider, error) {
-					return &catalogueTestProvider{mockStorageProvider: &mockStorageProvider{}}, nil
+					return &catalogueTestProvider{mockManagerProvider: &mockManagerProvider{}}, nil
 				},
 			},
 			{
@@ -859,7 +859,7 @@ func TestProviderCatalogueManagerSeam(t *testing.T) {
 				WindowsManagerBlocked:  true,
 				ManagerPathMutation:    true,
 				Construct: func(context.Context, string, string, string) (StorageProvider, error) {
-					return &catalogueTestProvider{mockStorageProvider: &mockStorageProvider{}}, nil
+					return &catalogueTestProvider{mockManagerProvider: &mockManagerProvider{}}, nil
 				},
 			},
 		})
@@ -874,7 +874,7 @@ func TestProviderCatalogueManagerSeam(t *testing.T) {
 			t.Fatalf("managerCapabilitiesFor(path-custom) = %+v, want Rename and Copy", got)
 		}
 
-		provider := &mockStorageProvider{
+		provider := &mockManagerProvider{
 			inspectFn: func(_ context.Context, _ string, p string) (CloudResource, error) {
 				if p == "/same" || p == "/other" {
 					return CloudResource{Path: p, Name: "dir", IsDir: true}, nil

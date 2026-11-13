@@ -16,7 +16,7 @@ New providers must be registered in the catalogue (`factory.go`); only whitelist
 type StorageProvider interface {
     ManagerProvider
     ProviderLifecycle
-    TransferCapabilities
+    transferCapabilities
 }
 ```
 

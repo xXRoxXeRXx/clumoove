@@ -176,7 +176,7 @@ type verificationPassConfig struct {
 	// callers leave it nil and construct a scoped provider below.
 	TargetClient verificationTarget
 	// NewTargetProvider is test-only injection for constructing a provider that
-	// still needs Connect before verification. Production callers use newProvider.
+	// still needs Connect before verification. Production callers use storage.NewProvider.
 	NewTargetProvider func(ctx context.Context, providerType, urlStr, username, password string) (connectableVerificationTarget, error)
 	GetTasks          func(ctx context.Context) ([]*db.Task, error)
 	ReconcileProgress func() error

@@ -7,21 +7,21 @@ import (
 	"testing"
 )
 
-type mockStorageProvider struct {
+type mockManagerProvider struct {
 	inspectFn    func(ctx context.Context, resourceType, path string) (CloudResource, error)
 	listingFn    func(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error)
 	renameFn     func(ctx context.Context, resourceType, oldPath, newPath string) error
 	inspectCount int
 }
 
-func (m *mockStorageProvider) Connect(ctx context.Context) (bool, error) { return true, nil }
-func (m *mockStorageProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
+func (m *mockManagerProvider) Connect(ctx context.Context) (bool, error) { return true, nil }
+func (m *mockManagerProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
 	if m.listingFn != nil {
 		return m.listingFn(ctx, resourceType, dirPath)
 	}
 	return nil, nil
 }
-func (m *mockStorageProvider) InspectResource(ctx context.Context, resourceType, path string) (CloudResource, error) {
+func (m *mockManagerProvider) InspectResource(ctx context.Context, resourceType, path string) (CloudResource, error) {
 	m.inspectCount++
 	if m.inspectFn != nil {
 		return m.inspectFn(ctx, resourceType, path)
@@ -31,22 +31,22 @@ func (m *mockStorageProvider) InspectResource(ctx context.Context, resourceType,
 	}
 	return CloudResource{Path: path, Name: "file.txt", Size: 100, IsDir: false}, nil
 }
-func (m *mockStorageProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
+func (m *mockManagerProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (m *mockStorageProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
+func (m *mockManagerProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	return nil
 }
-func (m *mockStorageProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
+func (m *mockManagerProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
 	return nil
 }
-func (m *mockStorageProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+func (m *mockManagerProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
 	return nil
 }
-func (m *mockStorageProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+func (m *mockManagerProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	return nil
 }
-func (m *mockStorageProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+func (m *mockManagerProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
 	if m.renameFn != nil {
 		return m.renameFn(ctx, resourceType, oldPath, newPath)
 	}
@@ -55,7 +55,7 @@ func (m *mockStorageProvider) RenameFile(ctx context.Context, resourceType, oldP
 
 func TestCopyNativePathManagerItem_Success(t *testing.T) {
 	ctx := context.Background()
-	provider := &mockStorageProvider{}
+	provider := &mockManagerProvider{}
 	opCalled := false
 
 	res, err := copyNativePathManagerItem(ctx, provider, ManagerLocator{Path: "/source/file.txt"}, ManagerLocator{Path: "/backup"}, "file.txt", ManagerMutationOptions{}, func(ctx context.Context, source CloudResource, target string, overwrite bool) error {
@@ -84,7 +84,7 @@ func TestCopyNativePathManagerItem_Success(t *testing.T) {
 
 func TestCopyNativePathManagerItem_ConflictSkip(t *testing.T) {
 	ctx := context.Background()
-	provider := &mockStorageProvider{
+	provider := &mockManagerProvider{
 		listingFn: func(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
 			return []CloudResource{{Path: "/backup/file.txt", Name: "file.txt", IsDir: false}}, nil
 		},
@@ -108,7 +108,7 @@ func TestCopyNativePathManagerItem_ConflictSkip(t *testing.T) {
 
 func TestCopyNativePathManagerItem_ConflictRename(t *testing.T) {
 	ctx := context.Background()
-	provider := &mockStorageProvider{
+	provider := &mockManagerProvider{
 		listingFn: func(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
 			return []CloudResource{{Path: "/backup/file.txt", Name: "file.txt", IsDir: false}}, nil
 		},
@@ -132,7 +132,7 @@ func TestCopyNativePathManagerItem_ConflictRename(t *testing.T) {
 
 func TestCopyNativePathManagerItem_ConflictOverwrite(t *testing.T) {
 	ctx := context.Background()
-	provider := &mockStorageProvider{
+	provider := &mockManagerProvider{
 		listingFn: func(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
 			return []CloudResource{{Path: "/backup/file.txt", Name: "file.txt", IsDir: false}}, nil
 		},
@@ -156,7 +156,7 @@ func TestCopyNativePathManagerItem_ConflictOverwrite(t *testing.T) {
 
 func TestCopyNativePathManagerItem_DirectoryOverwriteRefusal(t *testing.T) {
 	ctx := context.Background()
-	provider := &mockStorageProvider{
+	provider := &mockManagerProvider{
 		listingFn: func(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
 			return []CloudResource{{Path: "/backup/folder", Name: "folder", IsDir: true}}, nil
 		},
@@ -173,7 +173,7 @@ func TestCopyNativePathManagerItem_DirectoryOverwriteRefusal(t *testing.T) {
 
 func TestCopyNativePathManagerItem_DirectoryCycleRefusal(t *testing.T) {
 	ctx := context.Background()
-	provider := &mockStorageProvider{
+	provider := &mockManagerProvider{
 		inspectFn: func(ctx context.Context, resourceType, path string) (CloudResource, error) {
 			return CloudResource{Path: path, Name: "dir", IsDir: true}, nil
 		},
@@ -190,7 +190,7 @@ func TestCopyNativePathManagerItem_DirectoryCycleRefusal(t *testing.T) {
 
 func TestCopyNativePathManagerItem_RootRefusal(t *testing.T) {
 	ctx := context.Background()
-	provider := &mockStorageProvider{}
+	provider := &mockManagerProvider{}
 
 	_, err := copyNativePathManagerItem(ctx, provider, ManagerLocator{Path: "/"}, ManagerLocator{Path: "/backup"}, "root", ManagerMutationOptions{}, func(ctx context.Context, source CloudResource, target string, overwrite bool) error {
 		return nil
@@ -202,7 +202,7 @@ func TestCopyNativePathManagerItem_RootRefusal(t *testing.T) {
 
 func TestCopyNativePathManagerItem_NoStreamingFallbackOnError(t *testing.T) {
 	ctx := context.Background()
-	provider := &mockStorageProvider{}
+	provider := &mockManagerProvider{}
 	sentinel := errors.New("provider native failure")
 
 	_, err := copyNativePathManagerItem(ctx, provider, ManagerLocator{Path: "/source/file.txt"}, ManagerLocator{Path: "/backup"}, "file.txt", ManagerMutationOptions{}, func(ctx context.Context, source CloudResource, target string, overwrite bool) error {
@@ -215,7 +215,7 @@ func TestCopyNativePathManagerItem_NoStreamingFallbackOnError(t *testing.T) {
 
 func TestCopyNativePathManagerItemWithSource_DoesNotReinspect(t *testing.T) {
 	ctx := context.Background()
-	provider := &mockStorageProvider{}
+	provider := &mockManagerProvider{}
 	source := CloudResource{Path: "/source/prevalidated.txt", Name: "prevalidated.txt", Size: 50, IsDir: false}
 
 	res, err := copyNativePathManagerItemWithSource(ctx, provider, source, ManagerLocator{Path: "/source/prevalidated.txt"}, ManagerLocator{Path: "/backup"}, "prevalidated.txt", ManagerMutationOptions{}, func(ctx context.Context, s CloudResource, target string, overwrite bool) error {
@@ -238,7 +238,7 @@ func TestCopyNativePathManagerItemWithSource_DoesNotReinspect(t *testing.T) {
 func TestPathManagerMutator_Rename(t *testing.T) {
 	ctx := context.Background()
 	var renamedSource, renamedTarget string
-	provider := &mockStorageProvider{
+	provider := &mockManagerProvider{
 		inspectFn: func(ctx context.Context, resourceType, path string) (CloudResource, error) {
 			if path == "/folder" {
 				return CloudResource{Path: "/folder", Name: "folder", IsDir: true}, nil

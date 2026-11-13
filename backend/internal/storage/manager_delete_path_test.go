@@ -7,7 +7,7 @@ import (
 )
 
 type deleteTrackingProvider struct {
-	*mockStorageProvider
+	*mockManagerProvider
 	deletedFiles []string
 }
 
@@ -64,7 +64,7 @@ func TestDeleteManagerPathItemWithDirectoryDeleter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := &deleteTrackingProvider{mockStorageProvider: &mockStorageProvider{
+			provider := &deleteTrackingProvider{mockManagerProvider: &mockManagerProvider{
 				inspectFn: func(context.Context, string, string) (CloudResource, error) { return tt.resource, nil },
 				listingFn: func(context.Context, string, string) ([]CloudResource, error) { return tt.children, nil },
 			}}

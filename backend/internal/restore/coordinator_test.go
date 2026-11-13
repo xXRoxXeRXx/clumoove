@@ -375,7 +375,7 @@ func (m *metadataOnlyTarget) ApplyMetadata(_ context.Context, _, targetPath stri
 
 type minimalRepositorySource struct{}
 
-func (*minimalRepositorySource) Close() error                       { return nil }
+func (*minimalRepositorySource) Close() error                          { return nil }
 func (*minimalRepositorySource) Connect(context.Context) (bool, error) { return true, nil }
 func (*minimalRepositorySource) StreamDownload(_ context.Context, _, _ string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(nil)), nil
@@ -460,8 +460,8 @@ func (m *minimalWorkflowPreviewTarget) Connect(context.Context) (bool, error) {
 
 type minimalWorkflowRestoreTarget struct{}
 
-func (*minimalWorkflowRestoreTarget) Close() error                                         { return nil }
-func (*minimalWorkflowRestoreTarget) Connect(context.Context) (bool, error)                { return true, nil }
+func (*minimalWorkflowRestoreTarget) Close() error                          { return nil }
+func (*minimalWorkflowRestoreTarget) Connect(context.Context) (bool, error) { return true, nil }
 func (*minimalWorkflowRestoreTarget) FileExists(context.Context, string, string) (bool, int64, error) {
 	return false, 0, nil
 }
@@ -484,10 +484,25 @@ func (*minimalWorkflowRestoreTarget) RenameFile(context.Context, string, string,
 func (*minimalWorkflowRestoreTarget) StreamUpload(context.Context, string, string, io.Reader, int64) error {
 	return nil
 }
-func (*minimalWorkflowRestoreTarget) SupportsAtomicRename() bool               { return false }
-func (*minimalWorkflowRestoreTarget) VerificationMode() storage.VerificationMode { return storage.VerificationNone }
+func (*minimalWorkflowRestoreTarget) SupportsAtomicRename() bool { return false }
+func (*minimalWorkflowRestoreTarget) VerificationMode() storage.VerificationMode {
+	return storage.VerificationNone
+}
 func (*minimalWorkflowRestoreTarget) GetFileHash(context.Context, string, string) (string, error) {
 	return "", nil
+}
+
+func TestRestoreDefaultFactoryRejectsUnsupportedInterface(t *testing.T) {
+	const key = "test-restore-encryption-key"
+	secret, err := crypto.EncryptWithDomain("secret", key, crypto.ConnectionCredentialDomain(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type unsupported interface{ UnsupportedRestoreOperation() }
+	_, err = openWithDecryptedCredentials[unsupported](&Coordinator{encryptionKey: key}, context.Background(), "nextcloud", "https://1.1.1.1", "user", secret, encryptedMegaSession{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "does not support the requested restore operations") {
+		t.Fatalf("error = %v, want unsupported restore operations", err)
+	}
 }
 
 func TestRestoreCoordinatorFactoriesAcceptMinimalAdapters(t *testing.T) {

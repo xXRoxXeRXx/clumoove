@@ -14,7 +14,7 @@ Every registered storage backend implements the composed `StorageProvider` contr
 type StorageProvider interface {
 	ManagerProvider
 	ProviderLifecycle
-	TransferCapabilities
+	transferCapabilities
 }
 ```
 

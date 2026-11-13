@@ -31,6 +31,16 @@ type BrowseRequest struct {
 	Path            string `json:"path"`
 }
 
+type migrationBrowser interface {
+	profileProvider
+	GetDirectoryListing(context.Context, string, string) ([]storage.CloudResource, error)
+}
+
+type migrationDirectoryCreator interface {
+	profileProvider
+	CreateDirectory(context.Context, string, string) error
+}
+
 func normalizeProviderURL(provider, urlStr string) string {
 	if provider == "magentacloud" {
 		return "https://magentacloud.de/remote.php/webdav"
@@ -70,7 +80,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceClient, err := s.newProvider(r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword, megaProfileProviderOptions(sourceCreds)...)
+	sourceClient, err := newProfileProviderFor[migrationBrowser](s, r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword, megaProfileProviderOptions(sourceCreds)...)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 		return
@@ -161,7 +171,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 		targetCreds = tgt
 	}
 
-	targetClient, err := s.newProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword, megaProfileProviderOptions(targetCreds)...)
+	targetClient, err := newProfileProviderFor[migrationBrowser](s, r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword, megaProfileProviderOptions(targetCreds)...)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
@@ -245,7 +255,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		targetCreds = tgt
 	}
 
-	targetClient, err := s.newProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword, megaProfileProviderOptions(targetCreds)...)
+	targetClient, err := newProfileProviderFor[migrationDirectoryCreator](s, r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword, megaProfileProviderOptions(targetCreds)...)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
@@ -758,7 +768,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceClient, err := s.newProvider(r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword, megaProfileProviderOptions(src)...)
+	sourceClient, err := newProfileProviderFor[migrationBrowser](s, r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword, megaProfileProviderOptions(src)...)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 		return

@@ -979,7 +979,7 @@ func TestFileManagerDeleteMutateThumbnailAndProviderMatrix(t *testing.T) {
 	})
 
 	t.Run("every ValidProvider constructs a FileManager with matching capabilities and explicit unsupported gates", func(t *testing.T) {
-		providers := map[string]StorageProvider{
+		providers := map[string]ManagerProvider{
 			"nextcloud":    &NextcloudProvider{},
 			"opencloud":    &OpenCloudProvider{},
 			"webdav":       &WebDAVProvider{},
@@ -1068,6 +1068,3 @@ func TestFileManagerDeleteMutateThumbnailAndProviderMatrix(t *testing.T) {
 		}
 	})
 }
-
-
-

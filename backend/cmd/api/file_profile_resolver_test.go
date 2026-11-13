@@ -107,6 +107,50 @@ func TestResolveFileProfileMapsProviderSetupFailure(t *testing.T) {
 	}
 }
 
+type connectionOnlyProvider struct{ closed bool }
+
+func (*connectionOnlyProvider) Connect(context.Context) (bool, error) { return true, nil }
+func (p *connectionOnlyProvider) Close() error                        { p.closed = true; return nil }
+
+func TestNewProfileProviderForRejectsMissingOperationsAndCloses(t *testing.T) {
+	provider := &connectionOnlyProvider{}
+	server := &APIServer{providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
+		return provider, nil
+	}}
+	_, err := newProfileProviderFor[migrationBrowser](server, context.Background(), "nextcloud", "", "", "")
+	if !errors.Is(err, errProfileProvider) {
+		t.Fatalf("error = %v, want errProfileProvider", err)
+	}
+	if !provider.closed {
+		t.Fatal("provider missing browser operations was not closed")
+	}
+}
+
+func TestResolveFileProfileRejectsConnectionOnlyProvider(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	password, err := crypto.EncryptWithDomain("saved-secret", key, crypto.ConnectionCredentialDomain(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, _ := newBackupProfileConnectionTestDB(t, map[string][]driver.Value{
+		"profile-1": profileTestRow("profile-1", "user-1", "nextcloud", "https://saved.example.test", "saved-user", password),
+	})
+	provider := &connectionOnlyProvider{}
+	server := &APIServer{
+		db: database, encryptionKey: key,
+		providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
+			return provider, nil
+		},
+	}
+	_, err = server.resolveFileProfile(context.Background(), "user-1", "profile-1")
+	if !errors.Is(err, errFileProviderUnavailable) {
+		t.Fatalf("error = %v, want errFileProviderUnavailable", err)
+	}
+	if !provider.closed {
+		t.Fatal("connection-only provider was not closed")
+	}
+}
+
 func TestFileEntriesListMapsProviderSetupFailure(t *testing.T) {
 	const key = "01234567890123456789012345678901"
 	password, err := crypto.EncryptWithDomain("saved-secret", key, crypto.ConnectionCredentialDomain(false))
