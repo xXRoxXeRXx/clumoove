@@ -35,11 +35,10 @@ type StorageProvider interface {
 ## Architecture Rules & Guidelines
 
 1. **Required Interface**: `StorageProvider` is non-optional. All methods must be implemented by concrete provider structs and unit test mocks.
-2. **SSRF Guarding**: `providerRegistry.RequiresEgressValidation` is the source of truth for user-configured providers that require egress validation. Those providers MUST validate URLs using `validateEgressURL` and execute HTTP requests via `NewEgressHTTPClient` or custom transports with `egressDialer`.
+2. **SSRF Guarding**: The `RequiresEgressValidation` flag on the provider's entry in `providerCatalogueEntries` (`factory.go`) is the source of truth for user-configured providers that require egress validation. Those providers MUST validate URLs using `validateEgressURL` and execute HTTP requests via `NewEgressHTTPClient` or custom transports with `egressDialer`.
 3. **Data Integrity & Hashes**:
    - Return native cryptographic hashes (`SHA-1`, `MD5`, `SHA-256`, `QuickXor`, etc.) via `GetFileHash`.
    - Implement `VerificationMode()` returning `VerificationCryptographicHash` when hash verification is available, or `VerificationSizeOnly` otherwise.
 4. **Provider Factory Registration**:
-   - Add static metadata to `providerRegistry` (the validation source of truth) and keep `ValidProviders` in parity for API/UI ordering.
-   - Add switch cases in `NewProvider`.
+   - Add one authoritative `providerRegistration` entry to `providerCatalogueEntries` in `factory.go` supplying validation rules, construction, migration traits, and file-manager capabilities (`ValidProviders` is derived from it in order).
 5. **Zero-Disk Retention**: File transfers must be streamed through RAM buffers without writing intermediate data to local disk.

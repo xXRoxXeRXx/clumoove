@@ -30,27 +30,21 @@ type emulatedManagerCursor struct {
 }
 
 type fileManagerAdapter struct {
-	providerType   string
-	provider       StorageProvider
-	capabilities   ManagerCapabilities
-	pathSafe       bool
-	cleanupTimeout time.Duration
+	catalogue          *providerCatalogue
+	providerType       string
+	provider           StorageProvider
+	capabilities       ManagerCapabilities
+	pathSafe           bool
+	rootNativeID       string
+	downloadByNativeID bool
+	cleanupTimeout     time.Duration
 }
 
 // NewFileManager wraps a constructed StorageProvider in a unified, storage-owned
 // file-manager adapter that enforces provider capabilities, locator safety, and
 // consistent fallback behavior.
 func NewFileManager(providerType string, provider StorageProvider) (FileManager, error) {
-	if provider == nil || !IsValidProvider(providerType) {
-		return nil, ErrManagerUnsupported
-	}
-	return &fileManagerAdapter{
-		providerType:   providerType,
-		provider:       provider,
-		capabilities:   ManagerCapabilitiesFor(providerType),
-		pathSafe:       managerPathMutationProviders[providerType],
-		cleanupTimeout: managerCleanupTimeout,
-	}, nil
+	return defaultProviderCatalogue.newFileManager(providerType, provider)
 }
 
 // CanonicalManagerPath normalizes a manager path string to a clean forward-slash
@@ -91,7 +85,7 @@ func (m *fileManagerAdapter) IsRootLocator(locator ManagerLocator) bool {
 	if locator.NativeID == "" {
 		return locator.Path == "" || CanonicalManagerPath(locator.Path) == "/"
 	}
-	return m.providerType == "google" && locator.NativeID == "root"
+	return m.rootNativeID != "" && locator.NativeID == m.rootNativeID
 }
 
 func (m *fileManagerAdapter) InspectManagerItem(ctx context.Context, locator ManagerLocator) (ManagerItem, error) {
@@ -191,7 +185,7 @@ func (m *fileManagerAdapter) DownloadManager(ctx context.Context, locator Manage
 		return ManagerDownload{}, ErrNotFound
 	}
 	if hasDownloader {
-		if m.pathSafe && locator.Path == "" && m.providerType != "dropbox" {
+		if m.pathSafe && locator.Path == "" && !m.downloadByNativeID {
 			return ManagerDownload{}, ErrNotFound
 		}
 		return downloader.DownloadManager(ctx, locator)
@@ -278,7 +272,7 @@ func (m *fileManagerAdapter) RenameManagerItem(ctx context.Context, locator, par
 	if err := validateMutationPaths(locator, parent); err != nil {
 		return ManagerMutationResult{}, err
 	}
-	renamer, ok := NewManagerRenamer(m.providerType, m.provider)
+	renamer, ok := m.catalogue.newManagerRenamer(m.providerType, m.provider)
 	if !ok {
 		return ManagerMutationResult{}, ErrManagerUnsupported
 	}
@@ -295,7 +289,7 @@ func (m *fileManagerAdapter) MoveManagerItem(ctx context.Context, locator, desti
 	if err := validateMutationPaths(locator, destination); err != nil {
 		return ManagerMutationResult{}, err
 	}
-	mover, ok := NewManagerMover(m.providerType, m.provider)
+	mover, ok := m.catalogue.newManagerMover(m.providerType, m.provider)
 	if !ok {
 		return ManagerMutationResult{}, ErrManagerUnsupported
 	}
@@ -312,7 +306,7 @@ func (m *fileManagerAdapter) CopyManagerItem(ctx context.Context, locator, desti
 	if err := validateMutationPaths(locator, destination); err != nil {
 		return ManagerMutationResult{}, err
 	}
-	copier, ok := NewManagerCopier(m.providerType, m.provider)
+	copier, ok := m.catalogue.newManagerCopier(m.providerType, m.provider)
 	if !ok {
 		return ManagerMutationResult{}, ErrManagerUnsupported
 	}

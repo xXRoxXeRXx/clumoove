@@ -18,9 +18,9 @@ func TestIsValidProvider(t *testing.T) {
 	for _, providerType := range ValidProviders {
 		validProviderSet[providerType] = struct{}{}
 	}
-	for providerType := range providerRegistry {
+	for providerType := range defaultProviderCatalogue.entries {
 		if _, ok := validProviderSet[providerType]; !ok {
-			t.Errorf("providerRegistry entry %q is missing from ValidProviders", providerType)
+			t.Errorf("catalogue entry %q is missing from ValidProviders", providerType)
 		}
 	}
 	invalid := []string{"", "NEXTCLOUD", "Dropbox", "s3 "}
@@ -155,7 +155,7 @@ func TestPublicFactorySSRFGuardsEveryRegisteredEgressProvider(t *testing.T) {
 		"seafile":   "https://127.0.0.1",
 	}
 	guarded := 0
-	for providerType, meta := range providerRegistry {
+	for providerType, meta := range defaultProviderCatalogue.entries {
 		if !meta.RequiresEgressValidation {
 			continue
 		}
@@ -170,7 +170,7 @@ func TestPublicFactorySSRFGuardsEveryRegisteredEgressProvider(t *testing.T) {
 		}
 	}
 	if guarded != len(blockedURLs) {
-		t.Fatalf("egress-validated registry providers = %d, test inputs = %d", guarded, len(blockedURLs))
+		t.Fatalf("egress-validated catalogue providers = %d, test inputs = %d", guarded, len(blockedURLs))
 	}
 }
 
@@ -194,33 +194,33 @@ func TestProviderRegistryCapabilitiesMatchRuntime(t *testing.T) {
 		"seafile":      &SeafileProvider{},
 		"mega":         &MegaProvider{},
 	}
-	for providerType, meta := range providerRegistry {
+	for providerType, meta := range defaultProviderCatalogue.entries {
 		provider, ok := runtimeProviders[providerType]
 		if !ok {
 			t.Errorf("%s is registered without a runtime capability assertion", providerType)
 			continue
 		}
 		if got := provider.VerificationMode(); got != meta.VerificationMode {
-			t.Errorf("%s VerificationMode() = %q, registry = %q", providerType, got, meta.VerificationMode)
+			t.Errorf("%s VerificationMode() = %q, catalogue = %q", providerType, got, meta.VerificationMode)
 		}
 		if got := provider.SupportsAtomicRename(); got != meta.SupportsAtomicRename {
-			t.Errorf("%s SupportsAtomicRename() = %t, registry = %t", providerType, got, meta.SupportsAtomicRename)
+			t.Errorf("%s SupportsAtomicRename() = %t, catalogue = %t", providerType, got, meta.SupportsAtomicRename)
 		}
 	}
-	if len(runtimeProviders) != len(providerRegistry) {
-		t.Fatalf("runtime capability assertions = %d, registry providers = %d", len(runtimeProviders), len(providerRegistry))
+	if len(runtimeProviders) != len(defaultProviderCatalogue.entries) {
+		t.Fatalf("runtime capability assertions = %d, catalogue providers = %d", len(runtimeProviders), len(defaultProviderCatalogue.entries))
 	}
 }
 
 func TestManagerCapabilityRegistryMatchesProviders(t *testing.T) {
 	for _, providerType := range ValidProviders {
-		if _, ok := managerCapabilityRegistry[providerType]; !ok {
-			t.Errorf("%s is missing manager capabilities", providerType)
+		entry, ok := defaultProviderCatalogue.lookup(providerType)
+		if !ok {
+			t.Errorf("%s is missing from provider catalogue", providerType)
+			continue
 		}
-	}
-	for providerType := range managerCapabilityRegistry {
-		if !IsValidProvider(providerType) {
-			t.Errorf("manager capabilities registered for unsupported provider %s", providerType)
+		if entry.ManagerCapabilities == (ManagerCapabilities{}) {
+			t.Errorf("%s is missing manager capabilities", providerType)
 		}
 	}
 }
@@ -391,30 +391,66 @@ func TestManagerCapabilityInterfaceSatisfaction(t *testing.T) {
 }
 
 func TestManagerMutationCapabilityRouting(t *testing.T) {
-	for providerType, capabilities := range managerCapabilityRegistry {
+	for _, providerType := range ValidProviders {
 		if providerType == "local" && runtime.GOOS == "windows" {
 			continue
 		}
+		capabilities := ManagerCapabilitiesFor(providerType)
 		if capabilities.Rename || capabilities.Move || capabilities.Copy {
-			if providerType != "google" && !managerPathMutationProviders[providerType] {
+			entry, ok := defaultProviderCatalogue.lookup(providerType)
+			if !ok || (providerType != "google" && !entry.ManagerPathMutation) {
 				t.Errorf("%s advertises manager mutations without a path or dedicated route", providerType)
 			}
 		}
 	}
-	if managerPathMutationClassifier("s3")(ManagerLocator{}, ManagerLocator{}, "") {
-		t.Fatal("S3 copy/delete must not report a single native operation")
+
+	mockProvider := &mockStorageProvider{
+		inspectFn: func(_ context.Context, _ string, p string) (CloudResource, error) {
+			switch p {
+			case "/from", "/to", "/folder", "/Library/from", "/Library/to", "/Library/folder":
+				return CloudResource{Path: p, Name: "dir", IsDir: true}, nil
+			default:
+				return CloudResource{Path: p, Name: "report.txt", Size: 10}, nil
+			}
+		},
 	}
-	if managerPathMutationClassifier("mega")(ManagerLocator{Path: "/from/report.txt"}, ManagerLocator{Path: "/to"}, "report.txt") {
-		t.Fatal("MEGA cross-directory move must not report a single native operation")
+
+	s3Mover, ok := NewManagerMover("s3", mockProvider)
+	if !ok {
+		t.Fatal("NewManagerMover(s3) = false, want true")
 	}
-	if !managerPathMutationClassifier("mega")(ManagerLocator{Path: "/folder/report.txt"}, ManagerLocator{Path: "/folder"}, "renamed.txt") {
-		t.Fatal("MEGA same-directory rename should report a single native operation")
+	if res, err := s3Mover.MoveManagerItem(context.Background(), ManagerLocator{Path: "/from/report.txt"}, ManagerLocator{Path: "/to"}, "report.txt", ManagerMutationOptions{}); err != nil || res.Native {
+		t.Fatalf("S3 move = (%+v, %v), want Native=false without error", res, err)
 	}
-	if managerPathMutationClassifier("seafile")(ManagerLocator{Path: "/Library/from/report.txt"}, ManagerLocator{Path: "/Library/to"}, "renamed.txt") {
-		t.Fatal("Seafile move followed by rename must not report a single native operation")
+
+	megaMover, ok := NewManagerMover("mega", mockProvider)
+	if !ok {
+		t.Fatal("NewManagerMover(mega) = false, want true")
 	}
-	if !managerPathMutationClassifier("seafile")(ManagerLocator{Path: "/Library/folder/report.txt"}, ManagerLocator{Path: "/Library/folder"}, "renamed.txt") {
-		t.Fatal("Seafile same-directory rename should report a single native operation")
+	if res, err := megaMover.MoveManagerItem(context.Background(), ManagerLocator{Path: "/from/report.txt"}, ManagerLocator{Path: "/to"}, "report.txt", ManagerMutationOptions{}); err != nil || res.Native {
+		t.Fatalf("MEGA cross-directory move = (%+v, %v), want Native=false without error", res, err)
+	}
+	megaRenamer, ok := NewManagerRenamer("mega", mockProvider)
+	if !ok {
+		t.Fatal("NewManagerRenamer(mega) = false, want true")
+	}
+	if res, err := megaRenamer.RenameManagerItem(context.Background(), ManagerLocator{Path: "/folder/report.txt"}, ManagerLocator{Path: "/folder"}, "renamed.txt", ManagerMutationOptions{}); err != nil || !res.Native {
+		t.Fatalf("MEGA same-directory rename = (%+v, %v), want Native=true without error", res, err)
+	}
+
+	seafileMover, ok := NewManagerMover("seafile", mockProvider)
+	if !ok {
+		t.Fatal("NewManagerMover(seafile) = false, want true")
+	}
+	if res, err := seafileMover.MoveManagerItem(context.Background(), ManagerLocator{Path: "/Library/from/report.txt"}, ManagerLocator{Path: "/Library/to"}, "renamed.txt", ManagerMutationOptions{}); err != nil || res.Native {
+		t.Fatalf("Seafile move+rename = (%+v, %v), want Native=false without error", res, err)
+	}
+	seafileRenamer, ok := NewManagerRenamer("seafile", mockProvider)
+	if !ok {
+		t.Fatal("NewManagerRenamer(seafile) = false, want true")
+	}
+	if res, err := seafileRenamer.RenameManagerItem(context.Background(), ManagerLocator{Path: "/Library/folder/report.txt"}, ManagerLocator{Path: "/Library/folder"}, "renamed.txt", ManagerMutationOptions{}); err != nil || !res.Native {
+		t.Fatalf("Seafile same-directory rename = (%+v, %v), want Native=true without error", res, err)
 	}
 }
 
@@ -458,8 +494,8 @@ func TestPublicFactoryConstructsEveryProvider(t *testing.T) {
 			}
 		})
 	}
-	if len(cases) != len(providerRegistry) {
-		t.Fatalf("factory assertions = %d, registry providers = %d", len(cases), len(providerRegistry))
+	if len(cases) != len(defaultProviderCatalogue.entries) {
+		t.Fatalf("factory assertions = %d, catalogue providers = %d", len(cases), len(defaultProviderCatalogue.entries))
 	}
 }
 
@@ -514,4 +550,328 @@ func TestNewProviderMega(t *testing.T) {
 	if megaProvider.Session().MasterKey[0] != 1 {
 		t.Error("Session() returned a mutable reference to the provider session")
 	}
+}
+
+func TestProviderCatalogueValidationSeam(t *testing.T) {
+	stubConstruct := func(context.Context, string, string, string) (StorageProvider, error) {
+		return &WebDAVProvider{}, nil
+	}
+
+	t.Run("rejects invalid catalogue registrations", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			entries []providerRegistration
+		}{
+			{
+				name: "empty provider type",
+				entries: []providerRegistration{{
+					Type:                   "",
+					SupportedResourceTypes: map[string]bool{"files": true},
+					VerificationMode:       VerificationSizeOnly,
+					Construct:              stubConstruct,
+				}},
+			},
+			{
+				name: "duplicate provider type",
+				entries: []providerRegistration{
+					{Type: "custom", SupportedResourceTypes: map[string]bool{"files": true}, VerificationMode: VerificationSizeOnly, Construct: stubConstruct},
+					{Type: "custom", SupportedResourceTypes: map[string]bool{"files": true}, VerificationMode: VerificationSizeOnly, Construct: stubConstruct},
+				},
+			},
+			{
+				name: "missing constructor",
+				entries: []providerRegistration{{
+					Type:                   "custom",
+					SupportedResourceTypes: map[string]bool{"files": true},
+					VerificationMode:       VerificationSizeOnly,
+				}},
+			},
+			{
+				name: "empty resource types",
+				entries: []providerRegistration{{
+					Type:             "custom",
+					VerificationMode: VerificationSizeOnly,
+					Construct:        stubConstruct,
+				}},
+			},
+			{
+				name: "requires https without host",
+				entries: []providerRegistration{{
+					Type:                   "custom",
+					RequiresHTTPS:          true,
+					SupportedResourceTypes: map[string]bool{"files": true},
+					VerificationMode:       VerificationSizeOnly,
+					Construct:              stubConstruct,
+				}},
+			},
+			{
+				name: "rejects url userinfo without egress validation",
+				entries: []providerRegistration{{
+					Type:                   "custom",
+					RejectsURLUserinfo:     true,
+					SupportedResourceTypes: map[string]bool{"files": true},
+					VerificationMode:       VerificationSizeOnly,
+					Construct:              stubConstruct,
+				}},
+			},
+			{
+				name: "missing verification mode",
+				entries: []providerRegistration{{
+					Type:                   "custom",
+					SupportedResourceTypes: map[string]bool{"files": true},
+					Construct:              stubConstruct,
+				}},
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if _, err := newProviderCatalogue(tc.entries); err == nil {
+					t.Fatalf("newProviderCatalogue(%s) expected error, got nil", tc.name)
+				}
+			})
+		}
+	})
+
+	t.Run("single registration supplies validation rules and ordered list", func(t *testing.T) {
+		cat, err := newProviderCatalogue([]providerRegistration{
+			{
+				Type:                     "alpha",
+				RequiresHost:             true,
+				RequiresHTTPS:            true,
+				RequiresEgressValidation: true,
+				SupportedResourceTypes:   map[string]bool{"files": true, "calendars": true},
+				VerificationMode:         VerificationSizeOnly,
+				Construct:                stubConstruct,
+			},
+			{
+				Type:                   "beta",
+				IsVirtual:              true,
+				SupportedResourceTypes: map[string]bool{"files": true},
+				VerificationMode:       VerificationCryptographicHash,
+				Construct:              stubConstruct,
+			},
+		})
+		if err != nil {
+			t.Fatalf("newProviderCatalogue() error = %v", err)
+		}
+
+		wantOrder := []string{"alpha", "beta"}
+		if !reflect.DeepEqual(cat.validProviders(), wantOrder) {
+			t.Fatalf("validProviders() = %v, want %v", cat.validProviders(), wantOrder)
+		}
+		if !cat.isValidProvider("alpha") || !cat.isValidProvider("beta") || cat.isValidProvider("gamma") {
+			t.Fatalf("isValidProvider returned unexpected results")
+		}
+		if !cat.providerSupportsResourceType("alpha", "calendars") || cat.providerSupportsResourceType("beta", "calendars") {
+			t.Fatalf("providerSupportsResourceType returned unexpected results")
+		}
+		if cat.isVirtualProvider("alpha") || !cat.isVirtualProvider("beta") {
+			t.Fatalf("isVirtualProvider returned unexpected results")
+		}
+		if err := cat.validateProviderURL("alpha", "http://example.test"); err == nil {
+			t.Fatalf("validateProviderURL(alpha, http) expected error")
+		}
+		if err := cat.validateProviderURL("alpha", "https://example.test"); err != nil {
+			t.Fatalf("validateProviderURL(alpha, https) error = %v", err)
+		}
+		if err := cat.validateProviderURL("beta", ""); err != nil {
+			t.Fatalf("validateProviderURL(beta, empty) error = %v", err)
+		}
+	})
+
+	t.Run("production ValidProviders are unique and support files", func(t *testing.T) {
+		seen := make(map[string]bool, len(ValidProviders))
+		for _, p := range ValidProviders {
+			if seen[p] {
+				t.Fatalf("duplicate provider %q in ValidProviders", p)
+			}
+			seen[p] = true
+			if !IsValidProvider(p) {
+				t.Errorf("IsValidProvider(%q) = false, want true", p)
+			}
+			if !ProviderSupportsResourceType(p, "files") {
+				t.Errorf("ProviderSupportsResourceType(%q, files) = false, want true", p)
+			}
+			if got, want := IsVirtualProvider(p), p == "immich"; got != want {
+				t.Errorf("IsVirtualProvider(%q) = %t, want %t", p, got, want)
+			}
+			entry, ok := defaultProviderCatalogue.lookup(p)
+			if !ok {
+				t.Fatalf("missing catalogue entry for %q", p)
+			}
+			if entry.RequiresHost {
+				if err := ValidateProviderURL(p, ""); err == nil {
+					t.Errorf("ValidateProviderURL(%q, empty) expected error", p)
+				}
+				if entry.RequiresHTTPS {
+					if err := ValidateProviderURL(p, "http://example.test"); err == nil {
+						t.Errorf("ValidateProviderURL(%q, http) expected error", p)
+					}
+					if err := ValidateProviderURL(p, "https://example.test"); err != nil {
+						t.Errorf("ValidateProviderURL(%q, https) unexpected error: %v", p, err)
+					}
+				}
+			} else if err := ValidateProviderURL(p, ""); err != nil {
+				t.Errorf("ValidateProviderURL(%q, empty) unexpected error: %v", p, err)
+			}
+		}
+	})
+}
+
+func TestProviderCatalogueConstructionSeam(t *testing.T) {
+	t.Run("single registration drives userinfo handling, SSRF guard, and construction", func(t *testing.T) {
+		var gotURL, gotUser, gotPass string
+		cat, err := newProviderCatalogue([]providerRegistration{
+			{
+				Type:                     "egress-extract",
+				RequiresHost:             true,
+				RequiresHTTPS:            true,
+				RequiresEgressValidation: true,
+				SupportedResourceTypes:   map[string]bool{"files": true},
+				VerificationMode:         VerificationSizeOnly,
+				Construct: func(_ context.Context, urlStr, username, password string) (StorageProvider, error) {
+					gotURL, gotUser, gotPass = urlStr, username, password
+					return &WebDAVProvider{}, nil
+				},
+			},
+			{
+				Type:                     "egress-no-userinfo",
+				RequiresHost:             true,
+				RequiresEgressValidation: true,
+				RejectsURLUserinfo:       true,
+				SupportedResourceTypes:   map[string]bool{"files": true},
+				VerificationMode:         VerificationSizeOnly,
+				Construct: func(_ context.Context, urlStr, username, password string) (StorageProvider, error) {
+					return &FTPProvider{}, nil
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("newProviderCatalogue() error = %v", err)
+		}
+
+		if _, err := cat.newProvider(context.Background(), "unknown", "https://example.test", "", ""); err == nil {
+			t.Fatal("expected error for unregistered provider")
+		}
+		if _, err := cat.newProvider(context.Background(), "egress-extract", "https://127.0.0.1/dav", "u", "p"); err == nil {
+			t.Fatal("expected SSRF block for loopback endpoint")
+		}
+		if _, err := cat.newProvider(context.Background(), "egress-no-userinfo", "ftps://u:secret@10.0.0.5", "", ""); err == nil {
+			t.Fatal("expected userinfo rejection when RejectsURLUserinfo is true")
+		}
+		p, err := cat.newProvider(context.Background(), "egress-extract", "https://alice:s3cr3t@10.0.0.5/dav", "", "")
+		if err != nil {
+			t.Fatalf("newProvider(egress-extract) error = %v", err)
+		}
+		if p == nil {
+			t.Fatal("expected constructed provider")
+		}
+		if gotURL != "https://10.0.0.5/dav" || gotUser != "alice" || gotPass != "s3cr3t" {
+			t.Fatalf("Construct got (%q, %q, %q), want stripped URL and extracted credentials", gotURL, gotUser, gotPass)
+		}
+	})
+}
+
+func TestProviderCatalogueManagerSeam(t *testing.T) {
+	t.Run("single registration supplies capabilities, file manager, and mutation routing", func(t *testing.T) {
+		cat, err := newProviderCatalogue([]providerRegistration{
+			{
+				Type:                   "path-custom",
+				SupportedResourceTypes: map[string]bool{"files": true},
+				VerificationMode:       VerificationSizeOnly,
+				ManagerCapabilities:    ManagerCapabilities{Browse: true, Download: true, Rename: true, Move: true, Copy: true},
+				ManagerPathMutation:    true,
+				ManagerSingleOp: func(locator, destination ManagerLocator, _ string) bool {
+					return locator.Path == "/same/file.txt" && destination.Path == "/same"
+				},
+				Construct: func(context.Context, string, string, string) (StorageProvider, error) {
+					return &mockStorageProvider{}, nil
+				},
+			},
+			{
+				Type:                      "virtual-custom",
+				IsVirtual:                 true,
+				SupportedResourceTypes:    map[string]bool{"files": true},
+				VerificationMode:          VerificationSizeOnly,
+				ManagerCapabilities:       ManagerCapabilities{Browse: true, Download: true},
+				ManagerPathMutation:       false,
+				ManagerRootNativeID:       "custom-root",
+				ManagerDownloadByNativeID: true,
+				Construct: func(context.Context, string, string, string) (StorageProvider, error) {
+					return &mockStorageProvider{}, nil
+				},
+			},
+			{
+				Type:                   "windows-blocked",
+				SupportedResourceTypes: map[string]bool{"files": true},
+				VerificationMode:       VerificationSizeOnly,
+				ManagerCapabilities:    ManagerCapabilities{Browse: true, Rename: true, Move: true, Copy: true},
+				WindowsManagerBlocked:  true,
+				ManagerPathMutation:    true,
+				Construct: func(context.Context, string, string, string) (StorageProvider, error) {
+					return &mockStorageProvider{}, nil
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("newProviderCatalogue() error = %v", err)
+		}
+
+		if got := cat.managerCapabilitiesFor("unknown"); got != (ManagerCapabilities{}) {
+			t.Fatalf("managerCapabilitiesFor(unknown) = %+v, want zero", got)
+		}
+		if got := cat.managerCapabilitiesFor("path-custom"); !got.Rename || !got.Copy {
+			t.Fatalf("managerCapabilitiesFor(path-custom) = %+v, want Rename and Copy", got)
+		}
+
+		provider := &mockStorageProvider{
+			inspectFn: func(_ context.Context, _ string, p string) (CloudResource, error) {
+				if p == "/same" || p == "/other" {
+					return CloudResource{Path: p, Name: "dir", IsDir: true}, nil
+				}
+				return CloudResource{Path: p, Name: "file.txt", Size: 10}, nil
+			},
+		}
+
+		fm, err := cat.newFileManager("path-custom", provider)
+		if err != nil {
+			t.Fatalf("newFileManager(path-custom) error = %v", err)
+		}
+		renameRes, err := fm.RenameManagerItem(context.Background(), ManagerLocator{Path: "/same/file.txt"}, ManagerLocator{Path: "/same"}, "renamed.txt", ManagerMutationOptions{})
+		if err != nil {
+			t.Fatalf("RenameManagerItem error = %v", err)
+		}
+		if !renameRes.Native {
+			t.Fatal("expected single-op classifier to mark same-dir rename as Native=true")
+		}
+		moveRes, err := fm.MoveManagerItem(context.Background(), ManagerLocator{Path: "/same/file.txt"}, ManagerLocator{Path: "/other"}, "file.txt", ManagerMutationOptions{})
+		if err != nil {
+			t.Fatalf("MoveManagerItem error = %v", err)
+		}
+		if moveRes.Native {
+			t.Fatal("expected single-op classifier to mark cross-dir move as Native=false")
+		}
+
+		virtualFM, err := cat.newFileManager("virtual-custom", provider)
+		if err != nil {
+			t.Fatalf("newFileManager(virtual-custom) error = %v", err)
+		}
+		if !virtualFM.IsRootLocator(ManagerLocator{NativeID: "custom-root"}) {
+			t.Fatal("expected ManagerRootNativeID to drive IsRootLocator")
+		}
+		if _, ok := cat.newManagerRenamer("virtual-custom", provider); ok {
+			t.Fatal("virtual-custom without ManagerPathMutation should not fall back to path renamer")
+		}
+		if _, ok := cat.newManagerMover("virtual-custom", provider); ok {
+			t.Fatal("virtual-custom without ManagerPathMutation should not fall back to path mover")
+		}
+		if _, ok := cat.newManagerCopier("virtual-custom", provider); ok {
+			t.Fatal("virtual-custom without ManagerPathMutation should not fall back to path copier")
+		}
+
+		_, wantBlocked := cat.newManagerRenamer("windows-blocked", provider)
+		if wantBlocked == (runtime.GOOS == "windows") {
+			t.Fatalf("newManagerRenamer(windows-blocked) = %t on %s, want %t", wantBlocked, runtime.GOOS, runtime.GOOS != "windows")
+		}
+	})
 }
