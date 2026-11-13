@@ -88,6 +88,12 @@ type Coordinator struct {
 	previewTargetFactory    PreviewTargetFactoryFunc
 	repositorySourceFactory RepositorySourceFactoryFunc
 	restoreTargetFactory    RestoreTargetFactoryFunc
+	oauthLocker             oauth.TokenLocker
+}
+
+// SetOAuthLocker sets the distributed OAuth refresh lock backend for this coordinator.
+func (c *Coordinator) SetOAuthLocker(locker oauth.TokenLocker) {
+	c.oauthLocker = locker
 }
 
 // SetPreviewTargetFactory overrides preview target creation for tests or read-only adapters.
@@ -423,7 +429,7 @@ func isPermanentRestoreError(err error) bool {
 // A retry always receives a fresh preview, and terminalization clears this
 // snapshot, so neither a profile nor a historical restore job retains a
 // runnable direct credential.
-func (c *Coordinator) ensureFreshRestoreTargetOAuthToken(ctx context.Context, runID, provider, accessEncrypted string, refreshEncrypted sql.NullString, expiresAt sql.NullTime) (string, error) {
+func (c *Coordinator) ensureFreshRestoreTargetOAuthToken(ctx context.Context, userID, runID, provider, accessEncrypted string, refreshEncrypted sql.NullString, expiresAt sql.NullTime) (string, error) {
 	if !oauth.IsProvider(provider) {
 		return accessEncrypted, nil
 	}
@@ -433,40 +439,85 @@ func (c *Coordinator) ensureFreshRestoreTargetOAuthToken(ctx context.Context, ru
 	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
 		return accessEncrypted, nil
 	}
-	refresh, err := crypto.DecryptWithDomain(refreshEncrypted.String, c.encryptionKey, crypto.DomainOAuthRefreshToken)
+	expectedRefreshEnc := refreshEncrypted.String
+	refresh, err := crypto.DecryptWithDomain(expectedRefreshEnc, c.encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("decrypt restore OAuth refresh token: %w", err)
 	}
 	defer crypto.ZeroString(&refresh)
-	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	token, err := oauth.RefreshToken(refreshCtx, provider, refresh)
-	cancel()
-	if err != nil {
-		return "", fmt.Errorf("refresh restore OAuth token: %w", err)
-	}
-	access, err := crypto.EncryptWithDomain(token.AccessToken, c.encryptionKey, crypto.DomainOAuthAccessToken)
+
+	var persistedAccess string
+	res, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
+		DB:            c.db,
+		Locker:        c.oauthLocker,
+		EncryptionKey: c.encryptionKey,
+		UserID:        userID,
+		Provider:      provider,
+		RefreshToken:  refresh,
+		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
+			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
+			defer cancel()
+			token, rerr := oauth.RefreshToken(tCtx, prov, tok)
+			if rerr != nil {
+				return nil, fmt.Errorf("refresh restore OAuth token: %w", rerr)
+			}
+			return token, nil
+		},
+		OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
+			latestAccess, latestRefreshEnc, latestExpires, loadErr := db.GetRestoreRunCredentialSnapshotContext(lockCtx, c.db, runID)
+			if loadErr != nil {
+				return "", false, "", nil
+			}
+			if latestExpires.Valid && time.Now().Before(latestExpires.Time.Add(-2*time.Minute)) && latestAccess != "" {
+				return latestAccess, true, "", nil
+			}
+			if latestRefreshEnc.Valid && latestRefreshEnc.String != "" && latestRefreshEnc.String != expectedRefreshEnc {
+				expectedRefreshEnc = latestRefreshEnc.String
+				updatedPlain, decErr := crypto.DecryptWithDomain(expectedRefreshEnc, c.encryptionKey, crypto.DomainOAuthRefreshToken)
+				if decErr != nil {
+					return "", false, "", fmt.Errorf("decrypt restore OAuth refresh token: %w", decErr)
+				}
+				if updatedPlain != "" && updatedPlain != target {
+					refresh = updatedPlain
+					return "", false, updatedPlain, nil
+				}
+			}
+			return "", false, "", nil
+		},
+		Persist: func(persistCtx context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
+			access, err := crypto.EncryptWithDomain(token.AccessToken, c.encryptionKey, crypto.DomainOAuthAccessToken)
+			if err != nil {
+				return "", false, err
+			}
+			rotatedRefresh, err := crypto.EncryptWithDomain(token.RefreshToken, c.encryptionKey, crypto.DomainOAuthRefreshToken)
+			if err != nil {
+				return "", false, err
+			}
+			expiresIn := token.ExpiresIn
+			if expiresIn <= 0 {
+				expiresIn = 3600
+			}
+			if err := db.UpdateRestoreRunOAuthTokens(persistCtx, c.db, runID, access, rotatedRefresh, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc); err != nil {
+				if !errors.Is(err, db.ErrOAuthTokenConflict) {
+					return "", false, fmt.Errorf("persist restore OAuth token: %w", err)
+				}
+				latestAccess, _, latestExpires, latestErr := db.GetRestoreRunCredentialSnapshotContext(persistCtx, c.db, runID)
+				if latestErr != nil || latestAccess == "" || !latestExpires.Valid {
+					return "", false, fmt.Errorf("adopt concurrent restore OAuth token: %w", latestErr)
+				}
+				return latestAccess, true, nil
+			}
+			persistedAccess = access
+			return "", false, nil
+		},
+	})
 	if err != nil {
 		return "", err
 	}
-	rotatedRefresh, err := crypto.EncryptWithDomain(token.RefreshToken, c.encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil {
-		return "", err
+	if res.Adopted {
+		return res.AdoptedAccess, nil
 	}
-	expiresIn := token.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 3600
-	}
-	if err := db.UpdateRestoreRunOAuthTokens(ctx, c.db, runID, access, rotatedRefresh, time.Now().Add(time.Duration(expiresIn)*time.Second), refreshEncrypted.String); err != nil {
-		if !errors.Is(err, db.ErrOAuthTokenConflict) {
-			return "", fmt.Errorf("persist restore OAuth token: %w", err)
-		}
-		latestAccess, _, latestExpires, latestErr := db.GetRestoreRunCredentialSnapshotContext(ctx, c.db, runID)
-		if latestErr != nil || latestAccess == "" || !latestExpires.Valid {
-			return "", fmt.Errorf("adopt concurrent restore OAuth token: %w", latestErr)
-		}
-		return latestAccess, nil
-	}
-	return access, nil
+	return persistedAccess, nil
 }
 
 func (c *Coordinator) ensureFreshRepositoryOAuthToken(ctx context.Context, connection *db.BackupRepositoryConnection) (string, error) {
@@ -482,40 +533,85 @@ func (c *Coordinator) ensureFreshRepositoryOAuthToken(ctx context.Context, conne
 	if connection.TokenExpiresAt.Valid && time.Now().Before(connection.TokenExpiresAt.Time.Add(-2*time.Minute)) {
 		return connection.PasswordEncrypted, nil
 	}
-	refresh, err := crypto.DecryptWithDomain(connection.RefreshTokenEncrypted.String, c.encryptionKey, crypto.DomainOAuthRefreshToken)
+	expectedRefreshEnc := connection.RefreshTokenEncrypted.String
+	refresh, err := crypto.DecryptWithDomain(expectedRefreshEnc, c.encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return "", err
 	}
 	defer crypto.ZeroString(&refresh)
-	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	token, err := oauth.RefreshToken(refreshCtx, connection.Provider, refresh)
-	cancel()
-	if err != nil {
-		return "", fmt.Errorf("refresh backup repository OAuth token: %w", err)
-	}
-	accessEncrypted, err := crypto.EncryptWithDomain(token.AccessToken, c.encryptionKey, crypto.DomainOAuthAccessToken)
+
+	var persistedAccess string
+	res, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
+		DB:            c.db,
+		Locker:        c.oauthLocker,
+		EncryptionKey: c.encryptionKey,
+		UserID:        connection.UserID,
+		Provider:      connection.Provider,
+		RefreshToken:  refresh,
+		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
+			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
+			defer cancel()
+			token, rerr := oauth.RefreshToken(tCtx, prov, tok)
+			if rerr != nil {
+				return nil, fmt.Errorf("refresh backup repository OAuth token: %w", rerr)
+			}
+			return token, nil
+		},
+		OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
+			latest, loadErr := db.GetBackupRepositoryConnectionContext(lockCtx, c.db, connection.BackupJobID)
+			if loadErr != nil {
+				return "", false, "", nil
+			}
+			if latest.TokenExpiresAt.Valid && time.Now().Before(latest.TokenExpiresAt.Time.Add(-2*time.Minute)) && latest.PasswordEncrypted != "" {
+				return latest.PasswordEncrypted, true, "", nil
+			}
+			if latest.RefreshTokenEncrypted.Valid && latest.RefreshTokenEncrypted.String != "" && latest.RefreshTokenEncrypted.String != expectedRefreshEnc {
+				expectedRefreshEnc = latest.RefreshTokenEncrypted.String
+				updatedPlain, decErr := crypto.DecryptWithDomain(expectedRefreshEnc, c.encryptionKey, crypto.DomainOAuthRefreshToken)
+				if decErr != nil {
+					return "", false, "", decErr
+				}
+				if updatedPlain != "" && updatedPlain != target {
+					refresh = updatedPlain
+					return "", false, updatedPlain, nil
+				}
+			}
+			return "", false, "", nil
+		},
+		Persist: func(persistCtx context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
+			accessEncrypted, err := crypto.EncryptWithDomain(token.AccessToken, c.encryptionKey, crypto.DomainOAuthAccessToken)
+			if err != nil {
+				return "", false, err
+			}
+			refreshEncrypted, err := crypto.EncryptWithDomain(token.RefreshToken, c.encryptionKey, crypto.DomainOAuthRefreshToken)
+			if err != nil {
+				return "", false, err
+			}
+			expiresIn := token.ExpiresIn
+			if expiresIn <= 0 {
+				expiresIn = 3600
+			}
+			if err := db.UpdateBackupRepositoryOAuthTokens(persistCtx, c.db, connection.BackupJobID, accessEncrypted, refreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc); err != nil {
+				if !errors.Is(err, db.ErrOAuthTokenConflict) {
+					return "", false, err
+				}
+				latest, loadErr := db.GetBackupRepositoryConnectionContext(persistCtx, c.db, connection.BackupJobID)
+				if loadErr != nil || latest.PasswordEncrypted == "" {
+					return "", false, fmt.Errorf("adopt concurrent backup repository OAuth token: %w", loadErr)
+				}
+				return latest.PasswordEncrypted, true, nil
+			}
+			persistedAccess = accessEncrypted
+			return "", false, nil
+		},
+	})
 	if err != nil {
 		return "", err
 	}
-	refreshEncrypted, err := crypto.EncryptWithDomain(token.RefreshToken, c.encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil {
-		return "", err
+	if res.Adopted {
+		return res.AdoptedAccess, nil
 	}
-	expiresIn := token.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 3600
-	}
-	if err := db.UpdateBackupRepositoryOAuthTokens(ctx, c.db, connection.BackupJobID, accessEncrypted, refreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), connection.RefreshTokenEncrypted.String); err != nil {
-		if !errors.Is(err, db.ErrOAuthTokenConflict) {
-			return "", err
-		}
-		latest, loadErr := db.GetBackupRepositoryConnectionContext(ctx, c.db, connection.BackupJobID)
-		if loadErr != nil || latest.PasswordEncrypted == "" {
-			return "", fmt.Errorf("adopt concurrent backup repository OAuth token: %w", loadErr)
-		}
-		return latest.PasswordEncrypted, nil
-	}
-	return accessEncrypted, nil
+	return persistedAccess, nil
 }
 
 func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) error {
@@ -552,7 +648,7 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 	if targetPasswordEncrypted == "" && targetProviderType != "local" {
 		return errors.New("restore target credential snapshot is unavailable")
 	}
-	targetPasswordEncrypted, err = c.ensureFreshRestoreTargetOAuthToken(ctx, item.RestoreRunID, targetProviderType, targetPasswordEncrypted, targetRefreshEncrypted, targetTokenExpiresAt)
+	targetPasswordEncrypted, err = c.ensureFreshRestoreTargetOAuthToken(ctx, repository.UserID, item.RestoreRunID, targetProviderType, targetPasswordEncrypted, targetRefreshEncrypted, targetTokenExpiresAt)
 	if err != nil {
 		return err
 	}

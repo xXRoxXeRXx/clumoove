@@ -24,6 +24,7 @@ type oauthTokenSnapshot struct {
 type oauthTokenState interface {
 	OAuthWorkKind() string
 	OAuthJobID() string
+	OAuthUserID() string
 	OAuthTokens(role string) oauthTokenSnapshot
 	OAuthUpdatedAt() time.Time
 	ApplyOAuthTokens(role, access string, refresh sql.NullString, expires sql.NullTime)
@@ -31,10 +32,7 @@ type oauthTokenState interface {
 	PersistOAuthTokens(ctx context.Context, role, access, refresh string, expires time.Time, expectedRefresh string) error
 }
 
-type oauthRefreshLocker interface {
-	TryClaimOAuthLock(context.Context, string, string, string, time.Duration) (string, bool, error)
-	ReleaseOAuthLock(context.Context, string, string, string, string) error
-}
+type oauthRefreshLocker = oauth.TokenLocker
 
 func (p *Processor) refreshToken(ctx context.Context, provider, refresh string) (*oauth.TokenResponse, error) {
 	if p.oauthRefresh != nil {
@@ -43,11 +41,14 @@ func (p *Processor) refreshToken(ctx context.Context, provider, refresh string) 
 	return oauth.RefreshToken(ctx, provider, refresh)
 }
 
-func (p *Processor) refreshLocker() oauthRefreshLocker {
+func (p *Processor) refreshLocker() oauth.TokenLocker {
 	if p.oauthRefreshLock != nil {
 		return p.oauthRefreshLock
 	}
-	return p.queue
+	if p.queue != nil {
+		return p.queue
+	}
+	return nil
 }
 
 func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, migration *db.Migration, role, access string, force bool) (string, error) {
@@ -79,86 +80,107 @@ func (p *Processor) refreshOAuthLifecycle(ctx context.Context, state oauthTokenS
 	}
 
 	originalUpdatedAt := state.OAuthUpdatedAt()
-	release := p.refreshLocks.lock(fmt.Sprintf("%s:%s:%s", state.OAuthWorkKind(), state.OAuthJobID(), role))
-	defer release()
-	var lockToken string
-	if locker := p.refreshLocker(); locker != nil {
-		var claimed bool
-		var err error
-		for attempt := 0; attempt < 15; attempt++ {
-			lockToken, claimed, err = locker.TryClaimOAuthLock(ctx, state.OAuthWorkKind(), state.OAuthJobID(), role, 30*time.Second)
-			if err == nil && claimed {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-time.After(200 * time.Millisecond):
-			}
-			if state.ReloadOAuthTokens(ctx) == nil {
-				latest := state.OAuthTokens(role)
-				if latest.expiresAt.Valid && time.Now().Before(latest.expiresAt.Time.Add(-2*time.Minute)) {
-					if decrypted, decryptErr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); decryptErr == nil {
-						return decrypted, nil
-					}
-				}
-			}
-		}
-		if lockToken == "" || !claimed {
-			return "", fmt.Errorf("lock contention: unable to claim OAuth refresh lock for %s %s (%s)", state.OAuthWorkKind(), state.OAuthJobID(), role)
-		}
-		defer locker.ReleaseOAuthLock(ctx, state.OAuthWorkKind(), state.OAuthJobID(), role, lockToken)
-	}
-	if err := state.ReloadOAuthTokens(ctx); err != nil {
-		return "", fmt.Errorf("reload OAuth token state: %w", err)
-	}
-	latest := state.OAuthTokens(role)
-	decrypted, err := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken)
-	if err != nil {
-		return "", fmt.Errorf("decrypt %s access token: %w", role, err)
-	}
-	access = decrypted
-	if force && state.OAuthUpdatedAt().After(originalUpdatedAt) {
-		return access, nil
-	}
-	if !force && latest.expiresAt.Valid && time.Now().Before(latest.expiresAt.Time.Add(-2*time.Minute)) {
-		return access, nil
-	}
-
-	refresh, err := crypto.DecryptWithDomain(latest.refreshEnc.String, p.secretKey, crypto.DomainOAuthRefreshToken)
+	expectedRefreshEnc := initial.refreshEnc.String
+	refresh, err := crypto.DecryptWithDomain(expectedRefreshEnc, p.secretKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("decrypt %s refresh token: %w", role, err)
 	}
-	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	response, err := p.refreshToken(refreshCtx, latest.provider, refresh)
-	cancel()
-	if err != nil {
-		return "", fmt.Errorf("refresh OAuth token for %s: %w", role, err)
-	}
-	accessEnc, err := crypto.EncryptWithDomain(response.AccessToken, p.secretKey, crypto.DomainOAuthAccessToken)
-	if err != nil {
-		return "", fmt.Errorf("encrypt OAuth access token: %w", err)
-	}
-	refreshEnc, err := crypto.EncryptWithDomain(response.RefreshToken, p.secretKey, crypto.DomainOAuthRefreshToken)
-	if err != nil {
-		return "", fmt.Errorf("encrypt OAuth refresh token: %w", err)
-	}
-	expiresIn := response.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 3600
-	}
-	expires := time.Now().Add(time.Duration(expiresIn) * time.Second)
-	if err := state.PersistOAuthTokens(ctx, role, accessEnc, refreshEnc, expires, latest.refreshEnc.String); err != nil {
-		if errors.Is(err, db.ErrOAuthTokenConflict) && state.ReloadOAuthTokens(ctx) == nil {
-			winner := state.OAuthTokens(role)
-			if decrypted, decryptErr := crypto.DecryptWithDomain(winner.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); decryptErr == nil {
-				return decrypted, nil
+	defer crypto.ZeroString(&refresh)
+
+	// Hold the job-role lock alongside the token lock so concurrent force-refreshes
+	// on the same job serialize cleanly even if the underlying token rotates.
+	jobRelease := p.refreshLocks.lock(fmt.Sprintf("%s:%s:%s", state.OAuthWorkKind(), state.OAuthJobID(), role))
+	defer jobRelease()
+
+	res, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
+		DB:            p.db,
+		Locker:        p.refreshLocker(),
+		EncryptionKey: p.secretKey,
+		UserID:        state.OAuthUserID(),
+		Provider:      initial.provider,
+		RefreshToken:  refresh,
+		Refresh: func(refreshCtx context.Context, provider, tok string) (*oauth.TokenResponse, error) {
+			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
+			defer cancel()
+			resp, rerr := p.refreshToken(tCtx, provider, tok)
+			if rerr != nil {
+				return nil, fmt.Errorf("refresh OAuth token for %s: %w", role, rerr)
 			}
-		}
-		return "", fmt.Errorf("persist OAuth tokens: %w", err)
+			return resp, nil
+		},
+		OnWait: func(waitCtx context.Context) (string, bool) {
+			if state.ReloadOAuthTokens(waitCtx) == nil {
+				latest := state.OAuthTokens(role)
+				if !force && latest.expiresAt.Valid && time.Now().Before(latest.expiresAt.Time.Add(-2*time.Minute)) {
+					if decrypted, decryptErr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); decryptErr == nil {
+						return decrypted, true
+					}
+				}
+			}
+			return "", false
+		},
+		OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
+			if err := state.ReloadOAuthTokens(lockCtx); err != nil {
+				return "", false, "", fmt.Errorf("reload OAuth token state: %w", err)
+			}
+			latest := state.OAuthTokens(role)
+			decrypted, err := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken)
+			if err != nil {
+				return "", false, "", fmt.Errorf("decrypt %s access token: %w", role, err)
+			}
+			if force && state.OAuthUpdatedAt().After(originalUpdatedAt) {
+				return decrypted, true, "", nil
+			}
+			if !force && latest.expiresAt.Valid && time.Now().Before(latest.expiresAt.Time.Add(-2*time.Minute)) {
+				return decrypted, true, "", nil
+			}
+			if latest.refreshEnc.Valid && latest.refreshEnc.String != "" && latest.refreshEnc.String != expectedRefreshEnc {
+				expectedRefreshEnc = latest.refreshEnc.String
+				updatedPlain, decErr := crypto.DecryptWithDomain(expectedRefreshEnc, p.secretKey, crypto.DomainOAuthRefreshToken)
+				if decErr != nil {
+					return "", false, "", fmt.Errorf("decrypt %s refresh token: %w", role, decErr)
+				}
+				if updatedPlain != "" && updatedPlain != target {
+					refresh = updatedPlain
+					return "", false, updatedPlain, nil
+				}
+			}
+			return "", false, "", nil
+		},
+		Persist: func(persistCtx context.Context, _ string, response *oauth.TokenResponse) (string, bool, error) {
+			accessEnc, err := crypto.EncryptWithDomain(response.AccessToken, p.secretKey, crypto.DomainOAuthAccessToken)
+			if err != nil {
+				return "", false, fmt.Errorf("encrypt OAuth access token: %w", err)
+			}
+			refreshEnc, err := crypto.EncryptWithDomain(response.RefreshToken, p.secretKey, crypto.DomainOAuthRefreshToken)
+			if err != nil {
+				return "", false, fmt.Errorf("encrypt OAuth refresh token: %w", err)
+			}
+			expiresIn := response.ExpiresIn
+			if expiresIn <= 0 {
+				expiresIn = 3600
+			}
+			expires := time.Now().Add(time.Duration(expiresIn) * time.Second)
+			if err := state.PersistOAuthTokens(persistCtx, role, accessEnc, refreshEnc, expires, expectedRefreshEnc); err != nil {
+				if errors.Is(err, db.ErrOAuthTokenConflict) && state.ReloadOAuthTokens(persistCtx) == nil {
+					winner := state.OAuthTokens(role)
+					if decrypted, decryptErr := crypto.DecryptWithDomain(winner.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); decryptErr == nil {
+						return decrypted, true, nil
+					}
+				}
+				return "", false, fmt.Errorf("persist OAuth tokens: %w", err)
+			}
+			state.ApplyOAuthTokens(role, accessEnc, sql.NullString{String: refreshEnc, Valid: true}, sql.NullTime{Time: expires, Valid: true})
+			return "", false, nil
+		},
+	})
+	if err != nil {
+		return "", err
 	}
-	state.ApplyOAuthTokens(role, accessEnc, sql.NullString{String: refreshEnc, Valid: true}, sql.NullTime{Time: expires, Valid: true})
-	return response.AccessToken, nil
+	if res.Adopted {
+		return res.AdoptedAccess, nil
+	}
+	return res.Token.AccessToken, nil
 }
 
 type migrationOAuthTokenState struct {
@@ -168,6 +190,7 @@ type migrationOAuthTokenState struct {
 
 func (s *migrationOAuthTokenState) OAuthWorkKind() string     { return "migration" }
 func (s *migrationOAuthTokenState) OAuthJobID() string        { return s.migration.ID }
+func (s *migrationOAuthTokenState) OAuthUserID() string       { return s.migration.UserID.String }
 func (s *migrationOAuthTokenState) OAuthUpdatedAt() time.Time { return s.migration.UpdatedAt }
 func (s *migrationOAuthTokenState) OAuthTokens(role string) oauthTokenSnapshot {
 	if role == "source" {
@@ -199,6 +222,7 @@ type syncOAuthTokenState struct {
 
 func (s *syncOAuthTokenState) OAuthWorkKind() string     { return "sync" }
 func (s *syncOAuthTokenState) OAuthJobID() string        { return s.job.ID }
+func (s *syncOAuthTokenState) OAuthUserID() string       { return s.job.UserID }
 func (s *syncOAuthTokenState) OAuthUpdatedAt() time.Time { return s.job.UpdatedAt }
 func (s *syncOAuthTokenState) OAuthTokens(role string) oauthTokenSnapshot {
 	if role == "source" {

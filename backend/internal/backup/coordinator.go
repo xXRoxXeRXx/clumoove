@@ -94,6 +94,12 @@ type Coordinator struct {
 	workerID          string
 	providerFactory   ProviderFactoryFunc
 	preferMaintenance bool
+	oauthLocker       oauth.TokenLocker
+}
+
+// SetOAuthLocker sets the distributed OAuth refresh lock backend for this coordinator.
+func (c *Coordinator) SetOAuthLocker(locker oauth.TokenLocker) {
+	c.oauthLocker = locker
 }
 
 // backupRunLogger supplies the stable correlation fields used by every
@@ -1073,36 +1079,84 @@ func (c *Coordinator) ensureFreshOAuthToken(ctx context.Context, job *db.BackupJ
 	if !refreshEncrypted.Valid || refreshEncrypted.String == "" {
 		return errors.New("backup OAuth refresh credential is unavailable")
 	}
-	refresh, err := crypto.DecryptWithDomain(refreshEncrypted.String, c.encryptionKey, crypto.DomainOAuthRefreshToken)
+	expectedRefreshEnc := refreshEncrypted.String
+	refresh, err := crypto.DecryptWithDomain(expectedRefreshEnc, c.encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return fmt.Errorf("decrypt backup OAuth refresh token: %w", err)
 	}
 	defer crypto.ZeroString(&refresh)
-	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	token, err := oauth.RefreshToken(refreshCtx, provider, refresh)
-	cancel()
-	if err != nil {
-		return fmt.Errorf("refresh backup OAuth token: %w", err)
-	}
-	access, err := crypto.EncryptWithDomain(token.AccessToken, c.encryptionKey, crypto.DomainOAuthAccessToken)
+
+	var persistedAccess string
+	res, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
+		DB:            c.db,
+		Locker:        c.oauthLocker,
+		EncryptionKey: c.encryptionKey,
+		UserID:        job.UserID,
+		Provider:      provider,
+		RefreshToken:  refresh,
+		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
+			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
+			defer cancel()
+			token, rerr := oauth.RefreshToken(tCtx, prov, tok)
+			if rerr != nil {
+				return nil, fmt.Errorf("refresh backup OAuth token: %w", rerr)
+			}
+			return token, nil
+		},
+		OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
+			latestJob, lerr := db.GetBackupJobForOwnerContext(lockCtx, c.db, job.ID, job.UserID)
+			if lerr != nil || latestJob == nil {
+				return "", false, "", nil
+			}
+			*job = *latestJob
+			if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
+				return *accessEncrypted, true, "", nil
+			}
+			if refreshEncrypted.Valid && refreshEncrypted.String != "" && refreshEncrypted.String != expectedRefreshEnc {
+				expectedRefreshEnc = refreshEncrypted.String
+				updatedPlain, decErr := crypto.DecryptWithDomain(expectedRefreshEnc, c.encryptionKey, crypto.DomainOAuthRefreshToken)
+				if decErr != nil {
+					return "", false, "", fmt.Errorf("decrypt backup OAuth refresh token: %w", decErr)
+				}
+				if updatedPlain != "" && updatedPlain != target {
+					refresh = updatedPlain
+					return "", false, updatedPlain, nil
+				}
+			}
+			return "", false, "", nil
+		},
+		Persist: func(persistCtx context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
+			access, err := crypto.EncryptWithDomain(token.AccessToken, c.encryptionKey, crypto.DomainOAuthAccessToken)
+			if err != nil {
+				return "", false, err
+			}
+			rotatedRefresh, err := crypto.EncryptWithDomain(token.RefreshToken, c.encryptionKey, crypto.DomainOAuthRefreshToken)
+			if err != nil {
+				return "", false, err
+			}
+			expiresIn := token.ExpiresIn
+			if expiresIn <= 0 {
+				expiresIn = 3600
+			}
+			newExpiry := time.Now().Add(time.Duration(expiresIn) * time.Second)
+			if err := db.UpdateBackupJobOAuthTokens(persistCtx, c.db, job.ID, role, access, rotatedRefresh, newExpiry, expectedRefreshEnc); err != nil {
+				return "", false, fmt.Errorf("persist backup OAuth token: %w", err)
+			}
+			persistedAccess = access
+			*accessEncrypted = access
+			*refreshEncrypted = sql.NullString{String: rotatedRefresh, Valid: true}
+			*expiresAt = sql.NullTime{Time: newExpiry, Valid: true}
+			return "", false, nil
+		},
+	})
 	if err != nil {
 		return err
 	}
-	rotatedRefresh, err := crypto.EncryptWithDomain(token.RefreshToken, c.encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil {
-		return err
+	if res.Adopted {
+		*accessEncrypted = res.AdoptedAccess
+	} else {
+		_ = persistedAccess
 	}
-	expiresIn := token.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 3600
-	}
-	newExpiry := time.Now().Add(time.Duration(expiresIn) * time.Second)
-	if err := db.UpdateBackupJobOAuthTokens(ctx, c.db, job.ID, role, access, rotatedRefresh, newExpiry, refreshEncrypted.String); err != nil {
-		return fmt.Errorf("persist backup OAuth token: %w", err)
-	}
-	*accessEncrypted = access
-	*refreshEncrypted = sql.NullString{String: rotatedRefresh, Valid: true}
-	*expiresAt = sql.NullTime{Time: newExpiry, Valid: true}
 	return nil
 }
 

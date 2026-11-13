@@ -4,11 +4,9 @@ import (
 	"context"
 	"crypto/subtle"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"backend/internal/crypto"
@@ -28,9 +26,10 @@ var (
 	errProfileInvalidProvider = errors.New("profile provider invalid")
 )
 
-type oauthRefreshLocker interface {
-	TryClaimOAuthLock(ctx context.Context, jobType, jobID, role string, ttl time.Duration) (string, bool, error)
-	ReleaseOAuthLock(ctx context.Context, jobType, jobID, role, token string) error
+type oauthRotationCache = oauth.RotationCache
+
+func newOAuthRotationCache() *oauthRotationCache {
+	return oauth.NewRotationCache()
 }
 
 // ownedProfileAccess centralizes ownership checks, secret decryption/encryption,
@@ -42,24 +41,24 @@ type ownedProfileAccess struct {
 	providerFactory profileProviderFactory
 	refreshOAuth    func(context.Context, string, string) (*oauth.TokenResponse, error)
 	now             func() time.Time
-	oauthRotations  *oauthRotationCache
-	oauthLocker     oauthRefreshLocker
+	oauthRotations  *oauth.RotationCache
+	oauthLocker     oauth.TokenLocker
 }
 
-func (s *APIServer) rotationCache() *oauthRotationCache {
+func (s *APIServer) rotationCache() *oauth.RotationCache {
 	if s == nil {
 		return nil
 	}
 	s.oauthRotationMu.Lock()
 	defer s.oauthRotationMu.Unlock()
 	if s.oauthRotations == nil {
-		s.oauthRotations = newOAuthRotationCache()
+		s.oauthRotations = oauth.NewRotationCache()
 	}
 	return s.oauthRotations
 }
 
 func (s *APIServer) profiles() *ownedProfileAccess {
-	var locker oauthRefreshLocker
+	var locker oauth.TokenLocker
 	if s != nil && s.queue != nil {
 		locker = s.queue
 	}
@@ -613,15 +612,6 @@ func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, pro
 	return creds, profile, nil
 }
 
-const (
-	oauthRotationCacheTTL     = 24 * time.Hour
-	oauthRotationCacheMaxSize = 1024
-	oauthMaxResolveHops       = 32
-	oauthLockTTL              = 30 * time.Second
-	oauthLockMaxAttempts      = 50
-	oauthLockPollInterval     = 100 * time.Millisecond
-)
-
 func (a *ownedProfileAccess) resolveAndRefreshOAuth(
 	ctx context.Context,
 	userID string,
@@ -634,119 +624,121 @@ func (a *ownedProfileAccess) resolveAndRefreshOAuth(
 	secretFailurePolicy profileSecretFailurePolicy,
 ) (profileCreds, error) {
 	initialRefresh := creds.RefreshToken
+	rowRefreshEnc := profile.RefreshTokenEncrypted
 	var resolvedFromRotation string
 	defer crypto.ZeroString(&resolvedFromRotation)
 	defer crypto.ZeroString(&storedRefresh)
 
 	if !allowRefresh {
-		if rotated, ok := a.lookupOAuthRotation(ctx, userID, creds.Provider, creds.RefreshToken, a.currentTime()); ok {
+		if rotated, ok := oauth.LookupRotatedRefreshToken(ctx, a.db, a.oauthRotations, a.encryptionKey, userID, creds.Provider, creds.RefreshToken, a.currentTime()); ok {
 			resolvedFromRotation = rotated
 			creds.RefreshToken = rotated
 		}
 		return creds, nil
 	}
 
-	for hop := 0; hop < oauthMaxResolveHops; hop++ {
-		if rotated, ok := a.lookupOAuthRotation(ctx, userID, creds.Provider, creds.RefreshToken, a.currentTime()); ok && rotated != creds.RefreshToken {
-			resolvedFromRotation = rotated
-			creds.RefreshToken = rotated
-		}
-
-		target := creds.RefreshToken
-		targetKey := db.OAuthTokenRotationHash(userID, creds.Provider, target)
-		releaseLocal := a.oauthRotations.lockKey(targetKey)
-		releaseDist, lockErr := a.acquireDistributedOAuthLock(ctx, targetKey)
-		if lockErr != nil {
-			releaseLocal()
-			return creds, lockErr
-		}
-
-		releaseLocks := func() {
-			releaseDist()
-			releaseLocal()
-		}
-
-		// Re-check inside the critical section: another worker or instance holding
-		// target's lock may have just rotated it while we waited.
-		if rotated, ok := a.lookupOAuthRotation(ctx, userID, creds.Provider, target, a.currentTime()); ok && rotated != target {
-			resolvedFromRotation = rotated
-			creds.RefreshToken = rotated
-			releaseLocks()
-			continue
-		}
-
-		if err := a.reloadProfileOAuthState(ctx, profile, suppliedRefresh, &creds, &storedRefresh, secretFailurePolicy); err != nil {
-			releaseLocks()
-			return creds, err
-		}
-
-		now := a.currentTime()
-		if refreshPolicy != refreshOAuthAlways && !profileOAuthAccessNeedsRefresh(profile, creds.Password, now) {
-			releaseLocks()
-			return creds, nil
-		}
-
-		isProfileToken := suppliedRefresh == "" || (storedRefresh != "" && (subtle.ConstantTimeCompare([]byte(suppliedRefresh), []byte(storedRefresh)) == 1 || subtle.ConstantTimeCompare([]byte(creds.RefreshToken), []byte(storedRefresh)) == 1))
-		previousRefresh := creds.RefreshToken
-		token, refreshErr := a.refreshToken(ctx, creds.Provider, creds.RefreshToken)
-		if refreshErr != nil || token == nil || token.AccessToken == "" {
-			releaseLocks()
-			return creds, errors.New("profile OAuth token refresh failed")
-		}
-
-		if token.RefreshToken != "" {
-			a.recordOAuthRotationAliases(ctx, userID, creds.Provider, initialRefresh, suppliedRefresh, previousRefresh, storedRefresh, isProfileToken, token.RefreshToken, now)
-		}
-		if isProfileToken {
+	var isProfileToken bool
+	result, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
+		DB:            a.db,
+		Cache:         a.oauthRotations,
+		Locker:        a.oauthLocker,
+		EncryptionKey: a.encryptionKey,
+		UserID:        userID,
+		Provider:      creds.Provider,
+		RefreshToken:  creds.RefreshToken,
+		Now:           a.currentTime,
+		Refresh:       a.refreshToken,
+		ExtraAliases: func() []string {
+			aliases := []string{initialRefresh, suppliedRefresh}
+			if isProfileToken {
+				aliases = append(aliases, storedRefresh)
+			}
+			return aliases
+		},
+		OnLocked: func(ctx context.Context, target string) (string, bool, string, error) {
+			creds.RefreshToken = target
+			rowChanged, reloadErr := a.reloadProfileOAuthState(ctx, profile, suppliedRefresh, rowRefreshEnc, &creds, &storedRefresh, secretFailurePolicy)
+			if reloadErr != nil {
+				return "", false, "", reloadErr
+			}
+			if rowChanged {
+				rowRefreshEnc = profile.RefreshTokenEncrypted
+				if suppliedRefresh == "" && storedRefresh != "" && storedRefresh != target {
+					// Another writer updated the profile's stored refresh token while we waited.
+					// Release target's lock and re-acquire on the newer token before inspecting/refreshing.
+					return "", false, storedRefresh, nil
+				}
+			}
+			now := a.currentTime()
+			if refreshPolicy != refreshOAuthAlways && !profileOAuthAccessNeedsRefresh(profile, creds.Password, now) {
+				return "", true, "", nil
+			}
+			isProfileToken = suppliedRefresh == "" || (storedRefresh != "" && (subtle.ConstantTimeCompare([]byte(suppliedRefresh), []byte(storedRefresh)) == 1 || subtle.ConstantTimeCompare([]byte(target), []byte(storedRefresh)) == 1))
+			return "", false, "", nil
+		},
+		Persist: func(_ context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
+			if !isProfileToken {
+				return "", false, nil
+			}
 			if err := a.persistOAuthTokens(profile, token); err != nil {
-				releaseLocks()
-				return creds, err
+				return "", false, err
 			}
-			creds.TokenExpiresAt = profile.TokenExpiresAt
-		} else {
-			expiresIn := token.ExpiresIn
-			if expiresIn <= 0 {
-				expiresIn = 3600
-			}
-			creds.TokenExpiresAt = sql.NullTime{Time: now.Add(time.Duration(expiresIn) * time.Second), Valid: true}
-		}
-		creds.Password = token.AccessToken
-		if token.RefreshToken != "" {
-			creds.RefreshToken = token.RefreshToken
-		}
-		releaseLocks()
+			return "", false, nil
+		},
+	})
+	if err != nil {
+		return creds, err
+	}
+	if result.Adopted {
 		return creds, nil
 	}
 
-	return creds, errors.New("profile OAuth token rotation limit exceeded")
+	token := result.Token
+	if isProfileToken {
+		creds.TokenExpiresAt = profile.TokenExpiresAt
+	} else {
+		expiresIn := token.ExpiresIn
+		if expiresIn <= 0 {
+			expiresIn = 3600
+		}
+		creds.TokenExpiresAt = sql.NullTime{Time: a.currentTime().Add(time.Duration(expiresIn) * time.Second), Valid: true}
+	}
+	creds.Password = token.AccessToken
+	if token.RefreshToken != "" {
+		resolvedFromRotation = token.RefreshToken
+		creds.RefreshToken = token.RefreshToken
+	}
+	return creds, nil
 }
 
 func (a *ownedProfileAccess) reloadProfileOAuthState(
 	ctx context.Context,
 	profile *db.ConnectionProfile,
 	suppliedRefresh string,
+	expectedRowRefreshEnc string,
 	creds *profileCreds,
 	storedRefresh *string,
 	secretFailurePolicy profileSecretFailurePolicy,
-) error {
+) (bool, error) {
 	if a.db == nil || profile == nil || profile.ID == "" {
-		return nil
+		return false, nil
 	}
 	latest, err := db.GetConnectionProfile(ctx, a.db, profile.ID)
 	if err != nil || latest == nil || latest.UserID != profile.UserID {
-		return nil
+		return false, nil
 	}
+	rowChanged := latest.RefreshTokenEncrypted != expectedRowRefreshEnc
 	*profile = *latest
 	if latest.RefreshTokenEncrypted != "" {
 		plain, decErr := crypto.DecryptBytesWithDomain(latest.RefreshTokenEncrypted, a.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if decErr != nil {
 			if suppliedRefresh == "" && secretFailurePolicy == failOnProfileSecretError {
-				return fmt.Errorf("%w: %w", errProfileSecret, decErr)
+				return rowChanged, fmt.Errorf("%w: %w", errProfileSecret, decErr)
 			}
 		} else {
 			*storedRefresh = string(plain)
 			clear(plain)
-			if suppliedRefresh == "" && *storedRefresh != "" {
+			if suppliedRefresh == "" && rowChanged && *storedRefresh != "" {
 				creds.RefreshToken = *storedRefresh
 			}
 		}
@@ -757,7 +749,7 @@ func (a *ownedProfileAccess) reloadProfileOAuthState(
 			plain, decErr := crypto.DecryptBytesWithDomain(latest.PasswordEncrypted, a.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(creds.Provider)))
 			if decErr != nil {
 				if secretFailurePolicy == failOnProfileSecretError {
-					return fmt.Errorf("%w: %w", errProfileSecret, decErr)
+					return rowChanged, fmt.Errorf("%w: %w", errProfileSecret, decErr)
 				}
 			} else {
 				creds.Password = string(plain)
@@ -765,252 +757,7 @@ func (a *ownedProfileAccess) reloadProfileOAuthState(
 			}
 		}
 	}
-	return nil
-}
-
-func (a *ownedProfileAccess) acquireDistributedOAuthLock(ctx context.Context, lockKey string) (func(), error) {
-	if a.oauthLocker == nil {
-		return func() {}, nil
-	}
-	for attempt := 0; attempt < oauthLockMaxAttempts; attempt++ {
-		lockToken, claimed, err := a.oauthLocker.TryClaimOAuthLock(ctx, "profile", lockKey, "refresh", oauthLockTTL)
-		if err != nil {
-			return nil, err
-		}
-		if claimed {
-			return func() {
-				releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_ = a.oauthLocker.ReleaseOAuthLock(releaseCtx, "profile", lockKey, "refresh", lockToken)
-			}, nil
-		}
-		timer := time.NewTimer(oauthLockPollInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	return nil, errors.New("profile OAuth token refresh lock timeout")
-}
-
-func (a *ownedProfileAccess) lookupOAuthRotation(ctx context.Context, userID, provider, refreshToken string, now time.Time) (string, bool) {
-	if refreshToken == "" || a.encryptionKey == "" {
-		return "", false
-	}
-	if a.db != nil && userID != "" && provider != "" {
-		tokenHash := db.OAuthTokenRotationHash(userID, provider, refreshToken)
-		_, encrypted, found, err := db.LookupOAuthTokenRotation(ctx, a.db, userID, provider, tokenHash)
-		if err == nil && found {
-			plain, decErr := crypto.DecryptWithDomain(encrypted, a.encryptionKey, crypto.DomainOAuthRefreshToken)
-			if decErr == nil && plain != "" {
-				return plain, true
-			}
-		}
-		// Fall through to in-memory cache when DB has no entry or minimal test drivers return driver.ErrSkip.
-		_ = errors.Is(err, driver.ErrSkip)
-	}
-	return a.oauthRotations.lookup(userID, provider, refreshToken, a.encryptionKey, now)
-}
-
-func (a *ownedProfileAccess) recordOAuthRotationAliases(
-	ctx context.Context,
-	userID, provider string,
-	initialRefresh, suppliedRefresh, previousRefresh, storedRefresh string,
-	isProfileToken bool,
-	rotatedRefresh string,
-	now time.Time,
-) {
-	seen := make(map[string]struct{}, 4)
-	recordAlias := func(alias string) {
-		if alias == "" || alias == rotatedRefresh {
-			return
-		}
-		if _, dup := seen[alias]; dup {
-			return
-		}
-		seen[alias] = struct{}{}
-		a.recordOAuthRotation(ctx, userID, provider, alias, rotatedRefresh, now)
-	}
-	recordAlias(previousRefresh)
-	recordAlias(initialRefresh)
-	recordAlias(suppliedRefresh)
-	if isProfileToken {
-		recordAlias(storedRefresh)
-	}
-}
-
-func (a *ownedProfileAccess) recordOAuthRotation(ctx context.Context, userID, provider, previousToken, rotatedToken string, now time.Time) {
-	if previousToken == "" || rotatedToken == "" || previousToken == rotatedToken || a.encryptionKey == "" {
-		return
-	}
-	encrypted, err := crypto.EncryptWithDomain(rotatedToken, a.encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil {
-		return
-	}
-	prevHash := db.OAuthTokenRotationHash(userID, provider, previousToken)
-	rotatedHash := db.OAuthTokenRotationHash(userID, provider, rotatedToken)
-	a.oauthRotations.recordEncrypted(prevHash, rotatedHash, encrypted, now)
-	if a.db != nil && userID != "" && provider != "" {
-		_ = db.RecordOAuthTokenRotation(ctx, a.db, userID, provider, prevHash, rotatedHash, encrypted)
-	}
-}
-
-type keyedLockEntry struct {
-	mu   sync.Mutex
-	refs int
-}
-
-type oauthKeyLockSet struct {
-	mu    sync.Mutex
-	locks map[string]*keyedLockEntry
-}
-
-func (l *oauthKeyLockSet) lock(key string) func() {
-	if l == nil || key == "" {
-		return func() {}
-	}
-	l.mu.Lock()
-	if l.locks == nil {
-		l.locks = make(map[string]*keyedLockEntry)
-	}
-	entry, ok := l.locks[key]
-	if !ok {
-		entry = &keyedLockEntry{}
-		l.locks[key] = entry
-	}
-	entry.refs++
-	l.mu.Unlock()
-
-	entry.mu.Lock()
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			entry.mu.Unlock()
-			l.mu.Lock()
-			entry.refs--
-			if entry.refs == 0 && l.locks[key] == entry {
-				delete(l.locks, key)
-			}
-			l.mu.Unlock()
-		})
-	}
-}
-
-type oauthRotationEntry struct {
-	rotatedHash           string
-	refreshTokenEncrypted string
-	expiresAt             time.Time
-}
-
-// oauthRotationCache serializes in-process OAuth refresh attempts and acts as
-// an encrypted cache fallback when no durable database rotation store is attached.
-type oauthRotationCache struct {
-	mu       sync.Mutex
-	entries  map[string]oauthRotationEntry
-	keyLocks oauthKeyLockSet
-}
-
-func newOAuthRotationCache() *oauthRotationCache {
-	return &oauthRotationCache{entries: make(map[string]oauthRotationEntry)}
-}
-
-func (c *oauthRotationCache) lockKey(key string) func() {
-	if c == nil {
-		return func() {}
-	}
-	return c.keyLocks.lock(key)
-}
-
-func oauthRotationKey(userID, provider, refreshToken string) string {
-	return db.OAuthTokenRotationHash(userID, provider, refreshToken)
-}
-
-func (c *oauthRotationCache) lookup(userID, provider, refreshToken, encryptionKey string, now time.Time) (string, bool) {
-	if c == nil || refreshToken == "" || encryptionKey == "" {
-		return "", false
-	}
-	key := oauthRotationKey(userID, provider, refreshToken)
-	visited := map[string]struct{}{key: {}}
-	var latestEncrypted string
-	found := false
-
-	c.mu.Lock()
-	for hop := 0; hop < oauthMaxResolveHops; hop++ {
-		entry, ok := c.entries[key]
-		if !ok {
-			break
-		}
-		if !now.Before(entry.expiresAt) {
-			delete(c.entries, key)
-			break
-		}
-		latestEncrypted = entry.refreshTokenEncrypted
-		found = true
-		if entry.rotatedHash == "" {
-			break
-		}
-		if _, seen := visited[entry.rotatedHash]; seen {
-			break
-		}
-		visited[entry.rotatedHash] = struct{}{}
-		key = entry.rotatedHash
-	}
-	c.mu.Unlock()
-	if !found {
-		return "", false
-	}
-	plain, err := crypto.DecryptWithDomain(latestEncrypted, encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil || plain == "" {
-		return "", false
-	}
-	return plain, true
-}
-
-func (c *oauthRotationCache) record(userID, provider, previousToken, rotatedToken, encryptionKey string, now time.Time) {
-	if c == nil || previousToken == "" || rotatedToken == "" || previousToken == rotatedToken || encryptionKey == "" {
-		return
-	}
-	encrypted, err := crypto.EncryptWithDomain(rotatedToken, encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil {
-		return
-	}
-	c.recordEncrypted(oauthRotationKey(userID, provider, previousToken), oauthRotationKey(userID, provider, rotatedToken), encrypted, now)
-}
-
-func (c *oauthRotationCache) recordEncrypted(key, rotatedHash, encrypted string, now time.Time) {
-	if c == nil || key == "" || encrypted == "" {
-		return
-	}
-	entry := oauthRotationEntry{
-		rotatedHash:           rotatedHash,
-		refreshTokenEncrypted: encrypted,
-		expiresAt:             now.Add(oauthRotationCacheTTL),
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.entries == nil {
-		c.entries = make(map[string]oauthRotationEntry)
-	}
-	for k, existing := range c.entries {
-		if !now.Before(existing.expiresAt) {
-			delete(c.entries, k)
-		}
-	}
-	for len(c.entries) >= oauthRotationCacheMaxSize {
-		var oldestKey string
-		var oldestExpiry time.Time
-		for k, existing := range c.entries {
-			if oldestKey == "" || existing.expiresAt.Before(oldestExpiry) {
-				oldestKey = k
-				oldestExpiry = existing.expiresAt
-			}
-		}
-		delete(c.entries, oldestKey)
-	}
-	c.entries[key] = entry
+	return rowChanged, nil
 }
 
 type profileProviderFactory func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error)

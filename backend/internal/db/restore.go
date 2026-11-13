@@ -1281,6 +1281,7 @@ func ConsumeRestorePreviewContext(ctx context.Context, database *sql.DB, preview
 // ExpiringOAuthRestoreRun describes an active restore run whose target OAuth token is expiring.
 type ExpiringOAuthRestoreRun struct {
 	RestoreRunID          string
+	UserID                string
 	Provider              string
 	RefreshTokenEncrypted string
 }
@@ -1288,7 +1289,7 @@ type ExpiringOAuthRestoreRun struct {
 // GetExpiringOAuthRestoreRuns returns active restore runs whose OAuth access tokens expire within 15 minutes.
 func GetExpiringOAuthRestoreRuns(database *sql.DB) ([]ExpiringOAuthRestoreRun, error) {
 	rows, err := database.Query(`
-		SELECT r.id, j.target_provider, r.target_refresh_token_encrypted
+		SELECT r.id, j.user_id, j.target_provider, r.target_refresh_token_encrypted
 		FROM restore_runs r
 		JOIN restore_jobs j ON j.id = r.restore_job_id
 		WHERE r.status IN ('RUNNING', 'PLANNING', 'VERIFYING')
@@ -1304,7 +1305,7 @@ func GetExpiringOAuthRestoreRuns(database *sql.DB) ([]ExpiringOAuthRestoreRun, e
 	var result []ExpiringOAuthRestoreRun
 	for rows.Next() {
 		var e ExpiringOAuthRestoreRun
-		if err := rows.Scan(&e.RestoreRunID, &e.Provider, &e.RefreshTokenEncrypted); err != nil {
+		if err := rows.Scan(&e.RestoreRunID, &e.UserID, &e.Provider, &e.RefreshTokenEncrypted); err != nil {
 			return nil, fmt.Errorf("scan expiring oauth restore run: %w", err)
 		}
 		result = append(result, e)

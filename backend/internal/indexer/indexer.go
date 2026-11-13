@@ -470,103 +470,124 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 	if !mig.SourceTokenExpiresAt.Valid || time.Now().Before(mig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
 		return accessToken, nil
 	}
-
-	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
-	defer cancel()
-	logger := observability.Logger(ctx)
-	var lockToken string
-	if idx.queue != nil {
-		var claimed bool
-		var err error
-		for attempt := 0; attempt < 15; attempt++ {
-			lockToken, claimed, err = idx.queue.TryClaimOAuthLock(ctx, "migration", migID, "source", 30*time.Second)
-			if err == nil && claimed {
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-time.After(200 * time.Millisecond):
-			}
-			if latestMig, lerr := db.GetMigration(idx.db, migID); lerr == nil {
-				if latestMig.SourceTokenExpiresAt.Valid && time.Now().Before(latestMig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
-					if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
-						return latestAccess, nil
-					}
-				}
-			}
-		}
-		if lockToken == "" || !claimed {
-			return "", fmt.Errorf("lock contention: unable to claim OAuth refresh lock for migration %s (source)", migID)
-		}
-		defer func() {
-			releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer releaseCancel()
-			if err := idx.queue.ReleaseOAuthLock(releaseCtx, "migration", migID, "source", lockToken); err != nil {
-				logger.Warn("indexing_source_token_lock_release_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-			}
-		}()
-	}
-
-	// Re-fetch latest migration details inside lock
-	if latestMig, err := db.GetMigration(idx.db, migID); err == nil {
-		if latestMig.SourceTokenExpiresAt.Valid && time.Now().Before(latestMig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
-			if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
-				return latestAccess, nil
-			}
-		}
-		mig = latestMig
-	}
-
 	if !mig.SourceRefreshTokenEncrypted.Valid || mig.SourceRefreshTokenEncrypted.String == "" {
 		return accessToken, nil
 	}
 
-	refreshToken, err := crypto.DecryptWithDomain(mig.SourceRefreshTokenEncrypted.String, idx.encryptionKey, crypto.DomainOAuthRefreshToken)
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
+	defer cancel()
+	logger := observability.Logger(ctx)
+
+	expectedRefreshEnc := mig.SourceRefreshTokenEncrypted.String
+	refreshToken, err := crypto.DecryptWithDomain(expectedRefreshEnc, idx.encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt source refresh token: %w", err)
 	}
+	defer crypto.ZeroString(&refreshToken)
 
-	tokenResp, err := oauth.RefreshToken(ctx, mig.SourceProvider, refreshToken)
-	if err != nil {
-		return "", fmt.Errorf("oauth refresh failed for source (%s): %w", mig.SourceProvider, err)
-	}
-	newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, idx.encryptionKey, crypto.DomainOAuthAccessToken)
-	if err != nil {
-		return "", fmt.Errorf("failed to encrypt refreshed source access token: %w", err)
-	}
-	newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, idx.encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil {
-		return "", fmt.Errorf("failed to encrypt refreshed source refresh token: %w", err)
-	}
-	expiresIn := tokenResp.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 3600
+	var locker oauth.TokenLocker
+	if idx.queue != nil {
+		locker = idx.queue
 	}
 
-	expectedRefreshEnc := mig.SourceRefreshTokenEncrypted.String
-	err = db.UpdateMigrationOAuthTokens(idx.db, db.OAuthTokenUpdate{
-		MigrationID:           migID,
-		Role:                  "source",
-		AccessTokenEncrypted:  newAccessEnc,
-		RefreshTokenEncrypted: newRefreshEnc,
-		ExpiresAt:             time.Now().Add(time.Duration(expiresIn) * time.Second),
-	}, expectedRefreshEnc)
-
-	if errors.Is(err, db.ErrOAuthTokenConflict) {
-		logger.Info("indexing_source_token_update_conflict")
-		if latestMig, lerr := db.GetMigration(idx.db, migID); lerr == nil {
-			if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
-				return latestAccess, nil
+	var emptyRefresh bool
+	res, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
+		DB:            idx.db,
+		Locker:        locker,
+		EncryptionKey: idx.encryptionKey,
+		UserID:        mig.UserID.String,
+		Provider:      mig.SourceProvider,
+		RefreshToken:  refreshToken,
+		Refresh: func(refreshCtx context.Context, provider, tok string) (*oauth.TokenResponse, error) {
+			tokenResp, rerr := oauth.RefreshToken(refreshCtx, provider, tok)
+			if rerr != nil {
+				return nil, fmt.Errorf("oauth refresh failed for source (%s): %w", provider, rerr)
 			}
-		}
-		return "", fmt.Errorf("token update conflict for migration %s (source): %w", migID, err)
-	}
+			return tokenResp, nil
+		},
+		OnWait: func(context.Context) (string, bool) {
+			if latestMig, lerr := db.GetMigration(idx.db, migID); lerr == nil {
+				if latestMig.SourceTokenExpiresAt.Valid && time.Now().Before(latestMig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
+					if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
+						return latestAccess, true
+					}
+				}
+			}
+			return "", false
+		},
+		OnLocked: func(_ context.Context, target string) (string, bool, string, error) {
+			latestMig, lerr := db.GetMigration(idx.db, migID)
+			if lerr != nil {
+				return "", false, "", nil
+			}
+			mig = latestMig
+			if latestMig.SourceTokenExpiresAt.Valid && time.Now().Before(latestMig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
+				if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
+					return latestAccess, true, "", nil
+				}
+			}
+			if !latestMig.SourceRefreshTokenEncrypted.Valid || latestMig.SourceRefreshTokenEncrypted.String == "" {
+				emptyRefresh = true
+				return accessToken, true, "", nil
+			}
+			if latestMig.SourceRefreshTokenEncrypted.String != expectedRefreshEnc {
+				expectedRefreshEnc = latestMig.SourceRefreshTokenEncrypted.String
+				updatedPlain, decErr := crypto.DecryptWithDomain(expectedRefreshEnc, idx.encryptionKey, crypto.DomainOAuthRefreshToken)
+				if decErr != nil {
+					return "", false, "", fmt.Errorf("failed to decrypt source refresh token: %w", decErr)
+				}
+				if updatedPlain != "" && updatedPlain != target {
+					refreshToken = updatedPlain
+					return "", false, updatedPlain, nil
+				}
+			}
+			return "", false, "", nil
+		},
+		Persist: func(_ context.Context, _ string, tokenResp *oauth.TokenResponse) (string, bool, error) {
+			newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, idx.encryptionKey, crypto.DomainOAuthAccessToken)
+			if err != nil {
+				return "", false, fmt.Errorf("failed to encrypt refreshed source access token: %w", err)
+			}
+			newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, idx.encryptionKey, crypto.DomainOAuthRefreshToken)
+			if err != nil {
+				return "", false, fmt.Errorf("failed to encrypt refreshed source refresh token: %w", err)
+			}
+			expiresIn := tokenResp.ExpiresIn
+			if expiresIn <= 0 {
+				expiresIn = 3600
+			}
+			err = db.UpdateMigrationOAuthTokens(idx.db, db.OAuthTokenUpdate{
+				MigrationID:           migID,
+				Role:                  "source",
+				AccessTokenEncrypted:  newAccessEnc,
+				RefreshTokenEncrypted: newRefreshEnc,
+				ExpiresAt:             time.Now().Add(time.Duration(expiresIn) * time.Second),
+			}, expectedRefreshEnc)
+			if errors.Is(err, db.ErrOAuthTokenConflict) {
+				logger.Info("indexing_source_token_update_conflict")
+				if latestMig, lerr := db.GetMigration(idx.db, migID); lerr == nil {
+					if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
+						return latestAccess, true, nil
+					}
+				}
+				return "", false, fmt.Errorf("token update conflict for migration %s (source): %w", migID, err)
+			}
+			if err != nil {
+				return "", false, fmt.Errorf("failed to persist refreshed source tokens: %w", err)
+			}
+			return "", false, nil
+		},
+	})
 	if err != nil {
-		return "", fmt.Errorf("failed to persist refreshed source tokens: %w", err)
+		return "", err
 	}
-
-	return tokenResp.AccessToken, nil
+	if emptyRefresh {
+		return accessToken, nil
+	}
+	if res.Adopted {
+		return res.AdoptedAccess, nil
+	}
+	return res.Token.AccessToken, nil
 }
 
 func (idx *Indexer) newSource(ctx context.Context, providerType, urlStr, username, password string, opts ...storage.ProviderOption) (IndexSource, error) {

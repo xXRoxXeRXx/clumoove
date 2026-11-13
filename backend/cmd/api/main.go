@@ -57,7 +57,7 @@ type APIServer struct {
 	// Tests may inject an in-memory lookup to exercise route access contracts.
 	authStateLookup auth.AuthStateLookup
 	oauthRotationMu sync.Mutex
-	oauthRotations  *oauthRotationCache
+	oauthRotations  *oauth.RotationCache
 }
 
 // Rate-limit and quota configuration for the public / sensitive endpoints.

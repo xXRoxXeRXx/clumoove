@@ -67,6 +67,7 @@ type testOAuthTokenState struct {
 
 func (s *testOAuthTokenState) OAuthWorkKind() string                 { return s.kind }
 func (s *testOAuthTokenState) OAuthJobID() string                    { return s.id }
+func (s *testOAuthTokenState) OAuthUserID() string                   { return "user-1" }
 func (s *testOAuthTokenState) OAuthTokens(string) oauthTokenSnapshot { return s.snapshot }
 func (s *testOAuthTokenState) OAuthUpdatedAt() time.Time             { return time.Time{} }
 func (s *testOAuthTokenState) ApplyOAuthTokens(_ string, access string, refresh sql.NullString, expires sql.NullTime) {

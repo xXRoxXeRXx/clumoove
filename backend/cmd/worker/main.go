@@ -135,12 +135,14 @@ func main() {
 		os.Exit(1)
 	}
 	backupCoordinator.SetWorkerID(workerID)
+	backupCoordinator.SetOAuthLocker(q)
 	restoreCoordinator, err := restore.NewCoordinator(database, config.encryptionKey, packReaders)
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "restore"), observability.Error(err), slog.String("error_kind", "configuration"))
 		os.Exit(1)
 	}
 	restoreCoordinator.SetWorkerID(workerID)
+	restoreCoordinator.SetOAuthLocker(q)
 
 	// Context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

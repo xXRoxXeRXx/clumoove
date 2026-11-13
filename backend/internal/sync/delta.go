@@ -918,100 +918,116 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 
 	expiry, provider, refreshTokenEnc, _ := tokenSet(job)
 
-	if !shouldRefreshToken(expiry) {
+	if !shouldRefreshToken(expiry) || refreshTokenEnc == "" {
 		return currentToken, nil
 	}
 
-	var lockToken string
+	expectedRefreshEnc := refreshTokenEnc
+	refreshToken, err := crypto.DecryptWithDomain(expectedRefreshEnc, e.encryptionKey, crypto.DomainOAuthRefreshToken)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt refresh token: %w", err)
+	}
+	defer crypto.ZeroString(&refreshToken)
+
+	var locker oauth.TokenLocker
 	if e.queue != nil {
-		var claimed bool
-		var err error
-		for attempt := 0; attempt < 15; attempt++ {
-			lockToken, claimed, err = e.queue.TryClaimOAuthLock(ctx, "sync", syncJobID, role, 30*time.Second)
-			if err == nil && claimed {
-				break
+		locker = e.queue
+	}
+
+	var emptyRefresh bool
+	res, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
+		DB:            e.db,
+		Locker:        locker,
+		EncryptionKey: e.encryptionKey,
+		UserID:        job.UserID,
+		Provider:      provider,
+		RefreshToken:  refreshToken,
+		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
+			tokenResp, rerr := oauth.RefreshToken(refreshCtx, prov, tok)
+			if rerr != nil {
+				return nil, fmt.Errorf("oauth refresh failed for %s (%s): %w", role, prov, rerr)
 			}
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-time.After(200 * time.Millisecond):
-			}
+			return tokenResp, nil
+		},
+		OnWait: func(context.Context) (string, bool) {
 			if latestJob, lerr := db.GetSyncJob(e.db, syncJobID); lerr == nil {
 				latestExpiry, _, _, latestAccessEnc := tokenSet(latestJob)
 				if !shouldRefreshToken(latestExpiry) {
 					if latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
-						return latestAccess, nil
+						return latestAccess, true
 					}
 				}
 			}
-		}
-		if lockToken == "" || !claimed {
-			return "", fmt.Errorf("lock contention: unable to claim OAuth refresh lock for sync job %s (%s)", syncJobID, role)
-		}
-		defer e.queue.ReleaseOAuthLock(context.Background(), "sync", syncJobID, role, lockToken)
-	}
-
-	// Re-fetch latest sync job details inside lock
-	if latestJob, err := db.GetSyncJob(e.db, syncJobID); err == nil {
-		latestExpiry, latestProvider, latestRefreshEnc, latestAccessEnc := tokenSet(latestJob)
-		if latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
-			currentToken = latestAccess
-		}
-		expiry, provider, refreshTokenEnc = latestExpiry, latestProvider, latestRefreshEnc
-	}
-
-	if !shouldRefreshToken(expiry) {
-		return currentToken, nil
-	}
-
-	if refreshTokenEnc == "" {
-		return currentToken, nil
-	}
-
-	refreshToken, err := crypto.DecryptWithDomain(refreshTokenEnc, e.encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt refresh token: %w", err)
-	}
-
-	tokenResp, err := oauth.RefreshToken(ctx, provider, refreshToken)
-	if err != nil {
-		return "", fmt.Errorf("oauth refresh failed for %s (%s): %w", role, provider, err)
-	}
-
-	newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, e.encryptionKey, crypto.DomainOAuthAccessToken)
-	if err != nil {
-		return "", fmt.Errorf("failed to encrypt new access token: %w", err)
-	}
-
-	newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, e.encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil {
-		return "", fmt.Errorf("failed to encrypt new refresh token: %w", err)
-	}
-	// The returned access token remains live for the caller to construct the
-	// provider; runSyncPass defers zeroing that returned credential. Clear the
-	// response's refresh-token reference as soon as it has been encrypted.
-
-	expiresIn := tokenResp.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 3600
-	}
-	newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
-
-	expectedRefreshEnc := refreshTokenEnc
-	err = db.UpdateSyncJobOAuthTokens(e.db, syncJobID, role, newAccessEnc, newRefreshEnc, newExpiresAt, expectedRefreshEnc)
-	if errors.Is(err, db.ErrOAuthTokenConflict) {
-		slog.Info("sync OAuth token update conflicted; adopting stored winner", "sync_job_id", syncJobID, "role", role)
-		if latestJob, lerr := db.GetSyncJob(e.db, syncJobID); lerr == nil {
-			_, _, _, latestAccessEnc := tokenSet(latestJob)
-			if latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
-				return latestAccess, nil
+			return "", false
+		},
+		OnLocked: func(_ context.Context, target string) (string, bool, string, error) {
+			latestJob, lerr := db.GetSyncJob(e.db, syncJobID)
+			if lerr != nil {
+				return "", false, "", nil
 			}
-		}
-		return "", fmt.Errorf("token update conflict for sync job %s (%s): %w", syncJobID, role, err)
-	}
+			latestExpiry, _, latestRefreshEnc, latestAccessEnc := tokenSet(latestJob)
+			if latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
+				currentToken = latestAccess
+			}
+			if !shouldRefreshToken(latestExpiry) {
+				return currentToken, true, "", nil
+			}
+			if latestRefreshEnc == "" {
+				emptyRefresh = true
+				return currentToken, true, "", nil
+			}
+			if latestRefreshEnc != expectedRefreshEnc {
+				expectedRefreshEnc = latestRefreshEnc
+				updatedPlain, decErr := crypto.DecryptWithDomain(expectedRefreshEnc, e.encryptionKey, crypto.DomainOAuthRefreshToken)
+				if decErr != nil {
+					return "", false, "", fmt.Errorf("failed to decrypt refresh token: %w", decErr)
+				}
+				if updatedPlain != "" && updatedPlain != target {
+					refreshToken = updatedPlain
+					return "", false, updatedPlain, nil
+				}
+			}
+			return "", false, "", nil
+		},
+		Persist: func(_ context.Context, _ string, tokenResp *oauth.TokenResponse) (string, bool, error) {
+			newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, e.encryptionKey, crypto.DomainOAuthAccessToken)
+			if err != nil {
+				return "", false, fmt.Errorf("failed to encrypt new access token: %w", err)
+			}
+			newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, e.encryptionKey, crypto.DomainOAuthRefreshToken)
+			if err != nil {
+				return "", false, fmt.Errorf("failed to encrypt new refresh token: %w", err)
+			}
+			expiresIn := tokenResp.ExpiresIn
+			if expiresIn <= 0 {
+				expiresIn = 3600
+			}
+			newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
+			err = db.UpdateSyncJobOAuthTokens(e.db, syncJobID, role, newAccessEnc, newRefreshEnc, newExpiresAt, expectedRefreshEnc)
+			if errors.Is(err, db.ErrOAuthTokenConflict) {
+				slog.Info("sync OAuth token update conflicted; adopting stored winner", "sync_job_id", syncJobID, "role", role)
+				if latestJob, lerr := db.GetSyncJob(e.db, syncJobID); lerr == nil {
+					_, _, _, latestAccessEnc := tokenSet(latestJob)
+					if latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
+						return latestAccess, true, nil
+					}
+				}
+				return "", false, fmt.Errorf("token update conflict for sync job %s (%s): %w", syncJobID, role, err)
+			}
+			if err != nil {
+				return "", false, fmt.Errorf("failed to persist refreshed tokens: %w", err)
+			}
+			return "", false, nil
+		},
+	})
 	if err != nil {
-		return "", fmt.Errorf("failed to persist refreshed tokens: %w", err)
+		return "", err
 	}
-
-	return tokenResp.AccessToken, nil
+	if emptyRefresh {
+		return currentToken, nil
+	}
+	if res.Adopted {
+		return res.AdoptedAccess, nil
+	}
+	return res.Token.AccessToken, nil
 }

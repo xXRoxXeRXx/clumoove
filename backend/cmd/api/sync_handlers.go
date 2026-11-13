@@ -103,25 +103,95 @@ func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, r
 	}
 
 	if oauth.IsProvider(creds.provider) && expiresAt.Valid && !time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) && refreshEncrypted != "" {
-		refreshToken, err := crypto.DecryptWithDomain(refreshEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+		expectedRefreshEnc := refreshEncrypted
+		refreshToken, err := crypto.DecryptWithDomain(expectedRefreshEnc, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if err != nil {
 			return nil, err
 		}
+		defer crypto.ZeroString(&refreshToken)
 		if refreshToken != "" {
-			token, err := oauth.RefreshToken(ctx, creds.provider, refreshToken)
-			if err == nil && token != nil && token.AccessToken != "" {
-				creds.password = token.AccessToken
-				accessEncrypted, accessErr := crypto.EncryptWithDomain(token.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
-				newRefreshEncrypted, refreshErr := crypto.EncryptWithDomain(token.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
-				if accessErr == nil && refreshErr == nil {
+			var locker oauth.TokenLocker
+			if s.queue != nil {
+				locker = s.queue
+			}
+			res, rerr := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
+				DB:            s.db,
+				Cache:         s.rotationCache(),
+				Locker:        locker,
+				EncryptionKey: s.encryptionKey,
+				UserID:        userID,
+				Provider:      creds.provider,
+				RefreshToken:  refreshToken,
+				OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
+					latestJob, lerr := db.GetSyncJobContext(lockCtx, s.db, id)
+					if lerr != nil {
+						return "", false, "", nil
+					}
+					latestPassEnc := latestJob.SourcePasswordEncrypted
+					latestRefreshEnc := latestJob.SourceRefreshTokenEncrypted.String
+					latestExpiresAt := latestJob.SourceTokenExpiresAt
+					if role == "target" {
+						latestPassEnc = latestJob.TargetPasswordEncrypted
+						latestRefreshEnc = latestJob.TargetRefreshTokenEncrypted.String
+						latestExpiresAt = latestJob.TargetTokenExpiresAt
+					}
+					if latestExpiresAt.Valid && time.Now().Before(latestExpiresAt.Time.Add(-2*time.Minute)) && latestPassEnc != "" {
+						if plain, derr := crypto.DecryptWithDomain(latestPassEnc, s.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
+							return plain, true, "", nil
+						}
+					}
+					if latestRefreshEnc != "" && latestRefreshEnc != expectedRefreshEnc {
+						expectedRefreshEnc = latestRefreshEnc
+						updatedPlain, decErr := crypto.DecryptWithDomain(expectedRefreshEnc, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+						if decErr != nil {
+							return "", false, "", decErr
+						}
+						if updatedPlain != "" && updatedPlain != target {
+							refreshToken = updatedPlain
+							return "", false, updatedPlain, nil
+						}
+					}
+					return "", false, "", nil
+				},
+				Persist: func(_ context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
+					accessEncrypted, accessErr := crypto.EncryptWithDomain(token.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
+					if accessErr != nil {
+						return "", false, accessErr
+					}
+					newRefreshEncrypted, refreshErr := crypto.EncryptWithDomain(token.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+					if refreshErr != nil {
+						return "", false, refreshErr
+					}
 					expiresIn := token.ExpiresIn
 					if expiresIn <= 0 {
 						expiresIn = 3600
 					}
-					if err := db.UpdateSyncJobOAuthTokens(s.db, id, role, accessEncrypted, newRefreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), refreshEncrypted); err != nil {
-						creds.clear()
-						return nil, err
+					err := db.UpdateSyncJobOAuthTokens(s.db, id, role, accessEncrypted, newRefreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc)
+					if errors.Is(err, db.ErrOAuthTokenConflict) {
+						if latestJob, lerr := db.GetSyncJobContext(ctx, s.db, id); lerr == nil {
+							latestPassEnc := latestJob.SourcePasswordEncrypted
+							if role == "target" {
+								latestPassEnc = latestJob.TargetPasswordEncrypted
+							}
+							if plain, derr := crypto.DecryptWithDomain(latestPassEnc, s.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
+								return plain, true, nil
+							}
+						}
 					}
+					return "", false, err
+				},
+			})
+			if rerr == nil {
+				if res.Adopted {
+					creds.password = res.AdoptedAccess
+				} else if res.Token != nil {
+					creds.password = res.Token.AccessToken
+				}
+			} else if !errors.Is(rerr, oauth.ErrRefreshTokenInvalid) {
+				// Preserve DB/persistence error behavior while allowing downstream provider open on transient refresh issues.
+				if strings.Contains(rerr.Error(), "persist oauth token rotation") || strings.Contains(rerr.Error(), "database") {
+					creds.clear()
+					return nil, rerr
 				}
 			}
 		}

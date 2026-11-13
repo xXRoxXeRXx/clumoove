@@ -317,11 +317,12 @@ type profileSpyRotation struct {
 }
 
 type profileSpyState struct {
-	mu        sync.Mutex
-	profiles  map[string][]driver.Value
-	rotations map[string]profileSpyRotation
-	execCalls int
-	execErr   error
+	mu              sync.Mutex
+	profiles        map[string][]driver.Value
+	rotations       map[string]profileSpyRotation
+	execCalls       int
+	execErr         error
+	rotationExecErr error
 }
 
 type profileSpyConnector struct{ state *profileSpyState }
@@ -340,6 +341,9 @@ func (c profileSpyConn) ExecContext(_ context.Context, query string, args []driv
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	if strings.Contains(query, "oauth_token_rotations") {
+		if c.state.rotationExecErr != nil {
+			return nil, c.state.rotationExecErr
+		}
 		if c.state.rotations == nil {
 			c.state.rotations = make(map[string]profileSpyRotation)
 		}
@@ -577,6 +581,91 @@ func TestOwnedProfileAccessRotationDurabilityChainsAndConcurrency(t *testing.T) 
 		close(errs)
 		for err := range errs {
 			t.Fatal(err)
+		}
+	})
+
+	t.Run("rotation history DB write failure aborts foreign token refresh loudly", func(t *testing.T) {
+		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{"profile-oauth": makeRow()})
+		spyState.rotationExecErr = errors.New("rotation table offline")
+		access := &ownedProfileAccess{
+			db:             spyDB,
+			encryptionKey:  key,
+			now:            func() time.Time { return now },
+			oauthRotations: newOAuthRotationCache(),
+			refreshOAuth: func(context.Context, string, string) (*oauth.TokenResponse, error) {
+				return &oauth.TokenResponse{AccessToken: "at-new", RefreshToken: "foreign-new", ExpiresIn: 900}, nil
+			},
+		}
+		if _, err := access.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+			ProfileID:    "profile-oauth",
+			RefreshToken: "foreign-A",
+		}); err == nil {
+			t.Fatal("SnapshotRequest() error = nil, want rotation persistence failure")
+		}
+	})
+
+	t.Run("concurrent worker rotation updating profile before lock forces re-lock before refresh", func(t *testing.T) {
+		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{"profile-oauth": makeRow()})
+		locker := &testDistributedOAuthLocker{}
+		// Simulate a worker rotating saved-refresh -> worker-refresh just before lock reload completes.
+		workerRefreshEnc, _ := crypto.EncryptWithDomain("worker-refresh", key, crypto.DomainOAuthRefreshToken)
+		var once sync.Once
+		origGet := spyState.profiles["profile-oauth"]
+		_ = origGet
+
+		var gotRefreshToken string
+		var heldNewLockDuringRefresh bool
+		access := &ownedProfileAccess{
+			db:             spyDB,
+			encryptionKey:  key,
+			now:            func() time.Time { return now },
+			oauthRotations: newOAuthRotationCache(),
+			oauthLocker:    locker,
+			refreshOAuth: func(_ context.Context, _, refreshToken string) (*oauth.TokenResponse, error) {
+				gotRefreshToken = refreshToken
+				workerHash := db.OAuthTokenRotationHash("user-1", "google", "worker-refresh")
+				oldHash := db.OAuthTokenRotationHash("user-1", "google", "saved-refresh")
+				locker.mu.Lock()
+				_, heldNew := locker.locks["oauth-token:"+workerHash+":refresh"]
+				_, heldOld := locker.locks["oauth-token:"+oldHash+":refresh"]
+				locker.mu.Unlock()
+				heldNewLockDuringRefresh = heldNew && !heldOld
+				return &oauth.TokenResponse{AccessToken: "at-after-worker", RefreshToken: "after-worker-refresh", ExpiresIn: 3600}, nil
+			},
+		}
+		// Claim saved-refresh's lock briefly in another goroutine so access has to wait,
+		// and while waiting, update DB profile to worker-refresh before releasing.
+		oldHash := db.OAuthTokenRotationHash("user-1", "google", "saved-refresh")
+		claimTok, claimed, err := locker.TryClaimOAuthLock(context.Background(), "oauth-token", oldHash, "refresh", 30*time.Second)
+		if err != nil || !claimed {
+			t.Fatalf("setup TryClaimOAuthLock failed: claimed=%v err=%v", claimed, err)
+		}
+		once.Do(func() {
+			go func() {
+				time.Sleep(80 * time.Millisecond)
+				spyState.mu.Lock()
+				updatedRow := append([]driver.Value(nil), spyState.profiles["profile-oauth"]...)
+				updatedRow[7] = workerRefreshEnc
+				spyState.profiles["profile-oauth"] = updatedRow
+				spyState.mu.Unlock()
+				_ = locker.ReleaseOAuthLock(context.Background(), "oauth-token", oldHash, "refresh", claimTok)
+			}()
+		})
+
+		snap, err := access.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+			ProfileID: "profile-oauth",
+		})
+		if err != nil {
+			t.Fatalf("SnapshotRequest() error = %v", err)
+		}
+		if gotRefreshToken != "worker-refresh" {
+			t.Fatalf("refreshOAuth called with %q, want worker-refresh", gotRefreshToken)
+		}
+		if !heldNewLockDuringRefresh {
+			t.Fatal("refreshOAuth must run only while holding worker-refresh's lock and after releasing saved-refresh's lock")
+		}
+		if dec, _ := crypto.DecryptWithDomain(snap.Creds.RefreshTokenEncrypted.String, key, crypto.DomainOAuthRefreshToken); dec != "after-worker-refresh" {
+			t.Fatalf("final refresh token = %q, want after-worker-refresh", dec)
 		}
 	})
 }
