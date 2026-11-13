@@ -245,7 +245,7 @@ type requestConnectionSnapshot struct {
 	Creds           persistedProfileCreds
 }
 
-func (a *ownedProfileAccess) resolveRequestConnection(ctx context.Context, userID string, input requestConnectionInput) (profileCreds, *db.ConnectionProfile, error) {
+func (a *ownedProfileAccess) resolveRequestConnection(ctx context.Context, userID string, input requestConnectionInput) (profileCreds, error) {
 	base := profileCreds{
 		Provider:     input.Provider,
 		URL:          input.URL,
@@ -254,17 +254,16 @@ func (a *ownedProfileAccess) resolveRequestConnection(ctx context.Context, userI
 		RefreshToken: input.RefreshToken,
 	}
 	var (
-		creds   profileCreds
-		profile *db.ConnectionProfile
-		err     error
+		creds profileCreds
+		err   error
 	)
 	if input.ProfileID != "" {
 		if userID == "" {
-			return profileCreds{}, nil, errProfileNotFound
+			return profileCreds{}, errProfileNotFound
 		}
-		creds, profile, err = a.resolveCredentials(ctx, userID, input.ProfileID, base, refreshOAuthAlways, fallbackOnProfileSecretError)
+		creds, _, err = a.resolveCredentials(ctx, userID, input.ProfileID, base, refreshOAuthAlways, fallbackOnProfileSecretError)
 		if err != nil {
-			return profileCreds{}, nil, err
+			return profileCreds{}, err
 		}
 	} else {
 		creds = base
@@ -275,7 +274,7 @@ func (a *ownedProfileAccess) resolveRequestConnection(ctx context.Context, userI
 	if input.NormalizeURL {
 		creds.URL = normalizeProviderURL(creds.Provider, creds.URL)
 	}
-	return creds, profile, nil
+	return creds, nil
 }
 
 func wrapProfileProviderError(err error) error {
@@ -298,7 +297,7 @@ func narrowProvider[T any](client profileProvider) (T, error) {
 }
 
 func openRequestProviderFor[T any](access *ownedProfileAccess, ctx context.Context, userID string, input requestConnectionInput) (*openedRequestConnection[T], error) {
-	creds, _, err := access.resolveRequestConnection(ctx, userID, input)
+	creds, err := access.resolveRequestConnection(ctx, userID, input)
 	if err != nil {
 		return nil, err
 	}
@@ -331,16 +330,14 @@ func openRequestProviderFor[T any](access *ownedProfileAccess, ctx context.Conte
 }
 
 func (a *ownedProfileAccess) SnapshotRequest(ctx context.Context, userID string, input requestConnectionInput) (requestConnectionSnapshot, error) {
-	creds, profile, err := a.resolveRequestConnection(ctx, userID, input)
+	creds, err := a.resolveRequestConnection(ctx, userID, input)
 	if err != nil {
 		return requestConnectionSnapshot{}, err
 	}
 	defer creds.clear()
 
-	var tokenExpiresAt sql.NullTime
-	if profile != nil && profile.TokenExpiresAt.Valid {
-		tokenExpiresAt = profile.TokenExpiresAt
-	} else if creds.RefreshToken != "" {
+	tokenExpiresAt := creds.TokenExpiresAt
+	if !tokenExpiresAt.Valid && creds.RefreshToken != "" {
 		if input.TokenExpiresAt.Valid {
 			tokenExpiresAt = input.TokenExpiresAt
 		} else if input.TokenExpiresIn > 0 {
@@ -385,12 +382,13 @@ func (a *ownedProfileAccess) openDirectProvider(ctx context.Context, userID, pro
 // profileCreds is task-scoped plaintext connection material. Callers that keep
 // it past provider creation must call clear when the task finishes.
 type profileCreds struct {
-	Provider     string
-	URL          string
-	Username     string
-	Password     string
-	RefreshToken string
-	MegaSession  storage.MegaSession
+	Provider       string
+	URL            string
+	Username       string
+	Password       string
+	RefreshToken   string
+	TokenExpiresAt sql.NullTime
+	MegaSession    storage.MegaSession
 }
 
 func (c *profileCreds) clear() {
@@ -568,20 +566,30 @@ func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, pro
 		}
 		creds.MegaSession = session
 	}
-	if creds.RefreshToken != "" && oauth.IsProvider(profile.Provider) && !(base.Password != "" && base.RefreshToken != "") && (refreshPolicy == refreshOAuthAlways || profileOAuthAccessNeedsRefresh(profile, creds.Password, a.currentTime())) {
+	if base.Password == "" && base.RefreshToken == "" {
+		creds.TokenExpiresAt = profile.TokenExpiresAt
+	}
+	if creds.RefreshToken != "" && oauth.IsProvider(profile.Provider) && base.Password == "" && (refreshPolicy == refreshOAuthAlways || profileOAuthAccessNeedsRefresh(profile, creds.Password, a.currentTime())) {
 		token, refreshErr := a.refreshToken(ctx, creds.Provider, creds.RefreshToken)
 		if refreshErr != nil || token == nil || token.AccessToken == "" {
 			creds.clear()
 			return base, nil, errors.New("profile OAuth token refresh failed")
 		}
-		if err := a.persistOAuthTokens(profile, token); err != nil {
-			creds.clear()
-			return base, nil, err
-		}
-		if base.Password == "" {
-			creds.Password = token.AccessToken
-		}
 		if base.RefreshToken == "" {
+			if err := a.persistOAuthTokens(profile, token); err != nil {
+				creds.clear()
+				return base, nil, err
+			}
+			creds.TokenExpiresAt = profile.TokenExpiresAt
+		} else {
+			expiresIn := token.ExpiresIn
+			if expiresIn <= 0 {
+				expiresIn = 3600
+			}
+			creds.TokenExpiresAt = sql.NullTime{Time: a.currentTime().Add(time.Duration(expiresIn) * time.Second), Valid: true}
+		}
+		creds.Password = token.AccessToken
+		if token.RefreshToken != "" {
 			creds.RefreshToken = token.RefreshToken
 		}
 	}

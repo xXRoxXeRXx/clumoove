@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -87,12 +89,8 @@ func TestOwnedProfileAccessRefreshAndPersistFailures(t *testing.T) {
 	withRefreshRow := profileTestRow("with-refresh", "user-1", "google", "", "user@example.test", "")
 	withRefreshRow[7] = refreshEnc
 
-	// Profile without stored refresh token triggers OAuth conflict when inline refresh token tries to persist.
-	noStoredRefreshRow := profileTestRow("no-stored-refresh", "user-1", "google", "", "user@example.test", "")
-
 	database, _ := newBackupProfileConnectionTestDB(t, map[string][]driver.Value{
-		"with-refresh":      withRefreshRow,
-		"no-stored-refresh": noStoredRefreshRow,
+		"with-refresh": withRefreshRow,
 	})
 
 	t.Run("refresh failure aborts TestOwned", func(t *testing.T) {
@@ -108,21 +106,162 @@ func TestOwnedProfileAccessRefreshAndPersistFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("persist failure aborts request profile resolution", func(t *testing.T) {
+	t.Run("persist failure aborts profile refresh", func(t *testing.T) {
+		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{
+			"with-refresh": withRefreshRow,
+		})
+		spyState.execErr = errors.New("persist failed")
 		access := &ownedProfileAccess{
-			db:            database,
+			db:            spyDB,
 			encryptionKey: key,
 			refreshOAuth: func(context.Context, string, string) (*oauth.TokenResponse, error) {
 				return &oauth.TokenResponse{AccessToken: "fresh-access", RefreshToken: "fresh-refresh", ExpiresIn: 3600}, nil
 			},
 		}
-		if _, err := openRequestProviderFor[profileProvider](access, context.Background(), "user-1", requestConnectionInput{
-			ProfileID:    "no-stored-refresh",
-			RefreshToken: "inline-refresh",
-		}); err == nil {
-			t.Fatal("openRequestProviderFor() error = nil, want persist failure")
+		if _, err := access.TestOwned(context.Background(), "user-1", "with-refresh"); err == nil {
+			t.Fatal("TestOwned() error = nil, want persist failure")
 		}
 	})
+}
+
+func TestOwnedProfileAccessSuppliedOAuthDoesNotMutateProfileOrUseStaleExpiry(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	now := time.Date(2026, time.November, 13, 12, 0, 0, 0, time.UTC)
+	savedAccessEnc, _ := crypto.EncryptWithDomain("saved-access", key, crypto.DomainOAuthAccessToken)
+	savedRefreshEnc, _ := crypto.EncryptWithDomain("saved-refresh", key, crypto.DomainOAuthRefreshToken)
+	row := profileTestRow("profile-oauth", "user-1", "google", "", "saved@example.test", savedAccessEnc)
+	row[7] = savedRefreshEnc
+	row[8] = now.Add(10 * time.Hour)
+
+	t.Run("supplied refresh token refreshes ephemerally without mutating profile and preserves rotated token and expiry", func(t *testing.T) {
+		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{"profile-oauth": row})
+		var refreshedWith string
+		access := &ownedProfileAccess{
+			db:            spyDB,
+			encryptionKey: key,
+			now:           func() time.Time { return now },
+			refreshOAuth: func(_ context.Context, _, refreshToken string) (*oauth.TokenResponse, error) {
+				refreshedWith = refreshToken
+				return &oauth.TokenResponse{AccessToken: "rotated-access", RefreshToken: "rotated-refresh", ExpiresIn: 900}, nil
+			},
+		}
+
+		snap, err := access.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+			ProfileID:    "profile-oauth",
+			RefreshToken: "supplied-refresh",
+		})
+		if err != nil {
+			t.Fatalf("SnapshotRequest() error = %v", err)
+		}
+		if refreshedWith != "supplied-refresh" {
+			t.Fatalf("refreshOAuth called with %q, want supplied-refresh", refreshedWith)
+		}
+		if spyState.execCalls != 0 {
+			t.Fatalf("DB Exec calls = %d, want 0 (supplied refresh token must not overwrite saved profile)", spyState.execCalls)
+		}
+		if dec, _ := crypto.DecryptWithDomain(snap.Creds.PasswordEncrypted, key, crypto.DomainOAuthAccessToken); dec != "rotated-access" {
+			t.Fatalf("snapshot access = %q, want rotated-access", dec)
+		}
+		if dec, _ := crypto.DecryptWithDomain(snap.Creds.RefreshTokenEncrypted.String, key, crypto.DomainOAuthRefreshToken); dec != "rotated-refresh" {
+			t.Fatalf("snapshot refresh = %q, want rotated-refresh", dec)
+		}
+		wantExpiry := now.Add(900 * time.Second)
+		if !snap.TokenExpiresAt.Valid || !snap.TokenExpiresAt.Time.Equal(wantExpiry) {
+			t.Fatalf("snapshot TokenExpiresAt = %+v, want %v (must not use saved profile expiry)", snap.TokenExpiresAt, wantExpiry)
+		}
+	})
+
+	t.Run("supplied access and refresh tokens ignore saved profile expiry", func(t *testing.T) {
+		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{"profile-oauth": row})
+		refreshCalls := 0
+		access := &ownedProfileAccess{
+			db:            spyDB,
+			encryptionKey: key,
+			now:           func() time.Time { return now },
+			refreshOAuth: func(context.Context, string, string) (*oauth.TokenResponse, error) {
+				refreshCalls++
+				return nil, nil
+			},
+		}
+
+		snap, err := access.SnapshotRequest(context.Background(), "user-1", requestConnectionInput{
+			ProfileID:      "profile-oauth",
+			Password:       "supplied-access",
+			RefreshToken:   "supplied-refresh",
+			TokenExpiresIn: 1800,
+		})
+		if err != nil {
+			t.Fatalf("SnapshotRequest() error = %v", err)
+		}
+		if refreshCalls != 0 || spyState.execCalls != 0 {
+			t.Fatalf("refreshCalls=%d execCalls=%d, want both 0", refreshCalls, spyState.execCalls)
+		}
+		wantExpiry := now.Add(1800 * time.Second)
+		if !snap.TokenExpiresAt.Valid || !snap.TokenExpiresAt.Time.Equal(wantExpiry) {
+			t.Fatalf("snapshot TokenExpiresAt = %+v, want %v (must not use saved profile expiry)", snap.TokenExpiresAt, wantExpiry)
+		}
+	})
+}
+
+type profileSpyState struct {
+	profiles  map[string][]driver.Value
+	execCalls int
+	execErr   error
+}
+
+type profileSpyConnector struct{ state *profileSpyState }
+
+func (c profileSpyConnector) Connect(context.Context) (driver.Conn, error) {
+	return profileSpyConn{state: c.state}, nil
+}
+func (c profileSpyConnector) Driver() driver.Driver { return nil }
+
+type profileSpyConn struct{ state *profileSpyState }
+
+func (profileSpyConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (profileSpyConn) Close() error                        { return nil }
+func (profileSpyConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
+func (c profileSpyConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+	c.state.execCalls++
+	if c.state.execErr != nil {
+		return nil, c.state.execErr
+	}
+	return driver.RowsAffected(1), nil
+}
+func (c profileSpyConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if strings.Contains(query, "SELECT EXISTS") && strings.Contains(query, "connection_profiles") {
+		_, ok := c.state.profiles[args[0].Value.(string)]
+		return &profileSpyRows{rows: [][]driver.Value{{ok}}, columns: 1}, nil
+	}
+	if strings.Contains(query, "FROM connection_profiles WHERE id") {
+		return &profileSpyRows{rows: [][]driver.Value{c.state.profiles[args[0].Value.(string)]}, columns: 14}, nil
+	}
+	return nil, driver.ErrSkip
+}
+
+type profileSpyRows struct {
+	rows    [][]driver.Value
+	pos     int
+	columns int
+}
+
+func (r *profileSpyRows) Columns() []string { return make([]string, r.columns) }
+func (r *profileSpyRows) Close() error      { return nil }
+func (r *profileSpyRows) Next(dest []driver.Value) error {
+	if r.pos >= len(r.rows) {
+		return io.EOF
+	}
+	copy(dest, r.rows[r.pos])
+	r.pos++
+	return nil
+}
+
+func newProfileSpyDB(t *testing.T, profiles map[string][]driver.Value) (*sql.DB, *profileSpyState) {
+	t.Helper()
+	state := &profileSpyState{profiles: profiles}
+	database := sql.OpenDB(profileSpyConnector{state: state})
+	t.Cleanup(func() { _ = database.Close() })
+	return database, state
 }
 
 func TestOwnedProfileAccessSecretFailurePolicies(t *testing.T) {
