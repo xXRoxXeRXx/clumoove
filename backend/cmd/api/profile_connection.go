@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -109,7 +110,7 @@ type ownedProfileSnapshot struct {
 }
 
 func (a *ownedProfileAccess) SnapshotOwned(ctx context.Context, userID, profileID string) (ownedProfileSnapshot, error) {
-	creds, profile, err := a.resolveCredentials(ctx, userID, profileID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError)
+	creds, profile, err := a.resolveCredentials(ctx, userID, profileID, profileCreds{}, refreshOAuthWhenExpiring, failOnProfileSecretError, false)
 	if err != nil {
 		return ownedProfileSnapshot{}, err
 	}
@@ -167,7 +168,7 @@ func (c *ownedProfileConnection) Close() {
 }
 
 func (a *ownedProfileAccess) openOwnedWithPolicy(ctx context.Context, userID, profileID string, refreshPolicy profileOAuthRefreshPolicy) (*ownedProfileConnection, error) {
-	creds, profile, err := a.resolveCredentials(ctx, userID, profileID, profileCreds{}, refreshPolicy, failOnProfileSecretError)
+	creds, profile, err := a.resolveCredentials(ctx, userID, profileID, profileCreds{}, refreshPolicy, failOnProfileSecretError, false)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +246,7 @@ type requestConnectionSnapshot struct {
 	Creds           persistedProfileCreds
 }
 
-func (a *ownedProfileAccess) resolveRequestConnection(ctx context.Context, userID string, input requestConnectionInput) (profileCreds, error) {
+func (a *ownedProfileAccess) resolveRequestConnection(ctx context.Context, userID string, input requestConnectionInput, allowEphemeralOAuthRefresh bool) (profileCreds, error) {
 	base := profileCreds{
 		Provider:     input.Provider,
 		URL:          input.URL,
@@ -261,7 +262,7 @@ func (a *ownedProfileAccess) resolveRequestConnection(ctx context.Context, userI
 		if userID == "" {
 			return profileCreds{}, errProfileNotFound
 		}
-		creds, _, err = a.resolveCredentials(ctx, userID, input.ProfileID, base, refreshOAuthAlways, fallbackOnProfileSecretError)
+		creds, _, err = a.resolveCredentials(ctx, userID, input.ProfileID, base, refreshOAuthAlways, fallbackOnProfileSecretError, allowEphemeralOAuthRefresh)
 		if err != nil {
 			return profileCreds{}, err
 		}
@@ -297,7 +298,7 @@ func narrowProvider[T any](client profileProvider) (T, error) {
 }
 
 func openRequestProviderFor[T any](access *ownedProfileAccess, ctx context.Context, userID string, input requestConnectionInput) (*openedRequestConnection[T], error) {
-	creds, err := access.resolveRequestConnection(ctx, userID, input)
+	creds, err := access.resolveRequestConnection(ctx, userID, input, false)
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +331,7 @@ func openRequestProviderFor[T any](access *ownedProfileAccess, ctx context.Conte
 }
 
 func (a *ownedProfileAccess) SnapshotRequest(ctx context.Context, userID string, input requestConnectionInput) (requestConnectionSnapshot, error) {
-	creds, err := a.resolveRequestConnection(ctx, userID, input)
+	creds, err := a.resolveRequestConnection(ctx, userID, input, true)
 	if err != nil {
 		return requestConnectionSnapshot{}, err
 	}
@@ -515,7 +516,7 @@ const (
 	fallbackOnProfileSecretError
 )
 
-func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, profileID string, base profileCreds, refreshPolicy profileOAuthRefreshPolicy, secretFailurePolicy profileSecretFailurePolicy) (profileCreds, *db.ConnectionProfile, error) {
+func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, profileID string, base profileCreds, refreshPolicy profileOAuthRefreshPolicy, secretFailurePolicy profileSecretFailurePolicy, allowEphemeralOAuthRefresh bool) (profileCreds, *db.ConnectionProfile, error) {
 	if profileID == "" {
 		return base, nil, nil
 	}
@@ -546,16 +547,21 @@ func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, pro
 			clear(plain)
 		}
 	}
-	if profile.RefreshTokenEncrypted != "" && base.RefreshToken == "" {
+	var storedRefresh string
+	defer crypto.ZeroString(&storedRefresh)
+	if profile.RefreshTokenEncrypted != "" {
 		plain, decryptErr := crypto.DecryptBytesWithDomain(profile.RefreshTokenEncrypted, a.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if decryptErr != nil {
-			if secretFailurePolicy == failOnProfileSecretError {
+			if base.RefreshToken == "" && secretFailurePolicy == failOnProfileSecretError {
 				creds.clear()
 				return base, nil, fmt.Errorf("%w: %w", errProfileSecret, decryptErr)
 			}
 		} else {
-			creds.RefreshToken = string(plain)
+			storedRefresh = string(plain)
 			clear(plain)
+			if base.RefreshToken == "" {
+				creds.RefreshToken = storedRefresh
+			}
 		}
 	}
 	if creds.Provider == "mega" && (profile.MegaSessionIDEncrypted != "" || profile.MegaMasterKeyEncrypted != "") {
@@ -570,12 +576,17 @@ func (a *ownedProfileAccess) resolveCredentials(ctx context.Context, userID, pro
 		creds.TokenExpiresAt = profile.TokenExpiresAt
 	}
 	if creds.RefreshToken != "" && oauth.IsProvider(profile.Provider) && base.Password == "" && (refreshPolicy == refreshOAuthAlways || profileOAuthAccessNeedsRefresh(profile, creds.Password, a.currentTime())) {
+		isProfileToken := base.RefreshToken == "" || (storedRefresh != "" && subtle.ConstantTimeCompare([]byte(base.RefreshToken), []byte(storedRefresh)) == 1)
+		if !isProfileToken && !allowEphemeralOAuthRefresh {
+			creds.clear()
+			return base, nil, fmt.Errorf("%w: temporary connection cannot persist rotated OAuth refresh token", errProfileProvider)
+		}
 		token, refreshErr := a.refreshToken(ctx, creds.Provider, creds.RefreshToken)
 		if refreshErr != nil || token == nil || token.AccessToken == "" {
 			creds.clear()
 			return base, nil, errors.New("profile OAuth token refresh failed")
 		}
-		if base.RefreshToken == "" {
+		if isProfileToken {
 			if err := a.persistOAuthTokens(profile, token); err != nil {
 				creds.clear()
 				return base, nil, err

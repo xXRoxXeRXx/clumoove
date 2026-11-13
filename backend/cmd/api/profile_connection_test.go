@@ -201,6 +201,57 @@ func TestOwnedProfileAccessSuppliedOAuthDoesNotMutateProfileOrUseStaleExpiry(t *
 			t.Fatalf("snapshot TokenExpiresAt = %+v, want %v (must not use saved profile expiry)", snap.TokenExpiresAt, wantExpiry)
 		}
 	})
+
+	t.Run("temporary connection persists rotated token when supplied token matches saved profile", func(t *testing.T) {
+		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{"profile-oauth": row})
+		access := &ownedProfileAccess{
+			db:            spyDB,
+			encryptionKey: key,
+			now:           func() time.Time { return now },
+			refreshOAuth: func(context.Context, string, string) (*oauth.TokenResponse, error) {
+				return &oauth.TokenResponse{AccessToken: "rotated-access", RefreshToken: "rotated-refresh", ExpiresIn: 900}, nil
+			},
+			providerFactory: func(context.Context, string, string, string, string, ...storage.ProviderOption) (profileProvider, error) {
+				return &connectionOnlyProvider{}, nil
+			},
+		}
+
+		conn, err := openRequestProviderFor[profileProvider](access, context.Background(), "user-1", requestConnectionInput{
+			ProfileID:    "profile-oauth",
+			RefreshToken: "saved-refresh",
+		})
+		if err != nil {
+			t.Fatalf("openRequestProviderFor() error = %v", err)
+		}
+		conn.Close()
+		if spyState.execCalls != 1 {
+			t.Fatalf("DB Exec calls = %d, want 1 (matching saved token rotation must persist to profile)", spyState.execCalls)
+		}
+	})
+
+	t.Run("temporary connection rejects foreign refresh token without access token before burning rotation", func(t *testing.T) {
+		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{"profile-oauth": row})
+		refreshCalls := 0
+		access := &ownedProfileAccess{
+			db:            spyDB,
+			encryptionKey: key,
+			now:           func() time.Time { return now },
+			refreshOAuth: func(context.Context, string, string) (*oauth.TokenResponse, error) {
+				refreshCalls++
+				return &oauth.TokenResponse{AccessToken: "rotated-access", RefreshToken: "rotated-refresh", ExpiresIn: 900}, nil
+			},
+		}
+
+		if _, err := openRequestProviderFor[profileProvider](access, context.Background(), "user-1", requestConnectionInput{
+			ProfileID:    "profile-oauth",
+			RefreshToken: "foreign-refresh",
+		}); !errors.Is(err, errProfileProvider) {
+			t.Fatalf("openRequestProviderFor() error = %v, want errProfileProvider", err)
+		}
+		if refreshCalls != 0 || spyState.execCalls != 0 {
+			t.Fatalf("refreshCalls=%d execCalls=%d, want both 0 (must not consume/overwrite foreign token)", refreshCalls, spyState.execCalls)
+		}
+	})
 }
 
 type profileSpyState struct {
