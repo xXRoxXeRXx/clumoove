@@ -970,7 +970,10 @@ type encryptedMegaSession struct {
 	errLabel  string
 }
 
-func defaultProviderAdapter[T any](custom func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error)) func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error) {
+func defaultProviderAdapter[T any](
+	custom func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error),
+	wrap func(storage.StorageProvider) T,
+) func(ctx context.Context, provider, endpoint, username, password string, opts ...storage.ProviderOption) (T, error) {
 	if custom != nil {
 		return custom
 	}
@@ -980,20 +983,23 @@ func defaultProviderAdapter[T any](custom func(ctx context.Context, provider, en
 			var zero T
 			return zero, err
 		}
-		return any(providerClient).(T), nil
+		return wrap(providerClient), nil
 	}
 }
 
 func (c *Coordinator) newRepositorySource(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (RepositorySource, error) {
-	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega, defaultProviderAdapter(c.repositorySourceFactory))
+	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
+		defaultProviderAdapter(c.repositorySourceFactory, func(p storage.StorageProvider) RepositorySource { return p }))
 }
 
 func (c *Coordinator) newPreviewTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (PreviewTargetClient, error) {
-	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega, defaultProviderAdapter(c.previewTargetFactory))
+	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
+		defaultProviderAdapter(c.previewTargetFactory, func(p storage.StorageProvider) PreviewTargetClient { return p }))
 }
 
 func (c *Coordinator) newRestoreTarget(ctx context.Context, provider, endpoint, username, encryptedPassword string, mega encryptedMegaSession) (RestoreTarget, error) {
-	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega, defaultProviderAdapter(c.restoreTargetFactory))
+	return openWithDecryptedCredentials(c, ctx, provider, endpoint, username, encryptedPassword, mega,
+		defaultProviderAdapter(c.restoreTargetFactory, func(p storage.StorageProvider) RestoreTarget { return p }))
 }
 
 func openWithDecryptedCredentials[T any](
