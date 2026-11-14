@@ -104,7 +104,7 @@ migrations** so the schema self-heals on first boot:
   `idx_backup_jobs_user_created`, `idx_backup_runs_job_created`,
   `idx_backup_snapshots_job_created`, `idx_backup_blocks_job_pack`,
   `idx_restore_previews_owner`, and `idx_audit_log_*`.
-- Connection pool sizing derived from `MAX_THREADS` (`val*2`, min 50).
+- Connection pool size is an explicit `InitDB(connStr, maxConns)` argument: the worker passes `db.MaxConnsForThreads(MAX_THREADS)` (`2×`, min 50); the API passes `db.DefaultMaxConns` (50).
 - **Default-credential rejection:** if the DB host is publicly reachable and the DSN still contains
   `postgres:postgres@`, startup fails (local/private hosts are exempted).
 
@@ -195,7 +195,7 @@ Redis is used for:
    check enters increasing recovery backoff.
 3. Subscribes to cancel & bandwidth events (cancel invokes `activeTaskInfo.cancel()`; bandwidth updates
    the per-migration or per-sync-job throttler).
-4. Spawns `maxThreads` worker goroutines (default 16, overridden by `MAX_THREADS`) that loop over
+4. Spawns `maxThreads` worker goroutines (default 16, range 1–256, set by `MAX_THREADS` and validated at startup) that loop over
    `DequeueSQL` and call `processTask`.
 
 ### Transfer loop (`processTask`)

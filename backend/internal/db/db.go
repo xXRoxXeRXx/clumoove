@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -141,7 +140,20 @@ func isLocalOrPrivateHost(host string) bool {
 }
 
 // InitDB initializes the database connection with startup retries and schema DDL setup.
-func InitDB(connStr string) (*sql.DB, error) {
+// DefaultMaxConns is the connection pool size used when the caller has no
+// worker-capacity information (for example the API process).
+const DefaultMaxConns = 50
+
+// MaxConnsForThreads returns the pool size for a worker process running
+// maxThreads parallel tasks: two connections per task, never below
+// DefaultMaxConns.
+func MaxConnsForThreads(maxThreads int) int {
+	return max(DefaultMaxConns, maxThreads*2)
+}
+
+// InitDB connects to PostgreSQL, applies the schema and sizes the connection
+// pool to maxConns. It does not read the environment for sizing.
+func InitDB(connStr string, maxConns int) (*sql.DB, error) {
 	if host := dbHostFromConnStr(connStr); !isLocalOrPrivateHost(host) && strings.Contains(connStr, "postgres:postgres@") {
 		return nil, fmt.Errorf("insecure DATABASE_URL: the default 'postgres:postgres' credentials are only permitted for a localhost or private-network database. Set DB_PASSWORD to a strong, unique password for any publicly-reachable deployment.")
 	}
@@ -1256,15 +1268,6 @@ $$ language 'plpgsql'`)
 				return nil, schemaErr
 			}
 
-			maxConns := 50
-			if envVal := os.Getenv("MAX_THREADS"); envVal != "" {
-				if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
-					maxConns = val * 2
-					if maxConns < 50 {
-						maxConns = 50
-					}
-				}
-			}
 			db.SetMaxOpenConns(maxConns)
 			db.SetMaxIdleConns(10)
 			db.SetConnMaxLifetime(time.Hour)

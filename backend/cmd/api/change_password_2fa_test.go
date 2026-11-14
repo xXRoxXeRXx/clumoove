@@ -74,7 +74,7 @@ func setupChangePassword2FATestDB(t *testing.T) *sql.DB {
 	}
 	bootstrapDB.Close()
 
-	database, err := db.InitDB(isolatedDSN)
+	database, err := db.InitDB(isolatedDSN, db.DefaultMaxConns)
 	if err != nil {
 		t.Fatalf("InitDB() on isolated schema: %v", err)
 	}

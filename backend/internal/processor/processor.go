@@ -55,11 +55,11 @@ type Processor struct {
 	syncVerificationQueue      chan verificationWork
 	verificationWG             sync.WaitGroup
 	providerSlots              chan struct{}
-	// dbConnStr is the raw PostgreSQL DSN used to open a dedicated LISTEN
+	// notifyDSN is the raw PostgreSQL DSN used to open a dedicated LISTEN
 	// connection for pg_notify-based wake-up (see ListenForTasks in queue).
 	// Supplied via Config.NotifyDSN. If empty, the worker falls back to periodic
 	// polling.
-	dbConnStr    string
+	notifyDSN    string
 	activeTasks  sync.Map
 	refreshLocks keyedMutexes
 	throttlers   sync.Map
@@ -373,7 +373,7 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 		migrationVerificationQueue: make(chan verificationWork, cfg.MaxThreads*2),
 		syncVerificationQueue:      make(chan verificationWork, cfg.MaxThreads*2),
 		providerSlots:              make(chan struct{}, cfg.MaxThreads),
-		dbConnStr:                  cfg.NotifyDSN,
+		notifyDSN:                  cfg.NotifyDSN,
 	}, nil
 }
 
@@ -637,8 +637,8 @@ func (p *Processor) Start(ctx context.Context) {
 	// immediately when new tasks are inserted (pg_notify 'task_available').
 	// Falls back to periodic polling if the listener cannot be established.
 	var notifyTasksCh <-chan struct{}
-	if p.dbConnStr != "" {
-		ch, err := queue.ListenForTasks(ctx, p.dbConnStr)
+	if p.notifyDSN != "" {
+		ch, err := queue.ListenForTasks(ctx, p.notifyDSN)
 		if err != nil {
 			processorLogf("[Worker %s] LISTEN task_available unavailable (falling back to polling): %v\n", p.workerID, err)
 		} else {

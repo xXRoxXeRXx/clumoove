@@ -38,7 +38,7 @@ func TestInitDBFreshSchemaSupportsTaskHashRuntimeQueries(t *testing.T) {
 		_, _ = adminDB.Exec("DROP SCHEMA " + schemaName + " CASCADE")
 	})
 
-	initializedDB, err := InitDB(dsnWithSearchPath(t, dsn, schemaName))
+	initializedDB, err := InitDB(dsnWithSearchPath(t, dsn, schemaName), DefaultMaxConns)
 	if err != nil {
 		t.Fatalf("InitDB() on fresh schema: %v", err)
 	}

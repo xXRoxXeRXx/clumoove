@@ -80,6 +80,41 @@ func TestLoadWorkerConfigRejectsInvalidMaxThreads(t *testing.T) {
 	}
 }
 
+func TestLoadWorkerConfigRejectsMaxThreadsAboveCeiling(t *testing.T) {
+	if _, err := loadWorkerConfig(workerEnv(map[string]string{"MAX_THREADS": "256"})); err != nil {
+		t.Fatalf("MAX_THREADS=256 rejected: %v", err)
+	}
+	if _, err := loadWorkerConfig(workerEnv(map[string]string{"MAX_THREADS": "257"})); err == nil {
+		t.Fatal("MAX_THREADS=257 succeeded")
+	}
+}
+
+func TestLoadWorkerConfigDerivesDatabasePoolSizeFromMaxThreads(t *testing.T) {
+	for threads, want := range map[string]int{"16": 50, "25": 50, "50": 100} {
+		config, err := loadWorkerConfig(workerEnv(map[string]string{"MAX_THREADS": threads}))
+		if err != nil {
+			t.Fatalf("MAX_THREADS=%s: %v", threads, err)
+		}
+		if config.dbMaxConns != want {
+			t.Errorf("MAX_THREADS=%s: dbMaxConns = %d, want %d", threads, config.dbMaxConns, want)
+		}
+	}
+}
+
+func TestWorkerConfigProcessorConfigCarriesExplicitSettings(t *testing.T) {
+	config, err := loadWorkerConfig(workerEnv(map[string]string{
+		"DATABASE_URL": "postgres://db.example/clumoove?sslmode=require",
+		"MAX_THREADS":  "7",
+	}))
+	if err != nil {
+		t.Fatalf("loadWorkerConfig() error = %v", err)
+	}
+	got := config.processorConfig("worker-1")
+	if got.WorkerID != "worker-1" || got.SecretKey != "encryption-secret" || got.MaxThreads != 7 || got.NotifyDSN != "postgres://db.example/clumoove?sslmode=require" {
+		t.Fatalf("processorConfig() = %#v", got)
+	}
+}
+
 func TestLoadWorkerConfigRejectsMissingEncryptionKey(t *testing.T) {
 	if _, err := loadWorkerConfig(func(string) string { return "" }); err == nil {
 		t.Fatal("loadWorkerConfig() succeeded without an encryption key")

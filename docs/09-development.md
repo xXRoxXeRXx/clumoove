@@ -216,7 +216,7 @@ File-scoped commands referenced in `AGENTS.md`:
 - `threads` per migration or sync job are capped at 1–16. The worker respects this via the
   dequeue query (`COUNT(*) < m.threads`). Sync jobs also persist a 0–1000 Mbps bandwidth limit (0 is unlimited),
   which can be adjusted while a pass is running.
-- Worker-level `MAX_THREADS` (default 16) is total parallel tasks per worker process.
+- Worker-level `MAX_THREADS` (default 16, range 1–256) is total parallel tasks per worker process. It is validated at worker startup (invalid values are rejected) and passed explicitly to the processor; the processor never reads the environment.
 
 ### Retry & backoff
 - Exponential backoff: $10 \times 3^{\text{attempt}}$ s (10, 30, 90), max 3 attempts.

@@ -27,9 +27,13 @@ type workerConfig struct {
 	redisURL              string
 	encryptionKey         string
 	maxThreads            int
+	dbMaxConns            int
 	maxBackupPackWriters  int
 	maxRestorePackReaders int
 }
+
+// maxThreadsCeiling bounds MAX_THREADS so a typo cannot size huge channels.
+const maxThreadsCeiling = 256
 
 // defaultMaxThreads matches the maximum selectable threads per migration in
 // the UI slider; per-migration concurrency is still limited by its own setting.
@@ -50,28 +54,43 @@ func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
 	if workerCfg.encryptionKey == "" {
 		return workerConfig{}, errors.New("ENCRYPTION_SECRET_KEY is required")
 	}
-	if value := getenv("MAX_THREADS"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 {
-			return workerConfig{}, errors.New("MAX_THREADS must be a positive integer")
-		}
-		workerCfg.maxThreads = parsed
+	var err error
+	if workerCfg.maxThreads, err = intSetting(getenv, "MAX_THREADS", defaultMaxThreads, 1, maxThreadsCeiling); err != nil {
+		return workerConfig{}, err
 	}
-	if value := getenv("MAX_BACKUP_PACK_WRITERS"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 4 {
-			return workerConfig{}, errors.New("MAX_BACKUP_PACK_WRITERS must be an integer between 1 and 4")
-		}
-		workerCfg.maxBackupPackWriters = parsed
+	workerCfg.dbMaxConns = db.MaxConnsForThreads(workerCfg.maxThreads)
+	if workerCfg.maxBackupPackWriters, err = intSetting(getenv, "MAX_BACKUP_PACK_WRITERS", 1, 1, 4); err != nil {
+		return workerConfig{}, err
 	}
-	if value := getenv("MAX_RESTORE_PACK_READERS"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 4 {
-			return workerConfig{}, errors.New("MAX_RESTORE_PACK_READERS must be an integer between 1 and 4")
-		}
-		workerCfg.maxRestorePackReaders = parsed
+	if workerCfg.maxRestorePackReaders, err = intSetting(getenv, "MAX_RESTORE_PACK_READERS", 1, 1, 4); err != nil {
+		return workerConfig{}, err
 	}
 	return workerCfg, nil
+}
+
+// intSetting reads an optional integer setting, returning def when unset and
+// an error naming the setting when it is not an integer within [min, max].
+func intSetting(getenv func(string) string, name string, def, min, max int) (int, error) {
+	value := getenv(name)
+	if value == "" {
+		return def, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < min || parsed > max {
+		return 0, fmt.Errorf("%s must be an integer between %d and %d", name, min, max)
+	}
+	return parsed, nil
+}
+
+// processorConfig is the explicit execution configuration handed to the
+// processor; the database DSN doubles as the pg_notify LISTEN connection.
+func (c workerConfig) processorConfig(workerID string) processor.Config {
+	return processor.Config{
+		WorkerID:   workerID,
+		SecretKey:  c.encryptionKey,
+		MaxThreads: c.maxThreads,
+		NotifyDSN:  c.databaseURL,
+	}
 }
 
 func watchShutdownSignals(sigChan <-chan os.Signal, cancel context.CancelFunc, exit func(int)) {
@@ -104,7 +123,7 @@ func main() {
 	}
 
 	// 1. Initialize PostgreSQL
-	database, err := db.InitDB(config.databaseURL)
+	database, err := db.InitDB(config.databaseURL, config.dbMaxConns)
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "database"), slog.String("reason", "init_failed"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		os.Exit(1)
@@ -135,12 +154,7 @@ func main() {
 
 	// The worker only processes queued tasks. Sync-pass coordinators are owned
 	// by API instances and started exclusively by the API scheduler.
-	proc, err := processor.NewProcessor(database, q, processor.Config{
-		WorkerID:   workerID,
-		SecretKey:  config.encryptionKey,
-		MaxThreads: config.maxThreads,
-		NotifyDSN:  config.databaseURL, // Enables pg_notify-based wake-up for idle worker threads
-	})
+	proc, err := processor.NewProcessor(database, q, config.processorConfig(workerID))
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "processor"), observability.Error(err), slog.String("error_kind", "configuration"))
 		os.Exit(1)

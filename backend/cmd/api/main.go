@@ -135,7 +135,7 @@ func main() {
 	}
 
 	// 1. Initialize PostgreSQL
-	database, err := db.InitDB(dbURL)
+	database, err := db.InitDB(dbURL, db.DefaultMaxConns)
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "database"), slog.String("reason", "init_failed"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		os.Exit(1)
