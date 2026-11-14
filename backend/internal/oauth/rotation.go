@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -27,10 +28,11 @@ const (
 	tokenBackupTimeout     = 2 * time.Second
 	tokenRepairTimeout      = 2 * time.Second
 	defaultRepairBatchLimit = 50
-	// Must exceed the 5-minute daemon sweep interval (RunOAuthRotationDaemon) so
-	// persistently failing entries remain in cooldown across ticks instead of starving later keys.
-	repairFailureCooldown   = 15 * time.Minute
-	repairCooldownMaxSize   = 4096
+	// Base backoff exceeds the 5-minute daemon sweep interval; repeated failures
+	// back off exponentially up to 24h while untouched entries stay prioritized.
+	repairFailureCooldown    = 15 * time.Minute
+	repairFailureMaxCooldown = 24 * time.Hour
+	repairCooldownMaxSize    = 4096
 	tokenLockSafetyMargin   = 3 * time.Second
 	tokenLockTTL           = 40 * time.Second
 	tokenLockWaitTimeout   = 35 * time.Second
@@ -539,17 +541,24 @@ func RecordRotatedRefreshTokenWithStore(ctx context.Context, database *sql.DB, b
 
 var errRepairBatchLimitReached = errors.New("repair batch limit reached")
 
-// RotationRepairState tracks per-entry failure cooldowns across repair sweeps so
-// persistently failing keys cannot starve later valid backup entries.
-type RotationRepairState struct {
-	mu       sync.Mutex
-	cooldown map[string]time.Time
+type repairFailureEntry struct {
+	failures    int
+	lastAttempt time.Time
+	nextRetry   time.Time
 }
 
-// NewRotationRepairState allocates a bounded failure-cooldown tracker for
+// RotationRepairState tracks per-entry failure backoff and attempt counts
+// across repair sweeps so persistently failing keys cannot starve untouched or
+// less-failing backup entries regardless of backlog size or scan order.
+type RotationRepairState struct {
+	mu       sync.Mutex
+	failures map[string]repairFailureEntry
+}
+
+// NewRotationRepairState allocates a bounded fair-scheduling tracker for
 // rotation backup sweeps.
 func NewRotationRepairState() *RotationRepairState {
-	return &RotationRepairState{cooldown: make(map[string]time.Time)}
+	return &RotationRepairState{failures: make(map[string]repairFailureEntry)}
 }
 
 var defaultRepairState = NewRotationRepairState()
@@ -558,21 +567,14 @@ func (s *RotationRepairState) key(userID, provider, prevHash string) string {
 	return userID + "\x00" + provider + "\x00" + prevHash
 }
 
-func (s *RotationRepairState) retryAfter(key string, now time.Time) (time.Time, bool) {
+func (s *RotationRepairState) failureState(key string) (repairFailureEntry, bool) {
 	if s == nil {
-		return time.Time{}, false
+		return repairFailureEntry{}, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	until, ok := s.cooldown[key]
-	if !ok {
-		return time.Time{}, false
-	}
-	if !now.Before(until) {
-		delete(s.cooldown, key)
-		return time.Time{}, false
-	}
-	return until, true
+	entry, ok := s.failures[key]
+	return entry, ok
 }
 
 func (s *RotationRepairState) markFailed(key string, now time.Time) {
@@ -581,28 +583,36 @@ func (s *RotationRepairState) markFailed(key string, now time.Time) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cooldown == nil {
-		s.cooldown = make(map[string]time.Time)
+	if s.failures == nil {
+		s.failures = make(map[string]repairFailureEntry)
 	}
-	for k, until := range s.cooldown {
-		if !now.Before(until) {
-			delete(s.cooldown, k)
-		}
-	}
-	if len(s.cooldown) >= repairCooldownMaxSize {
-		var oldestKey string
-		var oldestUntil time.Time
-		for k, until := range s.cooldown {
-			if oldestKey == "" || until.Before(oldestUntil) {
-				oldestKey = k
-				oldestUntil = until
+	if _, exists := s.failures[key]; !exists && len(s.failures) >= repairCooldownMaxSize {
+		var evictKey string
+		var evictEntry repairFailureEntry
+		for k, entry := range s.failures {
+			if evictKey == "" || entry.lastAttempt.Before(evictEntry.lastAttempt) {
+				evictKey = k
+				evictEntry = entry
 			}
 		}
-		if oldestKey != "" {
-			delete(s.cooldown, oldestKey)
+		if evictKey != "" {
+			delete(s.failures, evictKey)
 		}
 	}
-	s.cooldown[key] = now.Add(repairFailureCooldown)
+	prev := s.failures[key]
+	failures := prev.failures + 1
+	backoff := repairFailureCooldown
+	for i := 1; i < failures && backoff < repairFailureMaxCooldown; i++ {
+		backoff *= 2
+		if backoff > repairFailureMaxCooldown {
+			backoff = repairFailureMaxCooldown
+		}
+	}
+	s.failures[key] = repairFailureEntry{
+		failures:    failures,
+		lastAttempt: now,
+		nextRetry:   now.Add(backoff),
+	}
 }
 
 func (s *RotationRepairState) clear(key string) {
@@ -610,7 +620,7 @@ func (s *RotationRepairState) clear(key string) {
 		return
 	}
 	s.mu.Lock()
-	delete(s.cooldown, key)
+	delete(s.failures, key)
 	s.mu.Unlock()
 }
 
@@ -627,44 +637,74 @@ func RepairRotationBackupsWithLimit(ctx context.Context, database *sql.DB, store
 	return defaultRepairState.RepairWithLimit(ctx, database, store, limit, time.Now())
 }
 
-// RepairWithLimit reconciles at most limit pending mappings while skipping
-// entries in recent failure cooldown unless no non-cooled entries exist.
+// RepairWithLimit reconciles at most limit pending mappings per pass, giving
+// strict priority to untouched entries ahead of past failures and ordering
+// retries fairly by fewest failures and oldest attempt so arbitrarily large
+// failing backlogs cannot starve later valid entries.
 func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql.DB, store RotationBackupRepairStore, limit int, now time.Time) (int, error) {
 	if database == nil || store == nil {
 		return 0, nil
 	}
 	type pendingRecord struct {
 		userID, provider, prevHash, rotatedHash, encrypted string
-		retryAt                                            time.Time
+		failures                                           int
+		lastAttempt                                        time.Time
 	}
-	var eligible, cooled []pendingRecord
+	var fresh, dueRetries, cooled []pendingRecord
 	visitErr := store.VisitOAuthRotationBackups(ctx, func(userID, provider, prevHash, rotatedHash, encryptedToken string) error {
+		st, hasFailed := s.failureState(s.key(userID, provider, prevHash))
 		rec := pendingRecord{
 			userID:      userID,
 			provider:    provider,
 			prevHash:    prevHash,
 			rotatedHash: rotatedHash,
 			encrypted:   encryptedToken,
+			failures:    st.failures,
+			lastAttempt: st.lastAttempt,
 		}
-		if until, ok := s.retryAfter(s.key(userID, provider, prevHash), now); ok {
-			if limit <= 0 || len(cooled) < limit {
-				rec.retryAt = until
-				cooled = append(cooled, rec)
+		if !hasFailed || st.failures == 0 {
+			fresh = append(fresh, rec)
+			if limit > 0 && len(fresh) >= limit {
+				return errRepairBatchLimitReached
 			}
 			return nil
 		}
-		eligible = append(eligible, rec)
-		if limit > 0 && len(eligible) >= limit {
-			return errRepairBatchLimitReached
+		if !now.Before(st.nextRetry) {
+			dueRetries = append(dueRetries, rec)
+			return nil
 		}
+		cooled = append(cooled, rec)
 		return nil
 	})
 	if visitErr != nil && !errors.Is(visitErr, errRepairBatchLimitReached) {
 		return 0, fmt.Errorf("%w: scan oauth rotation backups: %w", ErrRotationPersistence, visitErr)
 	}
-	pending := eligible
+	sortFair := func(list []pendingRecord) {
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].failures != list[j].failures {
+				return list[i].failures < list[j].failures
+			}
+			return list[i].lastAttempt.Before(list[j].lastAttempt)
+		})
+	}
+	pending := fresh
+	if limit <= 0 || len(pending) < limit {
+		sortFair(dueRetries)
+		for _, rec := range dueRetries {
+			pending = append(pending, rec)
+			if limit > 0 && len(pending) >= limit {
+				break
+			}
+		}
+	}
 	if len(pending) == 0 && len(cooled) > 0 {
-		pending = cooled
+		sortFair(cooled)
+		for _, rec := range cooled {
+			pending = append(pending, rec)
+			if limit > 0 && len(pending) >= limit {
+				break
+			}
+		}
 	}
 	repaired := 0
 	var repairErrs []error

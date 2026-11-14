@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -200,12 +201,16 @@ func (s *stubBackupStore) LookupOAuthRotationBackup(_ context.Context, userID, p
 
 func (s *stubBackupStore) VisitOAuthRotationBackups(_ context.Context, visit func(userID, provider, prevHash, rotatedHash, encryptedToken string) error) error {
 	s.mu.Lock()
+	keys := make([]string, 0, len(s.entries))
 	snapshot := make(map[string]stubRotationRow, len(s.entries))
 	for k, v := range s.entries {
+		keys = append(keys, k)
 		snapshot[k] = v
 	}
 	s.mu.Unlock()
-	for k, v := range snapshot {
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := snapshot[k]
 		parts := strings.SplitN(k, "\x00", 3)
 		if err := visit(parts[0], parts[1], parts[2], v.nextHash, v.encrypted); err != nil {
 			return err
@@ -754,28 +759,60 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		t.Cleanup(func() { _ = sqlDB.Close() })
 
 		sharedBackup := &stubBackupStore{}
-		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "deleted-user", "google", "B1", now, "A1")
-		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "deleted-user", "google", "B2", now, "A2")
-		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "healthy-user", "google", "B3", now, "A3")
+		// Simulate a multi-batch backlog: 150 failing entries sorted strictly ahead of
+		// a healthy entry across consecutive 5-minute sweeps with batch limit = 50.
+		// Even after pass 3 crosses the 15-minute cooldown window, the healthy entry must
+		// still be prioritized and repaired rather than starved by entries 0..49.
+		for i := 0; i < 150; i++ {
+			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "deleted-user", "google", fmt.Sprintf("B-%03d", i), now, fmt.Sprintf("A-%03d", i))
+		}
+		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "healthy-user", "google", "B-ok", now, "A-ok")
 
 		repairState := NewRotationRepairState()
-		// Simulate consecutive 5-minute production daemon sweeps with batch limit = 2:
-		// cooled failing entries stay skipped across 5m intervals so healthy-user -> B3 is repaired.
 		sawHealthyRepaired := false
-		for pass := 0; pass < 3; pass++ {
+		for pass := 0; pass < 4; pass++ {
 			sweepNow := now.Add(time.Duration(pass) * 5 * time.Minute)
-			repaired, _ := repairState.RepairWithLimit(context.Background(), sqlDB, sharedBackup, 2, sweepNow)
+			repaired, _ := repairState.RepairWithLimit(context.Background(), sqlDB, sharedBackup, 50, sweepNow)
 			if repaired > 0 {
 				sawHealthyRepaired = true
 				break
 			}
 		}
 		if !sawHealthyRepaired {
-			t.Fatal("later valid entry remained starved behind failing entries across repair passes")
+			t.Fatal("later valid entry remained starved behind 150 failing entries across 5m sweeps")
 		}
-		gotHealthy, okHealthy, errHealthy := LookupRotatedRefreshToken(context.Background(), sqlDB, nil, key, "healthy-user", "google", "A3", now)
-		if errHealthy != nil || !okHealthy || gotHealthy != "B3" {
-			t.Fatalf("Lookup(healthy-user) = (%q, %v, %v), want (B3, true, nil)", gotHealthy, okHealthy, errHealthy)
+		gotHealthy, okHealthy, errHealthy := LookupRotatedRefreshToken(context.Background(), sqlDB, nil, key, "healthy-user", "google", "A-ok", now)
+		if errHealthy != nil || !okHealthy || gotHealthy != "B-ok" {
+			t.Fatalf("Lookup(healthy-user) = (%q, %v, %v), want (B-ok, true, nil)", gotHealthy, okHealthy, errHealthy)
+		}
+
+		// Also verify fair rotation among previously-failed entries when a transient
+		// outage hit 120 entries and later only healthy-user recovers while 119 still fail.
+		for i := 0; i < 119; i++ {
+			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "deleted-user", "google", fmt.Sprintf("C-%03d", i), now, fmt.Sprintf("D-%03d", i))
+		}
+		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "healthy-user", "google", "B-transient", now, "A-transient")
+		state.mu.Lock()
+		state.execErr = fkErr
+		state.mu.Unlock()
+		transientState := NewRotationRepairState()
+		// Fail all entries across initial sweeps at t=0, 5m, 10m so healthy-user has failed once too.
+		for pass := 0; pass < 3; pass++ {
+			_, _ = transientState.RepairWithLimit(context.Background(), sqlDB, sharedBackup, 50, now.Add(time.Duration(pass)*5*time.Minute))
+		}
+		// Now healthy-user starts succeeding while deleted-user entries keep failing.
+		state.mu.Lock()
+		state.execErr = nil
+		state.mu.Unlock()
+		recovered := false
+		for pass := 3; pass < 12; pass++ {
+			if rep, _ := transientState.RepairWithLimit(context.Background(), sqlDB, sharedBackup, 50, now.Add(time.Duration(pass)*5*time.Minute)); rep > 0 {
+				recovered = true
+				break
+			}
+		}
+		if !recovered {
+			t.Fatal("previously-failed healthy entry stayed starved behind 119 permanently-failing entries")
 		}
 	})
 }
