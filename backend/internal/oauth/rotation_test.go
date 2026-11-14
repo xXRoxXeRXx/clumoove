@@ -977,7 +977,7 @@ func TestRepairWithLimitDeletedAnchorAndResumer(t *testing.T) {
 		t.Cleanup(func() { _ = sqlDB.Close() })
 
 		backing := &stubBackupStore{}
-		for i := 0; i < 5; i++ {
+		for i := 0; i < 15; i++ {
 			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, backing, nil, key, "deleted-user", "google", fmt.Sprintf("D-new-%02d", i), now, fmt.Sprintf("D-old-%02d", i))
 		}
 		for i := 0; i < 5; i++ {
@@ -988,33 +988,34 @@ func TestRepairWithLimitDeletedAnchorAndResumer(t *testing.T) {
 		}
 		store := &boundedScanBackupStore{
 			stubBackupStore:   backing,
-			maxVisitsPerSweep: 15,
+			maxVisitsPerSweep: 20,
 		}
 
 		repairState := NewRotationRepairState()
-		// Pass 1 fails the 5 deleted-user entries and sets resumeAnchor to the last surviving one.
-		_, _ = repairState.RepairWithLimit(context.Background(), sqlDB, store, 5, now)
+		// Pass 1 fails the 15 deleted-user entries and sets resumeAnchor to the last surviving one.
+		_, _ = repairState.RepairWithLimit(context.Background(), sqlDB, store, 15, now)
 		survivingAnchor := repairState.getResumeAnchor()
 		if survivingAnchor == "" {
 			t.Fatal("expected surviving anchor after failed pass 1")
 		}
-		// Externally remove the surviving anchor key.
+		// Externally remove the surviving anchor key and restrict pass 2 so it times out
+		// before reaching healthy-user.
 		backing.mu.Lock()
 		delete(backing.entries, survivingAnchor)
 		backing.mu.Unlock()
+		store.maxVisitsPerSweep = 10
 
-		// Pass 2 times out at maxVisitsPerSweep=15 while searching for the deleted anchor;
-		// the timeout must clear the unreachable anchor rather than wedging pass 3.
 		_, err := repairState.RepairWithLimit(context.Background(), sqlDB, store, 5, now.Add(5*time.Minute))
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("pass 2 error = %v, want DeadlineExceeded", err)
 		}
-		if repairState.getResumeAnchor() != "" {
-			t.Fatalf("expected unreachable resumeAnchor to clear after timeout, got %q", repairState.getResumeAnchor())
+		if repairState.getResumeAnchor() == survivingAnchor {
+			t.Fatalf("expected unreachable resumeAnchor %q to be cleared or replaced after timeout", survivingAnchor)
 		}
 
-		// Pass 3 visits the 4 remaining deleted-user entries (already in cooldown) + 5 healthy entries = 9 <= 15
+		// Pass 3 visits the 14 remaining deleted-user entries + 5 healthy entries = 19 <= 25
 		// and repairs all 5 healthy entries without timing out.
+		store.maxVisitsPerSweep = 25
 		repaired, err := repairState.RepairWithLimit(context.Background(), sqlDB, store, 5, now.Add(10*time.Minute))
 		if err != nil {
 			t.Fatalf("pass 3 RepairWithLimit error = %v (visits=%d)", err, store.visitsLastSweep)
@@ -1022,5 +1023,74 @@ func TestRepairWithLimitDeletedAnchorAndResumer(t *testing.T) {
 		if repaired != 5 {
 			t.Fatalf("pass 3 repaired = %d, want 5", repaired)
 		}
+	})
+
+	t.Run("slow retry backlog processes collected due retries before context deadline", func(t *testing.T) {
+		fkErr := errors.New("pq: transient db failure")
+		state := &stubRotationDB{execFailUser: "user", execFailErr: fkErr}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		backing := &stubBackupStore{}
+		for i := 0; i < 12; i++ {
+			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, backing, nil, key, "user", "google", fmt.Sprintf("R-new-%02d", i), now, fmt.Sprintf("R-old-%02d", i))
+		}
+		slowStore := &slowDeadlineResumingStore{
+			resumingBackupStore: &resumingBackupStore{
+				boundedScanBackupStore: &boundedScanBackupStore{stubBackupStore: backing},
+			},
+			perVisitDelay: 8 * time.Millisecond,
+		}
+
+		repairState := NewRotationRepairState()
+		// First pass records all 12 entries as failed (without delay).
+		slowStore.perVisitDelay = 0
+		if _, err := repairState.RepairWithLimit(context.Background(), sqlDB, slowStore, 12, now); err == nil {
+			t.Fatal("expected initial failure pass to record retry state")
+		}
+
+		// DB recovers, cooldown has elapsed, and scanning all 12 entries now exceeds the
+		// sweep deadline (12 * 10ms = 120ms > 50ms). Each bounded-deadline sweep must stop
+		// scanning at its half-budget and repair the collected due retries instead of discarding them.
+		state.mu.Lock()
+		state.execFailUser = ""
+		state.execFailErr = nil
+		state.mu.Unlock()
+		slowStore.perVisitDelay = 10 * time.Millisecond
+
+		totalRepaired := 0
+		sweepTime := now.Add(repairFailureCooldown + time.Second)
+		for pass := 0; pass < 8 && len(backing.entries) > 0; pass++ {
+			sweepCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			repaired, err := repairState.RepairWithLimit(sweepCtx, sqlDB, slowStore, 5, sweepTime.Add(time.Duration(pass)*5*time.Minute))
+			cancel()
+			if err != nil {
+				t.Fatalf("pass %d RepairWithLimit error = %v", pass, err)
+			}
+			totalRepaired += repaired
+		}
+		if totalRepaired != 12 || len(backing.entries) != 0 {
+			t.Fatalf("totalRepaired = %d (remaining=%d), want 12 (remaining=0)", totalRepaired, len(backing.entries))
+		}
+	})
+}
+
+type slowDeadlineResumingStore struct {
+	*resumingBackupStore
+	perVisitDelay time.Duration
+}
+
+func (s *slowDeadlineResumingStore) VisitOAuthRotationBackups(ctx context.Context, visit func(userID, provider, prevHash, rotatedHash, encryptedToken string) error) error {
+	return s.resumingBackupStore.VisitOAuthRotationBackups(ctx, func(userID, provider, prevHash, rotatedHash, encryptedToken string) error {
+		if s.perVisitDelay > 0 {
+			timer := time.NewTimer(s.perVisitDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		return visit(userID, provider, prevHash, rotatedHash, encryptedToken)
 	})
 }

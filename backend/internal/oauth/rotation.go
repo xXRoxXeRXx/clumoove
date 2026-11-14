@@ -686,8 +686,20 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 	}
 	passedAnchor := anchor == ""
 	sawAnchor := anchor == ""
+	scanCtx := ctx
+	var cancelScan context.CancelFunc
+	if deadline, ok := ctx.Deadline(); ok {
+		// Reserve half of the caller's deadline for repairing collected entries so
+		// scanning a large failed-retry backlog cannot exhaust the budget before repairs run.
+		if remaining := time.Until(deadline); remaining > 0 {
+			scanCtx, cancelScan = context.WithTimeout(ctx, remaining/2)
+		}
+	}
+	if cancelScan != nil {
+		defer cancelScan()
+	}
 	var fresh, wrappedFresh, dueRetries, cooled []pendingBackupRecord
-	visitErr := store.VisitOAuthRotationBackups(ctx, func(userID, provider, prevHash, rotatedHash, encryptedToken string) error {
+	visitErr := store.VisitOAuthRotationBackups(scanCtx, func(userID, provider, prevHash, rotatedHash, encryptedToken string) error {
 		k := s.key(userID, provider, prevHash)
 		st, hasFailed := s.failureState(k)
 		rec := pendingBackupRecord{
@@ -730,13 +742,21 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 		cooled = append(cooled, rec)
 		return nil
 	})
+	hasCandidates := len(fresh) > 0 || len(wrappedFresh) > 0 || len(dueRetries) > 0 || len(cooled) > 0
+	var deferredScanErr error
 	if visitErr != nil && !errors.Is(visitErr, errRepairBatchLimitReached) {
+		scanBudgetElapsed := cancelScan != nil && errors.Is(scanCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 		if !resumesScan && !sawAnchor {
 			// Clear an unreachable or deleted anchor so the next sweep does not
 			// repeat a full-keyspace traversal and hit the same scan error/timeout.
 			s.setResumeAnchor("")
 		}
-		return 0, fmt.Errorf("%w: scan oauth rotation backups: %w", ErrRotationPersistence, visitErr)
+		if ctx.Err() != nil || !hasCandidates {
+			return 0, fmt.Errorf("%w: scan oauth rotation backups: %w", ErrRotationPersistence, visitErr)
+		}
+		if !scanBudgetElapsed {
+			deferredScanErr = fmt.Errorf("%w: scan oauth rotation backups: %w", ErrRotationPersistence, visitErr)
+		}
 	}
 	sortFair := func(list []pendingBackupRecord) {
 		sort.Slice(list, func(i, j int) bool {
@@ -805,6 +825,9 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 		default:
 			s.setResumeAnchor("")
 		}
+	}
+	if deferredScanErr != nil {
+		repairErrs = append(repairErrs, deferredScanErr)
 	}
 	return repaired, errors.Join(repairErrs...)
 }
