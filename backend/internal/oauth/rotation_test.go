@@ -1070,6 +1070,48 @@ func TestRepairWithLimitDeletedAnchorAndResumer(t *testing.T) {
 			t.Fatalf("totalRepaired = %d (remaining=%d), want 12 (remaining=0)", totalRepaired, len(backing.entries))
 		}
 	})
+
+	t.Run("post-anchor failures do not regress resumeAnchor when mixed with prefix retries", func(t *testing.T) {
+		fkErr := errors.New("pq: fk violation")
+		state := &stubRotationDB{execFailUser: "fail-user", execFailErr: fkErr}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		backing := &stubBackupStore{}
+		for i := 0; i < 3; i++ {
+			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, backing, nil, key, "fail-user", "google", fmt.Sprintf("P-new-%d", i), now, fmt.Sprintf("P-old-%d", i))
+		}
+		keys := make([]string, 0, len(backing.entries))
+		for k := range backing.entries {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		repairState := NewRotationRepairState()
+		// Pass 1 fails keys[0] -> sets resumeAnchor = keys[0].
+		_, _ = repairState.RepairWithLimit(context.Background(), sqlDB, backing, 1, now)
+		if got := repairState.getResumeAnchor(); got != keys[0] {
+			t.Fatalf("pass 1 resumeAnchor = %q, want %q", got, keys[0])
+		}
+
+		// Pass 2 runs after cooldown so keys[0] is a due prefix retry while keys[1..2] are fresh
+		// post-anchor entries: pending = [keys[1], keys[2], keys[0]]. keys[0] runs last and fails,
+		// so resumeAnchor must advance to keys[2] rather than regressing back to keys[0].
+		_, _ = repairState.RepairWithLimit(context.Background(), sqlDB, backing, 3, now.Add(repairFailureCooldown+time.Second))
+		if got := repairState.getResumeAnchor(); got != keys[2] {
+			t.Fatalf("pass 2 resumeAnchor = %q, want %q (must not regress to %q)", got, keys[2], keys[0])
+		}
+
+		// If keys[2] is later deleted externally and prefix entries fail again, resumeAnchor updates
+		// to a surviving prefix key instead of staying stuck on missing keys[2].
+		backing.mu.Lock()
+		delete(backing.entries, keys[2])
+		backing.mu.Unlock()
+		_, _ = repairState.RepairWithLimit(context.Background(), sqlDB, backing, 1, now.Add(3*repairFailureCooldown))
+		if got := repairState.getResumeAnchor(); got == keys[2] || got == "" {
+			t.Fatalf("pass 3 resumeAnchor = %q, want surviving key instead of deleted %q", got, keys[2])
+		}
+	})
 }
 
 type slowDeadlineResumingStore struct {
