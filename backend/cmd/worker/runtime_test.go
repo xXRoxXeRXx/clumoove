@@ -143,8 +143,8 @@ func TestRunWorkerExitsNonZeroAfterDrainAndReleasesLeaseWhenLoopFails(t *testing
 	release := func() { events = append(events, "released") }
 
 	code := runWorker(ctx, cancel, drain, release,
-		backgroundLoop{name: "backup", run: blockUntilCancelled},
-		backgroundLoop{name: "restore", run: func(context.Context) error { return errors.New("poll exploded") }},
+		backgroundLoop{Name: "backup", Run: blockUntilCancelled},
+		backgroundLoop{Name: "restore", Run: func(context.Context) error { return errors.New("poll exploded") }},
 	)
 
 	if code != 1 {
@@ -165,8 +165,8 @@ func TestRunWorkerExitsZeroOnGracefulCancellation(t *testing.T) {
 		cancel()
 	}()
 	code := runWorker(ctx, cancel, drain, func() { released = true },
-		backgroundLoop{name: "backup", run: blockUntilCancelled},
-		backgroundLoop{name: "restore", run: blockUntilCancelled},
+		backgroundLoop{Name: "backup", Run: blockUntilCancelled},
+		backgroundLoop{Name: "restore", Run: blockUntilCancelled},
 	)
 
 	if code != 0 {
@@ -199,8 +199,8 @@ func TestRunWorkerWaitsForSlowLoopBeforeReleasingLease(t *testing.T) {
 		cancel()
 	}()
 	code := runWorker(ctx, cancel, drain, func() { record("released") },
-		backgroundLoop{name: "scheduler", run: slow},
-		backgroundLoop{name: "notifier", run: blockUntilCancelled},
+		backgroundLoop{Name: "scheduler", Run: slow},
+		backgroundLoop{Name: "notifier", Run: blockUntilCancelled},
 	)
 
 	if code != 0 {
@@ -219,7 +219,7 @@ func TestRunWorkerStopsLoopsWhenDrainReturnsWithoutCancellation(t *testing.T) {
 	loopStopped := false
 
 	code := runWorker(ctx, cancel, func(context.Context) {}, func() {},
-		backgroundLoop{name: "scheduler", run: func(ctx context.Context) error {
+		backgroundLoop{Name: "scheduler", Run: func(ctx context.Context) error {
 			<-ctx.Done()
 			loopStopped = true
 			return ctx.Err()

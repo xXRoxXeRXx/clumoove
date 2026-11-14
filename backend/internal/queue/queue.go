@@ -765,8 +765,10 @@ func ListenForTasks(ctx context.Context, connStr string) (<-chan struct{}, error
 
 	notifyCh := make(chan struct{}, 1)
 	go func() {
-		defer listener.Close()
+		// notifyCh closes only after the listener is closed, so a consumer that
+		// drains the channel after cancellation knows the connection is released.
 		defer close(notifyCh)
+		defer listener.Close()
 		for {
 			select {
 			case <-ctx.Done():

@@ -216,12 +216,10 @@ func main() {
 	// restart). Blocks until the context is cancelled AND all in-flight tasks and
 	// background loops have finished.
 	loops := []backgroundLoop{
-		{name: "backup", run: func(ctx context.Context) error { return backupCoordinator.Run(ctx, time.Second) }},
-		{name: "restore", run: func(ctx context.Context) error { return restoreCoordinator.Run(ctx, time.Second) }},
+		{Name: "backup", Run: func(ctx context.Context) error { return backupCoordinator.Run(ctx, time.Second) }},
+		{Name: "restore", Run: func(ctx context.Context) error { return restoreCoordinator.Run(ctx, time.Second) }},
 	}
-	for _, loop := range proc.BackgroundLoops() {
-		loops = append(loops, backgroundLoop{name: loop.Name, run: loop.Run})
-	}
+	loops = append(loops, proc.BackgroundLoops()...)
 	exitCode = runWorker(ctx, cancel, proc.Start, func() {
 		releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancelRelease()

@@ -688,8 +688,12 @@ func (p *Processor) Start(ctx context.Context) {
 	}
 
 	p.runTransferWorkers(ctx, notifyTasksCh)
-	return
-
+	// ctx is cancelled here; wait for the LISTEN goroutine to release its
+	// connection so no worker-owned goroutine outlives the drain.
+	if notifyTasksCh != nil {
+		for range notifyTasksCh {
+		}
+	}
 }
 
 type atomicRenameChecker interface {

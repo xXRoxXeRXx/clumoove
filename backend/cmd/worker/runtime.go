@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"backend/internal/observability"
+	"backend/internal/processor"
 )
 
 // This file is the worker's single runtime module. It owns the cancellation
@@ -17,7 +18,7 @@ import (
 // wires signals, and calls runWorker.
 
 // loopFailureKind is the error_kind logged for terminal background-loop exits.
-const loopFailureKind = "background_loop_failure"
+const loopFailureKind = "coordinator_failure"
 
 // loopFailure reports that a background loop stopped while the worker
 // was still supposed to be running.
@@ -69,7 +70,7 @@ func (s *loopSupervisor) Go(ctx context.Context, name string, run func(context.C
 		failure := &loopFailure{Name: name, Err: err}
 		s.failure = failure
 		s.mu.Unlock()
-		slog.Error("background_loop_stopped", slog.String("component", name), observability.Error(failure), slog.String("error_kind", loopFailureKind))
+		slog.Error("coordinator_stopped", slog.String("component", name), observability.Error(failure), slog.String("error_kind", loopFailureKind))
 		s.cancel()
 	}()
 }
@@ -89,11 +90,9 @@ func (s *loopSupervisor) Err() error {
 	return s.failure
 }
 
-// backgroundLoop is a named background loop that must run until shutdown.
-type backgroundLoop struct {
-	name string
-	run  func(context.Context) error
-}
+// backgroundLoop is a named background loop that must run until shutdown. It is
+// the same type the processor exposes, so no adapter is needed.
+type backgroundLoop = processor.BackgroundLoop
 
 // runWorker runs the background loops under supervision while drain (the
 // processor) blocks until ctx is cancelled and in-flight tasks finish. Once
@@ -105,7 +104,7 @@ type backgroundLoop struct {
 func runWorker(ctx context.Context, cancel context.CancelFunc, drain func(context.Context), release func(), loops ...backgroundLoop) int {
 	supervisor := newLoopSupervisor(cancel)
 	for _, loop := range loops {
-		supervisor.Go(ctx, loop.name, loop.run)
+		supervisor.Go(ctx, loop.Name, loop.Run)
 	}
 	drain(ctx)
 	// The drain finishing means the worker is done; stop every loop so the
