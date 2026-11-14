@@ -115,6 +115,21 @@ func TestWorkerConfigProcessorConfigCarriesExplicitSettings(t *testing.T) {
 	}
 }
 
+func TestLoadWorkerConfigValidatesBackupPackWriterLimit(t *testing.T) {
+	for _, value := range []string{"0", "5", "invalid"} {
+		if _, err := loadWorkerConfig(workerEnv(map[string]string{"MAX_BACKUP_PACK_WRITERS": value})); err == nil {
+			t.Errorf("MAX_BACKUP_PACK_WRITERS=%q succeeded", value)
+		}
+	}
+	config, err := loadWorkerConfig(workerEnv(map[string]string{"MAX_BACKUP_PACK_WRITERS": "4"}))
+	if err != nil || config.maxBackupPackWriters != 4 {
+		t.Fatalf("backup writer limit = %d, error = %v", config.maxBackupPackWriters, err)
+	}
+	if config, err = loadWorkerConfig(workerEnv(nil)); err != nil || config.maxBackupPackWriters != 1 {
+		t.Fatalf("default backup writer limit = %d, error = %v", config.maxBackupPackWriters, err)
+	}
+}
+
 func TestLoadWorkerConfigRejectsMissingEncryptionKey(t *testing.T) {
 	if _, err := loadWorkerConfig(func(string) string { return "" }); err == nil {
 		t.Fatal("loadWorkerConfig() succeeded without an encryption key")

@@ -139,7 +139,6 @@ func isLocalOrPrivateHost(host string) bool {
 	return true
 }
 
-// InitDB initializes the database connection with startup retries and schema DDL setup.
 // DefaultMaxConns is the connection pool size used when the caller has no
 // worker-capacity information (for example the API process).
 const DefaultMaxConns = 50
@@ -151,9 +150,14 @@ func MaxConnsForThreads(maxThreads int) int {
 	return max(DefaultMaxConns, maxThreads*2)
 }
 
-// InitDB connects to PostgreSQL, applies the schema and sizes the connection
-// pool to maxConns. It does not read the environment for sizing.
+// InitDB initializes the database connection with startup retries and schema DDL
+// setup, then sizes the connection pool to maxConns (which must be at least 1;
+// database/sql treats zero or less as unlimited). It does not read the
+// environment for sizing.
 func InitDB(connStr string, maxConns int) (*sql.DB, error) {
+	if maxConns < 1 {
+		return nil, fmt.Errorf("invalid database pool size %d: must be at least 1", maxConns)
+	}
 	if host := dbHostFromConnStr(connStr); !isLocalOrPrivateHost(host) && strings.Contains(connStr, "postgres:postgres@") {
 		return nil, fmt.Errorf("insecure DATABASE_URL: the default 'postgres:postgres' credentials are only permitted for a localhost or private-network database. Set DB_PASSWORD to a strong, unique password for any publicly-reachable deployment.")
 	}
