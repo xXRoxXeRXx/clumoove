@@ -25,8 +25,9 @@ const (
 	tokenPersistTimeout    = 10 * time.Second
 	tokenHistoryDBTimeout  = 4 * time.Second
 	tokenBackupTimeout     = 2 * time.Second
-	tokenRepairTimeout     = 2 * time.Second
-	tokenLockSafetyMargin  = 3 * time.Second
+	tokenRepairTimeout      = 2 * time.Second
+	defaultRepairBatchLimit = 50
+	tokenLockSafetyMargin   = 3 * time.Second
 	tokenLockTTL           = 40 * time.Second
 	tokenLockWaitTimeout   = 35 * time.Second
 	tokenLockPollDelay     = 100 * time.Millisecond
@@ -51,12 +52,12 @@ type RotationBackupStore interface {
 }
 
 // RotationBackupRepairStore extends RotationBackupStore with enumeration and
-// deletion so dormant backup-only mappings can be proactively repaired into
-// PostgreSQL and cleared once durable.
+// conditional deletion so dormant backup-only mappings can be proactively repaired
+// into PostgreSQL without removing newer concurrent rotations.
 type RotationBackupRepairStore interface {
 	RotationBackupStore
 	VisitOAuthRotationBackups(ctx context.Context, visit func(userID, provider, prevHash, rotatedHash, encryptedToken string) error) error
-	DeleteOAuthRotationBackup(ctx context.Context, userID, provider, prevHash string) error
+	DeleteOAuthRotationBackup(ctx context.Context, userID, provider, prevHash, expectedRotatedHash, expectedEncrypted string) (bool, error)
 }
 
 type keyedLockEntry struct {
@@ -277,21 +278,34 @@ func LookupRotatedRefreshTokenWithStore(ctx context.Context, database *sql.DB, b
 	return current, true, nil
 }
 
+func lookupOneDatabaseRotationHop(ctx context.Context, database *sql.DB, encryptionKey, userID, provider, tokenHash string) (string, bool, error) {
+	_, encrypted, found, err := db.LookupOAuthTokenRotation(ctx, database, userID, provider, tokenHash)
+	if err != nil {
+		if errors.Is(err, driver.ErrSkip) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("%w: lookup oauth token rotation: %w", ErrRotationPersistence, err)
+	}
+	if !found {
+		return "", false, nil
+	}
+	plain, decErr := crypto.DecryptWithDomain(encrypted, encryptionKey, crypto.DomainOAuthRefreshToken)
+	if decErr != nil {
+		return "", false, fmt.Errorf("%w: decrypt oauth token rotation: %w", ErrRotationPersistence, decErr)
+	}
+	if plain == "" {
+		return "", false, fmt.Errorf("%w: decrypted oauth token rotation is empty", ErrRotationPersistence)
+	}
+	return plain, true, nil
+}
+
 func lookupOneRotationHop(ctx context.Context, database *sql.DB, backup RotationBackupStore, cache *RotationCache, encryptionKey, userID, provider, refreshToken, tokenHash string, now time.Time) (string, bool, error) {
 	if database != nil && provider != "" && userID != "" {
-		_, encrypted, found, err := db.LookupOAuthTokenRotation(ctx, database, userID, provider, tokenHash)
+		plain, found, err := lookupOneDatabaseRotationHop(ctx, database, encryptionKey, userID, provider, tokenHash)
 		if err != nil {
-			if !errors.Is(err, driver.ErrSkip) {
-				return "", false, fmt.Errorf("%w: lookup oauth token rotation: %w", ErrRotationPersistence, err)
-			}
-		} else if found {
-			plain, decErr := crypto.DecryptWithDomain(encrypted, encryptionKey, crypto.DomainOAuthRefreshToken)
-			if decErr != nil {
-				return "", false, fmt.Errorf("%w: decrypt oauth token rotation: %w", ErrRotationPersistence, decErr)
-			}
-			if plain == "" {
-				return "", false, fmt.Errorf("%w: decrypted oauth token rotation is empty", ErrRotationPersistence)
-			}
+			return "", false, err
+		}
+		if found {
 			return plain, true, nil
 		}
 	}
@@ -313,7 +327,7 @@ func lookupOneRotationHop(ctx context.Context, database *sql.DB, backup Rotation
 					rotatedHash = db.OAuthTokenRotationHash(userID, provider, plain)
 				}
 				repairCtx, cancelRepair := context.WithTimeout(ctx, tokenRepairTimeout)
-				repairErr := db.RecordOAuthTokenRotation(repairCtx, database, userID, provider, tokenHash, rotatedHash, encrypted)
+				inserted, repairErr := db.RepairOAuthTokenRotation(repairCtx, database, userID, provider, tokenHash, rotatedHash, encrypted)
 				cancelRepair()
 				if repairErr != nil && !errors.Is(repairErr, driver.ErrSkip) {
 					return "", false, fmt.Errorf("%w: repair oauth token rotation: %w", ErrRotationPersistence, repairErr)
@@ -321,12 +335,31 @@ func lookupOneRotationHop(ctx context.Context, database *sql.DB, backup Rotation
 				if repairErr == nil {
 					if rs, ok := backup.(RotationBackupRepairStore); ok {
 						delCtx, cancelDel := context.WithTimeout(ctx, tokenRepairTimeout)
-						_ = rs.DeleteOAuthRotationBackup(delCtx, userID, provider, tokenHash)
+						_, _ = rs.DeleteOAuthRotationBackup(delCtx, userID, provider, tokenHash, rotatedHash, encrypted)
 						cancelDel()
+					}
+					if !inserted {
+						// PostgreSQL already held a mapping written concurrently; prefer the DB row.
+						if dbPlain, dbFound, dbErr := lookupOneDatabaseRotationHop(ctx, database, encryptionKey, userID, provider, tokenHash); dbErr != nil {
+							return "", false, dbErr
+						} else if dbFound {
+							return dbPlain, true, nil
+						}
 					}
 				}
 			}
 			return plain, true, nil
+		}
+		// Re-check PostgreSQL after a backup miss so a concurrent repair committing
+		// to PostgreSQL and deleting the Redis entry between reads is never missed.
+		if database != nil {
+			plain, found, err := lookupOneDatabaseRotationHop(ctx, database, encryptionKey, userID, provider, tokenHash)
+			if err != nil {
+				return "", false, err
+			}
+			if found {
+				return plain, true, nil
+			}
 		}
 	}
 	return cache.lookupOne(userID, provider, refreshToken, encryptionKey, now)
@@ -415,9 +448,18 @@ func RecordRotatedRefreshTokenWithStore(ctx context.Context, database *sql.DB, b
 	return persistErr
 }
 
-// RepairRotationBackups reconciles pending rotation mappings from the shared
-// backup store back into PostgreSQL and removes each backup entry once durable.
+var errRepairBatchLimitReached = errors.New("repair batch limit reached")
+
+// RepairRotationBackups reconciles up to defaultRepairBatchLimit pending rotation
+// mappings from the shared backup store back into PostgreSQL and conditionally
+// removes each backup entry once durable without overwriting newer rotations.
 func RepairRotationBackups(ctx context.Context, database *sql.DB, store RotationBackupRepairStore) (int, error) {
+	return RepairRotationBackupsWithLimit(ctx, database, store, defaultRepairBatchLimit)
+}
+
+// RepairRotationBackupsWithLimit reconciles at most limit pending rotation
+// mappings (unlimited when limit <= 0) from store into PostgreSQL.
+func RepairRotationBackupsWithLimit(ctx context.Context, database *sql.DB, store RotationBackupRepairStore, limit int) (int, error) {
 	if database == nil || store == nil {
 		return 0, nil
 	}
@@ -425,7 +467,7 @@ func RepairRotationBackups(ctx context.Context, database *sql.DB, store Rotation
 		userID, provider, prevHash, rotatedHash, encrypted string
 	}
 	var pending []pendingRecord
-	if err := store.VisitOAuthRotationBackups(ctx, func(userID, provider, prevHash, rotatedHash, encryptedToken string) error {
+	visitErr := store.VisitOAuthRotationBackups(ctx, func(userID, provider, prevHash, rotatedHash, encryptedToken string) error {
 		pending = append(pending, pendingRecord{
 			userID:      userID,
 			provider:    provider,
@@ -433,25 +475,49 @@ func RepairRotationBackups(ctx context.Context, database *sql.DB, store Rotation
 			rotatedHash: rotatedHash,
 			encrypted:   encryptedToken,
 		})
+		if limit > 0 && len(pending) >= limit {
+			return errRepairBatchLimitReached
+		}
 		return nil
-	}); err != nil {
-		return 0, fmt.Errorf("%w: scan oauth rotation backups: %w", ErrRotationPersistence, err)
+	})
+	if visitErr != nil && !errors.Is(visitErr, errRepairBatchLimitReached) {
+		return 0, fmt.Errorf("%w: scan oauth rotation backups: %w", ErrRotationPersistence, visitErr)
 	}
 	repaired := 0
 	var repairErrs []error
 	for _, rec := range pending {
-		if err := db.RecordOAuthTokenRotation(ctx, database, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash, rec.encrypted); err != nil {
+		if ctx.Err() != nil {
+			repairErrs = append(repairErrs, fmt.Errorf("%w: repair oauth token rotation: %w", ErrRotationPersistence, ctx.Err()))
+			break
+		}
+		// Refresh the backup entry immediately before writing to avoid repairing
+		// an older snapshot after a concurrent rotation replaced the backup key.
+		curRotated, curEnc, stillPresent, lerr := store.LookupOAuthRotationBackup(ctx, rec.userID, rec.provider, rec.prevHash)
+		if lerr != nil {
+			repairErrs = append(repairErrs, fmt.Errorf("%w: recheck oauth rotation backup: %w", ErrRotationPersistence, lerr))
+			continue
+		}
+		if !stillPresent {
+			continue
+		}
+		rec.rotatedHash = curRotated
+		rec.encrypted = curEnc
+
+		if _, err := db.RepairOAuthTokenRotation(ctx, database, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash, rec.encrypted); err != nil {
 			if errors.Is(err, driver.ErrSkip) {
 				continue
 			}
 			repairErrs = append(repairErrs, fmt.Errorf("%w: repair oauth token rotation: %w", ErrRotationPersistence, err))
 			continue
 		}
-		if derr := store.DeleteOAuthRotationBackup(ctx, rec.userID, rec.provider, rec.prevHash); derr != nil {
+		deleted, derr := store.DeleteOAuthRotationBackup(ctx, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash, rec.encrypted)
+		if derr != nil {
 			repairErrs = append(repairErrs, fmt.Errorf("%w: cleanup oauth rotation backup: %w", ErrRotationPersistence, derr))
 			continue
 		}
-		repaired++
+		if deleted {
+			repaired++
+		}
 	}
 	return repaired, errors.Join(repairErrs...)
 }

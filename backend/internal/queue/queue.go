@@ -440,13 +440,43 @@ func (q *Queue) VisitOAuthRotationBackups(ctx context.Context, visit func(userID
 	return nil
 }
 
-// DeleteOAuthRotationBackup removes a Redis backup entry after PostgreSQL has
-// durably persisted the rotation mapping.
-func (q *Queue) DeleteOAuthRotationBackup(ctx context.Context, userID, provider, prevHash string) error {
+// DeleteOAuthRotationBackup removes a Redis backup entry only if its stored
+// rotated_hash and ciphertext still match the repaired snapshot, preventing a
+// sweep from deleting a newer concurrent rotation.
+func (q *Queue) DeleteOAuthRotationBackup(ctx context.Context, userID, provider, prevHash, expectedRotatedHash, expectedEncrypted string) (bool, error) {
 	if q == nil || q.client == nil || userID == "" || provider == "" || prevHash == "" {
-		return nil
+		return false, nil
 	}
-	return q.client.Del(ctx, oauthRotationRedisKey(userID, provider, prevHash)).Err()
+	key := oauthRotationRedisKey(userID, provider, prevHash)
+	deleted := false
+	err := q.client.Watch(ctx, func(tx *redis.Tx) error {
+		raw, gerr := tx.Get(ctx, key).Result()
+		if errors.Is(gerr, redis.Nil) {
+			return nil
+		}
+		if gerr != nil {
+			return gerr
+		}
+		var entry redisOAuthRotationEntry
+		if uerr := json.Unmarshal([]byte(raw), &entry); uerr != nil {
+			return uerr
+		}
+		if entry.RotatedHash != expectedRotatedHash || entry.RefreshTokenEncrypted != expectedEncrypted {
+			return nil
+		}
+		_, perr := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Del(ctx, key)
+			return nil
+		})
+		if perr == nil {
+			deleted = true
+		}
+		return perr
+	}, key)
+	if errors.Is(err, redis.TxFailedErr) {
+		return false, nil
+	}
+	return deleted, err
 }
 
 // RegisterActiveWorker registers/refreshes the worker's active status in Redis

@@ -34,6 +34,29 @@ func RecordOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, pro
 	return err
 }
 
+// RepairOAuthTokenRotation inserts a backup rotation mapping only if PostgreSQL
+// does not already have a mapping for previousTokenHash, preventing a delayed
+// repair from overwriting a newer rotation. Returns true when inserted.
+func RepairOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, provider, previousTokenHash, rotatedTokenHash, rotatedRefreshTokenEncrypted string) (bool, error) {
+	if database == nil || userID == "" || provider == "" || previousTokenHash == "" || rotatedTokenHash == "" || previousTokenHash == rotatedTokenHash || rotatedRefreshTokenEncrypted == "" {
+		return false, nil
+	}
+	res, err := database.ExecContext(ctx, `
+		INSERT INTO oauth_token_rotations (
+			user_id, provider, token_hash, rotated_token_hash, rotated_refresh_token_encrypted
+		) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (user_id, provider, token_hash) DO NOTHING
+	`, userID, provider, previousTokenHash, rotatedTokenHash, rotatedRefreshTokenEncrypted)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
 // LookupOAuthTokenRotation transitively resolves a possibly pre-rotation
 // token hash along any recorded rotation chain (A -> B -> C) with cycle protection.
 func LookupOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, provider, tokenHash string) (string, string, bool, error) {

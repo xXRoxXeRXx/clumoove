@@ -56,6 +56,11 @@ func (c *stubRotationConn) ExecContext(ctx context.Context, query string, args [
 			c.db.rows = make(map[string]stubRotationRow)
 		}
 		k := fmt.Sprintf("%v\x00%v\x00%v", args[0].Value, args[1].Value, args[2].Value)
+		if strings.Contains(query, "DO NOTHING") {
+			if _, exists := c.db.rows[k]; exists {
+				return driver.RowsAffected(0), nil
+			}
+		}
 		c.db.rows[k] = stubRotationRow{
 			nextHash:  args[3].Value.(string),
 			encrypted: args[4].Value.(string),
@@ -142,11 +147,12 @@ func (l *trackingTokenLocker) isHeld(jobType, jobID, role string) bool {
 }
 
 type stubBackupStore struct {
-	mu        sync.Mutex
-	entries   map[string]stubRotationRow
-	recordErr error
-	sawCtxErr error
-	lastTTL   time.Duration
+	mu           sync.Mutex
+	entries      map[string]stubRotationRow
+	recordErr    error
+	sawCtxErr    error
+	lastTTL      time.Duration
+	onBeforeLook func()
 }
 
 func (s *stubBackupStore) RecordOAuthRotationBackup(ctx context.Context, userID, provider, prevHash, rotatedHash, encryptedToken string, ttl time.Duration) error {
@@ -171,6 +177,12 @@ func (s *stubBackupStore) RecordOAuthRotationBackup(ctx context.Context, userID,
 }
 
 func (s *stubBackupStore) LookupOAuthRotationBackup(_ context.Context, userID, provider, tokenHash string) (string, string, bool, error) {
+	s.mu.Lock()
+	hook := s.onBeforeLook
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := fmt.Sprintf("%s\x00%s\x00%s", userID, provider, tokenHash)
@@ -197,11 +209,16 @@ func (s *stubBackupStore) VisitOAuthRotationBackups(_ context.Context, visit fun
 	return nil
 }
 
-func (s *stubBackupStore) DeleteOAuthRotationBackup(_ context.Context, userID, provider, prevHash string) error {
+func (s *stubBackupStore) DeleteOAuthRotationBackup(_ context.Context, userID, provider, prevHash, expectedRotatedHash, expectedEncrypted string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.entries, fmt.Sprintf("%s\x00%s\x00%s", userID, provider, prevHash))
-	return nil
+	k := fmt.Sprintf("%s\x00%s\x00%s", userID, provider, prevHash)
+	cur, ok := s.entries[k]
+	if !ok || cur.nextHash != expectedRotatedHash || cur.encrypted != expectedEncrypted {
+		return false, nil
+	}
+	delete(s.entries, k)
+	return true, nil
 }
 
 func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
@@ -606,6 +623,69 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		gotDB, okDB, errDB := LookupRotatedRefreshToken(context.Background(), sqlDB, nil, key, "u1", "google", "T1", now)
 		if errDB != nil || !okDB || gotDB != "T2" {
 			t.Fatalf("LookupRotatedRefreshToken(after sweep) = (%q, %v, %v), want (T2, true, nil)", gotDB, okDB, errDB)
+		}
+	})
+
+	t.Run("concurrent move from backup to postgresql is not missed by lookup", func(t *testing.T) {
+		state := &stubRotationDB{}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		sharedBackup := &stubBackupStore{}
+		if err := RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "u1", "google", "T2", now, "T1"); err != nil {
+			t.Fatalf("setup backup record error = %v", err)
+		}
+
+		// Simulate repair committing T1 -> T2 to DB and deleting it from Redis right
+		// after lookup missed DB and right before lookup checks Redis.
+		sharedBackup.onBeforeLook = func() {
+			sharedBackup.mu.Lock()
+			sharedBackup.onBeforeLook = nil
+			sharedBackup.mu.Unlock()
+			_, _ = RepairRotationBackups(context.Background(), sqlDB, sharedBackup)
+		}
+
+		got, ok, err := LookupRotatedRefreshTokenWithStore(context.Background(), sqlDB, sharedBackup, nil, key, "u1", "google", "T1", now)
+		if err != nil || !ok || got != "T2" {
+			t.Fatalf("LookupRotatedRefreshTokenWithStore(race) = (%q, %v, %v), want (T2, true, nil)", got, ok, err)
+		}
+	})
+
+	t.Run("repair compare-and-delete and ON CONFLICT DO NOTHING preserve newer rotations and respect batch limits", func(t *testing.T) {
+		state := &stubRotationDB{}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		sharedBackup := &stubBackupStore{}
+		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "u1", "google", "B", now, "A")
+		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "u1", "google", "Y", now, "X")
+
+		// Pre-populate PostgreSQL with newer A -> C before stale A -> B repair arrives,
+		// and ensure DeleteOAuthRotationBackup refuses when rotatedHash differs.
+		if err := RecordRotatedRefreshToken(context.Background(), sqlDB, nil, key, "u1", "google", "C", now, "A"); err != nil {
+			t.Fatalf("Record(A->C) error = %v", err)
+		}
+		deleted, derr := sharedBackup.DeleteOAuthRotationBackup(context.Background(), "u1", "google", db.OAuthTokenRotationHash("u1", "google", "A"), "wrong-hash", "wrong-enc")
+		if derr != nil || deleted {
+			t.Fatalf("DeleteOAuthRotationBackup(mismatch) = (%v, %v), want (false, nil)", deleted, derr)
+		}
+
+		// Batch limit = 1 repairs at most one backup per pass without overwriting A -> C.
+		repaired, err := RepairRotationBackupsWithLimit(context.Background(), sqlDB, sharedBackup, 1)
+		if err != nil || repaired != 1 {
+			t.Fatalf("RepairRotationBackupsWithLimit(1) = (%d, %v), want (1, nil)", repaired, err)
+		}
+		if len(sharedBackup.entries) != 1 {
+			t.Fatalf("remaining entries after batch=1 = %d, want 1", len(sharedBackup.entries))
+		}
+		repaired2, err := RepairRotationBackupsWithLimit(context.Background(), sqlDB, sharedBackup, 1)
+		if err != nil || repaired2 != 1 {
+			t.Fatalf("second batch = (%d, %v), want (1, nil)", repaired2, err)
+		}
+		// A -> C in PostgreSQL must remain C, not overwritten by stale A -> B!
+		gotA, okA, errA := LookupRotatedRefreshToken(context.Background(), sqlDB, nil, key, "u1", "google", "A", now)
+		if errA != nil || !okA || gotA != "C" {
+			t.Fatalf("Lookup(A) after stale repair = (%q, %v, %v), want (C, true, nil)", gotA, okA, errA)
 		}
 	})
 }

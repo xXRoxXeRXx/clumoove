@@ -325,13 +325,6 @@ func isOAuthRotationAlreadyResolved(currentRefreshEnc, freshRefreshEnc string) b
 
 func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 	logger := oauthRotationLogger(ctx)
-	if s.queue != nil {
-		if repaired, repairErr := oauth.RepairRotationBackups(ctx, s.db, s.queue); repairErr != nil {
-			logger.ErrorContext(ctx, "oauth_rotation_backup_repair_failed", observability.Error(repairErr), slog.String("error_kind", observability.ErrorKind(repairErr)))
-		} else if repaired > 0 {
-			logger.InfoContext(ctx, "oauth_rotation_backups_repaired", slog.Int("repaired_count", repaired))
-		}
-	}
 	expiringMig, err := db.GetExpiringOAuthMigrations(s.db)
 	if err != nil {
 		logger.ErrorContext(ctx, "oauth_rotation_scan_failed", slog.String("job_type", "migration"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
@@ -456,6 +449,19 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					return db.UpdateRestoreRunOAuthTokens(persistCtx, s.db, entry.RestoreRunID, accessEnc, refreshEnc, expiresAt, expectedRefreshEnc)
 				},
 			})
+		}
+	}
+
+	// Reconcile dormant Redis rotation backups after active token refreshes so
+	// large backlogs or slow DB writes never delay active OAuth jobs.
+	if s.queue != nil {
+		repairCtx, cancelRepair := context.WithTimeout(ctx, 5*time.Second)
+		repaired, repairErr := oauth.RepairRotationBackups(repairCtx, s.db, s.queue)
+		cancelRepair()
+		if repairErr != nil {
+			logger.ErrorContext(ctx, "oauth_rotation_backup_repair_failed", observability.Error(repairErr), slog.String("error_kind", observability.ErrorKind(repairErr)))
+		} else if repaired > 0 {
+			logger.InfoContext(ctx, "oauth_rotation_backups_repaired", slog.Int("repaired_count", repaired))
 		}
 	}
 }
