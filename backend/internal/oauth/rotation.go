@@ -66,6 +66,13 @@ type RotationBackupRepairStore interface {
 	DeleteOAuthRotationBackup(ctx context.Context, userID, provider, prevHash, expectedRotatedHash, expectedEncrypted string) (bool, error)
 }
 
+// OAuthRotationScanResumer may be implemented by RotationBackupRepairStore
+// stores (such as Queue) that persist scan progress internally across
+// VisitOAuthRotationBackups calls.
+type OAuthRotationScanResumer interface {
+	ResumesOAuthRotationScan() bool
+}
+
 type keyedLockEntry struct {
 	mu   sync.Mutex
 	refs int
@@ -657,6 +664,12 @@ func RepairRotationBackupsWithLimit(ctx context.Context, database *sql.DB, store
 	return defaultRepairState.RepairWithLimit(ctx, database, store, limit, time.Now())
 }
 
+type pendingBackupRecord struct {
+	key, userID, provider, prevHash, rotatedHash, encrypted string
+	failures                                                int
+	lastAttempt                                             time.Time
+}
+
 // RepairWithLimit reconciles at most limit pending mappings per pass, giving
 // strict priority to untouched entries ahead of past failures and ordering
 // retries fairly by fewest failures and oldest attempt so arbitrarily large
@@ -665,18 +678,19 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 	if database == nil || store == nil {
 		return 0, nil
 	}
-	type pendingRecord struct {
-		key, userID, provider, prevHash, rotatedHash, encrypted string
-		failures                                                int
-		lastAttempt                                             time.Time
+	resumer, hasResumer := store.(OAuthRotationScanResumer)
+	resumesScan := hasResumer && resumer.ResumesOAuthRotationScan()
+	var anchor string
+	if !resumesScan {
+		anchor = s.getResumeAnchor()
 	}
-	anchor := s.getResumeAnchor()
 	passedAnchor := anchor == ""
-	var fresh, wrappedFresh, dueRetries, cooled []pendingRecord
+	sawAnchor := anchor == ""
+	var fresh, wrappedFresh, dueRetries, cooled []pendingBackupRecord
 	visitErr := store.VisitOAuthRotationBackups(ctx, func(userID, provider, prevHash, rotatedHash, encryptedToken string) error {
 		k := s.key(userID, provider, prevHash)
 		st, hasFailed := s.failureState(k)
-		rec := pendingRecord{
+		rec := pendingBackupRecord{
 			key:         k,
 			userID:      userID,
 			provider:    provider,
@@ -689,6 +703,7 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 		if !passedAnchor {
 			if k == anchor {
 				passedAnchor = true
+				sawAnchor = true
 			}
 			if !hasFailed || st.failures == 0 {
 				if limit <= 0 || len(wrappedFresh) < limit {
@@ -716,9 +731,14 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 		return nil
 	})
 	if visitErr != nil && !errors.Is(visitErr, errRepairBatchLimitReached) {
+		if !resumesScan && !sawAnchor {
+			// Clear an unreachable or deleted anchor so the next sweep does not
+			// repeat a full-keyspace traversal and hit the same scan error/timeout.
+			s.setResumeAnchor("")
+		}
 		return 0, fmt.Errorf("%w: scan oauth rotation backups: %w", ErrRotationPersistence, visitErr)
 	}
-	sortFair := func(list []pendingRecord) {
+	sortFair := func(list []pendingBackupRecord) {
 		sort.Slice(list, func(i, j int) bool {
 			if list[i].failures != list[j].failures {
 				return list[i].failures < list[j].failures
@@ -753,71 +773,87 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 			}
 		}
 	}
-	if len(pending) > 0 {
-		s.setResumeAnchor(pending[len(pending)-1].key)
-	} else {
-		s.setResumeAnchor("")
-	}
 	repaired := 0
 	var repairErrs []error
+	var lastSurvivingAnchor string
+	anchorDeleted := false
 	for _, rec := range pending {
 		if ctx.Err() != nil {
 			repairErrs = append(repairErrs, fmt.Errorf("%w: repair oauth token rotation: %w", ErrRotationPersistence, ctx.Err()))
 			break
 		}
 		cooldownKey := s.key(rec.userID, rec.provider, rec.prevHash)
-		// Refresh the backup entry immediately before writing to avoid repairing
-		// an older snapshot after a concurrent rotation replaced the backup key.
-		curRotated, curEnc, stillPresent, lerr := store.LookupOAuthRotationBackup(ctx, rec.userID, rec.provider, rec.prevHash)
-		if lerr != nil {
-			s.markFailed(cooldownKey, now)
-			repairErrs = append(repairErrs, fmt.Errorf("%w: recheck oauth rotation backup: %w", ErrRotationPersistence, lerr))
-			continue
-		}
-		if !stillPresent {
-			s.clear(cooldownKey)
-			continue
-		}
-		rec.rotatedHash = curRotated
-		rec.encrypted = curEnc
-
-		inserted, err := db.RepairOAuthTokenRotation(ctx, database, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash, rec.encrypted)
-		if err != nil {
-			if errors.Is(err, driver.ErrSkip) {
-				continue
-			}
-			s.markFailed(cooldownKey, now)
-			repairErrs = append(repairErrs, fmt.Errorf("%w: repair oauth token rotation: %w", ErrRotationPersistence, err))
-			continue
-		}
-		safeToDelete := inserted
-		if !inserted {
-			var cerr error
-			safeToDelete, cerr = isBackupAccountedInDatabase(ctx, database, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash)
-			if cerr != nil {
-				s.markFailed(cooldownKey, now)
-				repairErrs = append(repairErrs, cerr)
-				continue
-			}
-		}
-		if !safeToDelete {
-			// PostgreSQL holds a diverging mapping while this backup target is not yet
-			// superseded there; keep the backup intact and defer it so later entries advance.
-			s.markFailed(cooldownKey, now)
-			continue
-		}
-		deleted, derr := store.DeleteOAuthRotationBackup(ctx, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash, rec.encrypted)
-		if derr != nil {
-			s.markFailed(cooldownKey, now)
-			repairErrs = append(repairErrs, fmt.Errorf("%w: cleanup oauth rotation backup: %w", ErrRotationPersistence, derr))
-			continue
-		}
-		s.clear(cooldownKey)
-		if deleted {
+		wasRepaired, survived, rerr := s.repairOnePendingBackup(ctx, database, store, rec, cooldownKey, now)
+		if wasRepaired {
 			repaired++
+		}
+		if rerr != nil {
+			repairErrs = append(repairErrs, rerr)
+		}
+		if survived {
+			lastSurvivingAnchor = cooldownKey
+		} else if !resumesScan && cooldownKey == anchor {
+			anchorDeleted = true
+		}
+	}
+	if !resumesScan {
+		switch {
+		case lastSurvivingAnchor != "":
+			s.setResumeAnchor(lastSurvivingAnchor)
+		case sawAnchor && !anchorDeleted:
+			s.setResumeAnchor(anchor)
+		default:
+			s.setResumeAnchor("")
 		}
 	}
 	return repaired, errors.Join(repairErrs...)
+}
+
+func (s *RotationRepairState) repairOnePendingBackup(ctx context.Context, database *sql.DB, store RotationBackupRepairStore, rec pendingBackupRecord, cooldownKey string, now time.Time) (repaired bool, survived bool, err error) {
+	// Refresh the backup entry immediately before writing to avoid repairing
+	// an older snapshot after a concurrent rotation replaced the backup key.
+	curRotated, curEnc, stillPresent, lerr := store.LookupOAuthRotationBackup(ctx, rec.userID, rec.provider, rec.prevHash)
+	if lerr != nil {
+		s.markFailed(cooldownKey, now)
+		return false, true, fmt.Errorf("%w: recheck oauth rotation backup: %w", ErrRotationPersistence, lerr)
+	}
+	if !stillPresent {
+		s.clear(cooldownKey)
+		return false, false, nil
+	}
+	rec.rotatedHash = curRotated
+	rec.encrypted = curEnc
+
+	inserted, rerr := db.RepairOAuthTokenRotation(ctx, database, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash, rec.encrypted)
+	if rerr != nil {
+		if errors.Is(rerr, driver.ErrSkip) {
+			return false, true, nil
+		}
+		s.markFailed(cooldownKey, now)
+		return false, true, fmt.Errorf("%w: repair oauth token rotation: %w", ErrRotationPersistence, rerr)
+	}
+	safeToDelete := inserted
+	if !inserted {
+		var cerr error
+		safeToDelete, cerr = isBackupAccountedInDatabase(ctx, database, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash)
+		if cerr != nil {
+			s.markFailed(cooldownKey, now)
+			return false, true, cerr
+		}
+	}
+	if !safeToDelete {
+		// PostgreSQL holds a diverging mapping while this backup target is not yet
+		// superseded there; keep the backup intact and defer it so later entries advance.
+		s.markFailed(cooldownKey, now)
+		return false, true, nil
+	}
+	deleted, derr := store.DeleteOAuthRotationBackup(ctx, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash, rec.encrypted)
+	if derr != nil {
+		s.markFailed(cooldownKey, now)
+		return false, true, fmt.Errorf("%w: cleanup oauth rotation backup: %w", ErrRotationPersistence, derr)
+	}
+	s.clear(cooldownKey)
+	return deleted, false, nil
 }
 
 // RotationRefreshRequest configures a token-locked, chain-aware OAuth refresh.

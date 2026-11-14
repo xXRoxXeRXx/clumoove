@@ -843,3 +843,184 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		}
 	})
 }
+
+type boundedScanBackupStore struct {
+	*stubBackupStore
+	maxVisitsPerSweep int
+	visitsLastSweep   int
+}
+
+func (b *boundedScanBackupStore) VisitOAuthRotationBackups(ctx context.Context, visit func(userID, provider, prevHash, rotatedHash, encryptedToken string) error) error {
+	b.visitsLastSweep = 0
+	return b.stubBackupStore.VisitOAuthRotationBackups(ctx, func(userID, provider, prevHash, rotatedHash, encryptedToken string) error {
+		b.visitsLastSweep++
+		if b.maxVisitsPerSweep > 0 && b.visitsLastSweep > b.maxVisitsPerSweep {
+			return context.DeadlineExceeded
+		}
+		return visit(userID, provider, prevHash, rotatedHash, encryptedToken)
+	})
+}
+
+type resumingBackupStore struct {
+	*boundedScanBackupStore
+	cursor string
+}
+
+func (r *resumingBackupStore) ResumesOAuthRotationScan() bool {
+	return true
+}
+
+func (r *resumingBackupStore) VisitOAuthRotationBackups(ctx context.Context, visit func(userID, provider, prevHash, rotatedHash, encryptedToken string) error) error {
+	r.stubBackupStore.mu.Lock()
+	keys := make([]string, 0, len(r.stubBackupStore.entries))
+	snapshot := make(map[string]stubRotationRow, len(r.stubBackupStore.entries))
+	for k, v := range r.stubBackupStore.entries {
+		keys = append(keys, k)
+		snapshot[k] = v
+	}
+	r.stubBackupStore.mu.Unlock()
+	sort.Strings(keys)
+
+	startIdx := 0
+	if r.cursor != "" {
+		startIdx = sort.SearchStrings(keys, r.cursor)
+	}
+	ordered := append(append([]string(nil), keys[startIdx:]...), keys[:startIdx]...)
+	r.visitsLastSweep = 0
+	for _, k := range ordered {
+		r.cursor = k + "\x00"
+		r.visitsLastSweep++
+		if r.maxVisitsPerSweep > 0 && r.visitsLastSweep > r.maxVisitsPerSweep {
+			return context.DeadlineExceeded
+		}
+		v := snapshot[k]
+		parts := strings.SplitN(k, "\x00", 3)
+		if err := visit(parts[0], parts[1], parts[2], v.nextHash, v.encrypted); err != nil {
+			return err
+		}
+	}
+	r.cursor = ""
+	return nil
+}
+
+func TestRepairWithLimitDeletedAnchorAndResumer(t *testing.T) {
+	now := time.Unix(1700000000, 0).UTC()
+	key := "0123456789abcdef0123456789abcdef"
+
+	t.Run("cursor-resuming store deletes entire repaired batch without wrapping for deleted anchor", func(t *testing.T) {
+		state := &stubRotationDB{}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		backing := &stubBackupStore{}
+		for i := 0; i < 120; i++ {
+			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, backing, nil, key, "healthy-user", "google", fmt.Sprintf("H-new-%03d", i), now, fmt.Sprintf("H-old-%03d", i))
+		}
+		store := &resumingBackupStore{
+			boundedScanBackupStore: &boundedScanBackupStore{
+				stubBackupStore:   backing,
+				maxVisitsPerSweep: 60,
+			},
+		}
+
+		repairState := NewRotationRepairState()
+		totalRepaired := 0
+		for pass := 0; pass < 3; pass++ {
+			repaired, err := repairState.RepairWithLimit(context.Background(), sqlDB, store, 50, now.Add(time.Duration(pass)*5*time.Minute))
+			if err != nil {
+				t.Fatalf("pass %d RepairWithLimit error = %v", pass, err)
+			}
+			totalRepaired += repaired
+		}
+		if totalRepaired != 120 {
+			t.Fatalf("totalRepaired = %d, want 120", totalRepaired)
+		}
+		if len(backing.entries) != 0 {
+			t.Fatalf("remaining backup entries = %d, want 0", len(backing.entries))
+		}
+	})
+
+	t.Run("stateless store with deleted batch entries does not scan past batch limit", func(t *testing.T) {
+		fkErr := errors.New("pq: fk violation")
+		state := &stubRotationDB{execFailUser: "z-deleted-user", execFailErr: fkErr}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		backing := &stubBackupStore{}
+		for i := 0; i < 120; i++ {
+			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, backing, nil, key, "a-healthy-user", "google", fmt.Sprintf("H-new-%03d", i), now, fmt.Sprintf("H-old-%03d", i))
+		}
+		for i := 0; i < 100; i++ {
+			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, backing, nil, key, "z-deleted-user", "google", fmt.Sprintf("Z-new-%03d", i), now, fmt.Sprintf("Z-old-%03d", i))
+		}
+		store := &boundedScanBackupStore{
+			stubBackupStore:   backing,
+			maxVisitsPerSweep: 60,
+		}
+
+		repairState := NewRotationRepairState()
+		for pass := 0; pass < 2; pass++ {
+			repaired, err := repairState.RepairWithLimit(context.Background(), sqlDB, store, 50, now.Add(time.Duration(pass)*5*time.Minute))
+			if err != nil {
+				t.Fatalf("pass %d RepairWithLimit error = %v (visits=%d)", pass, err, store.visitsLastSweep)
+			}
+			if repaired != 50 {
+				t.Fatalf("pass %d repaired = %d, want 50", pass, repaired)
+			}
+		}
+	})
+
+	t.Run("externally deleted anchor clears after scan timeout so subsequent sweep repairs healthy entries", func(t *testing.T) {
+		fkErr := errors.New("pq: fk violation")
+		state := &stubRotationDB{execFailUser: "deleted-user", execFailErr: fkErr}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		backing := &stubBackupStore{}
+		for i := 0; i < 5; i++ {
+			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, backing, nil, key, "deleted-user", "google", fmt.Sprintf("D-new-%02d", i), now, fmt.Sprintf("D-old-%02d", i))
+		}
+		for i := 0; i < 5; i++ {
+			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, backing, nil, key, "healthy-user", "google", fmt.Sprintf("H-new-%02d", i), now, fmt.Sprintf("H-old-%02d", i))
+		}
+		for i := 0; i < 60; i++ {
+			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, backing, nil, key, "z-tail-user", "google", fmt.Sprintf("Z-new-%02d", i), now, fmt.Sprintf("Z-old-%02d", i))
+		}
+		store := &boundedScanBackupStore{
+			stubBackupStore:   backing,
+			maxVisitsPerSweep: 15,
+		}
+
+		repairState := NewRotationRepairState()
+		// Pass 1 fails the 5 deleted-user entries and sets resumeAnchor to the last surviving one.
+		_, _ = repairState.RepairWithLimit(context.Background(), sqlDB, store, 5, now)
+		survivingAnchor := repairState.getResumeAnchor()
+		if survivingAnchor == "" {
+			t.Fatal("expected surviving anchor after failed pass 1")
+		}
+		// Externally remove the surviving anchor key.
+		backing.mu.Lock()
+		delete(backing.entries, survivingAnchor)
+		backing.mu.Unlock()
+
+		// Pass 2 times out at maxVisitsPerSweep=15 while searching for the deleted anchor;
+		// the timeout must clear the unreachable anchor rather than wedging pass 3.
+		_, err := repairState.RepairWithLimit(context.Background(), sqlDB, store, 5, now.Add(5*time.Minute))
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("pass 2 error = %v, want DeadlineExceeded", err)
+		}
+		if repairState.getResumeAnchor() != "" {
+			t.Fatalf("expected unreachable resumeAnchor to clear after timeout, got %q", repairState.getResumeAnchor())
+		}
+
+		// Pass 3 visits the 4 remaining deleted-user entries (already in cooldown) + 5 healthy entries = 9 <= 15
+		// and repairs all 5 healthy entries without timing out.
+		repaired, err := repairState.RepairWithLimit(context.Background(), sqlDB, store, 5, now.Add(10*time.Minute))
+		if err != nil {
+			t.Fatalf("pass 3 RepairWithLimit error = %v (visits=%d)", err, store.visitsLastSweep)
+		}
+		if repaired != 5 {
+			t.Fatalf("pass 3 repaired = %d, want 5", repaired)
+		}
+	})
+}

@@ -399,6 +399,13 @@ func (q *Queue) LookupOAuthRotationBackup(ctx context.Context, userID, provider,
 	return entry.RotatedHash, entry.RefreshTokenEncrypted, true, nil
 }
 
+// ResumesOAuthRotationScan reports whether VisitOAuthRotationBackups resumes
+// from a persistent SCAN cursor across calls so callers do not re-scan for a
+// key-based anchor that may have been repaired and deleted.
+func (q *Queue) ResumesOAuthRotationScan() bool {
+	return q != nil && q.client != nil
+}
+
 // VisitOAuthRotationBackups iterates pending encrypted OAuth rotation backups
 // stored in Redis across passes using a persistent SCAN cursor so large backlogs
 // advance round-robin instead of restarting from the head of the keyspace.
