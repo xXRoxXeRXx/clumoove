@@ -161,43 +161,87 @@ func (server *APIServer) setupRoutes() *http.ServeMux {
 	return server.buildMux(nil)
 }
 
-func (server *APIServer) buildMux(overrideHandler http.HandlerFunc) *http.ServeMux {
-	mux := http.NewServeMux()
+// routeMiddleware holds the access-control middleware the gateway composes once
+// and hands to every feature module for its own route registration.
+type routeMiddleware struct {
+	authenticated   func(http.Handler) http.Handler
+	allowMustChange func(http.Handler) http.Handler
+	adminOnly       func(http.Handler) http.Handler
+}
 
+// featureModule describes one feature module as seen by the gateway: the routes
+// it owns and how it registers them. The gateway never declares routes itself.
+type featureModule struct {
+	name     string
+	routes   []routeSpec
+	register func(mux *http.ServeMux, overrideHandler http.HandlerFunc)
+}
+
+// featureModules lists every feature module composed into the gateway. Each
+// module owns its endpoint registration and feature dependencies.
+func (server *APIServer) featureModules(mw routeMiddleware) []featureModule {
+	accounts := server.accounts()
+	files := server.files()
+	migrations := server.migrations()
+	syncs := server.syncs()
+	backups := server.backups()
+	schedules := server.schedules()
+	profiles := server.connectionProfiles()
+	admin := server.administration()
+	notifications := server.notifications()
+	return []featureModule{
+		{"accounts", accounts.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
+			accounts.registerRoutesWithHandler(mux, mw.authenticated, mw.allowMustChange, o)
+		}},
+		{"files", files.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
+			files.registerRoutesWithHandler(mux, mw.authenticated, o)
+		}},
+		{"migrations", migrations.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
+			migrations.registerRoutesWithHandler(mux, mw.authenticated, o)
+		}},
+		{"syncs", syncs.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
+			syncs.registerRoutesWithHandler(mux, mw.authenticated, o)
+		}},
+		{"backups", backups.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
+			backups.registerRoutesWithHandler(mux, mw.authenticated, o)
+		}},
+		{"schedules", schedules.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
+			schedules.registerRoutesWithHandler(mux, mw.authenticated, o)
+		}},
+		{"profiles", profiles.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
+			profiles.registerRoutesWithHandler(mux, mw.authenticated, o)
+		}},
+		{"administration", admin.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
+			admin.registerRoutesWithHandler(mux, mw.authenticated, mw.adminOnly, o)
+		}},
+		{"notifications", notifications.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
+			notifications.registerRoutesWithHandler(mux, mw.authenticated, o)
+		}},
+	}
+}
+
+func (server *APIServer) routeMiddleware() routeMiddleware {
 	jwtMiddleware := auth.AuthMiddleware(server.db, server.jwtSecret)
 	allowMustChangeMiddleware := auth.AuthMiddlewareAllowMustChange(server.db, server.jwtSecret)
 	if server.authStateLookup != nil {
 		jwtMiddleware = auth.AuthMiddlewareWithAuthStateLookup(server.jwtSecret, server.authStateLookup)
 		allowMustChangeMiddleware = auth.AuthMiddlewareAllowMustChangeWithAuthStateLookup(server.jwtSecret, server.authStateLookup)
 	}
-	adminRouteMiddleware := adminMiddleware(jwtMiddleware)
-
-	registerRouteSpecs(mux, server.gatewayRoutes(), jwtMiddleware, allowMustChangeMiddleware, adminRouteMiddleware, overrideHandler)
-	accounts := server.accounts()
-	files := server.files()
-	migrations := server.migrations()
-	syncs := server.syncs()
-	backups := server.backups()
-	admin := server.administration()
-	notifications := server.notifications()
-	if overrideHandler == nil {
-		accounts.registerRoutes(mux, jwtMiddleware, allowMustChangeMiddleware)
-		files.registerRoutes(mux, jwtMiddleware)
-		migrations.registerRoutes(mux, jwtMiddleware)
-		syncs.registerRoutes(mux, jwtMiddleware)
-		backups.registerRoutes(mux, jwtMiddleware)
-		admin.registerRoutes(mux, jwtMiddleware, adminRouteMiddleware)
-		notifications.registerRoutes(mux, jwtMiddleware)
-	} else {
-		accounts.registerRoutesWithHandler(mux, jwtMiddleware, allowMustChangeMiddleware, overrideHandler)
-		files.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
-		migrations.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
-		syncs.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
-		backups.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
-		admin.registerRoutesWithHandler(mux, jwtMiddleware, adminRouteMiddleware, overrideHandler)
-		notifications.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
+	return routeMiddleware{
+		authenticated:   jwtMiddleware,
+		allowMustChange: allowMustChangeMiddleware,
+		adminOnly:       adminMiddleware(jwtMiddleware),
 	}
+}
 
+// buildMux composes feature-module routes only. When overrideHandler is non-nil
+// every route still passes through its own access middleware but terminates in
+// the override, which route-contract tests use to probe access control.
+func (server *APIServer) buildMux(overrideHandler http.HandlerFunc) *http.ServeMux {
+	mux := http.NewServeMux()
+	for _, module := range server.featureModules(server.routeMiddleware()) {
+		module.register(mux, overrideHandler)
+	}
 	return mux
 }
 
@@ -216,6 +260,23 @@ func registerRouteSpecs(
 		}
 		mux.Handle(r.pattern, wrapRouteAccess(r.access, authenticated, allowMustChange, adminOnly, target))
 	}
+}
+
+// registerAuthenticatedRouteSpecs registers a module whose routes must all
+// require authentication, refusing any route that declares another access level.
+func registerAuthenticatedRouteSpecs(
+	module string,
+	mux *http.ServeMux,
+	routes []routeSpec,
+	authenticated func(http.Handler) http.Handler,
+	overrideHandler http.HandlerFunc,
+) {
+	for _, route := range routes {
+		if route.access != routeAuthenticated {
+			panic(module + " routes must require authentication")
+		}
+	}
+	registerRouteSpecs(mux, routes, authenticated, nil, nil, overrideHandler)
 }
 
 func wrapRouteAccess(
@@ -246,22 +307,5 @@ func wrapRouteAccess(
 		return adminOnly(base)
 	default:
 		panic("unsupported route access category")
-	}
-}
-
-func (server *APIServer) gatewayRoutes() []routeSpec {
-	return []routeSpec{
-		// Schedule Management Routes (Protected)
-		{pattern: "GET /api/schedule", access: routeAuthenticated, handler: server.handleListSchedules},
-		{pattern: "GET /api/schedule/{id}", access: routeAuthenticated, handler: server.handleGetSchedule},
-		{pattern: "DELETE /api/schedule/{id}", access: routeAuthenticated, handler: server.handleDeleteSchedule},
-
-		// Connection Profiles (Protected)
-		{pattern: "GET /api/profiles", access: routeAuthenticated, handler: server.handleListProfiles},
-		{pattern: "POST /api/profiles", access: routeAuthenticated, handler: server.handleCreateProfile},
-		{pattern: "GET /api/profiles/{id}", access: routeAuthenticated, handler: server.handleGetProfile},
-		{pattern: "PUT /api/profiles/{id}", access: routeAuthenticated, handler: server.handleUpdateConnectionProfile},
-		{pattern: "DELETE /api/profiles/{id}", access: routeAuthenticated, handler: server.handleDeleteProfile},
-		{pattern: "POST /api/profiles/{id}/test", access: routeAuthenticated, handler: server.handleTestProfile},
 	}
 }

@@ -36,7 +36,7 @@ func TestTestProfileMapsProviderSetupFailureToSourceURLInvalid(t *testing.T) {
 	request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
 	recorder := httptest.NewRecorder()
 
-	server.handleTestProfile(recorder, request)
+	server.connectionProfiles().handleTestProfile(recorder, request)
 
 	var response struct {
 		Success   bool         `json:"success"`
@@ -59,7 +59,7 @@ func TestTestProfileMapsOwnershipCheckFailureToInternalError(t *testing.T) {
 	request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
 	recorder := httptest.NewRecorder()
 
-	server.handleTestProfile(recorder, request)
+	server.connectionProfiles().handleTestProfile(recorder, request)
 
 	assertAPIError(t, recorder, http.StatusInternalServerError, ErrInternalError)
 }

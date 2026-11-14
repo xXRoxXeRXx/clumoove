@@ -2,8 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"backend/internal/auth"
@@ -149,4 +154,56 @@ func TestAPIGatewayHandlerComposesMiddlewareAndAccessControl(t *testing.T) {
 
 		assertAPIResponseError(t, rec, http.StatusForbidden, ErrAdminOnly, "GET /api/admin/users")
 	})
+}
+
+// The root gateway composes feature modules and cross-cutting HTTP policy only.
+// Feature endpoint handlers must live on their feature module, not on APIServer.
+func TestGatewayOwnsNoFeatureHandlers(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(info os.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parse package: %v", err)
+	}
+	for _, pkg := range pkgs {
+		for fileName, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 {
+					continue
+				}
+				star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+				if !ok {
+					continue
+				}
+				if ident, ok := star.X.(*ast.Ident); ok && ident.Name == "APIServer" && strings.HasPrefix(fn.Name.Name, "handle") {
+					t.Errorf("%s: APIServer.%s is a feature handler; move it to its feature module", fileName, fn.Name.Name)
+				}
+			}
+		}
+	}
+}
+
+// Every contract route must be served by the real composed mux (not merely
+// listed by a module) and must match the declared HTTP method and path.
+func TestGatewayServesEveryContractRoute(t *testing.T) {
+	server := newTestAPIGateway(t, nil)
+	handler := server.contractTestHandler(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	for _, c := range expectedRouteContracts {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, requestForRoutePattern(c.pattern))
+		if rec.Code == http.StatusNotFound || rec.Code == http.StatusMethodNotAllowed {
+			t.Errorf("%s is not served by the composed gateway (status %d)", c.pattern, rec.Code)
+		}
+	}
+
+	// A path that no module owns must stay unrouted.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/not-a-route", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unowned path status = %d, want 404", rec.Code)
+	}
 }

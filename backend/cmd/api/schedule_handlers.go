@@ -7,15 +7,15 @@ import (
 )
 
 // handleListSchedules returns all schedules for the authenticated user
-func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *scheduleAPI) handleListSchedules(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
-	schedules, err := db.GetSchedulesForUserContext(r.Context(), s.db, userID)
+	schedules, err := db.GetSchedulesForUserContext(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "handleListSchedules: failed to get schedules for user %s: %v\n", userID, err)
+		api.logf(r, "handleListSchedules: failed to get schedules for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -28,21 +28,21 @@ func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleGetSchedule returns a specific schedule if owned by the user
-func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
+func (api *scheduleAPI) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrScheduleIdMissing)
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
-	owns, err := db.VerifyScheduleOwnershipContext(r.Context(), s.db, id, userID)
+	owns, err := db.VerifyScheduleOwnershipContext(r.Context(), api.db, id, userID)
 	if err != nil {
-		s.logf(r, "handleGetSchedule: error verifying ownership: %v\n", err)
+		api.logf(r, "handleGetSchedule: error verifying ownership: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -51,9 +51,9 @@ func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	schedule, err := db.GetScheduleContext(r.Context(), s.db, id)
+	schedule, err := db.GetScheduleContext(r.Context(), api.db, id)
 	if err != nil {
-		s.logf(r, "handleGetSchedule: failed to get schedule %s: %v\n", id, err)
+		api.logf(r, "handleGetSchedule: failed to get schedule %s: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -62,21 +62,21 @@ func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeleteSchedule deletes a schedule if owned by the user
-func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
+func (api *scheduleAPI) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrScheduleIdMissing)
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
-	owns, err := db.VerifyScheduleOwnershipContext(r.Context(), s.db, id, userID)
+	owns, err := db.VerifyScheduleOwnershipContext(r.Context(), api.db, id, userID)
 	if err != nil {
-		s.logf(r, "handleDeleteSchedule: error verifying ownership: %v\n", err)
+		api.logf(r, "handleDeleteSchedule: error verifying ownership: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -84,9 +84,9 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, ErrScheduleNotFound)
 		return
 	}
-	schedule, err := db.GetScheduleContext(r.Context(), s.db, id)
+	schedule, err := db.GetScheduleContext(r.Context(), api.db, id)
 	if err != nil {
-		s.logf(r, "handleDeleteSchedule: failed to get schedule %s: %v", id, err)
+		api.logf(r, "handleDeleteSchedule: failed to get schedule %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -97,9 +97,9 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	err = db.DeleteSchedule(s.db, id)
+	err = db.DeleteSchedule(api.db, id)
 	if err != nil {
-		s.logf(r, "handleDeleteSchedule: failed to delete schedule %s: %v\n", id, err)
+		api.logf(r, "handleDeleteSchedule: failed to delete schedule %s: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

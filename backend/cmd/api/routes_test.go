@@ -262,14 +262,15 @@ func TestGatewayRouteContracts(t *testing.T) {
 		t.Fatalf("GenerateMustChangePasswordToken: %v", err)
 	}
 
-	// Verify the composed gateway and feature-module route tables match the independent contract table 1:1.
-	actualRoutes := append(server.gatewayRoutes(), server.accounts().routes()...)
-	actualRoutes = append(actualRoutes, server.files().routes()...)
-	actualRoutes = append(actualRoutes, server.migrations().routes()...)
-	actualRoutes = append(actualRoutes, server.syncs().routes()...)
-	actualRoutes = append(actualRoutes, server.backups().routes()...)
-	actualRoutes = append(actualRoutes, server.administration().routes()...)
-	actualRoutes = append(actualRoutes, server.notifications().routes()...)
+	// Verify the composed feature-module route tables match the independent contract table 1:1.
+	// The gateway itself declares no routes: every route comes from a feature module.
+	var actualRoutes []routeSpec
+	for _, module := range server.featureModules(server.routeMiddleware()) {
+		if len(module.routes) == 0 {
+			t.Errorf("feature module %s registers no routes", module.name)
+		}
+		actualRoutes = append(actualRoutes, module.routes...)
+	}
 	actualByPattern := make(map[string]routeSpec, len(actualRoutes))
 	for _, r := range actualRoutes {
 		if r.handler == nil {
