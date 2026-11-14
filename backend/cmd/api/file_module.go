@@ -183,17 +183,9 @@ func (api *fileAPI) routes() []routeSpec {
 // registerRoutes registers the file-manager module's routes on mux with the
 // supplied authentication middleware wrapping protected endpoints.
 func (api *fileAPI) registerRoutes(mux *http.ServeMux, authenticated func(http.Handler) http.Handler) {
-	for _, r := range api.routes() {
-		switch r.access {
-		case routePublic:
-			mux.HandleFunc(r.pattern, r.handler)
-		case routeAuthenticated:
-			if authenticated == nil {
-				panic("authenticated middleware required for protected file routes")
-			}
-			mux.Handle(r.pattern, authenticated(http.HandlerFunc(r.handler)))
-		default:
-			panic("unsupported route access category in file module")
-		}
-	}
+	api.registerRoutesWithHandler(mux, authenticated, nil)
+}
+
+func (api *fileAPI) registerRoutesWithHandler(mux *http.ServeMux, authenticated func(http.Handler) http.Handler, overrideHandler http.HandlerFunc) {
+	registerRouteSpecs(mux, api.routes(), authenticated, nil, nil, overrideHandler)
 }

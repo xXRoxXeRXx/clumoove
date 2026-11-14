@@ -124,15 +124,32 @@ func (server *APIServer) buildMux(overrideHandler http.HandlerFunc) *http.ServeM
 	}
 	adminRouteMiddleware := adminMiddleware(jwtMiddleware)
 
-	for _, r := range server.gatewayRoutes() {
+	registerRouteSpecs(mux, server.gatewayRoutes(), jwtMiddleware, allowMustChangeMiddleware, adminRouteMiddleware, overrideHandler)
+	files := server.files()
+	if overrideHandler == nil {
+		files.registerRoutes(mux, jwtMiddleware)
+	} else {
+		files.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
+	}
+
+	return mux
+}
+
+func registerRouteSpecs(
+	mux *http.ServeMux,
+	routes []routeSpec,
+	authenticated func(http.Handler) http.Handler,
+	allowMustChange func(http.Handler) http.Handler,
+	adminOnly func(http.Handler) http.Handler,
+	overrideHandler http.HandlerFunc,
+) {
+	for _, r := range routes {
 		target := r.handler
 		if overrideHandler != nil {
 			target = overrideHandler
 		}
-		mux.Handle(r.pattern, wrapRouteAccess(r.access, jwtMiddleware, allowMustChangeMiddleware, adminRouteMiddleware, target))
+		mux.Handle(r.pattern, wrapRouteAccess(r.access, authenticated, allowMustChange, adminOnly, target))
 	}
-
-	return mux
 }
 
 func wrapRouteAccess(
@@ -147,10 +164,19 @@ func wrapRouteAccess(
 	case routePublic:
 		return base
 	case routeAuthenticated:
+		if authenticated == nil {
+			panic("authenticated middleware required for protected routes")
+		}
 		return authenticated(base)
 	case routeAllowMustChange:
+		if allowMustChange == nil {
+			panic("allow-must-change middleware required for password rotation routes")
+		}
 		return allowMustChange(base)
 	case routeAdmin:
+		if adminOnly == nil {
+			panic("admin middleware required for admin routes")
+		}
 		return adminOnly(base)
 	default:
 		panic("unsupported route access category")
@@ -167,7 +193,6 @@ func (server *APIServer) gatewayRoutes() []routeSpec {
 		writeAudit:    server.writeAudit,
 		logf:          server.logf,
 	})
-	files := server.files()
 
 	routes := []routeSpec{
 		// Auth Routes (Public)
@@ -314,6 +339,5 @@ func (server *APIServer) gatewayRoutes() []routeSpec {
 	}
 
 	routes = append(routes, notifications.routes()...)
-	routes = append(routes, files.routes()...)
 	return routes
 }
