@@ -177,6 +177,20 @@ type featureModule struct {
 	register func(mux *http.ServeMux, overrideHandler http.HandlerFunc)
 }
 
+// authenticatedRegistrar is the registration shape shared by every module whose
+// routes only need the authenticated middleware.
+type authenticatedRegistrar func(mux *http.ServeMux, authenticated func(http.Handler) http.Handler, overrideHandler http.HandlerFunc)
+
+func authenticatedModule(name string, mw routeMiddleware, routes []routeSpec, register authenticatedRegistrar) featureModule {
+	return featureModule{
+		name:   name,
+		routes: routes,
+		register: func(mux *http.ServeMux, overrideHandler http.HandlerFunc) {
+			register(mux, mw.authenticated, overrideHandler)
+		},
+	}
+}
+
 // featureModules lists every feature module composed into the gateway. Each
 // module owns its endpoint registration and feature dependencies.
 func (server *APIServer) featureModules(mw routeMiddleware) []featureModule {
@@ -190,33 +204,27 @@ func (server *APIServer) featureModules(mw routeMiddleware) []featureModule {
 	admin := server.administration()
 	notifications := server.notifications()
 	return []featureModule{
-		{"accounts", accounts.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
-			accounts.registerRoutesWithHandler(mux, mw.authenticated, mw.allowMustChange, o)
-		}},
-		{"files", files.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
-			files.registerRoutesWithHandler(mux, mw.authenticated, o)
-		}},
-		{"migrations", migrations.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
-			migrations.registerRoutesWithHandler(mux, mw.authenticated, o)
-		}},
-		{"syncs", syncs.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
-			syncs.registerRoutesWithHandler(mux, mw.authenticated, o)
-		}},
-		{"backups", backups.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
-			backups.registerRoutesWithHandler(mux, mw.authenticated, o)
-		}},
-		{"schedules", schedules.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
-			schedules.registerRoutesWithHandler(mux, mw.authenticated, o)
-		}},
-		{"profiles", profiles.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
-			profiles.registerRoutesWithHandler(mux, mw.authenticated, o)
-		}},
-		{"administration", admin.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
-			admin.registerRoutesWithHandler(mux, mw.authenticated, mw.adminOnly, o)
-		}},
-		{"notifications", notifications.routes(), func(mux *http.ServeMux, o http.HandlerFunc) {
-			notifications.registerRoutesWithHandler(mux, mw.authenticated, o)
-		}},
+		{
+			name:   "accounts",
+			routes: accounts.routes(),
+			register: func(mux *http.ServeMux, o http.HandlerFunc) {
+				accounts.registerRoutesWithHandler(mux, mw.authenticated, mw.allowMustChange, o)
+			},
+		},
+		authenticatedModule("files", mw, files.routes(), files.registerRoutesWithHandler),
+		authenticatedModule("migrations", mw, migrations.routes(), migrations.registerRoutesWithHandler),
+		authenticatedModule("syncs", mw, syncs.routes(), syncs.registerRoutesWithHandler),
+		authenticatedModule("backups", mw, backups.routes(), backups.registerRoutesWithHandler),
+		authenticatedModule("schedules", mw, schedules.routes(), schedules.registerRoutesWithHandler),
+		authenticatedModule("profiles", mw, profiles.routes(), profiles.registerRoutesWithHandler),
+		{
+			name:   "administration",
+			routes: admin.routes(),
+			register: func(mux *http.ServeMux, o http.HandlerFunc) {
+				admin.registerRoutesWithHandler(mux, mw.authenticated, mw.adminOnly, o)
+			},
+		},
+		authenticatedModule("notifications", mw, notifications.routes(), notifications.registerRoutesWithHandler),
 	}
 }
 

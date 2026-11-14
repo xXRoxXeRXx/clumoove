@@ -138,14 +138,14 @@ func newScheduleModuleTestAPI(t *testing.T, state *scheduleModuleState) *schedul
 func serveSchedule(t *testing.T, api *scheduleAPI, method, path, userID string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	api.registerRoutes(mux, func(next http.Handler) http.Handler {
+	api.registerRoutesWithHandler(mux, func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if userID != "" {
 				r = r.WithContext(context.WithValue(r.Context(), auth.ClaimsKey, &auth.Claims{UserID: userID}))
 			}
 			next.ServeHTTP(w, r)
 		})
-	})
+	}, nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 	return rec

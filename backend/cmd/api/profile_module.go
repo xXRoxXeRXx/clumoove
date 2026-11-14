@@ -34,11 +34,15 @@ func newProfileAPI(deps profileDependencies) *profileAPI {
 	if deps.clientIP == nil {
 		deps.clientIP = (&APIServer{}).clientIP
 	}
-	if deps.writeAudit == nil {
-		deps.writeAudit = func(*http.Request, db.AuditAction, string, string, map[string]interface{}) {}
-	}
 	if deps.logf == nil {
 		deps.logf = (&APIServer{}).logf
+	}
+	if deps.writeAudit == nil {
+		// A mis-wired module must not drop audit events silently.
+		logf := deps.logf
+		deps.writeAudit = func(r *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
+			logf(r, "profile module: audit writer not configured, dropped %s", action)
+		}
 	}
 	return &profileAPI{profileDependencies: deps}
 }
@@ -65,12 +69,6 @@ func (api *profileAPI) routes() []routeSpec {
 		{pattern: "DELETE /api/profiles/{id}", access: routeAuthenticated, handler: api.handleDeleteProfile},
 		{pattern: "POST /api/profiles/{id}/test", access: routeAuthenticated, handler: api.handleTestProfile},
 	}
-}
-
-// registerRoutes registers the profile module's routes on mux with the
-// supplied authentication middleware wrapping every endpoint.
-func (api *profileAPI) registerRoutes(mux *http.ServeMux, authenticated func(http.Handler) http.Handler) {
-	api.registerRoutesWithHandler(mux, authenticated, nil)
 }
 
 func (api *profileAPI) registerRoutesWithHandler(mux *http.ServeMux, authenticated func(http.Handler) http.Handler, overrideHandler http.HandlerFunc) {

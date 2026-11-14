@@ -185,6 +185,25 @@ func TestGatewayOwnsNoFeatureHandlers(t *testing.T) {
 	}
 }
 
+// The gateway file composes modules; it must never declare route specs itself.
+func TestGatewayFileDeclaresNoRouteSpecs(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "gateway.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse gateway.go: %v", err)
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "pattern" {
+			t.Errorf("gateway.go:%d declares a route pattern; routes belong to feature modules", fset.Position(kv.Pos()).Line)
+		}
+		return true
+	})
+}
+
 // Every contract route must be served by the real composed mux (not merely
 // listed by a module) and must match the declared HTTP method and path.
 func TestGatewayServesEveryContractRoute(t *testing.T) {

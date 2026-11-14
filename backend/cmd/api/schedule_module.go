@@ -45,12 +45,6 @@ func (api *scheduleAPI) routes() []routeSpec {
 	}
 }
 
-// registerRoutes registers the schedule module's routes on mux with the
-// supplied authentication middleware wrapping every endpoint.
-func (api *scheduleAPI) registerRoutes(mux *http.ServeMux, authenticated func(http.Handler) http.Handler) {
-	api.registerRoutesWithHandler(mux, authenticated, nil)
-}
-
 func (api *scheduleAPI) registerRoutesWithHandler(mux *http.ServeMux, authenticated func(http.Handler) http.Handler, overrideHandler http.HandlerFunc) {
 	registerAuthenticatedRouteSpecs("schedule", mux, api.routes(), authenticated, overrideHandler)
 }
