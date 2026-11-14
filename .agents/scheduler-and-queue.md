@@ -27,7 +27,7 @@
 ## Concurrency & Resource Limits
 - **Per-Job Concurrency (`threads`)**: User-selectable between 1 and 16. The worker enforces this in the SQL dequeue query (`COUNT(*) < m.threads`).
 - **Sync Bandwidth Limit**: Persists a 0–1000 Mbps limit (0 = unlimited), dynamically adjustable during runtime.
-- **Worker Process Capacity (`MAX_THREADS`)**: Total concurrent tasks per worker process (default: 16, range: 1–256). Parsed once in `loadWorkerConfig` and passed to `processor.NewProcessor` via `processor.Config`; an invalid value stops worker startup. The same value sizes the worker DB pool (`db.MaxConnsForThreads`, passed to `db.InitDB`).
+- **Worker Process Capacity (`MAX_THREADS`)**: Total concurrent tasks per worker process (default: 16, range: 1–256). Parsed once in `loadWorkerConfig` and passed to `processor.NewProcessor` via `processor.Config`; an invalid value stops worker startup. `INDEXING_TIMEOUT_MINUTES` (default 20, range 1–10080), `REDIS_PASSWORD`, and the coordinators' worker ID/OAuth locker follow the same rule: loaded once at startup and injected through constructors. The same value sizes the worker DB pool (`db.MaxConnsForThreads`, passed to `db.InitDB`).
 - **Restore Pack Reader Cap (`MAX_RESTORE_PACK_READERS`)**: Limits concurrent full-pack memory buffers (default: 1, range: 1–4). A worker process holds at most `64 MiB * MAX_RESTORE_PACK_READERS` of pack data.
 
 ## Retry & Error Backoff

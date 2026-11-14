@@ -159,6 +159,28 @@ func TestLoadWorkerConfigRejectsInvalidIndexingTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadWorkerConfigBoundsIndexingTimeout(t *testing.T) {
+	config, err := loadWorkerConfig(workerEnv(map[string]string{"INDEXING_TIMEOUT_MINUTES": "10080"}))
+	if err != nil || config.indexingTimeout != 7*24*time.Hour {
+		t.Fatalf("INDEXING_TIMEOUT_MINUTES=10080: timeout = %v, error = %v", config.indexingTimeout, err)
+	}
+	for _, value := range []string{"10081", "99999999999", "9223372036854775807"} {
+		if _, err := loadWorkerConfig(workerEnv(map[string]string{"INDEXING_TIMEOUT_MINUTES": value})); err == nil {
+			t.Errorf("INDEXING_TIMEOUT_MINUTES=%q succeeded", value)
+		}
+	}
+}
+
+func TestLoadWorkerConfigLeavesRedisPasswordEmptyWhenUnset(t *testing.T) {
+	config, err := loadWorkerConfig(workerEnv(nil))
+	if err != nil {
+		t.Fatalf("loadWorkerConfig() error = %v", err)
+	}
+	if config.redisPassword != "" {
+		t.Fatalf("redisPassword = %q, want empty", config.redisPassword)
+	}
+}
+
 func TestLoadWorkerConfigCarriesRedisPassword(t *testing.T) {
 	config, err := loadWorkerConfig(workerEnv(map[string]string{"REDIS_PASSWORD": "queue-secret"}))
 	if err != nil {

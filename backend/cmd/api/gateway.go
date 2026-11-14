@@ -79,7 +79,10 @@ func newAPIGateway(cfg gatewayConfig) (*APIServer, error) {
 
 	idx := cfg.Indexer
 	if idx == nil && cfg.DB != nil {
-		idx = indexer.NewIndexer(cfg.DB, cfg.EncryptionKey, cfg.Queue, config.DefaultIndexingTimeout)
+		var err error
+		if idx, err = indexer.NewIndexer(cfg.DB, cfg.EncryptionKey, cfg.Queue, config.DefaultIndexingTimeout); err != nil {
+			return nil, err
+		}
 	}
 
 	return &APIServer{

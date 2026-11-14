@@ -59,9 +59,10 @@ func (q *Queue) RedisClient() *redis.Client {
 	return q.client
 }
 
-// NewQueue connects to Redis at redisAddr. redisPassword is the validated
-// REDIS_PASSWORD supplied by the process's startup configuration; a password
-// embedded in a Redis URL takes precedence.
+// NewQueue connects to Redis at redisAddr. redisPassword is the REDIS_PASSWORD
+// value loaded by the process's startup configuration; a password embedded in a
+// Redis URL takes precedence. The effective password is validated here: empty
+// and known-default passwords are rejected.
 func NewQueue(redisAddr, redisPassword string) (*Queue, error) {
 	opt, err := redis.ParseURL(redisAddr)
 	var client *redis.Client

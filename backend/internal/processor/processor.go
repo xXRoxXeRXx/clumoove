@@ -353,7 +353,7 @@ type Config struct {
 	// for pg_notify-based wake-up of idle worker threads. If empty, the worker
 	// falls back to periodic polling.
 	NotifyDSN string
-	// IndexingTimeout bounds one indexing run.
+	// IndexingTimeout bounds one indexing run. It must be positive.
 	IndexingTimeout time.Duration
 }
 
@@ -362,11 +362,15 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 	if cfg.MaxThreads < 1 {
 		return nil, errors.New("processor MaxThreads must be at least 1")
 	}
+	idx, err := indexer.NewIndexer(database, cfg.SecretKey, q, cfg.IndexingTimeout)
+	if err != nil {
+		return nil, err
+	}
 	transferWorkers, verificationWorkers := workerCapacity(cfg.MaxThreads)
 	return &Processor{
 		db:                         database,
 		queue:                      q,
-		indexer:                    indexer.NewIndexer(database, cfg.SecretKey, q, cfg.IndexingTimeout),
+		indexer:                    idx,
 		workerID:                   cfg.WorkerID,
 		secretKey:                  cfg.SecretKey,
 		maxThreads:                 cfg.MaxThreads,

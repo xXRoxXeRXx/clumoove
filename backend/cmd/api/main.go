@@ -172,12 +172,18 @@ func main() {
 		slog.Warn("trusted_proxy_not_configured", slog.String("component", "api"))
 	}
 
+	idx, err := indexer.NewIndexer(database, encryptionKey, q, indexingTimeout)
+	if err != nil {
+		slog.Error("startup_failed", slog.String("component", "indexer"), observability.Error(err), slog.String("error_kind", "configuration"))
+		os.Exit(1)
+	}
+
 	syncEng := appSync.NewEngine(database, q, encryptionKey)
 	go syncEng.SubscribeToCancelEvents(ctx)
 	server, err := newAPIGateway(gatewayConfig{
 		DB:                database,
 		Queue:             q,
-		Indexer:           indexer.NewIndexer(database, encryptionKey, q, indexingTimeout),
+		Indexer:           idx,
 		SyncPass:          syncEng.Pass(),
 		EncryptionKey:     encryptionKey,
 		JWTSecret:         jwtSecret,

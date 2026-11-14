@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"backend/internal/config"
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/megasecret"
@@ -55,18 +54,19 @@ func (idx *Indexer) SetSourceFactory(factory SourceFactoryFunc) {
 }
 
 // NewIndexer creates a new Indexer instance. timeout bounds one indexing run;
-// callers pass the validated INDEXING_TIMEOUT_MINUTES value, and a non-positive
-// value selects config.DefaultIndexingTimeout.
-func NewIndexer(database *sql.DB, encryptionKey string, q *queue.Queue, timeout time.Duration) *Indexer {
+// callers pass the validated INDEXING_TIMEOUT_MINUTES value (see
+// config.IndexingTimeout). A non-positive timeout is a wiring mistake and is
+// rejected rather than silently defaulted.
+func NewIndexer(database *sql.DB, encryptionKey string, q *queue.Queue, timeout time.Duration) (*Indexer, error) {
 	if timeout <= 0 {
-		timeout = config.DefaultIndexingTimeout
+		return nil, errors.New("indexer timeout must be positive")
 	}
 	return &Indexer{
 		db:            database,
 		encryptionKey: encryptionKey,
 		queue:         q,
 		timeout:       timeout,
-	}
+	}, nil
 }
 
 // Start indexes the migration identified by migID. It reads the persisted

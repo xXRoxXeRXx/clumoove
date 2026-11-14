@@ -629,7 +629,10 @@ func (s *minimalIndexSource) GetDirectoryListing(_ context.Context, _, dirPath s
 
 func TestIndexerSetSourceFactoryAcceptsMinimalIndexSource(t *testing.T) {
 	database, _ := newBatchTestDB(t, false)
-	idx := NewIndexer(database, "", nil, 0)
+	idx, err := NewIndexer(database, "", nil, time.Minute)
+	if err != nil {
+		t.Fatalf("NewIndexer() error = %v", err)
+	}
 	src := &minimalIndexSource{
 		resources: map[string]storage.CloudResource{
 			"/root": {Path: "/root", Name: "root", IsDir: true},
