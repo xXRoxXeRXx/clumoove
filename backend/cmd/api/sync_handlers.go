@@ -165,7 +165,7 @@ func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, r
 					}
 					return "", false, "", nil
 				},
-				Persist: func(_ context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
+				Persist: func(persistCtx context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
 					accessEncrypted, accessErr := crypto.EncryptWithDomain(token.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
 					if accessErr != nil {
 						return "", false, accessErr
@@ -178,9 +178,9 @@ func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, r
 					if expiresIn <= 0 {
 						expiresIn = 3600
 					}
-					err := db.UpdateSyncJobOAuthTokens(s.db, id, role, accessEncrypted, newRefreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc)
+					err := db.UpdateSyncJobOAuthTokensContext(persistCtx, s.db, id, role, accessEncrypted, newRefreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc)
 					if errors.Is(err, db.ErrOAuthTokenConflict) {
-						if latestJob, lerr := db.GetSyncJobContext(ctx, s.db, id); lerr == nil {
+						if latestJob, lerr := db.GetSyncJobContext(persistCtx, s.db, id); lerr == nil {
 							latestPassEnc := latestJob.SourcePasswordEncrypted
 							if role == "target" {
 								latestPassEnc = latestJob.TargetPasswordEncrypted

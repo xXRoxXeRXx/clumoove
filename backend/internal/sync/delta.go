@@ -989,7 +989,7 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 			}
 			return "", false, "", nil
 		},
-		Persist: func(_ context.Context, _ string, tokenResp *oauth.TokenResponse) (string, bool, error) {
+		Persist: func(persistCtx context.Context, _ string, tokenResp *oauth.TokenResponse) (string, bool, error) {
 			newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, e.encryptionKey, crypto.DomainOAuthAccessToken)
 			if err != nil {
 				return "", false, fmt.Errorf("failed to encrypt new access token: %w", err)
@@ -1003,10 +1003,10 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 				expiresIn = 3600
 			}
 			newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
-			err = db.UpdateSyncJobOAuthTokens(e.db, syncJobID, role, newAccessEnc, newRefreshEnc, newExpiresAt, expectedRefreshEnc)
+			err = db.UpdateSyncJobOAuthTokensContext(persistCtx, e.db, syncJobID, role, newAccessEnc, newRefreshEnc, newExpiresAt, expectedRefreshEnc)
 			if errors.Is(err, db.ErrOAuthTokenConflict) {
 				slog.Info("sync OAuth token update conflicted; adopting stored winner", "sync_job_id", syncJobID, "role", role)
-				if latestJob, lerr := db.GetSyncJob(e.db, syncJobID); lerr == nil {
+				if latestJob, lerr := db.GetSyncJobContext(persistCtx, e.db, syncJobID); lerr == nil {
 					_, _, _, latestAccessEnc := tokenSet(latestJob)
 					if latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
 						return latestAccess, true, nil

@@ -1124,3 +1124,31 @@ func TestOwnedProfileAccessRequestProviderAndSnapshot(t *testing.T) {
 		t.Fatalf("snapshot refresh = %q, want direct-refresh", dec)
 	}
 }
+
+func TestOwnedProfileAccessPersistOAuthTokensHonorsContextDeadline(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	now := time.Date(2026, time.November, 14, 1, 0, 0, 0, time.UTC)
+	refreshEnc, _ := crypto.EncryptWithDomain("saved-refresh", key, crypto.DomainOAuthRefreshToken)
+	database, _ := newBackupProfileConnectionTestDB(t, nil)
+
+	access := &ownedProfileAccess{
+		db:            database,
+		encryptionKey: key,
+		now:           func() time.Time { return now },
+	}
+	profile := &db.ConnectionProfile{
+		ID:                    "profile-oauth",
+		RefreshTokenEncrypted: refreshEnc,
+	}
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := access.persistOAuthTokens(canceledCtx, profile, &oauth.TokenResponse{
+		AccessToken:  "fresh-access",
+		RefreshToken: "fresh-refresh",
+		ExpiresIn:    3600,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("persistOAuthTokens(canceledCtx) error = %v, want context.Canceled", err)
+	}
+}

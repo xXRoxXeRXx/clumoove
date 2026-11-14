@@ -589,6 +589,12 @@ func AbortSyncJobVerification(db *sql.DB, id string, generation int) (bool, erro
 // and the worker-side checksum verifier. Uses conditional persistence to prevent
 // concurrent token rotation from overwriting a newer token pair.
 func UpdateSyncJobOAuthTokens(db *sql.DB, id, role, accessTokenEncrypted, refreshTokenEncrypted string, expiresAt time.Time, expectedRefreshTokenEncrypted string) error {
+	return UpdateSyncJobOAuthTokensContext(context.Background(), db, id, role, accessTokenEncrypted, refreshTokenEncrypted, expiresAt, expectedRefreshTokenEncrypted)
+}
+
+// UpdateSyncJobOAuthTokensContext persists a rotated OAuth token pair for a
+// sync job while honoring ctx cancellation and deadlines.
+func UpdateSyncJobOAuthTokensContext(ctx context.Context, db *sql.DB, id, role, accessTokenEncrypted, refreshTokenEncrypted string, expiresAt time.Time, expectedRefreshTokenEncrypted string) error {
 	if role != "source" && role != "target" {
 		return fmt.Errorf("invalid oauth token role %q", role)
 	}
@@ -617,7 +623,7 @@ func UpdateSyncJobOAuthTokens(db *sql.DB, id, role, accessTokenEncrypted, refres
 			  AND target_refresh_token_encrypted = $5
 		`
 	}
-	res, err := db.Exec(query, accessTokenEncrypted, refreshTokenEncrypted, expiresAt, id, expectedRefreshTokenEncrypted)
+	res, err := db.ExecContext(ctx, query, accessTokenEncrypted, refreshTokenEncrypted, expiresAt, id, expectedRefreshTokenEncrypted)
 	if err != nil {
 		return err
 	}

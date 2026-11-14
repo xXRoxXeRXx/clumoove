@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -337,6 +338,54 @@ func (q *Queue) ReleaseOAuthLock(ctx context.Context, jobType, jobID, role strin
 	}
 	key := fmt.Sprintf("oauth:lock:%s:%s:%s", jobType, jobID, role)
 	return releaseLockLuaScript.Run(ctx, q.client, []string{key}, token).Err()
+}
+
+type redisOAuthRotationEntry struct {
+	RotatedHash           string `json:"rotated_hash"`
+	RefreshTokenEncrypted string `json:"refresh_token_encrypted"`
+}
+
+func oauthRotationRedisKey(userID, provider, tokenHash string) string {
+	return fmt.Sprintf("oauth:rotation:%s:%s:%s", userID, provider, tokenHash)
+}
+
+// RecordOAuthRotationBackup stores an AES-256-GCM encrypted rotation mapping
+// in Redis so a failed PostgreSQL rotation-history write does not lose the
+// replacement refresh token across API/worker instances or process restarts.
+func (q *Queue) RecordOAuthRotationBackup(ctx context.Context, userID, provider, prevHash, rotatedHash, encryptedToken string, ttl time.Duration) error {
+	if q == nil || q.client == nil || userID == "" || provider == "" || prevHash == "" || rotatedHash == "" || encryptedToken == "" {
+		return nil
+	}
+	payload, err := json.Marshal(redisOAuthRotationEntry{
+		RotatedHash:           rotatedHash,
+		RefreshTokenEncrypted: encryptedToken,
+	})
+	if err != nil {
+		return err
+	}
+	return q.client.Set(ctx, oauthRotationRedisKey(userID, provider, prevHash), string(payload), ttl).Err()
+}
+
+// LookupOAuthRotationBackup retrieves an encrypted rotation mapping from Redis.
+func (q *Queue) LookupOAuthRotationBackup(ctx context.Context, userID, provider, tokenHash string) (string, string, bool, error) {
+	if q == nil || q.client == nil || userID == "" || provider == "" || tokenHash == "" {
+		return "", "", false, nil
+	}
+	raw, err := q.client.Get(ctx, oauthRotationRedisKey(userID, provider, tokenHash)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return "", "", false, nil
+		}
+		return "", "", false, err
+	}
+	var entry redisOAuthRotationEntry
+	if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+		return "", "", false, err
+	}
+	if entry.RotatedHash == "" || entry.RefreshTokenEncrypted == "" {
+		return "", "", false, nil
+	}
+	return entry.RotatedHash, entry.RefreshTokenEncrypted, true, nil
 }
 
 // RegisterActiveWorker registers/refreshes the worker's active status in Redis

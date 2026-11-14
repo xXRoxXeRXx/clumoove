@@ -1123,6 +1123,12 @@ func GetMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResour
 var ErrOAuthTokenConflict = errors.New("oauth token update conflict: persisted token changed concurrently")
 
 func UpdateMigrationOAuthTokens(db *sql.DB, u OAuthTokenUpdate, expectedRefreshTokenEncrypted string) error {
+	return UpdateMigrationOAuthTokensContext(context.Background(), db, u, expectedRefreshTokenEncrypted)
+}
+
+// UpdateMigrationOAuthTokensContext atomically persists a rotated OAuth token
+// pair for a migration while honoring ctx cancellation and deadlines.
+func UpdateMigrationOAuthTokensContext(ctx context.Context, db *sql.DB, u OAuthTokenUpdate, expectedRefreshTokenEncrypted string) error {
 	if u.Role != "source" && u.Role != "target" {
 		return fmt.Errorf("invalid oauth token role %q", u.Role)
 	}
@@ -1154,7 +1160,7 @@ func UpdateMigrationOAuthTokens(db *sql.DB, u OAuthTokenUpdate, expectedRefreshT
 			  AND target_refresh_token_encrypted = $5
 		`
 	}
-	res, err := db.Exec(query, u.AccessTokenEncrypted, u.RefreshTokenEncrypted, u.ExpiresAt, u.MigrationID, expectedRefreshTokenEncrypted)
+	res, err := db.ExecContext(ctx, query, u.AccessTokenEncrypted, u.RefreshTokenEncrypted, u.ExpiresAt, u.MigrationID, expectedRefreshTokenEncrypted)
 	if err != nil {
 		return err
 	}

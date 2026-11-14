@@ -543,7 +543,7 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 			}
 			return "", false, "", nil
 		},
-		Persist: func(_ context.Context, _ string, tokenResp *oauth.TokenResponse) (string, bool, error) {
+		Persist: func(persistCtx context.Context, _ string, tokenResp *oauth.TokenResponse) (string, bool, error) {
 			newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, idx.encryptionKey, crypto.DomainOAuthAccessToken)
 			if err != nil {
 				return "", false, fmt.Errorf("failed to encrypt refreshed source access token: %w", err)
@@ -556,7 +556,7 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 			if expiresIn <= 0 {
 				expiresIn = 3600
 			}
-			err = db.UpdateMigrationOAuthTokens(idx.db, db.OAuthTokenUpdate{
+			err = db.UpdateMigrationOAuthTokensContext(persistCtx, idx.db, db.OAuthTokenUpdate{
 				MigrationID:           migID,
 				Role:                  "source",
 				AccessTokenEncrypted:  newAccessEnc,
@@ -565,7 +565,7 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 			}, expectedRefreshEnc)
 			if errors.Is(err, db.ErrOAuthTokenConflict) {
 				logger.Info("indexing_source_token_update_conflict")
-				if latestMig, lerr := db.GetMigration(idx.db, migID); lerr == nil {
+				if latestMig, lerr := db.GetMigrationContext(persistCtx, idx.db, migID); lerr == nil {
 					if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
 						return latestAccess, true, nil
 					}

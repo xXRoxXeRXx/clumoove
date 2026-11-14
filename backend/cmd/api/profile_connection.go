@@ -460,7 +460,7 @@ func (a *ownedProfileAccess) encryptCreds(creds profileCreds) (persistedProfileC
 	return persisted, nil
 }
 
-func (a *ownedProfileAccess) persistOAuthTokens(profile *db.ConnectionProfile, token *oauth.TokenResponse) error {
+func (a *ownedProfileAccess) persistOAuthTokens(ctx context.Context, profile *db.ConnectionProfile, token *oauth.TokenResponse) error {
 	accessEncrypted, err := crypto.EncryptWithDomain(token.AccessToken, a.encryptionKey, crypto.DomainOAuthAccessToken)
 	if err != nil {
 		return err
@@ -474,7 +474,7 @@ func (a *ownedProfileAccess) persistOAuthTokens(profile *db.ConnectionProfile, t
 		expiresIn = 3600
 	}
 	expiresAt := a.currentTime().Add(time.Duration(expiresIn) * time.Second)
-	if err := db.UpdateConnectionProfileOAuthTokens(a.db, profile.ID, accessEncrypted, refreshEncrypted, expiresAt, profile.RefreshTokenEncrypted); err != nil {
+	if err := db.UpdateConnectionProfileOAuthTokensContext(ctx, a.db, profile.ID, accessEncrypted, refreshEncrypted, expiresAt, profile.RefreshTokenEncrypted); err != nil {
 		return err
 	}
 	profile.PasswordEncrypted = accessEncrypted
@@ -630,7 +630,11 @@ func (a *ownedProfileAccess) resolveAndRefreshOAuth(
 	defer crypto.ZeroString(&storedRefresh)
 
 	if !allowRefresh {
-		rotated, ok, err := oauth.LookupRotatedRefreshToken(ctx, a.db, a.oauthRotations, a.encryptionKey, userID, creds.Provider, creds.RefreshToken, a.currentTime())
+		var backupStore oauth.RotationBackupStore
+		if bs, ok := a.oauthLocker.(oauth.RotationBackupStore); ok {
+			backupStore = bs
+		}
+		rotated, ok, err := oauth.LookupRotatedRefreshTokenWithStore(ctx, a.db, backupStore, a.oauthRotations, a.encryptionKey, userID, creds.Provider, creds.RefreshToken, a.currentTime())
 		if err != nil {
 			return creds, err
 		}
@@ -680,11 +684,11 @@ func (a *ownedProfileAccess) resolveAndRefreshOAuth(
 			isProfileToken = suppliedRefresh == "" || (storedRefresh != "" && (subtle.ConstantTimeCompare([]byte(suppliedRefresh), []byte(storedRefresh)) == 1 || subtle.ConstantTimeCompare([]byte(target), []byte(storedRefresh)) == 1))
 			return "", false, "", nil
 		},
-		Persist: func(_ context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
+		Persist: func(persistCtx context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
 			if !isProfileToken {
 				return "", false, nil
 			}
-			if err := a.persistOAuthTokens(profile, token); err != nil {
+			if err := a.persistOAuthTokens(persistCtx, profile, token); err != nil {
 				return "", false, err
 			}
 			return "", false, nil

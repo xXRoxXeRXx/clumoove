@@ -221,10 +221,17 @@ func UpdateConnectionProfileMegaSession(ctx context.Context, database *sql.DB, i
 // UpdateConnectionProfileOAuthTokens atomically persists a refreshed OAuth
 // credential set if no concurrent rotation has already replaced its refresh token.
 func UpdateConnectionProfileOAuthTokens(database *sql.DB, id, accessTokenEncrypted, refreshTokenEncrypted string, expiresAt time.Time, expectedRefreshTokenEncrypted string) error {
+	return UpdateConnectionProfileOAuthTokensContext(context.Background(), database, id, accessTokenEncrypted, refreshTokenEncrypted, expiresAt, expectedRefreshTokenEncrypted)
+}
+
+// UpdateConnectionProfileOAuthTokensContext atomically persists a refreshed
+// OAuth credential set while honoring ctx cancellation/deadlines so a blocked
+// update cannot outlive a distributed refresh lock lease.
+func UpdateConnectionProfileOAuthTokensContext(ctx context.Context, database *sql.DB, id, accessTokenEncrypted, refreshTokenEncrypted string, expiresAt time.Time, expectedRefreshTokenEncrypted string) error {
 	if expectedRefreshTokenEncrypted == "" {
 		return ErrOAuthTokenConflict
 	}
-	res, err := database.Exec(`
+	res, err := database.ExecContext(ctx, `
 		UPDATE connection_profiles
 		SET password_encrypted = $1,
 		    refresh_token_encrypted = $2,

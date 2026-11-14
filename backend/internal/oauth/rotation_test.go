@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/crypto"
 	"backend/internal/db"
 )
 
@@ -130,6 +131,33 @@ func (l *trackingTokenLocker) isHeld(jobType, jobID, role string) bool {
 	defer l.mu.Unlock()
 	_, ok := l.held[jobType+":"+jobID+":"+role]
 	return ok
+}
+
+type stubBackupStore struct {
+	mu      sync.Mutex
+	entries map[string]stubRotationRow
+}
+
+func (s *stubBackupStore) RecordOAuthRotationBackup(_ context.Context, userID, provider, prevHash, rotatedHash, encryptedToken string, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.entries == nil {
+		s.entries = make(map[string]stubRotationRow)
+	}
+	k := fmt.Sprintf("%s\x00%s\x00%s", userID, provider, prevHash)
+	s.entries[k] = stubRotationRow{nextHash: rotatedHash, encrypted: encryptedToken}
+	return nil
+}
+
+func (s *stubBackupStore) LookupOAuthRotationBackup(_ context.Context, userID, provider, tokenHash string) (string, string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := fmt.Sprintf("%s\x00%s\x00%s", userID, provider, tokenHash)
+	v, ok := s.entries[k]
+	if !ok {
+		return "", "", false, nil
+	}
+	return v.nextHash, v.encrypted, true, nil
 }
 
 func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
@@ -280,9 +308,124 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("lock wait budget exceeds 15s provider refresh timeout", func(t *testing.T) {
-		if tokenLockWaitTimeout <= 15*time.Second {
-			t.Fatalf("tokenLockWaitTimeout = %v, must exceed 15s provider refresh timeout", tokenLockWaitTimeout)
+	t.Run("lock wait budget exceeds 15s refresh plus 10s persist budget", func(t *testing.T) {
+		maxHolderBudget := tokenRefreshTimeout + tokenPersistTimeout
+		if tokenLockWaitTimeout <= maxHolderBudget {
+			t.Fatalf("tokenLockWaitTimeout = %v, must exceed refresh+persist budget %v", tokenLockWaitTimeout, maxHolderBudget)
+		}
+		if tokenLockTTL <= maxHolderBudget {
+			t.Fatalf("tokenLockTTL = %v, must exceed refresh+persist budget %v", tokenLockTTL, maxHolderBudget)
+		}
+	})
+
+	t.Run("partial database chain continues through newer cached hop", func(t *testing.T) {
+		encB, err := crypto.EncryptWithDomain("B", key, crypto.DomainOAuthRefreshToken)
+		if err != nil {
+			t.Fatalf("Encrypt(B) error = %v", err)
+		}
+		encC, err := crypto.EncryptWithDomain("C", key, crypto.DomainOAuthRefreshToken)
+		if err != nil {
+			t.Fatalf("Encrypt(C) error = %v", err)
+		}
+		hashA := db.OAuthTokenRotationHash("u1", "google", "A")
+		hashB := db.OAuthTokenRotationHash("u1", "google", "B")
+		hashC := db.OAuthTokenRotationHash("u1", "google", "C")
+
+		state := &stubRotationDB{
+			rows: map[string]stubRotationRow{
+				fmt.Sprintf("u1\x00google\x00%s", hashA): {nextHash: hashB, encrypted: encB},
+			},
+		}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		cache := NewRotationCache()
+		cache.RecordEncrypted(hashB, hashC, encC, now)
+
+		got, ok, err := LookupRotatedRefreshToken(context.Background(), sqlDB, cache, key, "u1", "google", "A", now)
+		if err != nil || !ok || got != "C" {
+			t.Fatalf("LookupRotatedRefreshToken(A) = (%q, %v, %v), want (C, true, nil)", got, ok, err)
+		}
+	})
+
+	t.Run("failed DB history write recovers across instances via shared backup store", func(t *testing.T) {
+		dbErr := errors.New("pq: permission denied for table oauth_token_rotations")
+		state := &stubRotationDB{execErr: dbErr}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		sharedBackup := &stubBackupStore{}
+		_, err := RefreshWithRotationLock(context.Background(), RotationRefreshRequest{
+			DB:            sqlDB,
+			BackupStore:   sharedBackup,
+			Cache:         NewRotationCache(),
+			EncryptionKey: key,
+			UserID:        "u1",
+			Provider:      "google",
+			RefreshToken:  "T1",
+			Now:           func() time.Time { return now },
+			Refresh: func(context.Context, string, string) (*TokenResponse, error) {
+				return &TokenResponse{AccessToken: "at-2", RefreshToken: "T2", ExpiresIn: 3600}, nil
+			},
+		})
+		if !errors.Is(err, dbErr) {
+			t.Fatalf("first instance error = %v, want %v", err, dbErr)
+		}
+
+		// Simulate a different API/worker instance with an empty local cache and healthy DB writes.
+		state.mu.Lock()
+		state.execErr = nil
+		state.mu.Unlock()
+		var secondUsed string
+		res2, err := RefreshWithRotationLock(context.Background(), RotationRefreshRequest{
+			DB:            sqlDB,
+			BackupStore:   sharedBackup,
+			Cache:         NewRotationCache(),
+			EncryptionKey: key,
+			UserID:        "u1",
+			Provider:      "google",
+			RefreshToken:  "T1",
+			Now:           func() time.Time { return now },
+			Refresh: func(_ context.Context, _, tok string) (*TokenResponse, error) {
+				secondUsed = tok
+				return &TokenResponse{AccessToken: "at-3", RefreshToken: "T3", ExpiresIn: 3600}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("second instance error = %v", err)
+		}
+		if secondUsed != "T2" || res2.Token.RefreshToken != "T3" {
+			t.Fatalf("second instance refreshed (%q -> %q), want (T2 -> T3)", secondUsed, res2.Token.RefreshToken)
+		}
+	})
+
+	t.Run("persist callback receives bounded deadline strictly inside lock TTL", func(t *testing.T) {
+		var hasDeadline bool
+		var deadlineRemaining time.Duration
+		locker := &trackingTokenLocker{}
+		_, err := RefreshWithRotationLock(context.Background(), RotationRefreshRequest{
+			Locker:        locker,
+			Cache:         NewRotationCache(),
+			EncryptionKey: key,
+			UserID:        "u1",
+			Provider:      "google",
+			RefreshToken:  "T1",
+			Now:           func() time.Time { return now },
+			Refresh: func(context.Context, string, string) (*TokenResponse, error) {
+				return &TokenResponse{AccessToken: "at-2", RefreshToken: "T2", ExpiresIn: 3600}, nil
+			},
+			Persist: func(persistCtx context.Context, _ string, _ *TokenResponse) (string, bool, error) {
+				dl, ok := persistCtx.Deadline()
+				hasDeadline = ok
+				deadlineRemaining = time.Until(dl)
+				return "", false, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("RefreshWithRotationLock() error = %v", err)
+		}
+		if !hasDeadline || deadlineRemaining <= 0 || deadlineRemaining >= tokenLockTTL {
+			t.Fatalf("persistCtx deadline=(%v, remaining=%v), want 0 < remaining < %v", hasDeadline, deadlineRemaining, tokenLockTTL)
 		}
 	})
 }

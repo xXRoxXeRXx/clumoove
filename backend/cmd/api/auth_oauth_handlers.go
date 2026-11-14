@@ -369,8 +369,8 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					}
 					return mig.UserID.String, refreshEnc, expiresAt, active, mig.Status, nil
 				},
-				persist: func(_ context.Context, accessEnc, refreshEnc string, expiresAt time.Time, expectedRefreshEnc string) error {
-					return db.UpdateMigrationOAuthTokens(s.db, db.OAuthTokenUpdate{
+				persist: func(persistCtx context.Context, accessEnc, refreshEnc string, expiresAt time.Time, expectedRefreshEnc string) error {
+					return db.UpdateMigrationOAuthTokensContext(persistCtx, s.db, db.OAuthTokenUpdate{
 						MigrationID:           entry.MigrationID,
 						Role:                  entry.Role,
 						AccessTokenEncrypted:  accessEnc,
@@ -415,8 +415,8 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					}
 					return job.UserID, refreshEnc, expiresAt, active, job.Status, nil
 				},
-				persist: func(_ context.Context, accessEnc, refreshEnc string, expiresAt time.Time, expectedRefreshEnc string) error {
-					return db.UpdateSyncJobOAuthTokens(s.db, entry.SyncJobID, entry.Role, accessEnc, refreshEnc, expiresAt, expectedRefreshEnc)
+				persist: func(persistCtx context.Context, accessEnc, refreshEnc string, expiresAt time.Time, expectedRefreshEnc string) error {
+					return db.UpdateSyncJobOAuthTokensContext(persistCtx, s.db, entry.SyncJobID, entry.Role, accessEnc, refreshEnc, expiresAt, expectedRefreshEnc)
 				},
 				markFailed: func() {
 					errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", entry.Provider)

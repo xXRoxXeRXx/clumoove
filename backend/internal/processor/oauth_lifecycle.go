@@ -201,8 +201,8 @@ func (s *migrationOAuthTokenState) OAuthTokens(role string) oauthTokenSnapshot {
 func (s *migrationOAuthTokenState) ApplyOAuthTokens(role, access string, refresh sql.NullString, expires sql.NullTime) {
 	applyOAuthTokensToMigration(s.migration, role, access, refresh, expires)
 }
-func (s *migrationOAuthTokenState) ReloadOAuthTokens(context.Context) error {
-	latest, err := db.GetMigration(s.p.db, s.migration.ID)
+func (s *migrationOAuthTokenState) ReloadOAuthTokens(ctx context.Context) error {
+	latest, err := db.GetMigrationContext(ctx, s.p.db, s.migration.ID)
 	if err != nil {
 		return err
 	}
@@ -211,8 +211,8 @@ func (s *migrationOAuthTokenState) ReloadOAuthTokens(context.Context) error {
 	s.migration.UpdatedAt = latest.UpdatedAt
 	return nil
 }
-func (s *migrationOAuthTokenState) PersistOAuthTokens(_ context.Context, role, access, refresh string, expires time.Time, expected string) error {
-	return db.UpdateMigrationOAuthTokens(s.p.db, db.OAuthTokenUpdate{MigrationID: s.migration.ID, Role: role, AccessTokenEncrypted: access, RefreshTokenEncrypted: refresh, ExpiresAt: expires}, expected)
+func (s *migrationOAuthTokenState) PersistOAuthTokens(ctx context.Context, role, access, refresh string, expires time.Time, expected string) error {
+	return db.UpdateMigrationOAuthTokensContext(ctx, s.p.db, db.OAuthTokenUpdate{MigrationID: s.migration.ID, Role: role, AccessTokenEncrypted: access, RefreshTokenEncrypted: refresh, ExpiresAt: expires}, expected)
 }
 
 type syncOAuthTokenState struct {
@@ -233,8 +233,8 @@ func (s *syncOAuthTokenState) OAuthTokens(role string) oauthTokenSnapshot {
 func (s *syncOAuthTokenState) ApplyOAuthTokens(role, access string, refresh sql.NullString, expires sql.NullTime) {
 	applyOAuthTokensToSyncJob(s.job, role, access, refresh, expires)
 }
-func (s *syncOAuthTokenState) ReloadOAuthTokens(context.Context) error {
-	latest, err := db.GetSyncJob(s.p.db, s.job.ID)
+func (s *syncOAuthTokenState) ReloadOAuthTokens(ctx context.Context) error {
+	latest, err := db.GetSyncJobContext(ctx, s.p.db, s.job.ID)
 	if err != nil {
 		return err
 	}
@@ -243,6 +243,6 @@ func (s *syncOAuthTokenState) ReloadOAuthTokens(context.Context) error {
 	s.job.UpdatedAt = latest.UpdatedAt
 	return nil
 }
-func (s *syncOAuthTokenState) PersistOAuthTokens(_ context.Context, role, access, refresh string, expires time.Time, expected string) error {
-	return db.UpdateSyncJobOAuthTokens(s.p.db, s.job.ID, role, access, refresh, expires, expected)
+func (s *syncOAuthTokenState) PersistOAuthTokens(ctx context.Context, role, access, refresh string, expires time.Time, expected string) error {
+	return db.UpdateSyncJobOAuthTokensContext(ctx, s.p.db, s.job.ID, role, access, refresh, expires, expected)
 }
