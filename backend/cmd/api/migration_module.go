@@ -149,6 +149,14 @@ func (api *migrationAPI) allowRateLimit(r *http.Request, scope string, limit int
 }
 
 func (api *migrationAPI) requireOwnedMigration(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	return api.verifyOwnedMigration(w, r, false)
+}
+
+func (api *migrationAPI) requireOwnedMigrationStrict(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	return api.verifyOwnedMigration(w, r, true)
+}
+
+func (api *migrationAPI) verifyOwnedMigration(w http.ResponseWriter, r *http.Request, internalErrorOnLookupFailure bool) (string, string, bool) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
@@ -162,7 +170,12 @@ func (api *migrationAPI) requireOwnedMigration(w http.ResponseWriter, r *http.Re
 
 	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), api.db, id, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		if internalErrorOnLookupFailure {
+			api.logf(r, "Error checking migration %s ownership: %v", id, err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return "", "", false
+		}
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return "", "", false
 	}
 	if !owns {

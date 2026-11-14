@@ -25,7 +25,7 @@ func oauthExpiry(seconds int) time.Time {
 }
 
 func (api *migrationAPI) handleMigrationReauth(w http.ResponseWriter, r *http.Request) {
-	id, _, ok := api.requireOwnedMigration(w, r)
+	id, _, ok := api.requireOwnedMigrationStrict(w, r)
 	if !ok {
 		return
 	}

@@ -1043,7 +1043,7 @@ func (api *migrationAPI) handleMigrationStream(w http.ResponseWriter, r *http.Re
 }
 
 func (api *migrationAPI) handleDeleteMigration(w http.ResponseWriter, r *http.Request) {
-	id, userID, ok := api.requireOwnedMigration(w, r)
+	id, userID, ok := api.requireOwnedMigrationStrict(w, r)
 	if !ok {
 		return
 	}
@@ -1207,7 +1207,7 @@ func sanitizeErrorListItems(items []db.ErrorListItem) {
 }
 
 func (api *migrationAPI) handleMigrationErrors(w http.ResponseWriter, r *http.Request) {
-	id, _, ok := api.requireOwnedMigration(w, r)
+	id, _, ok := api.requireOwnedMigrationStrict(w, r)
 	if !ok {
 		return
 	}

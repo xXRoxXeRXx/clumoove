@@ -511,6 +511,51 @@ func TestMigrationModuleLifecycleActionsAndOwnership(t *testing.T) {
 	}
 }
 
+func TestMigrationModuleOwnershipLookupFailureCompatibility(t *testing.T) {
+	database, state := newMigrationModuleTestDB(t, nil)
+	state.setOwnershipErr(errors.New("db connection lost"))
+
+	api := newMigrationAPI(migrationDependencies{
+		db:            database,
+		encryptionKey: "01234567890123456789012345678901",
+		rateLimiter:   allowAllFileRateLimiter{},
+	})
+	mux := http.NewServeMux()
+	api.registerRoutes(mux, headerAuthMiddleware)
+
+	// Handlers that historically treated ownership lookup errors as 403 MIGRATION_NOT_OWNED.
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodPost, "/api/migration/m-1/pause", ""},
+		{http.MethodPost, "/api/migration/m-1/resume", ""},
+		{http.MethodPost, "/api/migration/m-1/retry-failed", ""},
+		{http.MethodPost, "/api/migration/m-1/reindex", ""},
+		{http.MethodPost, "/api/migration/m-1/cancel", ""},
+		{http.MethodPut, "/api/migration/m-1/threads", `{"threads":4}`},
+		{http.MethodPut, "/api/migration/m-1/bandwidth", `{"limit_mbps":10}`},
+	} {
+		rec := performMigrationModuleRequest(mux, tc.method, tc.path, "user-1", tc.body)
+		assertAPIResponseError(t, rec, http.StatusForbidden, ErrMigrationNotOwned, "lookup failure "+tc.method+" "+tc.path)
+	}
+
+	// Handlers that historically returned 500 INTERNAL_ERROR on ownership lookup failures.
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodDelete, "/api/migration/m-1", ""},
+		{http.MethodGet, "/api/migration/m-1/errors", ""},
+		{http.MethodPost, "/api/migration/m-1/reauth", `{"role":"source","access_token":"a","refresh_token":"r"}`},
+	} {
+		rec := performMigrationModuleRequest(mux, tc.method, tc.path, "user-1", tc.body)
+		assertAPIResponseError(t, rec, http.StatusInternalServerError, ErrInternalError, "lookup failure "+tc.method+" "+tc.path)
+	}
+}
+
 func TestMigrationModuleQueriesReportsAndStreamLimits(t *testing.T) {
 	database, state := newMigrationModuleTestDB(t, nil)
 	now := time.Now().UTC()
@@ -750,7 +795,14 @@ type migrationModuleDBState struct {
 	schedules         int
 	activeCountByUser map[string]int
 	oauthConflict     bool
+	ownershipErr      error
 	nextID            int
+}
+
+func (s *migrationModuleDBState) setOwnershipErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ownershipErr = err
 }
 
 func (s *migrationModuleDBState) setMigration(rec *migrationModuleRecord) {
@@ -898,9 +950,13 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 		id := args[0].Value.(string)
 		userID := args[1].Value.(string)
 		c.state.mu.Lock()
+		lookupErr := c.state.ownershipErr
 		rec := c.state.migrations[id]
 		owned := rec != nil && rec.userID == userID
 		c.state.mu.Unlock()
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
 		return &backupProfileConnectionRows{rows: [][]driver.Value{{owned}}, columns: 1}, nil
 	}
 	if strings.Contains(query, "FROM connection_profiles WHERE id") {
