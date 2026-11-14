@@ -120,10 +120,10 @@ func main() {
 
 	// Registered first so it runs after every other deferred cleanup (database
 	// close, signal teardown) when the worker stops because of a failure.
-	exitCode := 0
+	failed := false
 	defer func() {
-		if exitCode != 0 {
-			os.Exit(exitCode)
+		if failed {
+			os.Exit(1)
 		}
 	}()
 
@@ -218,10 +218,9 @@ func main() {
 
 	// Block until context is cancelled AND all in-flight tasks have finished.
 	proc.Start(ctx)
-	if err := supervisor.Err(); err != nil {
-		slog.Error("service_failed", slog.String("component", "worker"), observability.Error(err), slog.String("error_kind", coordinatorFailureKind))
-		exitCode = 1
-		return
-	}
-	slog.Info("service_stopped", slog.String("component", "worker"))
+	// Coordinators stop on the cancelled context; wait so none is still using
+	// the database when it closes, and so a failure is never missed.
+	supervisor.Wait()
+	failed = supervisor.Err() != nil
+	slog.Info("service_stopped", slog.String("component", "worker"), slog.Bool("failed", failed))
 }

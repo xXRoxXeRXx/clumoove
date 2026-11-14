@@ -11,13 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"path"
 	"sort"
 	"strings"
 	"time"
 
-	"backend/internal/crypto"
 	"backend/internal/coordcfg"
+	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/megasecret"
 	"backend/internal/oauth"
@@ -1143,24 +1144,52 @@ func openWithDecryptedCredentials[T any](
 	return result, nil
 }
 
+// Run polls until ctx is cancelled. Poll errors are treated as transient and
+// retried with capped exponential backoff, so a brief database outage does not
+// end the loop (an exit before shutdown is a terminal worker failure).
 func (c *Coordinator) Run(ctx context.Context, interval time.Duration) error {
 	if interval <= 0 {
 		return errors.New("restore poll interval must be positive")
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		processed, err := c.PollOnce(ctx)
-		if err != nil {
-			return err
-		}
-		if processed {
-			continue
-		}
+	const maxRetryDelay = 30 * time.Second
+	baseDelay := interval
+	if baseDelay > time.Second {
+		baseDelay = time.Second
+	}
+	retryDelay := baseDelay
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	<-timer.C
+	wait := func(delay time.Duration) error {
+		timer.Reset(delay)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
+		case <-timer.C:
+			return nil
+		}
+	}
+	for {
+		processed, err := c.PollOnce(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			slog.Default().Warn("restore_poll_failed", slog.Any("error", err), slog.Duration("retry_delay", retryDelay))
+			if werr := wait(retryDelay); werr != nil {
+				return werr
+			}
+			if retryDelay *= 2; retryDelay > maxRetryDelay {
+				retryDelay = maxRetryDelay
+			}
+			continue
+		}
+		retryDelay = baseDelay
+		if processed {
+			continue
+		}
+		if werr := wait(interval); werr != nil {
+			return werr
 		}
 	}
 }
