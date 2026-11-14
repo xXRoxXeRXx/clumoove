@@ -21,10 +21,11 @@ type stubRotationRow struct {
 }
 
 type stubRotationDB struct {
-	mu       sync.Mutex
-	rows     map[string]stubRotationRow
-	execErr  error
-	queryErr error
+	mu                sync.Mutex
+	rows              map[string]stubRotationRow
+	execErr           error
+	queryErr          error
+	waitCtxDoneOnExec bool
 }
 
 func (s *stubRotationDB) Connect(context.Context) (driver.Conn, error) {
@@ -37,8 +38,15 @@ type stubRotationConn struct{ db *stubRotationDB }
 func (*stubRotationConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
 func (*stubRotationConn) Close() error                        { return nil }
 func (*stubRotationConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
-func (c *stubRotationConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+func (c *stubRotationConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if strings.Contains(query, "oauth_token_rotations") {
+		c.db.mu.Lock()
+		wait := c.db.waitCtxDoneOnExec
+		c.db.mu.Unlock()
+		if wait {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
 		c.db.mu.Lock()
 		defer c.db.mu.Unlock()
 		if c.db.execErr != nil {
@@ -134,13 +142,24 @@ func (l *trackingTokenLocker) isHeld(jobType, jobID, role string) bool {
 }
 
 type stubBackupStore struct {
-	mu      sync.Mutex
-	entries map[string]stubRotationRow
+	mu        sync.Mutex
+	entries   map[string]stubRotationRow
+	recordErr error
+	sawCtxErr error
 }
 
-func (s *stubBackupStore) RecordOAuthRotationBackup(_ context.Context, userID, provider, prevHash, rotatedHash, encryptedToken string, _ time.Duration) error {
+func (s *stubBackupStore) RecordOAuthRotationBackup(ctx context.Context, userID, provider, prevHash, rotatedHash, encryptedToken string, _ time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.sawCtxErr == nil && ctx.Err() != nil {
+		s.sawCtxErr = ctx.Err()
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if s.recordErr != nil {
+		return s.recordErr
+	}
 	if s.entries == nil {
 		s.entries = make(map[string]stubRotationRow)
 	}
@@ -308,13 +327,13 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("lock wait budget exceeds 15s refresh plus 10s persist budget", func(t *testing.T) {
-		maxHolderBudget := tokenRefreshTimeout + tokenPersistTimeout
-		if tokenLockWaitTimeout <= maxHolderBudget {
-			t.Fatalf("tokenLockWaitTimeout = %v, must exceed refresh+persist budget %v", tokenLockWaitTimeout, maxHolderBudget)
+	t.Run("lock wait budget exceeds pre-refresh, refresh, and persist holder budget", func(t *testing.T) {
+		maxWorkBudget := tokenPreRefreshTimeout + tokenRefreshTimeout + tokenPersistTimeout
+		if tokenLockWaitTimeout <= maxWorkBudget {
+			t.Fatalf("tokenLockWaitTimeout = %v, must exceed holder work budget %v", tokenLockWaitTimeout, maxWorkBudget)
 		}
-		if tokenLockTTL <= maxHolderBudget {
-			t.Fatalf("tokenLockTTL = %v, must exceed refresh+persist budget %v", tokenLockTTL, maxHolderBudget)
+		if tokenLockTTL < maxWorkBudget+tokenLockSafetyMargin {
+			t.Fatalf("tokenLockTTL = %v, must fit holder work budget + safety margin (%v)", tokenLockTTL, maxWorkBudget+tokenLockSafetyMargin)
 		}
 	})
 
@@ -426,6 +445,97 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		}
 		if !hasDeadline || deadlineRemaining <= 0 || deadlineRemaining >= tokenLockTTL {
 			t.Fatalf("persistCtx deadline=(%v, remaining=%v), want 0 < remaining < %v", hasDeadline, deadlineRemaining, tokenLockTTL)
+		}
+	})
+
+	t.Run("database timeout still records backup with independent context and surfaces backup errors", func(t *testing.T) {
+		state := &stubRotationDB{waitCtxDoneOnExec: true}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		sharedBackup := &stubBackupStore{}
+		shortCtx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		defer cancel()
+
+		err := RecordRotatedRefreshTokenWithStore(shortCtx, sqlDB, sharedBackup, NewRotationCache(), key, "u1", "google", "T2", now, "T1")
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("RecordRotatedRefreshTokenWithStore() error = %v, want context.DeadlineExceeded", err)
+		}
+		if sharedBackup.sawCtxErr != nil {
+			t.Fatalf("backup saw cancelled context error = %v, want nil", sharedBackup.sawCtxErr)
+		}
+		got, ok, lerr := LookupRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, NewRotationCache(), key, "u1", "google", "T1", now)
+		if lerr != nil || !ok || got != "T2" {
+			t.Fatalf("backup lookup after DB timeout = (%q, %v, %v), want (T2, true, nil)", got, ok, lerr)
+		}
+
+		// When backup itself fails, the error must not be swallowed.
+		backupErr := errors.New("redis unavailable")
+		failingBackup := &stubBackupStore{recordErr: backupErr}
+		err = RecordRotatedRefreshTokenWithStore(context.Background(), nil, failingBackup, NewRotationCache(), key, "u1", "google", "T2", now, "T1")
+		if !errors.Is(err, backupErr) {
+			t.Fatalf("RecordRotatedRefreshTokenWithStore(backup failure) error = %v, want %v", err, backupErr)
+		}
+	})
+
+	t.Run("pre-refresh OnLocked and refresh contexts are bounded inside remaining lock lease", func(t *testing.T) {
+		var preHasDeadline, refreshHasDeadline bool
+		var preRemaining, refreshRemaining time.Duration
+		locker := &trackingTokenLocker{}
+
+		_, err := RefreshWithRotationLock(context.Background(), RotationRefreshRequest{
+			Locker:        locker,
+			Cache:         NewRotationCache(),
+			EncryptionKey: key,
+			UserID:        "u1",
+			Provider:      "google",
+			RefreshToken:  "T1",
+			Now:           func() time.Time { return now },
+			OnLocked: func(preCtx context.Context, _ string) (string, bool, string, error) {
+				dl, ok := preCtx.Deadline()
+				preHasDeadline = ok
+				preRemaining = time.Until(dl)
+				return "", false, "", nil
+			},
+			Refresh: func(refreshCtx context.Context, _, _ string) (*TokenResponse, error) {
+				dl, ok := refreshCtx.Deadline()
+				refreshHasDeadline = ok
+				refreshRemaining = time.Until(dl)
+				return &TokenResponse{AccessToken: "at-2", RefreshToken: "T2", ExpiresIn: 3600}, nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("RefreshWithRotationLock() error = %v", err)
+		}
+		if !preHasDeadline || preRemaining <= 0 || preRemaining > tokenPreRefreshTimeout {
+			t.Fatalf("preRefreshCtx deadline=(%v, remaining=%v), want 0 < remaining <= %v", preHasDeadline, preRemaining, tokenPreRefreshTimeout)
+		}
+		if !refreshHasDeadline || refreshRemaining <= 0 || refreshRemaining > tokenRefreshTimeout {
+			t.Fatalf("refreshCtx deadline=(%v, remaining=%v), want 0 < remaining <= %v", refreshHasDeadline, refreshRemaining, tokenRefreshTimeout)
+		}
+	})
+
+	t.Run("backup-only rotation entry is repaired into postgresql on read", func(t *testing.T) {
+		state := &stubRotationDB{}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		sharedBackup := &stubBackupStore{}
+		// Record only into backup (simulating prior PostgreSQL failure).
+		if err := RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "u1", "google", "T2", now, "T1"); err != nil {
+			t.Fatalf("setup backup record error = %v", err)
+		}
+
+		// Reading with DB + backup should resolve T2 and repair PostgreSQL.
+		got, ok, err := LookupRotatedRefreshTokenWithStore(context.Background(), sqlDB, sharedBackup, nil, key, "u1", "google", "T1", now)
+		if err != nil || !ok || got != "T2" {
+			t.Fatalf("LookupRotatedRefreshTokenWithStore(repair) = (%q, %v, %v), want (T2, true, nil)", got, ok, err)
+		}
+
+		// Clearing backup proves PostgreSQL now holds T1 -> T2 durably.
+		gotDB, okDB, errDB := LookupRotatedRefreshToken(context.Background(), sqlDB, nil, key, "u1", "google", "T1", now)
+		if errDB != nil || !okDB || gotDB != "T2" {
+			t.Fatalf("LookupRotatedRefreshToken(after repair, no backup) = (%q, %v, %v), want (T2, true, nil)", gotDB, okDB, errDB)
 		}
 	})
 }
