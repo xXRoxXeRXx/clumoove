@@ -120,10 +120,10 @@ func main() {
 
 	// Registered first so it runs after every other deferred cleanup (database
 	// close, signal teardown) when the worker stops because of a failure.
-	failed := false
+	exitCode := 0
 	defer func() {
-		if failed {
-			os.Exit(1)
+		if exitCode != 0 {
+			os.Exit(exitCode)
 		}
 	}()
 
@@ -209,18 +209,19 @@ func main() {
 
 	// A second signal lets an operator abort a potentially long task drain.
 	go watchShutdownSignals(sigChan, cancel, os.Exit)
+
 	// A coordinator loop that stops before shutdown is a terminal failure: the
 	// supervisor cancels the worker context so the drain below begins and the
 	// liveness heartbeat stops, then main exits non-zero for a platform restart.
-	supervisor := newCoordinatorSupervisor(cancel)
-	supervisor.Go(ctx, "backup", func(ctx context.Context) error { return backupCoordinator.Run(ctx, time.Second) })
-	supervisor.Go(ctx, "restore", func(ctx context.Context) error { return restoreCoordinator.Run(ctx, time.Second) })
-
-	// Block until context is cancelled AND all in-flight tasks have finished.
-	proc.Start(ctx)
-	// Coordinators stop on the cancelled context; wait so none is still using
-	// the database when it closes, and so a failure is never missed.
-	supervisor.Wait()
-	failed = supervisor.Err() != nil
-	slog.Info("service_stopped", slog.String("component", "worker"), slog.Bool("failed", failed))
+	// Blocks until context is cancelled AND all in-flight tasks have finished.
+	exitCode = serveWorker(ctx, cancel, proc.Start, func() {
+		releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancelRelease()
+		if err := q.DeregisterActiveWorker(releaseCtx, workerID); err != nil {
+			slog.Warn("worker_lease_release_failed", slog.String("component", "worker"), observability.Error(err))
+		}
+	},
+		coordinatorLoop{name: "backup", run: func(ctx context.Context) error { return backupCoordinator.Run(ctx, time.Second) }},
+		coordinatorLoop{name: "restore", run: func(ctx context.Context) error { return restoreCoordinator.Run(ctx, time.Second) }},
+	)
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -33,8 +34,11 @@ func (f *coordinatorFailure) Unwrap() error { return f.Err }
 // terminal failure. The supervisor records the first such failure and cancels
 // the worker context, so in-flight tasks drain, the liveness heartbeat stops,
 // and the process can exit non-zero for a platform restart instead of running
-// on in a partially operational state. Exits after shutdown has begun are a
-// clean stop, whatever error the loop returns while unwinding.
+// on in a partially operational state. A loop stops cleanly only when it
+// returns context.Canceled (or nil) because the worker context was cancelled;
+// any other return, before or during shutdown, is a failure. The classification
+// is by the returned error, not by timing, so a real failure that coincides
+// with a shutdown signal is still reported.
 type coordinatorSupervisor struct {
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
@@ -53,7 +57,7 @@ func (s *coordinatorSupervisor) Go(ctx context.Context, name string, run func(co
 		defer s.wg.Done()
 		err := run(ctx)
 		s.mu.Lock()
-		if ctx.Err() != nil || s.failure != nil {
+		if stoppedForShutdown(ctx, err) || s.failure != nil {
 			s.mu.Unlock()
 			return
 		}
@@ -65,6 +69,10 @@ func (s *coordinatorSupervisor) Go(ctx context.Context, name string, run func(co
 	}()
 }
 
+func stoppedForShutdown(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && (err == nil || errors.Is(err, context.Canceled))
+}
+
 // Wait blocks until every supervised loop has returned.
 func (s *coordinatorSupervisor) Wait() { s.wg.Wait() }
 
@@ -74,4 +82,33 @@ func (s *coordinatorSupervisor) Err() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.failure
+}
+
+// coordinatorLoop is a named background loop that must run until shutdown.
+type coordinatorLoop struct {
+	name string
+	run  func(context.Context) error
+}
+
+// serveWorker runs the coordinator loops under supervision while drain (the
+// processor) blocks until ctx is cancelled and in-flight tasks finish. Once
+// the drain and every loop have stopped, release is called to drop the
+// worker's liveness lease: no task is running at that point, so other workers
+// can safely reclaim anything left behind instead of waiting for the lease to
+// expire. It returns the process exit code: 1 when a coordinator failed, so
+// the platform restarts the worker, otherwise 0.
+func serveWorker(ctx context.Context, cancel context.CancelFunc, drain func(context.Context), release func(), loops ...coordinatorLoop) int {
+	supervisor := newCoordinatorSupervisor(cancel)
+	for _, loop := range loops {
+		supervisor.Go(ctx, loop.name, loop.run)
+	}
+	drain(ctx)
+	supervisor.Wait()
+	release()
+	failed := supervisor.Err() != nil
+	slog.Info("service_stopped", slog.String("component", "worker"), slog.Bool("failed", failed))
+	if failed {
+		return 1
+	}
+	return 0
 }

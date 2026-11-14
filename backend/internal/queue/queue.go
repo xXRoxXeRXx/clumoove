@@ -515,6 +515,13 @@ func (q *Queue) RegisterActiveWorker(ctx context.Context, workerID string, ttl t
 	return q.client.Set(ctx, key, "1", ttl).Err()
 }
 
+// DeregisterActiveWorker removes the worker's liveness lease. Call it only once
+// the worker has stopped running tasks, so other workers may reclaim anything
+// it left behind without waiting for the lease TTL.
+func (q *Queue) DeregisterActiveWorker(ctx context.Context, workerID string) error {
+	return q.client.Del(ctx, fmt.Sprintf("worker:active:%s", workerID)).Err()
+}
+
 // GetAbandonedWorkerQueues scans the database for all workers currently processing tasks and cross-checks their liveness in Redis
 func (q *Queue) GetAbandonedWorkerQueues(ctx context.Context, db *sql.DB) ([]string, error) {
 	query := `SELECT DISTINCT worker_hash FROM tasks WHERE status = 'RUNNING' AND worker_hash IS NOT NULL`
