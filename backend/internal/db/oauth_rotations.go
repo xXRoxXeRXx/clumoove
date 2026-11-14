@@ -60,8 +60,15 @@ func RepairOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, pro
 // LookupOAuthTokenRotation transitively resolves a possibly pre-rotation
 // token hash along any recorded rotation chain (A -> B -> C) with cycle protection.
 func LookupOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, provider, tokenHash string) (string, string, bool, error) {
+	latestHash, latestEncrypted, _, found, err := LookupOAuthTokenRotationChain(ctx, database, userID, provider, tokenHash)
+	return latestHash, latestEncrypted, found, err
+}
+
+// LookupOAuthTokenRotationChain resolves a rotation chain like
+// LookupOAuthTokenRotation and also returns every token hash visited along it.
+func LookupOAuthTokenRotationChain(ctx context.Context, database *sql.DB, userID, provider, tokenHash string) (string, string, map[string]struct{}, bool, error) {
 	if database == nil || userID == "" || provider == "" || tokenHash == "" {
-		return "", "", false, nil
+		return "", "", nil, false, nil
 	}
 	visited := map[string]struct{}{tokenHash: {}}
 	currentHash := tokenHash
@@ -79,7 +86,7 @@ func LookupOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, pro
 			if errors.Is(err, sql.ErrNoRows) {
 				break
 			}
-			return "", "", false, err
+			return "", "", nil, false, err
 		}
 		if nextHash == "" || nextEncrypted == "" {
 			break
@@ -93,5 +100,5 @@ func LookupOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, pro
 		visited[nextHash] = struct{}{}
 		currentHash = nextHash
 	}
-	return latestHash, latestEncrypted, found, nil
+	return latestHash, latestEncrypted, visited, found, nil
 }

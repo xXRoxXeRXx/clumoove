@@ -724,9 +724,30 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		if len(sharedBackup.entries) != 1 {
 			t.Fatalf("backup entries after lookup = %d, want 1 (A->C preserved)", len(sharedBackup.entries))
 		}
+
+		// Even if PostgreSQL also records an unrelated successor C -> D (with B -> C
+		// still missing), C is NOT reachable from A in PostgreSQL, so repair must NOT
+		// delete A -> C and lookup must still resolve A -> C -> D.
+		if err := RecordRotatedRefreshToken(context.Background(), sqlDB, nil, key, "u1", "google", "D", now, "C"); err != nil {
+			t.Fatalf("Record(C->D) error = %v", err)
+		}
+		repaired, err = repairState.RepairWithLimit(context.Background(), sqlDB, sharedBackup, 10, now.Add(repairFailureCooldown+time.Second))
+		if err != nil || repaired != 0 {
+			t.Fatalf("RepairWithLimit(C->D present) = (%d, %v), want (0, nil)", repaired, err)
+		}
+		if len(sharedBackup.entries) != 1 {
+			t.Fatalf("backup entries after disjoint C->D repair = %d, want 1 (A->C preserved)", len(sharedBackup.entries))
+		}
+		gotD, okD, errD := LookupRotatedRefreshTokenWithStore(context.Background(), sqlDB, sharedBackup, nil, key, "u1", "google", "A", now)
+		if errD != nil || !okD || gotD != "D" {
+			t.Fatalf("Lookup(A) with DB(A->B, C->D) + backup(A->C) = (%q, %v, %v), want (D, true, nil)", gotD, okD, errD)
+		}
 	})
 
 	t.Run("repeatedly failing repair entries do not starve later valid entries", func(t *testing.T) {
+		if repairFailureCooldown <= 5*time.Minute {
+			t.Fatalf("repairFailureCooldown = %v, must exceed 5m daemon sweep interval", repairFailureCooldown)
+		}
 		fkErr := errors.New("pq: insert or update on table oauth_token_rotations violates foreign key constraint")
 		state := &stubRotationDB{execFailUser: "deleted-user", execFailErr: fkErr}
 		sqlDB := sql.OpenDB(state)
@@ -738,11 +759,12 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "healthy-user", "google", "B3", now, "A3")
 
 		repairState := NewRotationRepairState()
-		// Even with batch limit = 2 and both failing entries visited first, subsequent
-		// passes must advance past cooled entries and repair healthy-user -> B3.
+		// Simulate consecutive 5-minute production daemon sweeps with batch limit = 2:
+		// cooled failing entries stay skipped across 5m intervals so healthy-user -> B3 is repaired.
 		sawHealthyRepaired := false
 		for pass := 0; pass < 3; pass++ {
-			repaired, _ := repairState.RepairWithLimit(context.Background(), sqlDB, sharedBackup, 2, now)
+			sweepNow := now.Add(time.Duration(pass) * 5 * time.Minute)
+			repaired, _ := repairState.RepairWithLimit(context.Background(), sqlDB, sharedBackup, 2, sweepNow)
 			if repaired > 0 {
 				sawHealthyRepaired = true
 				break

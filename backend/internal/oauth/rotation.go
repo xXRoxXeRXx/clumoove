@@ -27,7 +27,9 @@ const (
 	tokenBackupTimeout     = 2 * time.Second
 	tokenRepairTimeout      = 2 * time.Second
 	defaultRepairBatchLimit = 50
-	repairFailureCooldown   = 1 * time.Minute
+	// Must exceed the 5-minute daemon sweep interval (RunOAuthRotationDaemon) so
+	// persistently failing entries remain in cooldown across ticks instead of starving later keys.
+	repairFailureCooldown   = 15 * time.Minute
 	repairCooldownMaxSize   = 4096
 	tokenLockSafetyMargin   = 3 * time.Second
 	tokenLockTTL           = 40 * time.Second
@@ -301,24 +303,53 @@ func lookupOneDatabaseRotationHop(ctx context.Context, database *sql.DB, encrypt
 	return rotatedHash, plain, true, nil
 }
 
-// isBackupSafeToDeleteAfterConflict reports whether an existing PostgreSQL row
-// for prevHash already accounts for backupRotatedHash (either matching its
-// terminal hash or proving backupRotatedHash has already been rotated further in
-// PostgreSQL). Returning false preserves newer backup entries when PostgreSQL
-// only holds an older mapping.
-func isBackupSafeToDeleteAfterConflict(ctx context.Context, database *sql.DB, userID, provider, prevHash, backupRotatedHash string) (bool, error) {
-	dbLatestHash, _, dbFound, dbErr := db.LookupOAuthTokenRotation(ctx, database, userID, provider, prevHash)
-	if dbErr != nil && !errors.Is(dbErr, driver.ErrSkip) {
+func deleteBackupIfRepairStore(ctx context.Context, backup RotationBackupStore, userID, provider, tokenHash, rotatedHash, encrypted string) {
+	rs, ok := backup.(RotationBackupRepairStore)
+	if !ok {
+		return
+	}
+	delCtx, cancelDel := context.WithTimeout(ctx, tokenRepairTimeout)
+	_, _ = rs.DeleteOAuthRotationBackup(delCtx, userID, provider, tokenHash, rotatedHash, encrypted)
+	cancelDel()
+}
+
+// isBackupAccountedInDatabase reports whether PostgreSQL's chain starting at
+// prevHash already reaches or converges with backupRotatedHash. An unrelated
+// successor elsewhere in PostgreSQL (e.g. A -> B and C -> D when B -> C was
+// never persisted) returns false so backup A -> C is neither discarded nor bypassed.
+func isBackupAccountedInDatabase(ctx context.Context, database *sql.DB, userID, provider, prevHash, backupRotatedHash string) (bool, error) {
+	dbLatestHash, _, prevVisited, dbFound, dbErr := db.LookupOAuthTokenRotationChain(ctx, database, userID, provider, prevHash)
+	if dbErr != nil {
+		if errors.Is(dbErr, driver.ErrSkip) {
+			return false, nil
+		}
 		return false, fmt.Errorf("%w: lookup oauth token rotation: %w", ErrRotationPersistence, dbErr)
 	}
-	if dbFound && dbLatestHash == backupRotatedHash {
+	if !dbFound {
+		return false, nil
+	}
+	if _, seen := prevVisited[backupRotatedHash]; seen || dbLatestHash == backupRotatedHash {
 		return true, nil
 	}
-	_, _, superseded, sErr := db.LookupOAuthTokenRotation(ctx, database, userID, provider, backupRotatedHash)
-	if sErr != nil && !errors.Is(sErr, driver.ErrSkip) {
+	targetLatestHash, _, targetVisited, targetFound, sErr := db.LookupOAuthTokenRotationChain(ctx, database, userID, provider, backupRotatedHash)
+	if sErr != nil {
+		if errors.Is(sErr, driver.ErrSkip) {
+			return false, nil
+		}
 		return false, fmt.Errorf("%w: lookup oauth token rotation successor: %w", ErrRotationPersistence, sErr)
 	}
-	return superseded, nil
+	if !targetFound {
+		return false, nil
+	}
+	if targetLatestHash == dbLatestHash {
+		return true, nil
+	}
+	for h := range targetVisited {
+		if _, intersects := prevVisited[h]; intersects && h != prevHash {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func lookupOneRotationHop(ctx context.Context, database *sql.DB, backup RotationBackupStore, cache *RotationCache, encryptionKey, userID, provider, refreshToken, tokenHash string, now time.Time) (string, bool, error) {
@@ -328,8 +359,8 @@ func lookupOneRotationHop(ctx context.Context, database *sql.DB, backup Rotation
 			return "", false, err
 		}
 		if found {
-			// If backup still carries an un-superseded newer target for the same
-			// token (e.g. DB holds A -> B while backup holds A -> C), prefer C.
+			// If backup holds a target not yet accounted for by PostgreSQL's chain from
+			// tokenHash (e.g. DB holds A -> B while backup holds A -> C), prefer C.
 			if backup != nil {
 				bHash, bEnc, bFound, bErr := backup.LookupOAuthRotationBackup(ctx, userID, provider, tokenHash)
 				if bErr != nil {
@@ -346,20 +377,18 @@ func lookupOneRotationHop(ctx context.Context, database *sql.DB, backup Rotation
 					if bHash == "" {
 						bHash = db.OAuthTokenRotationHash(userID, provider, bPlain)
 					}
-					if bHash != dbHash {
-						_, _, superseded, sErr := db.LookupOAuthTokenRotation(ctx, database, userID, provider, bHash)
-						if sErr != nil && !errors.Is(sErr, driver.ErrSkip) {
-							return "", false, fmt.Errorf("%w: lookup oauth token rotation successor: %w", ErrRotationPersistence, sErr)
-						}
-						if !superseded {
-							return bPlain, true, nil
+					accounted := bHash == dbHash
+					if !accounted {
+						var aErr error
+						accounted, aErr = isBackupAccountedInDatabase(ctx, database, userID, provider, tokenHash, bHash)
+						if aErr != nil {
+							return "", false, aErr
 						}
 					}
-					if rs, ok := backup.(RotationBackupRepairStore); ok {
-						delCtx, cancelDel := context.WithTimeout(ctx, tokenRepairTimeout)
-						_, _ = rs.DeleteOAuthRotationBackup(delCtx, userID, provider, tokenHash, bHash, bEnc)
-						cancelDel()
+					if !accounted {
+						return bPlain, true, nil
 					}
+					deleteBackupIfRepairStore(ctx, backup, userID, provider, tokenHash, bHash, bEnc)
 				}
 			}
 			return dbPlain, true, nil
@@ -391,17 +420,13 @@ func lookupOneRotationHop(ctx context.Context, database *sql.DB, backup Rotation
 				if repairErr == nil {
 					safeToDelete := inserted
 					if !inserted {
-						safeToDelete, err = isBackupSafeToDeleteAfterConflict(ctx, database, userID, provider, tokenHash, rotatedHash)
+						safeToDelete, err = isBackupAccountedInDatabase(ctx, database, userID, provider, tokenHash, rotatedHash)
 						if err != nil {
 							return "", false, err
 						}
 					}
 					if safeToDelete {
-						if rs, ok := backup.(RotationBackupRepairStore); ok {
-							delCtx, cancelDel := context.WithTimeout(ctx, tokenRepairTimeout)
-							_, _ = rs.DeleteOAuthRotationBackup(delCtx, userID, provider, tokenHash, rotatedHash, encrypted)
-							cancelDel()
-						}
+						deleteBackupIfRepairStore(ctx, backup, userID, provider, tokenHash, rotatedHash, encrypted)
 					}
 					if !inserted && safeToDelete {
 						if _, dbPlain, dbFound, dbErr := lookupOneDatabaseRotationHop(ctx, database, encryptionKey, userID, provider, tokenHash); dbErr != nil {
@@ -676,7 +701,7 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 		safeToDelete := inserted
 		if !inserted {
 			var cerr error
-			safeToDelete, cerr = isBackupSafeToDeleteAfterConflict(ctx, database, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash)
+			safeToDelete, cerr = isBackupAccountedInDatabase(ctx, database, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash)
 			if cerr != nil {
 				s.markFailed(cooldownKey, now)
 				repairErrs = append(repairErrs, cerr)
