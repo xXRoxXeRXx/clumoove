@@ -13,6 +13,7 @@ import (
 
 	"backend/internal/backup"
 	"backend/internal/config"
+	"backend/internal/coordcfg"
 	"backend/internal/db"
 	"backend/internal/oauth"
 	"backend/internal/observability"
@@ -172,9 +173,7 @@ func main() {
 		os.Exit(1)
 	}
 	backupCoordinator, err := backup.NewCoordinator(database, backup.Config{
-		EncryptionKey:  config.encryptionKey,
-		WorkerID:       workerID,
-		OAuthLocker:    q,
+		Common:         coordcfg.Common{EncryptionKey: config.encryptionKey, WorkerID: workerID, OAuthLocker: q},
 		MaxPackWriters: config.maxBackupPackWriters,
 		PackReaders:    packReaders,
 	})
@@ -183,10 +182,8 @@ func main() {
 		os.Exit(1)
 	}
 	restoreCoordinator, err := restore.NewCoordinator(database, restore.Config{
-		EncryptionKey: config.encryptionKey,
-		WorkerID:      workerID,
-		OAuthLocker:   q,
-		PackReaders:   packReaders,
+		Common:      coordcfg.Common{EncryptionKey: config.encryptionKey, WorkerID: workerID, OAuthLocker: q},
+		PackReaders: packReaders,
 	})
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "restore"), observability.Error(err), slog.String("error_kind", "configuration"))

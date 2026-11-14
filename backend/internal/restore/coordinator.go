@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"backend/internal/crypto"
+	"backend/internal/coordcfg"
 	"backend/internal/db"
 	"backend/internal/megasecret"
 	"backend/internal/oauth"
@@ -110,12 +111,9 @@ var ErrRestoreTypeConflict = errors.New("restore target type conflict")
 
 // Config is the explicit worker-side configuration of a Coordinator.
 type Config struct {
-	EncryptionKey string
-	// WorkerID binds claims and heartbeats to the process liveness identity. An
-	// empty value selects "restore-worker" for narrow unit tests.
-	WorkerID string
-	// OAuthLocker is the distributed OAuth refresh lock backend.
-	OAuthLocker oauth.TokenLocker
+	// Common carries the encryption key, worker ID (blank selects
+	// "restore-worker") and required OAuth locker.
+	coordcfg.Common
 	// PackReaders optionally bounds concurrent full-pack memory buffers.
 	PackReaders *PackReaderLimiter
 }
@@ -124,9 +122,9 @@ func NewCoordinator(database *sql.DB, cfg Config) (*Coordinator, error) {
 	if database == nil || cfg.EncryptionKey == "" {
 		return nil, errors.New("restore database is required")
 	}
-	workerID := "restore-worker"
-	if strings.TrimSpace(cfg.WorkerID) != "" {
-		workerID = cfg.WorkerID
+	workerID, err := cfg.Resolve("restore-worker")
+	if err != nil {
+		return nil, fmt.Errorf("restore coordinator: %w", err)
 	}
 	return &Coordinator{db: database, encryptionKey: cfg.EncryptionKey, packReaders: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
 }

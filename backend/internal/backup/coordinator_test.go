@@ -26,11 +26,11 @@ import (
 
 func TestNewCoordinatorValidatesPackWriterLimit(t *testing.T) {
 	for _, limit := range []int{0, 5} {
-		if _, err := NewCoordinator(&sql.DB{}, Config{EncryptionKey: "key", MaxPackWriters: limit}); err == nil {
+		if _, err := NewCoordinator(&sql.DB{}, validBackupConfigWithLimit(limit)); err == nil {
 			t.Errorf("NewCoordinator(limit=%d) succeeded", limit)
 		}
 	}
-	coordinator, err := NewCoordinator(&sql.DB{}, Config{EncryptionKey: "key", MaxPackWriters: 2})
+	coordinator, err := NewCoordinator(&sql.DB{}, validBackupConfigWithLimit(2))
 	if err != nil {
 		t.Fatalf("NewCoordinator() error = %v", err)
 	}

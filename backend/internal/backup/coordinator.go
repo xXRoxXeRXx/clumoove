@@ -20,6 +20,7 @@ import (
 
 	"backend/internal/backuprepo"
 	"backend/internal/crypto"
+	"backend/internal/coordcfg"
 	"backend/internal/db"
 	"backend/internal/megasecret"
 	"backend/internal/oauth"
@@ -128,12 +129,9 @@ func backupFailureAttrs(code string, cause error) []slog.Attr {
 
 // Config is the explicit worker-side configuration of a Coordinator.
 type Config struct {
-	EncryptionKey string
-	// WorkerID binds claims and heartbeats to the process liveness identity. An
-	// empty value selects "backup-worker" for narrow unit tests.
-	WorkerID string
-	// OAuthLocker is the distributed OAuth refresh lock backend.
-	OAuthLocker oauth.TokenLocker
+	// Common carries the encryption key, worker ID (blank selects
+	// "backup-worker") and required OAuth locker.
+	coordcfg.Common
 	// MaxPackWriters is the validated value of MAX_BACKUP_PACK_WRITERS (1-4).
 	MaxPackWriters int
 	// PackReaders optionally shares the restore pack reader limiter.
@@ -148,9 +146,9 @@ func NewCoordinator(database *sql.DB, cfg Config) (*Coordinator, error) {
 	if cfg.MaxPackWriters < 1 || cfg.MaxPackWriters > 4 {
 		return nil, fmt.Errorf("MAX_BACKUP_PACK_WRITERS must be between 1 and 4")
 	}
-	workerID := "backup-worker"
-	if strings.TrimSpace(cfg.WorkerID) != "" {
-		workerID = cfg.WorkerID
+	workerID, err := cfg.Resolve("backup-worker")
+	if err != nil {
+		return nil, fmt.Errorf("backup coordinator: %w", err)
 	}
 	return &Coordinator{db: database, encryptionKey: cfg.EncryptionKey, packWriterSlots: make(chan struct{}, cfg.MaxPackWriters), packReaderSlots: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
 }
