@@ -10,9 +10,7 @@ import (
 	"hash"
 	"io"
 	"net"
-	"os"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,8 +57,8 @@ type Processor struct {
 	providerSlots              chan struct{}
 	// dbConnStr is the raw PostgreSQL DSN used to open a dedicated LISTEN
 	// connection for pg_notify-based wake-up (see ListenForTasks in queue).
-	// Set via SetDBConnStr before calling Start. If empty, the worker falls back
-	// to periodic polling.
+	// Supplied via Config.NotifyDSN. If empty, the worker falls back to periodic
+	// polling.
 	dbConnStr    string
 	activeTasks  sync.Map
 	refreshLocks keyedMutexes
@@ -342,37 +340,41 @@ func immichYearMonthFromMetadata(metadata []byte) (string, string) {
 	return "", ""
 }
 
-// SetDBConnStr sets the PostgreSQL DSN used to open a dedicated LISTEN
-// connection for immediate wake-up when new tasks are inserted.
-// Must be called before Start(). Falls back to polling if not set.
-func (p *Processor) SetDBConnStr(connStr string) {
-	p.dbConnStr = connStr
+// Config is the explicit execution configuration of a Processor. The worker
+// loads and validates it once at startup; the processor never reads the
+// environment itself.
+type Config struct {
+	WorkerID  string
+	SecretKey string
+	// MaxThreads is the global parallelism of this worker process. It must be
+	// at least 1.
+	MaxThreads int
+	// NotifyDSN is the PostgreSQL DSN used to open a dedicated LISTEN connection
+	// for pg_notify-based wake-up of idle worker threads. If empty, the worker
+	// falls back to periodic polling.
+	NotifyDSN string
 }
 
-func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
-	// Default to 16 to match the maximum selectable threads per migration in the UI slider.
-	// The actual concurrency per migration is limited by the m.threads setting in the database during DequeueSQL.
-	maxThreads := 16
-	if envVal := os.Getenv("MAX_THREADS"); envVal != "" {
-		if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
-			maxThreads = val
-		}
+// NewProcessor builds a Processor from validated configuration.
+func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, error) {
+	if cfg.MaxThreads < 1 {
+		return nil, errors.New("processor MaxThreads must be at least 1")
 	}
-
-	transferWorkers, verificationWorkers := workerCapacity(maxThreads)
+	transferWorkers, verificationWorkers := workerCapacity(cfg.MaxThreads)
 	return &Processor{
 		db:                         database,
 		queue:                      q,
-		indexer:                    indexer.NewIndexer(database, secretKey, q),
-		workerID:                   workerID,
-		secretKey:                  secretKey,
-		maxThreads:                 maxThreads,
+		indexer:                    indexer.NewIndexer(database, cfg.SecretKey, q),
+		workerID:                   cfg.WorkerID,
+		secretKey:                  cfg.SecretKey,
+		maxThreads:                 cfg.MaxThreads,
 		transferWorkers:            transferWorkers,
 		verificationWorkers:        verificationWorkers,
-		migrationVerificationQueue: make(chan verificationWork, maxThreads*2),
-		syncVerificationQueue:      make(chan verificationWork, maxThreads*2),
-		providerSlots:              make(chan struct{}, maxThreads),
-	}
+		migrationVerificationQueue: make(chan verificationWork, cfg.MaxThreads*2),
+		syncVerificationQueue:      make(chan verificationWork, cfg.MaxThreads*2),
+		providerSlots:              make(chan struct{}, cfg.MaxThreads),
+		dbConnStr:                  cfg.NotifyDSN,
+	}, nil
 }
 
 func (p *Processor) acquireProviderSlot(ctx context.Context) bool {

@@ -26,9 +26,14 @@ type workerConfig struct {
 	databaseURLDefaulted  bool
 	redisURL              string
 	encryptionKey         string
+	maxThreads            int
 	maxBackupPackWriters  int
 	maxRestorePackReaders int
 }
+
+// defaultMaxThreads matches the maximum selectable threads per migration in
+// the UI slider; per-migration concurrency is still limited by its own setting.
+const defaultMaxThreads = 16
 
 func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
 	databaseURL, databaseURLDefaulted := config.DatabaseURL(getenv("DATABASE_URL"))
@@ -38,11 +43,19 @@ func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
 		databaseURLDefaulted:  databaseURLDefaulted,
 		redisURL:              redisURL,
 		encryptionKey:         getenv("ENCRYPTION_SECRET_KEY"),
+		maxThreads:            defaultMaxThreads,
 		maxBackupPackWriters:  1,
 		maxRestorePackReaders: 1,
 	}
 	if workerCfg.encryptionKey == "" {
 		return workerConfig{}, errors.New("ENCRYPTION_SECRET_KEY is required")
+	}
+	if value := getenv("MAX_THREADS"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 {
+			return workerConfig{}, errors.New("MAX_THREADS must be a positive integer")
+		}
+		workerCfg.maxThreads = parsed
 	}
 	if value := getenv("MAX_BACKUP_PACK_WRITERS"); value != "" {
 		parsed, err := strconv.Atoi(value)
@@ -78,10 +91,10 @@ func main() {
 	}
 	slog.Info("service_starting", slog.String("component", "worker"))
 
-	// Read environment variables.
+	// Load and validate all worker settings once, before any component starts.
 	config, err := loadWorkerConfig(os.Getenv)
 	if err != nil {
-		slog.Error("startup_failed", slog.String("component", "worker"), slog.String("reason", "encryption_key_missing"), slog.String("error_kind", "configuration"), observability.Error(err))
+		slog.Error("startup_failed", slog.String("component", "worker"), slog.String("reason", "invalid_configuration"), slog.String("error_kind", "configuration"), observability.Error(err))
 		os.Exit(1)
 	}
 	if config.databaseURLDefaulted {
@@ -122,8 +135,16 @@ func main() {
 
 	// The worker only processes queued tasks. Sync-pass coordinators are owned
 	// by API instances and started exclusively by the API scheduler.
-	proc := processor.NewProcessor(database, q, workerID, config.encryptionKey)
-	proc.SetDBConnStr(config.databaseURL) // Enable pg_notify-based wake-up for idle worker threads
+	proc, err := processor.NewProcessor(database, q, processor.Config{
+		WorkerID:   workerID,
+		SecretKey:  config.encryptionKey,
+		MaxThreads: config.maxThreads,
+		NotifyDSN:  config.databaseURL, // Enables pg_notify-based wake-up for idle worker threads
+	})
+	if err != nil {
+		slog.Error("startup_failed", slog.String("component", "processor"), observability.Error(err), slog.String("error_kind", "configuration"))
+		os.Exit(1)
+	}
 	packReaders, err := restore.NewPackReaderLimiter(config.maxRestorePackReaders)
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "restore"), observability.Error(err), slog.String("error_kind", "configuration"))

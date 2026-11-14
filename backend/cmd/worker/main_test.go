@@ -44,6 +44,42 @@ func TestLoadWorkerConfigAppliesSafeDefaults(t *testing.T) {
 	}
 }
 
+func workerEnv(overrides map[string]string) func(string) string {
+	values := map[string]string{"ENCRYPTION_SECRET_KEY": "encryption-secret"}
+	for key, value := range overrides {
+		values[key] = value
+	}
+	return func(key string) string { return values[key] }
+}
+
+func TestLoadWorkerConfigDefaultsMaxThreadsToSixteen(t *testing.T) {
+	config, err := loadWorkerConfig(workerEnv(nil))
+	if err != nil {
+		t.Fatalf("loadWorkerConfig() error = %v", err)
+	}
+	if config.maxThreads != 16 {
+		t.Fatalf("maxThreads = %d, want 16", config.maxThreads)
+	}
+}
+
+func TestLoadWorkerConfigUsesConfiguredMaxThreads(t *testing.T) {
+	config, err := loadWorkerConfig(workerEnv(map[string]string{"MAX_THREADS": "50"}))
+	if err != nil {
+		t.Fatalf("loadWorkerConfig() error = %v", err)
+	}
+	if config.maxThreads != 50 {
+		t.Fatalf("maxThreads = %d, want 50", config.maxThreads)
+	}
+}
+
+func TestLoadWorkerConfigRejectsInvalidMaxThreads(t *testing.T) {
+	for _, value := range []string{"0", "-4", "many", "1.5"} {
+		if _, err := loadWorkerConfig(workerEnv(map[string]string{"MAX_THREADS": value})); err == nil {
+			t.Errorf("MAX_THREADS=%q succeeded", value)
+		}
+	}
+}
+
 func TestLoadWorkerConfigRejectsMissingEncryptionKey(t *testing.T) {
 	if _, err := loadWorkerConfig(func(string) string { return "" }); err == nil {
 		t.Fatal("loadWorkerConfig() succeeded without an encryption key")

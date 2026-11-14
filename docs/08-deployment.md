@@ -35,7 +35,7 @@ Downloads and raw uploads are streamed without API buffering. The frontend nginx
 | `VITE_ALLOWED_HOSTS` | Allowed hosts for the Vite dev server. | – |
 | `INDEXING_TIMEOUT_MINUTES` | Max duration of one indexing run. | `60` |
 | `WEBDAV_LISTING_TIMEOUT_SECONDS` | Per-PROPFIND listing timeout. | `120` |
-| `MAX_THREADS` | Global max parallel tasks per worker process (also sizes DB pool). | `16` (`50` in production Compose) |
+| `MAX_THREADS` | Global max parallel tasks per worker process (also sizes DB pool). Must be a positive integer; the worker refuses to start otherwise. | `16` (`50` in production Compose) |
 | `MAX_BACKUP_PACK_WRITERS` | Worker-only limit for concurrent immutable backup-pack writers; values outside `1..4` refuse worker startup. | `1` |
 | `MAX_RESTORE_PACK_READERS` | Concurrent full-pack readers shared by restore execution and repository checks; values outside `1..4` refuse worker startup. | `1` |
 | `MIGRATION_BLOCK_PRIVATE` | If `1`/`true`, also block RFC1918/ULA egress (SSRF). | off |
