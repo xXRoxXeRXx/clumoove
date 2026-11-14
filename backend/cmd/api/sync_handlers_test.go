@@ -75,7 +75,7 @@ func TestOpenSyncJobEndpointProfileAndDirectPaths(t *testing.T) {
 			SourceProfileID: sql.NullString{String: "profile-1", Valid: true},
 			SourceProvider:  "webdav",
 		}
-		endpoint, err := openSyncJobEndpoint[migrationBrowser](server, context.Background(), "sync-1", "user-1", "source", job)
+		endpoint, err := openSyncJobEndpoint[migrationBrowser](server.syncs(), context.Background(), "sync-1", "user-1", "source", job)
 		if err != nil {
 			t.Fatalf("openSyncJobEndpoint(profile) error = %v", err)
 		}
@@ -98,7 +98,7 @@ func TestOpenSyncJobEndpointProfileAndDirectPaths(t *testing.T) {
 			UserID:          "user-1",
 			TargetProfileID: sql.NullString{String: "missing-profile", Valid: true},
 		}
-		_, err := openSyncJobEndpoint[migrationBrowser](server, context.Background(), "sync-2", "user-1", "target", job)
+		_, err := openSyncJobEndpoint[migrationBrowser](server.syncs(), context.Background(), "sync-2", "user-1", "target", job)
 		if !errors.Is(err, errProfileNotOwned) {
 			t.Fatalf("error = %v, want errProfileNotOwned", err)
 		}
@@ -123,7 +123,7 @@ func TestOpenSyncJobEndpointProfileAndDirectPaths(t *testing.T) {
 			SourceUsername:          "direct-user",
 			SourcePasswordEncrypted: directPasswordEnc,
 		}
-		endpoint, err := openSyncJobEndpoint[migrationBrowser](server, context.Background(), "sync-3", "user-1", "source", job)
+		endpoint, err := openSyncJobEndpoint[migrationBrowser](server.syncs(), context.Background(), "sync-3", "user-1", "source", job)
 		if err != nil {
 			t.Fatalf("openSyncJobEndpoint(direct) error = %v", err)
 		}

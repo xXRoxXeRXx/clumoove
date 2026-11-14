@@ -709,7 +709,7 @@ func TestOpenSyncJobEndpointDoesNotSwallowNonDatabaseStringPersistenceErrors(t *
 		SourceRefreshTokenEncrypted: sql.NullString{String: refreshEnc, Valid: true},
 		SourceTokenExpiresAt:        sql.NullTime{Time: time.Now().Add(-time.Hour), Valid: true},
 	}
-	_, err := openSyncJobEndpoint[profileProvider](server, context.Background(), "sync-1", "user-1", "source", job)
+	_, err := openSyncJobEndpoint[profileProvider](server.syncs(), context.Background(), "sync-1", "user-1", "source", job)
 	if !errors.Is(err, permErr) {
 		t.Fatalf("openSyncJobEndpoint() error = %v, want %v", err, permErr)
 	}

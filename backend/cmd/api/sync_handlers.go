@@ -20,22 +20,6 @@ import (
 	"backend/internal/storage"
 )
 
-// requireSyncOwnership deliberately maps a missing job and a job belonging to
-// another account to the same response. This prevents sync IDs being used for
-// account enumeration while keeping database failures distinguishable.
-func (s *APIServer) requireSyncOwnership(w http.ResponseWriter, r *http.Request, id, userID string) bool {
-	owned, err := db.VerifySyncJobOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return false
-	}
-	if !owned {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
-		return false
-	}
-	return true
-}
-
 type syncBrowseCredentials struct {
 	provider    string
 	url         string
@@ -66,13 +50,13 @@ func (e *openedSyncEndpoint[T]) Close() {
 	}
 }
 
-func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, role string, job *db.SyncJob) (*openedSyncEndpoint[T], error) {
+func openSyncJobEndpoint[T any](api *syncAPI, ctx context.Context, id, userID, role string, job *db.SyncJob) (*openedSyncEndpoint[T], error) {
 	profileID := job.SourceProfileID
 	if role == "target" {
 		profileID = job.TargetProfileID
 	}
 	if profileID.Valid {
-		conn, err := s.profiles().OpenOwned(ctx, userID, profileID.String)
+		conn, err := api.profiles.OpenOwned(ctx, userID, profileID.String)
 		if err != nil {
 			return nil, err
 		}
@@ -109,21 +93,17 @@ func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, r
 
 	if oauth.IsProvider(creds.provider) && expiresAt.Valid && !time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) && refreshEncrypted != "" {
 		expectedRefreshEnc := refreshEncrypted
-		refreshToken, err := crypto.DecryptWithDomain(expectedRefreshEnc, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+		refreshToken, err := crypto.DecryptWithDomain(expectedRefreshEnc, api.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if err != nil {
 			return nil, err
 		}
 		defer crypto.ZeroString(&refreshToken)
 		if refreshToken != "" {
-			var locker oauth.TokenLocker
-			if s.queue != nil {
-				locker = s.queue
-			}
 			res, rerr := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
-				DB:            s.db,
-				Cache:         s.rotationCache(),
-				Locker:        locker,
-				EncryptionKey: s.encryptionKey,
+				DB:            api.db,
+				Cache:         api.oauthRotations,
+				Locker:        api.oauthLocker,
+				EncryptionKey: api.encryptionKey,
 				UserID:        userID,
 				Provider:      creds.provider,
 				RefreshToken:  refreshToken,
@@ -135,7 +115,7 @@ func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, r
 					return token, nil
 				},
 				OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
-					latestJob, lerr := db.GetSyncJobContext(lockCtx, s.db, id)
+					latestJob, lerr := db.GetSyncJobContext(lockCtx, api.db, id)
 					if lerr != nil {
 						return "", false, "", nil
 					}
@@ -148,13 +128,13 @@ func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, r
 						latestExpiresAt = latestJob.TargetTokenExpiresAt
 					}
 					if latestExpiresAt.Valid && time.Now().Before(latestExpiresAt.Time.Add(-2*time.Minute)) && latestPassEnc != "" {
-						if plain, derr := crypto.DecryptWithDomain(latestPassEnc, s.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
+						if plain, derr := crypto.DecryptWithDomain(latestPassEnc, api.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
 							return plain, true, "", nil
 						}
 					}
 					if latestRefreshEnc != "" && latestRefreshEnc != expectedRefreshEnc {
 						expectedRefreshEnc = latestRefreshEnc
-						updatedPlain, decErr := crypto.DecryptWithDomain(expectedRefreshEnc, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+						updatedPlain, decErr := crypto.DecryptWithDomain(expectedRefreshEnc, api.encryptionKey, crypto.DomainOAuthRefreshToken)
 						if decErr != nil {
 							return "", false, "", decErr
 						}
@@ -166,11 +146,11 @@ func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, r
 					return "", false, "", nil
 				},
 				Persist: func(persistCtx context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
-					accessEncrypted, accessErr := crypto.EncryptWithDomain(token.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
+					accessEncrypted, accessErr := crypto.EncryptWithDomain(token.AccessToken, api.encryptionKey, crypto.DomainOAuthAccessToken)
 					if accessErr != nil {
 						return "", false, accessErr
 					}
-					newRefreshEncrypted, refreshErr := crypto.EncryptWithDomain(token.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+					newRefreshEncrypted, refreshErr := crypto.EncryptWithDomain(token.RefreshToken, api.encryptionKey, crypto.DomainOAuthRefreshToken)
 					if refreshErr != nil {
 						return "", false, refreshErr
 					}
@@ -178,14 +158,14 @@ func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, r
 					if expiresIn <= 0 {
 						expiresIn = 3600
 					}
-					err := db.UpdateSyncJobOAuthTokensContext(persistCtx, s.db, id, role, accessEncrypted, newRefreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc)
+					err := db.UpdateSyncJobOAuthTokensContext(persistCtx, api.db, id, role, accessEncrypted, newRefreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc)
 					if errors.Is(err, db.ErrOAuthTokenConflict) {
-						if latestJob, lerr := db.GetSyncJobContext(persistCtx, s.db, id); lerr == nil {
+						if latestJob, lerr := db.GetSyncJobContext(persistCtx, api.db, id); lerr == nil {
 							latestPassEnc := latestJob.SourcePasswordEncrypted
 							if role == "target" {
 								latestPassEnc = latestJob.TargetPasswordEncrypted
 							}
-							if plain, derr := crypto.DecryptWithDomain(latestPassEnc, s.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
+							if plain, derr := crypto.DecryptWithDomain(latestPassEnc, api.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
 								return plain, true, nil
 							}
 						}
@@ -210,14 +190,14 @@ func openSyncJobEndpoint[T any](s *APIServer, ctx context.Context, id, userID, r
 	}
 
 	if creds.password == "" && passwordEncrypted != "" {
-		password, err := crypto.DecryptWithDomain(passwordEncrypted, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(creds.provider)))
+		password, err := crypto.DecryptWithDomain(passwordEncrypted, api.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(creds.provider)))
 		if err != nil {
 			creds.clear()
 			return nil, err
 		}
 		creds.password = password
 	}
-	rawClient, err := s.profiles().openDirectProvider(ctx, userID, creds.provider, creds.url, creds.username, creds.password, creds.megaSession)
+	rawClient, err := api.profiles.openDirectProvider(ctx, userID, creds.provider, creds.url, creds.username, creds.password, creds.megaSession)
 	creds.clear()
 	if err != nil {
 		return nil, err
@@ -261,15 +241,15 @@ type createSyncRequest struct {
 	SelectedPaths        []string `json:"selected_paths"`
 }
 
-func (s *APIServer) handleListSyncs(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *syncAPI) handleListSyncs(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
-	jobs, err := db.GetSyncJobsForUserContext(r.Context(), s.db, userID)
+	jobs, err := db.GetSyncJobsForUserContext(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "Error fetching sync jobs for user %s: %v\n", userID, err)
+		api.logf(r, "Error fetching sync jobs for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -280,13 +260,13 @@ func (s *APIServer) handleListSyncs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, jobs)
 }
 
-func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *syncAPI) handleCreateSync(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -297,7 +277,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Merge any referenced reusable connection profiles into the request.
-	src, err := s.snapshotRequestConnection(r, requestConnectionInput{
+	src, err := api.profiles.SnapshotRequest(r.Context(), userID, requestConnectionInput{
 		ProfileID:       req.SourceProfileID,
 		DefaultProvider: "nextcloud",
 		NormalizeURL:    true,
@@ -309,11 +289,11 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		TokenExpiresAt:  parseSyncTokenExpiry(req.SourceTokenExpiresAt),
 	})
 	if err != nil {
-		s.writeRequestSnapshotError(w, r, "handleCreateSync: failed to load source profile", err)
+		writeRequestSnapshotErrorWith(w, r, api.logf, "handleCreateSync: failed to load source profile", err)
 		return
 	}
 
-	tgt, err := s.snapshotRequestConnection(r, requestConnectionInput{
+	tgt, err := api.profiles.SnapshotRequest(r.Context(), userID, requestConnectionInput{
 		ProfileID:       req.TargetProfileID,
 		DefaultProvider: "nextcloud",
 		NormalizeURL:    true,
@@ -325,7 +305,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		TokenExpiresAt:  parseSyncTokenExpiry(req.TargetTokenExpiresAt),
 	})
 	if err != nil {
-		s.writeRequestSnapshotError(w, r, "handleCreateSync: failed to load target profile", err)
+		writeRequestSnapshotErrorWith(w, r, api.logf, "handleCreateSync: failed to load target profile", err)
 		return
 	}
 
@@ -425,14 +405,14 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		NextRunAt:      sql.NullTime{Time: nextRun, Valid: true},
 		IsActive:       true,
 	}
-	jobID, err := db.CreateSyncJobAndSchedule(s.db, job, sched)
+	jobID, err := db.CreateSyncJobAndSchedule(api.db, job, sched)
 	if err != nil {
-		s.logf(r, "Failed to create sync job and schedule: %v\n", err)
+		api.logf(r, "Failed to create sync job and schedule: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditSyncCreated, jobID, userID, map[string]interface{}{
+	api.writeAudit(r, db.AuditSyncCreated, jobID, userID, map[string]interface{}{
 		"source_provider": src.Provider,
 		"target_provider": tgt.Provider,
 		"direction":       req.Direction,
@@ -445,8 +425,8 @@ func validSyncDirection(direction string) bool {
 	return direction == "one_way" || direction == "two_way"
 }
 
-func (s *APIServer) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *syncAPI) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -457,22 +437,22 @@ func (s *APIServer) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
-	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
 	}
 
 	if job.Status == "RUNNING" || job.Status == "INDEXING" {
-		if activeFiles, err := db.GetActiveSyncTaskPaths(s.db, r.Context(), id); err == nil {
+		if activeFiles, err := db.GetActiveSyncTaskPaths(api.db, r.Context(), id); err == nil {
 			job.ActiveFiles = activeFiles
 		}
 	} else if job.Status == "VERIFYING" {
-		if verifyingFiles, err := db.GetVerifyingSyncTaskPaths(s.db, r.Context(), id); err == nil {
+		if verifyingFiles, err := db.GetVerifyingSyncTaskPaths(api.db, r.Context(), id); err == nil {
 			job.ActiveFiles = verifyingFiles
 		}
 	}
@@ -480,13 +460,22 @@ func (s *APIServer) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, job)
 }
 
-func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *syncAPI) requireSyncPass(w http.ResponseWriter, r *http.Request, id string) bool {
+	if api.syncPass != nil {
+		return true
+	}
+	api.logf(r, "[Sync] SyncPass unavailable for sync job %s", id)
+	writeError(w, http.StatusInternalServerError, ErrInternalError)
+	return false
+}
+
+func (api *syncAPI) handleStartSync(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -497,13 +486,13 @@ func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) || !api.requireSyncPass(w, r, id) {
 		return
 	}
 
-	result, err := s.syncPass.Start(s.backgroundCtx, id)
+	result, err := api.syncPass.Start(api.backgroundCtx, id)
 	if err != nil {
-		s.logf(r, "[Sync] Failed to claim sync job %s: %v", id, err)
+		api.logf(r, "[Sync] Failed to claim sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -520,28 +509,28 @@ func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeAudit(r, db.AuditSyncStarted, id, userID, nil)
+	api.writeAudit(r, db.AuditSyncStarted, id, userID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *syncAPI) handlePauseSync(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
 	id := r.PathValue("id")
 
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) || !api.requireSyncPass(w, r, id) {
 		return
 	}
 
 	// A paused sync abandons the current pass. Resume starts a freshly indexed
 	// pass; it never attempts to continue a coordinator that was cancelled.
-	paused, err := s.syncPass.Pause(r.Context(), id)
+	paused, err := api.syncPass.Pause(r.Context(), id)
 	if err != nil {
-		s.logf(r, "Failed to pause sync job %s: %v", id, err)
+		api.logf(r, "Failed to pause sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -549,26 +538,26 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, ErrSyncInvalidState)
 		return
 	}
-	s.writeAudit(r, db.AuditSyncPaused, id, userID, nil)
+	api.writeAudit(r, db.AuditSyncPaused, id, userID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *syncAPI) handleResumeSync(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
 	id := r.PathValue("id")
 
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) || !api.requireSyncPass(w, r, id) {
 		return
 	}
 
-	result, err := s.syncPass.Resume(r.Context(), s.backgroundCtx, id)
+	result, err := api.syncPass.Resume(r.Context(), api.backgroundCtx, id)
 	if err != nil {
-		s.logf(r, "Failed to resume sync job %s: %v", id, err)
+		api.logf(r, "Failed to resume sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -578,60 +567,60 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 	}
 	if result.Deferred {
 		if result.StartError != nil {
-			s.warnf(r, "Deferred resumed sync job %s after immediate start error: %v", id, result.StartError)
+			api.warnf(r, "Deferred resumed sync job %s after immediate start error: %v", id, result.StartError)
 		} else {
-			s.warnf(r, "Deferred resumed sync job %s because another instance claimed it", id)
+			api.warnf(r, "Deferred resumed sync job %s because another instance claimed it", id)
 		}
 	}
 
-	s.writeAudit(r, db.AuditSyncResumed, id, userID, nil)
+	api.writeAudit(r, db.AuditSyncResumed, id, userID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true, "deferred": result.Deferred})
 }
 
-func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *syncAPI) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
 	id := r.PathValue("id")
 
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) || !api.requireSyncPass(w, r, id) {
 		return
 	}
 
-	err := s.syncPass.Delete(r.Context(), id)
+	err := api.syncPass.Delete(r.Context(), id)
 	if err != nil {
-		s.logf(r, "Failed to delete sync job: %v\n", err)
+		api.logf(r, "Failed to delete sync job: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditSyncDeleted, id, userID, nil)
+	api.writeAudit(r, db.AuditSyncDeleted, id, userID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-func (s *APIServer) handleDownloadSyncReport(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *syncAPI) handleDownloadSyncReport(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
 	id := r.PathValue("id")
 
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
-	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
 	}
 
-	failedTasks, err := db.GetFailedSyncTasksForReport(s.db, id, job.RunGeneration)
+	failedTasks, err := db.GetFailedSyncTasksForReport(api.db, id, job.RunGeneration)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -662,8 +651,8 @@ func (s *APIServer) handleDownloadSyncReport(w http.ResponseWriter, r *http.Requ
 	writer.Flush()
 }
 
-func (s *APIServer) handleSyncErrors(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *syncAPI) handleSyncErrors(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -672,13 +661,13 @@ func (s *APIServer) handleSyncErrors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
 		return
 	}
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 	limit, offset := parseErrorListPagination(r)
-	items, total, err := db.GetSyncErrorsContext(r.Context(), s.db, id, limit, offset)
+	items, total, err := db.GetSyncErrorsContext(r.Context(), api.db, id, limit, offset)
 	if err != nil {
-		s.logf(r, "Error fetching sync job %s errors: %v", id, err)
+		api.logf(r, "Error fetching sync job %s errors: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -686,20 +675,20 @@ func (s *APIServer) handleSyncErrors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"errors": items, "total": total, "limit": limit, "offset": offset})
 }
 
-func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *syncAPI) handleSyncStream(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
-	if !s.acquireSyncStream(w, r, userID) {
+	if !api.acquireSyncStream(w, r, userID) {
 		return
 	}
-	defer s.releaseSyncStream(userID)
+	defer api.releaseSyncStream(userID)
 
 	// Disable the server write deadline for this long-lived connection.
 	rc := http.NewResponseController(w)
-	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -717,7 +706,7 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 
 	// 3s poll is a good balance: fast enough to feel live, slow enough to not
 	// hammer the DB. Change-detection skips the flush when nothing changed.
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(api.streamPollInterval)
 	defer ticker.Stop()
 
 	// Periodic comment heartbeat keeps the SSE connection alive behind proxies
@@ -737,7 +726,7 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		case <-ticker.C:
-			jobs, err := db.GetSyncJobsForUserContext(r.Context(), s.db, userID)
+			jobs, err := db.GetSyncJobsForUserContext(r.Context(), api.db, userID)
 			if err != nil {
 				continue
 			}
@@ -746,11 +735,11 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 			}
 			for i := range jobs {
 				if jobs[i].Status == "RUNNING" || jobs[i].Status == "INDEXING" {
-					if activeFiles, err := db.GetActiveSyncTaskPaths(s.db, r.Context(), jobs[i].ID); err == nil {
+					if activeFiles, err := db.GetActiveSyncTaskPaths(api.db, r.Context(), jobs[i].ID); err == nil {
 						jobs[i].ActiveFiles = activeFiles
 					}
 				} else if jobs[i].Status == "VERIFYING" {
-					if verifyingFiles, err := db.GetVerifyingSyncTaskPaths(s.db, r.Context(), jobs[i].ID); err == nil {
+					if verifyingFiles, err := db.GetVerifyingSyncTaskPaths(api.db, r.Context(), jobs[i].ID); err == nil {
 						jobs[i].ActiveFiles = verifyingFiles
 					}
 				}
@@ -801,8 +790,8 @@ func parseSyncTokenExpiry(raw *string) sql.NullTime {
 	return sql.NullTime{Time: exp, Valid: true}
 }
 
-func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *syncAPI) handleSetSyncThreads(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -813,11 +802,11 @@ func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -832,8 +821,8 @@ func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := db.UpdateSyncJobThreads(s.db, id, threads); err != nil {
-		s.logf(r, "Error updating threads for sync job %s: %v", id, err)
+	if err := db.UpdateSyncJobThreads(api.db, id, threads); err != nil {
+		api.logf(r, "Error updating threads for sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -841,8 +830,8 @@ func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (s *APIServer) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *syncAPI) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -853,11 +842,11 @@ func (s *APIServer) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -870,15 +859,15 @@ func (s *APIServer) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := db.UpdateSyncJobBandwidthLimit(s.db, id, req.LimitMbps); err != nil {
-		s.logf(r, "Error updating bandwidth limit for sync job %s: %v", id, err)
+	if err := db.UpdateSyncJobBandwidthLimit(api.db, id, req.LimitMbps); err != nil {
+		api.logf(r, "Error updating bandwidth limit for sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
 	if err != nil {
-		s.logf(r, "Error loading sync job %s after bandwidth update: %v", id, err)
+		api.logf(r, "Error loading sync job %s after bandwidth update: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -890,11 +879,13 @@ func (s *APIServer) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := s.queue.PublishBandwidthChange(r.Context(), queue.BandwidthEvent{
-		SyncJobID:          id,
-		BandwidthLimitMbps: req.LimitMbps,
-	}); err != nil {
-		s.logf(r, "Warning: failed to publish bandwidth change for sync job %s: %v", id, err)
+	if api.publishBandwidthChange != nil {
+		if err := api.publishBandwidthChange(r.Context(), queue.BandwidthEvent{
+			SyncJobID:          id,
+			BandwidthLimitMbps: req.LimitMbps,
+		}); err != nil {
+			api.logf(r, "Warning: failed to publish bandwidth change for sync job %s: %v", id, err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -912,19 +903,19 @@ type updateSyncScopeRequest struct {
 	DeletePropagation *bool    `json:"delete_propagation,omitempty"`
 }
 
-func (s *APIServer) handleUpdateSyncSchedule(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *syncAPI) handleUpdateSyncSchedule(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
 	id := r.PathValue("id")
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -939,23 +930,23 @@ func (s *APIServer) handleUpdateSyncSchedule(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := db.UpdateSyncJobInterval(s.db, id, req.IntervalMinutes); err != nil {
-		s.logf(r, "Error updating sync schedule for job %s: %v", id, err)
+	if err := db.UpdateSyncJobInterval(api.db, id, req.IntervalMinutes); err != nil {
+		api.logf(r, "Error updating sync schedule for job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditSyncUpdated, id, userID, map[string]any{"interval_minutes": req.IntervalMinutes})
+	api.writeAudit(r, db.AuditSyncUpdated, id, userID, map[string]any{"interval_minutes": req.IntervalMinutes})
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "browse", s.clientIP(r), connectRateLimit, connectRateWindow) {
+func (api *syncAPI) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "browse", connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -965,13 +956,13 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
 		return
 	}
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
-	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
 	if err != nil {
-		s.logf(r, "Error getting sync job %s for browse: %v", id, err)
+		api.logf(r, "Error getting sync job %s for browse: %v", id, err)
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
 	}
@@ -993,7 +984,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	endpoint, err := openSyncJobEndpoint[migrationBrowser](s, r.Context(), id, userID, role, job)
+	endpoint, err := openSyncJobEndpoint[migrationBrowser](api, r.Context(), id, userID, role, job)
 	if err != nil {
 		if errors.Is(err, errProfileInvalidProvider) || errors.Is(err, errProfileProvider) {
 			errCode := ErrSourceUrlInvalid
@@ -1003,7 +994,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
 			return
 		}
-		s.logf(r, "handleBrowseSyncJob: failed to open endpoint for job %s role %s: %v", id, role, err)
+		api.logf(r, "handleBrowseSyncJob: failed to open endpoint for job %s role %s: %v", id, role, err)
 		errCode := ErrSourceConnectionFailed
 		if role == "target" {
 			errCode = ErrTargetConnectionFailed
@@ -1018,7 +1009,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 
 	ok, err := endpoint.Client.Connect(ctx)
 	if !ok {
-		s.logf(r, "handleBrowseSyncJob: connection failed for provider %s: %v", endpoint.Provider, err)
+		api.logf(r, "handleBrowseSyncJob: connection failed for provider %s: %v", endpoint.Provider, err)
 		errCode := ErrSourceConnectionFailed
 		if role == "target" {
 			errCode = ErrTargetConnectionFailed
@@ -1029,7 +1020,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 
 	items, err := endpoint.Client.GetDirectoryListing(ctx, resourceType, reqPath)
 	if err != nil {
-		s.logf(r, "handleBrowseSyncJob: failed to list %s for path %s (provider %s): %v", resourceType, reqPath, endpoint.Provider, err)
+		api.logf(r, "handleBrowseSyncJob: failed to list %s for path %s (provider %s): %v", resourceType, reqPath, endpoint.Provider, err)
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(ErrListFailed)})
 		return
 	}
@@ -1060,13 +1051,13 @@ func syncMkdirPath(parent, name string) (string, bool) {
 	return path.Join(path.Clean(parent), name), true
 }
 
-func (s *APIServer) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "sync-mkdir", s.clientIP(r), connectRateLimit, connectRateWindow) {
+func (api *syncAPI) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "sync-mkdir", connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -1076,7 +1067,7 @@ func (s *APIServer) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
 		return
 	}
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -1094,20 +1085,20 @@ func (s *APIServer) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
 	if err != nil {
-		s.logf(r, "handleSyncMkdir: failed to load sync job %s: %v", id, err)
+		api.logf(r, "handleSyncMkdir: failed to load sync job %s: %v", id, err)
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
 	}
 
-	endpoint, err := openSyncJobEndpoint[migrationDirectoryCreator](s, r.Context(), id, userID, "target", job)
+	endpoint, err := openSyncJobEndpoint[migrationDirectoryCreator](api, r.Context(), id, userID, "target", job)
 	if err != nil {
 		if errors.Is(err, errProfileInvalidProvider) || errors.Is(err, errProfileProvider) {
 			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetUrlInvalid})
 			return
 		}
-		s.logf(r, "handleSyncMkdir: failed to open target endpoint for job %s: %v", id, err)
+		api.logf(r, "handleSyncMkdir: failed to open target endpoint for job %s: %v", id, err)
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetConnectionFailed})
 		return
 	}
@@ -1116,12 +1107,12 @@ func (s *APIServer) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if ok, err := endpoint.Client.Connect(ctx); !ok {
-		s.logf(r, "handleSyncMkdir: target connection failed for job %s: %v", id, err)
+		api.logf(r, "handleSyncMkdir: target connection failed for job %s: %v", id, err)
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrTargetConnectionFailed})
 		return
 	}
 	if err := endpoint.Client.CreateDirectory(ctx, "files", dirPath); err != nil {
-		s.logf(r, "handleSyncMkdir: target directory creation failed for job %s: %v", id, err)
+		api.logf(r, "handleSyncMkdir: target directory creation failed for job %s: %v", id, err)
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrFolderCreateFailed})
 		return
 	}
@@ -1129,25 +1120,25 @@ func (s *APIServer) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-func (s *APIServer) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *syncAPI) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
 	id := r.PathValue("id")
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
-	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
 	if err != nil {
-		s.logf(r, "Error getting sync job %s for scope update: %v", id, err)
+		api.logf(r, "Error getting sync job %s for scope update: %v", id, err)
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
 	}
@@ -1176,17 +1167,17 @@ func (s *APIServer) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request
 		req.TargetDir = "/"
 	}
 
-	if err := db.UpdateSyncJobScope(s.db, id, req.SelectedPaths, req.TargetDir, req.ConflictStrategy, req.Direction, req.DeletePropagation); err != nil {
+	if err := db.UpdateSyncJobScope(api.db, id, req.SelectedPaths, req.TargetDir, req.ConflictStrategy, req.Direction, req.DeletePropagation); err != nil {
 		if errors.Is(err, db.ErrSyncInvalidState) {
 			writeError(w, http.StatusConflict, ErrSyncInvalidState)
 			return
 		}
-		s.logf(r, "Error updating scope for sync job %s: %v", id, err)
+		api.logf(r, "Error updating scope for sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditSyncUpdated, id, userID, map[string]any{
+	api.writeAudit(r, db.AuditSyncUpdated, id, userID, map[string]any{
 		"selected_paths": req.SelectedPaths,
 		"target_dir":     req.TargetDir,
 	})

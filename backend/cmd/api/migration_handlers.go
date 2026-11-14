@@ -1324,18 +1324,8 @@ func (api *migrationAPI) releaseMigrationStream(userID string) {
 	}
 }
 
-func (s *APIServer) acquireSyncStream(w http.ResponseWriter, r *http.Request, userID string) bool {
-	return s.acquireStream(w, r, userID, "sync-stream")
-}
-
 func (s *APIServer) releaseStream(userID string) {
 	s.streamPool().Release(userID)
-}
-
-// releaseSyncStream mirrors acquireSyncStream. Both stream types use the same
-// per-user pool, which is released by releaseStream.
-func (s *APIServer) releaseSyncStream(userID string) {
-	s.releaseStream(userID)
 }
 
 // releaseBackupStream mirrors acquireStream for backup endpoints.

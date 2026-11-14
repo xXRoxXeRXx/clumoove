@@ -82,16 +82,16 @@ func (api *migrationAPI) handleMigrationReauth(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "retried": count})
 }
 
-func (s *APIServer) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
+func (api *syncAPI) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	if !s.requireSyncOwnership(w, r, id, userID) {
+	if !api.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
-	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
@@ -112,26 +112,26 @@ func (s *APIServer) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrProviderUnsupported)
 		return
 	}
-	access, err := crypto.EncryptWithDomain(req.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
+	access, err := crypto.EncryptWithDomain(req.AccessToken, api.encryptionKey, crypto.DomainOAuthAccessToken)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
-	refresh, err := crypto.EncryptWithDomain(req.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+	refresh, err := crypto.EncryptWithDomain(req.RefreshToken, api.encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
 	if expected.Valid && expected.String != "" {
-		err = db.UpdateSyncJobOAuthTokens(s.db, id, req.Role, access, refresh, oauthExpiry(req.ExpiresIn), expected.String)
+		err = db.UpdateSyncJobOAuthTokens(api.db, id, req.Role, access, refresh, oauthExpiry(req.ExpiresIn), expected.String)
 	} else {
-		err = db.UpdateSyncJobOAuthTokensForReauth(s.db, id, req.Role, access, refresh, oauthExpiry(req.ExpiresIn))
+		err = db.UpdateSyncJobOAuthTokensForReauth(api.db, id, req.Role, access, refresh, oauthExpiry(req.ExpiresIn))
 	}
 	if err != nil {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
-	if err = db.UpdateSyncJobStatus(s.db, id, "IDLE", nil); err != nil {
+	if err = db.UpdateSyncJobStatus(api.db, id, "IDLE", nil); err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

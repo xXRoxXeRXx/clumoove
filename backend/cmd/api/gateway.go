@@ -175,12 +175,15 @@ func (server *APIServer) buildMux(overrideHandler http.HandlerFunc) *http.ServeM
 	registerRouteSpecs(mux, server.gatewayRoutes(), jwtMiddleware, allowMustChangeMiddleware, adminRouteMiddleware, overrideHandler)
 	files := server.files()
 	migrations := server.migrations()
+	syncs := server.syncs()
 	if overrideHandler == nil {
 		files.registerRoutes(mux, jwtMiddleware)
 		migrations.registerRoutes(mux, jwtMiddleware)
+		syncs.registerRoutes(mux, jwtMiddleware)
 	} else {
 		files.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 		migrations.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
+		syncs.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 	}
 
 	return mux
@@ -278,25 +281,6 @@ func (server *APIServer) gatewayRoutes() []routeSpec {
 		{pattern: "GET /api/auth/email-change-available", access: routePublic, handler: server.handleEmailChangeAvailable},
 		{pattern: "POST /api/auth/change-email", access: routeAuthenticated, handler: server.handleChangeEmail},
 		{pattern: "POST /api/auth/confirm-email-change", access: routePublic, handler: server.handleConfirmEmailChange},
-
-		// Sync Engine Routes
-		{pattern: "GET /api/sync", access: routeAuthenticated, handler: server.handleListSyncs},
-		{pattern: "GET /api/sync/stream", access: routeAuthenticated, handler: server.handleSyncStream},
-		{pattern: "POST /api/sync", access: routeAuthenticated, handler: server.handleCreateSync},
-		{pattern: "GET /api/sync/{id}", access: routeAuthenticated, handler: server.handleGetSyncStatus},
-		{pattern: "POST /api/sync/{id}/start", access: routeAuthenticated, handler: server.handleStartSync},
-		{pattern: "POST /api/sync/{id}/pause", access: routeAuthenticated, handler: server.handlePauseSync},
-		{pattern: "POST /api/sync/{id}/resume", access: routeAuthenticated, handler: server.handleResumeSync},
-		{pattern: "POST /api/sync/{id}/reauth", access: routeAuthenticated, handler: server.handleSyncReauth},
-		{pattern: "DELETE /api/sync/{id}", access: routeAuthenticated, handler: server.handleDeleteSync},
-		{pattern: "GET /api/sync/{id}/report", access: routeAuthenticated, handler: server.handleDownloadSyncReport},
-		{pattern: "GET /api/sync/{id}/errors", access: routeAuthenticated, handler: server.handleSyncErrors},
-		{pattern: "PUT /api/sync/{id}/threads", access: routeAuthenticated, handler: server.handleSetSyncThreads},
-		{pattern: "PUT /api/sync/{id}/bandwidth", access: routeAuthenticated, handler: server.handleSetSyncBandwidth},
-		{pattern: "GET /api/sync/{id}/browse", access: routeAuthenticated, handler: server.handleBrowseSyncJob},
-		{pattern: "POST /api/sync/{id}/mkdir", access: routeAuthenticated, handler: server.handleSyncMkdir},
-		{pattern: "PUT /api/sync/{id}/schedule", access: routeAuthenticated, handler: server.handleUpdateSyncSchedule},
-		{pattern: "PUT /api/sync/{id}/scope", access: routeAuthenticated, handler: server.handleUpdateSyncScope},
 
 		// Backup Routes
 		{pattern: "GET /api/backup", access: routeAuthenticated, handler: server.handleListBackups},

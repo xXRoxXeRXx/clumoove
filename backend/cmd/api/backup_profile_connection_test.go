@@ -92,7 +92,7 @@ func TestCreateSyncUsesProfileResolvedCredentials(t *testing.T) {
 	request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
 	recorder := httptest.NewRecorder()
 
-	server.handleCreateSync(recorder, request)
+	server.syncs().handleCreateSync(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
