@@ -40,11 +40,11 @@ type APIServer struct {
 	backgroundCtx     context.Context
 	rateLimiter       rateLimiter
 	dummyPasswordHash string
-	// activeStreams tracks the number of open SSE migration-stream connections
-	// per user so we can cap concurrent streams (each polls the DB on an
-	// interval) and prevent resource exhaustion via connection flooding.
-	streamMu      sync.Mutex
-	activeStreams map[string]int
+	// streams tracks the number of open SSE stream connections per user so we
+	// can cap concurrent streams (each polls the DB on an interval) and prevent
+	// resource exhaustion via connection flooding.
+	streamMu sync.Mutex
+	streams  *userStreamPool
 	// trustedProxy, when true, lets the server derive the real client IP and
 	// HTTPS state from X-Forwarded-For / X-Forwarded-Proto. Only enable this
 	// when a trusted reverse proxy (that strips client-supplied copies of these

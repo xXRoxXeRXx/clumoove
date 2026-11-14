@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"sync"
 
 	"backend/internal/auth"
 	"backend/internal/indexer"
@@ -90,10 +91,57 @@ func newAPIGateway(cfg gatewayConfig) (*APIServer, error) {
 		backgroundCtx:     bgCtx,
 		rateLimiter:       rl,
 		dummyPasswordHash: cfg.DummyPasswordHash,
-		activeStreams:     make(map[string]int),
+		streams:           newUserStreamPool(maxStreamsPerUser),
 		trustedProxy:      cfg.TrustedProxy,
 		authStateLookup:   cfg.AuthStateLookup,
 	}, nil
+}
+
+type userStreamPool struct {
+	mu     sync.Mutex
+	active map[string]int
+	limit  int
+}
+
+func newUserStreamPool(limit int) *userStreamPool {
+	return &userStreamPool{
+		active: make(map[string]int),
+		limit:  limit,
+	}
+}
+
+func (p *userStreamPool) Acquire(userID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.active == nil {
+		p.active = make(map[string]int)
+	}
+	if p.active[userID] >= p.limit {
+		return false
+	}
+	p.active[userID]++
+	return true
+}
+
+func (p *userStreamPool) Release(userID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.active[userID]--
+	if p.active[userID] <= 0 {
+		delete(p.active, userID)
+	}
+}
+
+func (s *APIServer) streamPool() *userStreamPool {
+	if s == nil {
+		return nil
+	}
+	s.streamMu.Lock()
+	defer s.streamMu.Unlock()
+	if s.streams == nil {
+		s.streams = newUserStreamPool(maxStreamsPerUser)
+	}
+	return s.streams
 }
 
 // Handler composes the HTTP routing mux and outer gateway middleware chain.
@@ -126,10 +174,13 @@ func (server *APIServer) buildMux(overrideHandler http.HandlerFunc) *http.ServeM
 
 	registerRouteSpecs(mux, server.gatewayRoutes(), jwtMiddleware, allowMustChangeMiddleware, adminRouteMiddleware, overrideHandler)
 	files := server.files()
+	migrations := server.migrations()
 	if overrideHandler == nil {
 		files.registerRoutes(mux, jwtMiddleware)
+		migrations.registerRoutes(mux, jwtMiddleware)
 	} else {
 		files.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
+		migrations.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 	}
 
 	return mux
@@ -227,29 +278,6 @@ func (server *APIServer) gatewayRoutes() []routeSpec {
 		{pattern: "GET /api/auth/email-change-available", access: routePublic, handler: server.handleEmailChangeAvailable},
 		{pattern: "POST /api/auth/change-email", access: routeAuthenticated, handler: server.handleChangeEmail},
 		{pattern: "POST /api/auth/confirm-email-change", access: routePublic, handler: server.handleConfirmEmailChange},
-
-		// Migration Routes
-		{pattern: "GET /api/migration", access: routeAuthenticated, handler: server.handleListMigrations},
-		{pattern: "GET /api/migration/stream", access: routeAuthenticated, handler: server.handleMigrationStream},
-		{pattern: "POST /api/migration/connect", access: routeAuthenticated, handler: server.handleConnect},
-		{pattern: "POST /api/migration/connect/test", access: routeAuthenticated, handler: server.handleConnectTest},
-		{pattern: "POST /api/migration/browse", access: routeAuthenticated, handler: server.handleBrowse},
-		{pattern: "POST /api/migration/target/browse", access: routeAuthenticated, handler: server.handleTargetBrowse},
-		{pattern: "POST /api/migration/target/mkdir", access: routeAuthenticated, handler: server.handleTargetMkdir},
-		{pattern: "POST /api/migration/start", access: routeAuthenticated, handler: server.handleStart},
-		{pattern: "GET /api/migration/{id}", access: routeAuthenticated, handler: server.handleGetStatus},
-		{pattern: "GET /api/migration/{id}/stream", access: routeAuthenticated, handler: server.handleMigrationDetailStream},
-		{pattern: "POST /api/migration/{id}/pause", access: routeAuthenticated, handler: server.handlePause},
-		{pattern: "POST /api/migration/{id}/resume", access: routeAuthenticated, handler: server.handleResume},
-		{pattern: "POST /api/migration/{id}/cancel", access: routeAuthenticated, handler: server.handleCancel},
-		{pattern: "DELETE /api/migration/{id}", access: routeAuthenticated, handler: server.handleDeleteMigration},
-		{pattern: "GET /api/migration/{id}/report", access: routeAuthenticated, handler: server.handleDownloadReport},
-		{pattern: "GET /api/migration/{id}/errors", access: routeAuthenticated, handler: server.handleMigrationErrors},
-		{pattern: "POST /api/migration/{id}/retry-failed", access: routeAuthenticated, handler: server.handleRetryFailed},
-		{pattern: "POST /api/migration/{id}/reauth", access: routeAuthenticated, handler: server.handleMigrationReauth},
-		{pattern: "POST /api/migration/{id}/reindex", access: routeAuthenticated, handler: server.handleReindex},
-		{pattern: "PUT /api/migration/{id}/bandwidth", access: routeAuthenticated, handler: server.handleSetBandwidth},
-		{pattern: "PUT /api/migration/{id}/threads", access: routeAuthenticated, handler: server.handleSetThreads},
 
 		// Sync Engine Routes
 		{pattern: "GET /api/sync", access: routeAuthenticated, handler: server.handleListSyncs},

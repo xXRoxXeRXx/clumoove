@@ -24,19 +24,9 @@ func oauthExpiry(seconds int) time.Time {
 	return time.Now().Add(time.Duration(seconds) * time.Second)
 }
 
-func (s *APIServer) handleMigrationReauth(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	owned, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
+func (api *migrationAPI) handleMigrationReauth(w http.ResponseWriter, r *http.Request) {
+	id, _, ok := api.requireOwnedMigration(w, r)
+	if !ok {
 		return
 	}
 	var req oauthReauthRequest
@@ -47,7 +37,7 @@ func (s *APIServer) handleMigrationReauth(w http.ResponseWriter, r *http.Request
 		writeValidationError(w, ErrRefreshTokenMissing)
 		return
 	}
-	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrMigrationNotFound)
 		return
@@ -60,21 +50,21 @@ func (s *APIServer) handleMigrationReauth(w http.ResponseWriter, r *http.Request
 		writeValidationError(w, ErrProviderUnsupported)
 		return
 	}
-	access, err := crypto.EncryptWithDomain(req.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
+	access, err := crypto.EncryptWithDomain(req.AccessToken, api.encryptionKey, crypto.DomainOAuthAccessToken)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
-	refresh, err := crypto.EncryptWithDomain(req.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+	refresh, err := crypto.EncryptWithDomain(req.RefreshToken, api.encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
 	update := db.OAuthTokenUpdate{MigrationID: id, Role: req.Role, AccessTokenEncrypted: access, RefreshTokenEncrypted: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}
 	if expected.Valid && expected.String != "" {
-		err = db.UpdateMigrationOAuthTokens(s.db, update, expected.String)
+		err = db.UpdateMigrationOAuthTokens(api.db, update, expected.String)
 	} else {
-		err = db.UpdateMigrationOAuthTokensForReauth(s.db, update)
+		err = db.UpdateMigrationOAuthTokensForReauth(api.db, update)
 	}
 	if err != nil {
 		if errors.Is(err, db.ErrOAuthTokenConflict) {
@@ -84,7 +74,7 @@ func (s *APIServer) handleMigrationReauth(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
-	count, err := db.ResetFailedTasksForRetry(s.db, r.Context(), id)
+	count, err := db.ResetFailedTasksForRetry(api.db, r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return

@@ -52,7 +52,7 @@ func TestHandleConnectTestConnectionResults(t *testing.T) {
 		request = request.WithContext(storage.WithLocalUserScope(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}), "user-1"))
 		recorder := httptest.NewRecorder()
 
-		server.handleConnectTest(recorder, request)
+		server.migrations().handleConnectTest(recorder, request)
 
 		if recorder.Code != http.StatusOK || recorder.Body.String() != "{\"success\":true}\n" {
 			t.Fatalf("response = %d %s, want successful connection", recorder.Code, recorder.Body.String())
@@ -64,7 +64,7 @@ func TestHandleConnectTestConnectionResults(t *testing.T) {
 		request = request.WithContext(storage.WithLocalUserScope(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}), "user-1"))
 		recorder := httptest.NewRecorder()
 
-		server.handleConnectTest(recorder, request)
+		server.migrations().handleConnectTest(recorder, request)
 
 		if recorder.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
@@ -94,7 +94,7 @@ func TestHandleConnectTestConnectionResults(t *testing.T) {
 		request = request.WithContext(storage.WithLocalUserScope(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}), "user-1"))
 		recorder := httptest.NewRecorder()
 
-		server.handleConnectTest(recorder, request)
+		server.migrations().handleConnectTest(recorder, request)
 
 		assertAPIError(t, recorder, http.StatusOK, ErrSourceUrlInvalid)
 	})
@@ -104,7 +104,7 @@ func TestHandleConnectTestConnectionResults(t *testing.T) {
 		request = request.WithContext(storage.WithLocalUserScope(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}), "user-1"))
 		recorder := httptest.NewRecorder()
 
-		server.handleConnectTest(recorder, request)
+		server.migrations().handleConnectTest(recorder, request)
 
 		assertAPIError(t, recorder, http.StatusNotFound, ErrProfileNotFound)
 	})
@@ -122,7 +122,7 @@ func TestMigrationBrowseAndStartProfileFailures(t *testing.T) {
 		request := httptest.NewRequest(http.MethodPost, "/api/migration/browse", bytes.NewBufferString(`{"source_provider":"nextcloud","source_url":"https://cloud.example.test","resource_type":"files"}`))
 		recorder := httptest.NewRecorder()
 
-		server.handleBrowse(recorder, request)
+		server.migrations().handleBrowse(recorder, request)
 
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -144,7 +144,7 @@ func TestMigrationBrowseAndStartProfileFailures(t *testing.T) {
 		request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
 		recorder := httptest.NewRecorder()
 
-		server.handleBrowse(recorder, request)
+		server.migrations().handleBrowse(recorder, request)
 
 		assertAPIError(t, recorder, http.StatusOK, ErrProfileNotFound)
 	})
@@ -154,7 +154,7 @@ func TestMigrationBrowseAndStartProfileFailures(t *testing.T) {
 		request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
 		recorder := httptest.NewRecorder()
 
-		server.handleStart(recorder, request)
+		server.migrations().handleStart(recorder, request)
 
 		assertAPIError(t, recorder, http.StatusNotFound, ErrProfileNotFound)
 	})

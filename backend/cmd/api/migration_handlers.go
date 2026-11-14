@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"backend/internal/auth"
 	"backend/internal/db"
 	"backend/internal/oauth"
 	"backend/internal/processor"
@@ -47,8 +48,8 @@ func normalizeProviderURL(provider, urlStr string) string {
 	return urlStr
 }
 
-func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "browse", s.clientIP(r), connectRateLimit, connectRateWindow) {
+func (api *migrationAPI) handleBrowse(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "browse", connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -63,7 +64,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceConn, err := openRequestProviderFromRequest[migrationBrowser](s, r, requestConnectionInput{
+	sourceConn, err := openRequestProviderWith[migrationBrowser](api.profiles, r, requestConnectionInput{
 		ProfileID:       req.SourceProfileID,
 		DefaultProvider: "nextcloud",
 		NormalizeURL:    true,
@@ -73,7 +74,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		Password:        req.SourcePassword,
 	})
 	if err != nil {
-		s.writeRequestProviderBrowseError(w, r, "handleBrowse: failed to load source profile", ErrSourceUrlInvalid, err)
+		writeRequestProviderBrowseErrorWith(w, r, api.logf, "handleBrowse: failed to load source profile", ErrSourceUrlInvalid, err)
 		return
 	}
 	defer sourceConn.Close()
@@ -84,7 +85,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := sourceClient.Connect(ctx)
 	if !ok {
-		s.logf(r, "handleBrowse: source connection failed for provider %s: %v", sourceConn.Provider, err)
+		api.logf(r, "handleBrowse: source connection failed for provider %s: %v", sourceConn.Provider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -100,7 +101,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 
 	items, err := sourceClient.GetDirectoryListing(ctx, req.ResourceType, reqPath)
 	if err != nil {
-		s.logf(r, "handleBrowse: failed to list %s for path %s (provider %s): %v", req.ResourceType, reqPath, sourceConn.Provider, err)
+		api.logf(r, "handleBrowse: failed to list %s for path %s (provider %s): %v", req.ResourceType, reqPath, sourceConn.Provider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"success":    false,
 			"error_code": ErrListFailed,
@@ -131,8 +132,8 @@ type TargetBrowseRequest struct {
 	Path            string `json:"path"`
 }
 
-func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "target-browse", s.clientIP(r), connectRateLimit, connectRateWindow) {
+func (api *migrationAPI) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "target-browse", connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -142,7 +143,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetConn, err := openRequestProviderFromRequest[migrationBrowser](s, r, requestConnectionInput{
+	targetConn, err := openRequestProviderWith[migrationBrowser](api.profiles, r, requestConnectionInput{
 		ProfileID:       req.TargetProfileID,
 		DefaultProvider: "nextcloud",
 		NormalizeURL:    true,
@@ -152,7 +153,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 		Password:        req.TargetPassword,
 	})
 	if err != nil {
-		s.writeRequestProviderBrowseError(w, r, "handleTargetBrowse: failed to load target profile", ErrTargetUrlInvalid, err)
+		writeRequestProviderBrowseErrorWith(w, r, api.logf, "handleTargetBrowse: failed to load target profile", ErrTargetUrlInvalid, err)
 		return
 	}
 	defer targetConn.Close()
@@ -163,7 +164,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := targetClient.Connect(ctx)
 	if !ok {
-		s.logf(r, "handleTargetBrowse: connection failed for provider %s: %v", targetConn.Provider, err)
+		api.logf(r, "handleTargetBrowse: connection failed for provider %s: %v", targetConn.Provider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -179,7 +180,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 
 	files, err := targetClient.GetDirectoryListing(ctx, "files", reqPath)
 	if err != nil {
-		s.logf(r, "handleTargetBrowse: failed to list target files for path %s (provider %s): %v", reqPath, targetConn.Provider, err)
+		api.logf(r, "handleTargetBrowse: failed to list target files for path %s (provider %s): %v", reqPath, targetConn.Provider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
 		return
 	}
@@ -199,8 +200,8 @@ type TargetMkdirRequest struct {
 	Path            string `json:"path"`
 }
 
-func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "target-mkdir", s.clientIP(r), connectRateLimit, connectRateWindow) {
+func (api *migrationAPI) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "target-mkdir", connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -215,7 +216,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetConn, err := openRequestProviderFromRequest[migrationDirectoryCreator](s, r, requestConnectionInput{
+	targetConn, err := openRequestProviderWith[migrationDirectoryCreator](api.profiles, r, requestConnectionInput{
 		ProfileID:       req.TargetProfileID,
 		DefaultProvider: "nextcloud",
 		NormalizeURL:    true,
@@ -225,7 +226,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		Password:        req.TargetPassword,
 	})
 	if err != nil {
-		s.writeRequestProviderBrowseError(w, r, "handleTargetMkdir: failed to load target profile", ErrTargetUrlInvalid, err)
+		writeRequestProviderBrowseErrorWith(w, r, api.logf, "handleTargetMkdir: failed to load target profile", ErrTargetUrlInvalid, err)
 		return
 	}
 	defer targetConn.Close()
@@ -236,7 +237,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := targetClient.Connect(ctx)
 	if !ok {
-		s.logf(r, "handleTargetMkdir: connection failed for provider %s: %v", targetConn.Provider, err)
+		api.logf(r, "handleTargetMkdir: connection failed for provider %s: %v", targetConn.Provider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -247,7 +248,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 
 	err = targetClient.CreateDirectory(ctx, "files", req.Path)
 	if err != nil {
-		s.logf(r, "handleTargetMkdir: CreateDirectory(%s) failed: %v", req.Path, err)
+		api.logf(r, "handleTargetMkdir: CreateDirectory(%s) failed: %v", req.Path, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrFolderCreateFailed})
 		return
 	}
@@ -257,24 +258,13 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *APIServer) handlePause(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
+func (api *migrationAPI) handlePause(w http.ResponseWriter, r *http.Request) {
+	id, userID, ok := api.requireOwnedMigration(w, r)
+	if !ok {
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil || !owns {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
-		return
-	}
-
-	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -284,34 +274,23 @@ func (s *APIServer) handlePause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.UpdateMigrationStatus(s.db, id, "PAUSED", nil)
+	err = db.UpdateMigrationStatus(api.db, id, "PAUSED", nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditMigrationPaused, id, userID, nil)
+	api.writeAudit(r, db.AuditMigrationPaused, id, userID, nil)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (s *APIServer) handleResume(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
+func (api *migrationAPI) handleResume(w http.ResponseWriter, r *http.Request) {
+	id, userID, ok := api.requireOwnedMigration(w, r)
+	if !ok {
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil || !owns {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
-		return
-	}
-
-	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -321,37 +300,26 @@ func (s *APIServer) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	needsDiscovery, err := db.ResumeMigration(s.db, id)
+	needsDiscovery, err := db.ResumeMigration(api.db, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if needsDiscovery {
-		go s.indexer.Start(s.backgroundCtx, id)
+	if needsDiscovery && api.startIndexer != nil {
+		go api.startIndexer(api.backgroundCtx, id)
 	}
 
-	s.writeAudit(r, db.AuditMigrationResumed, id, userID, nil)
+	api.writeAudit(r, db.AuditMigrationResumed, id, userID, nil)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
+func (api *migrationAPI) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
+	id, _, ok := api.requireOwnedMigration(w, r)
+	if !ok {
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil || !owns {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
-		return
-	}
-
-	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -361,9 +329,9 @@ func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := db.ResetFailedTasksForRetry(s.db, r.Context(), id)
+	count, err := db.ResetFailedTasksForRetry(api.db, r.Context(), id)
 	if err != nil {
-		s.logf(r, "Error resetting failed tasks for retry: %v", err)
+		api.logf(r, "Error resetting failed tasks for retry: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -371,24 +339,13 @@ func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "retried": count})
 }
 
-func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
+func (api *migrationAPI) handleReindex(w http.ResponseWriter, r *http.Request) {
+	id, _, ok := api.requireOwnedMigration(w, r)
+	if !ok {
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil || !owns {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
-		return
-	}
-
-	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -398,55 +355,48 @@ func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.ResetMigrationForReindex(s.db, r.Context(), id); err != nil {
+	if err := db.ResetMigrationForReindex(api.db, r.Context(), id); err != nil {
 		if errors.Is(err, db.ErrMigrationNotFailed) {
 			writeError(w, http.StatusConflict, ErrMigrationReindexConflict)
 			return
 		}
-		s.logf(r, "Reindex error for migration %s: %v", id, err)
+		api.logf(r, "Reindex error for migration %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	go s.indexer.Start(s.backgroundCtx, id)
+	if api.startIndexer != nil {
+		go api.startIndexer(api.backgroundCtx, id)
+	}
 
-	s.infof(r, "Migration %s re-index triggered", id)
+	api.infof(r, "Migration %s re-index triggered", id)
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{"success": true, "migration_id": id})
 }
 
-func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
+func (api *migrationAPI) handleCancel(w http.ResponseWriter, r *http.Request) {
+	id, userID, ok := api.requireOwnedMigration(w, r)
+	if !ok {
 		return
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil || !owns {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
-		return
-	}
-
-	err = db.UpdateMigrationStatus(s.db, id, "CANCELLED", nil)
+	err := db.UpdateMigrationStatus(api.db, id, "CANCELLED", nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	err = db.CancelPendingTasks(s.db, id)
+	err = db.CancelPendingTasks(api.db, id)
 	if err != nil {
-		s.logf(r, "Warning: failed to cancel pending tasks for migration %s: %v", id, err)
+		api.logf(r, "Warning: failed to cancel pending tasks for migration %s: %v", id, err)
 	}
 
-	if err := s.queue.PublishCancelEvent(r.Context(), id); err != nil {
-		s.logf(r, "Warning: failed to publish cancel event for migration %s: %v — in-flight tasks will be aborted via DB status check", id, err)
+	if api.publishCancelEvent != nil {
+		if err := api.publishCancelEvent(r.Context(), id); err != nil {
+			api.logf(r, "Warning: failed to publish cancel event for migration %s: %v — in-flight tasks will be aborted via DB status check", id, err)
+		}
 	}
 
-	s.writeAudit(r, db.AuditMigrationCancelled, id, userID, nil)
+	api.writeAudit(r, db.AuditMigrationCancelled, id, userID, nil)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -458,20 +408,9 @@ type ThreadsRequest struct {
 	Threads int `json:"threads"`
 }
 
-func (s *APIServer) handleSetThreads(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
-		return
-	}
-
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil || !owns {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
+func (api *migrationAPI) handleSetThreads(w http.ResponseWriter, r *http.Request) {
+	id, _, ok := api.requireOwnedMigration(w, r)
+	if !ok {
 		return
 	}
 
@@ -486,8 +425,8 @@ func (s *APIServer) handleSetThreads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.UpdateMigrationThreads(s.db, id, threads); err != nil {
-		s.logf(r, "Error updating threads for migration %s: %v", id, err)
+	if err := db.UpdateMigrationThreads(api.db, id, threads); err != nil {
+		api.logf(r, "Error updating threads for migration %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -495,20 +434,9 @@ func (s *APIServer) handleSetThreads(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
-		return
-	}
-
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil || !owns {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
+func (api *migrationAPI) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
+	id, _, ok := api.requireOwnedMigration(w, r)
+	if !ok {
 		return
 	}
 
@@ -522,13 +450,13 @@ func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.UpdateMigrationBandwidthLimit(s.db, id, req.LimitMbps); err != nil {
-		s.logf(r, "Error updating bandwidth limit for migration %s: %v", id, err)
+	if err := db.UpdateMigrationBandwidthLimit(api.db, id, req.LimitMbps); err != nil {
+		api.logf(r, "Error updating bandwidth limit for migration %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
 	if err == nil {
 		switch mig.Status {
 		case "COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED", "CANCELLED":
@@ -537,11 +465,13 @@ func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.queue.PublishBandwidthChange(r.Context(), queue.BandwidthEvent{
-		MigrationID:        id,
-		BandwidthLimitMbps: req.LimitMbps,
-	}); err != nil {
-		s.logf(r, "Warning: failed to publish bandwidth change for migration %s: %v", id, err)
+	if api.publishBandwidthChange != nil {
+		if err := api.publishBandwidthChange(r.Context(), queue.BandwidthEvent{
+			MigrationID:        id,
+			BandwidthLimitMbps: req.LimitMbps,
+		}); err != nil {
+			api.logf(r, "Warning: failed to publish bandwidth change for migration %s: %v", id, err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -572,8 +502,8 @@ type ConnectRequest struct {
 // It reuses ConnectRequest but ignores Path, ResourceType,
 // TargetProfileID, TargetProvider, and target credential fields
 // when role="source" (and vice-versa for role="target").
-func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "connect-test", s.clientIP(r), connectTestRateLimit, connectTestRateWindow) {
+func (api *migrationAPI) handleConnectTest(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "connect-test", connectTestRateLimit, connectTestRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -606,7 +536,7 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 		profileID = req.TargetProfileID
 	}
 
-	conn, err := openRequestProviderFromRequest[profileProvider](s, r, requestConnectionInput{
+	conn, err := openRequestProviderWith[profileProvider](api.profiles, r, requestConnectionInput{
 		ProfileID:       profileID,
 		DefaultProvider: "nextcloud",
 		NormalizeURL:    true,
@@ -629,7 +559,7 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": string(code)})
 			return
 		}
-		s.logf(r, "handleConnectTest: failed to load %s profile: %v", role, err)
+		api.logf(r, "handleConnectTest: failed to load %s profile: %v", role, err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
@@ -639,7 +569,7 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	ok, err := client.Connect(ctx)
 	if !ok {
-		s.logf(r, "handleConnectTest: %s connection failed for provider %s: %v", role, conn.Provider, err)
+		api.logf(r, "handleConnectTest: %s connection failed for provider %s: %v", role, conn.Provider, err)
 		code := ErrSourceConnectionFailed
 		if role == "target" {
 			code = ErrTargetConnectionFailed
@@ -655,8 +585,8 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "connect", s.clientIP(r), connectRateLimit, connectRateWindow) {
+func (api *migrationAPI) handleConnect(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "connect", connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -670,7 +600,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		req.ResourceType = "files"
 	}
 
-	sourceConn, err := openRequestProviderFromRequest[migrationBrowser](s, r, requestConnectionInput{
+	sourceConn, err := openRequestProviderWith[migrationBrowser](api.profiles, r, requestConnectionInput{
 		ProfileID:       req.SourceProfileID,
 		DefaultProvider: "nextcloud",
 		NormalizeURL:    true,
@@ -689,14 +619,14 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 			return
 		}
-		s.logf(r, "handleConnect: failed to load source profile: %v", err)
+		api.logf(r, "handleConnect: failed to load source profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
 	defer sourceConn.Close()
 	sourceClient := sourceConn.Client
 
-	targetConn, err := openRequestProviderFromRequest[profileProvider](s, r, requestConnectionInput{
+	targetConn, err := openRequestProviderWith[profileProvider](api.profiles, r, requestConnectionInput{
 		ProfileID:       req.TargetProfileID,
 		DefaultProvider: "nextcloud",
 		NormalizeURL:    true,
@@ -715,7 +645,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 			return
 		}
-		s.logf(r, "handleConnect: failed to load target profile: %v", err)
+		api.logf(r, "handleConnect: failed to load target profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
@@ -726,7 +656,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	sourceOK, err := sourceClient.Connect(srcCtx)
 	srcCancel()
 	if !sourceOK {
-		s.logf(r, "handleConnect: source connection failed for provider %s: %v", sourceConn.Provider, err)
+		api.logf(r, "handleConnect: source connection failed for provider %s: %v", sourceConn.Provider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -739,7 +669,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	targetOK, err := targetClient.Connect(tgtCtx)
 	tgtCancel()
 	if !targetOK {
-		s.logf(r, "handleConnect: target connection failed for provider %s: %v", targetConn.Provider, err)
+		api.logf(r, "handleConnect: target connection failed for provider %s: %v", targetConn.Provider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -756,7 +686,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	defer listCancel()
 	files, err := sourceClient.GetDirectoryListing(listCtx, req.ResourceType, reqPath)
 	if err != nil {
-		s.logf(r, "handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, sourceConn.Provider, err)
+		api.logf(r, "handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, sourceConn.Provider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
 		return
 	}
@@ -779,8 +709,8 @@ type StartRequest struct {
 	BandwidthLimitMbps int      `json:"bandwidth_limit_mbps"`
 }
 
-func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *migrationAPI) handleStart(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -790,7 +720,8 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	src, err := s.snapshotRequestConnection(r, requestConnectionInput{
+	userID := auth.GetUserIDFromContext(r.Context())
+	src, err := api.profiles.SnapshotRequest(r.Context(), userID, requestConnectionInput{
 		ProfileID:       req.SourceProfileID,
 		DefaultProvider: "nextcloud",
 		NormalizeURL:    true,
@@ -802,11 +733,11 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		TokenExpiresIn:  req.SourceTokenExpiresIn,
 	})
 	if err != nil {
-		s.writeRequestSnapshotError(w, r, "handleStart: failed to load source profile", err)
+		writeRequestSnapshotErrorWith(w, r, api.logf, "handleStart: failed to load source profile", err)
 		return
 	}
 
-	tgt, err := s.snapshotRequestConnection(r, requestConnectionInput{
+	tgt, err := api.profiles.SnapshotRequest(r.Context(), userID, requestConnectionInput{
 		ProfileID:       req.TargetProfileID,
 		DefaultProvider: "nextcloud",
 		NormalizeURL:    true,
@@ -818,7 +749,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		TokenExpiresIn:  req.TargetTokenExpiresIn,
 	})
 	if err != nil {
-		s.writeRequestSnapshotError(w, r, "handleStart: failed to load target profile", err)
+		writeRequestSnapshotErrorWith(w, r, api.logf, "handleStart: failed to load target profile", err)
 		return
 	}
 
@@ -879,14 +810,14 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		targetDir = "/"
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
-	active, err := db.CountActiveMigrationsForUser(s.db, userID)
+	active, err := db.CountActiveMigrationsForUser(api.db, userID)
 	if err != nil {
-		s.logf(r, "handleStart: failed to count active migrations for user %s: %v\n", userID, err)
+		api.logf(r, "handleStart: failed to count active migrations for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -965,24 +896,24 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 			NextRunAt: sql.NullTime{Time: scheduledAt, Valid: true},
 			IsActive:  true,
 		}
-		migrationID, err = db.CreateMigrationAndSchedule(s.db, m, schedule)
+		migrationID, err = db.CreateMigrationAndSchedule(api.db, m, schedule)
 	} else {
-		migrationID, err = db.CreateMigration(s.db, m)
+		migrationID, err = db.CreateMigration(api.db, m)
 	}
 	if err != nil {
-		s.logf(r, "Start migration error: failed to create migration or schedule: %v\n", err)
+		api.logf(r, "Start migration error: failed to create migration or schedule: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditMigrationCreated, migrationID, userID, map[string]interface{}{
+	api.writeAudit(r, db.AuditMigrationCreated, migrationID, userID, map[string]interface{}{
 		"source_provider": m.SourceProvider,
 		"target_provider": m.TargetProvider,
 		"scheduled":       req.ScheduledTime != "",
 	})
 
 	if req.ScheduledTime != "" {
-		s.infof(r, "Migration %s scheduled for %s", migrationID, scheduledAt.Format(time.RFC3339))
+		api.infof(r, "Migration %s scheduled for %s", migrationID, scheduledAt.Format(time.RFC3339))
 
 		writeJSON(w, http.StatusAccepted, map[string]interface{}{
 			"success":        true,
@@ -993,7 +924,9 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.indexer.Start(s.backgroundCtx, migrationID)
+	if api.startIndexer != nil {
+		go api.startIndexer(api.backgroundCtx, migrationID)
+	}
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"success":      true,
@@ -1001,29 +934,29 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *migrationAPI) handleListMigrations(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	list, err := db.GetMigrationsForUserContext(r.Context(), s.db, userID)
+	list, err := db.GetMigrationsForUserContext(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "Error listing migrations for user %s: %v\n", userID, err)
+		api.logf(r, "Error listing migrations for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, list)
 }
 
-func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *migrationAPI) handleMigrationStream(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	if !s.acquireMigrationStream(w, r, userID) {
+	if !api.acquireMigrationStream(w, r, userID) {
 		return
 	}
-	defer s.releaseMigrationStream(userID)
+	defer api.releaseMigrationStream(userID)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -1035,7 +968,7 @@ func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1055,20 +988,20 @@ func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request
 		return nil
 	}
 
-	initial, err := db.GetMigrationsForUserContext(r.Context(), s.db, userID)
+	initial, err := db.GetMigrationsForUserContext(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "Migration stream initial load error for user %s: %v\n", userID, err)
+		api.logf(r, "Migration stream initial load error for user %s: %v\n", userID, err)
 		writeErrorEvent(ErrInternalError)
 		return
 	}
 	prev, err := json.Marshal(initial)
 	if err != nil {
-		s.logf(r, "Migration stream initial marshal error for user %s: %v\n", userID, err)
+		api.logf(r, "Migration stream initial marshal error for user %s: %v\n", userID, err)
 		writeErrorEvent(ErrInternalError)
 		return
 	}
 	if err := writeEvent(prev); err != nil {
-		s.logf(r, "Migration stream initial write error for user %s: %v\n", userID, err)
+		api.logf(r, "Migration stream initial write error for user %s: %v\n", userID, err)
 		return
 	}
 
@@ -1088,19 +1021,19 @@ func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			list, err := db.GetMigrationsForUserContext(r.Context(), s.db, userID)
+			list, err := db.GetMigrationsForUserContext(r.Context(), api.db, userID)
 			if err != nil {
-				s.logf(r, "Migration stream reload error for user %s: %v\n", userID, err)
+				api.logf(r, "Migration stream reload error for user %s: %v\n", userID, err)
 				return
 			}
 			cur, err := json.Marshal(list)
 			if err != nil {
-				s.logf(r, "Migration stream marshal error for user %s: %v\n", userID, err)
+				api.logf(r, "Migration stream marshal error for user %s: %v\n", userID, err)
 				return
 			}
 			if !bytes.Equal(cur, prev) {
 				if err := writeEvent(cur); err != nil {
-					s.logf(r, "Migration stream write error for user %s: %v\n", userID, err)
+					api.logf(r, "Migration stream write error for user %s: %v\n", userID, err)
 					return
 				}
 				prev = cur
@@ -1109,132 +1042,108 @@ func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
-		return
-	}
-
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-
-	owned, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-
-	if !owned {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
+func (api *migrationAPI) handleDeleteMigration(w http.ResponseWriter, r *http.Request) {
+	id, userID, ok := api.requireOwnedMigration(w, r)
+	if !ok {
 		return
 	}
 
 	// A worker can already have loaded this migration and be streaming a file.
 	// Mark it cancelled and broadcast before deleting its rows so active workers
 	// cancel their request contexts instead of continuing against deleted tasks.
-	if err = db.UpdateMigrationStatus(s.db, id, "CANCELLED", nil); err != nil {
-		s.logf(r, "Error cancelling migration %s before deletion: %v\n", id, err)
+	if err := db.UpdateMigrationStatus(api.db, id, "CANCELLED", nil); err != nil {
+		api.logf(r, "Error cancelling migration %s before deletion: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if err = db.CancelPendingTasks(s.db, id); err != nil {
+	if err := db.CancelPendingTasks(api.db, id); err != nil {
 		// Once the migration row is removed, workers cannot observe its CANCELLED
 		// status. Do not delete until all not-yet-running tasks are cancelled.
-		s.logf(r, "Failed to cancel pending tasks for migration %s before deletion: %v", id, err)
+		api.logf(r, "Failed to cancel pending tasks for migration %s before deletion: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	s.writeAudit(r, db.AuditMigrationCancelled, id, userID, map[string]interface{}{"reason": "deletion"})
-	if err = s.queue.PublishCancelEvent(r.Context(), id); err != nil {
+	api.writeAudit(r, db.AuditMigrationCancelled, id, userID, map[string]interface{}{"reason": "deletion"})
+	if api.publishCancelEvent == nil {
+		api.logf(r, "Failed to publish cancel event for migration %s before deletion: publisher unavailable", id)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if err := api.publishCancelEvent(r.Context(), id); err != nil {
 		// Do not remove the cancellation state while a worker may still be
 		// streaming. Retrying the delete will publish a fresh cancellation event.
-		s.logf(r, "Failed to publish cancel event for migration %s before deletion: %v", id, err)
+		api.logf(r, "Failed to publish cancel event for migration %s before deletion: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	err = db.DeleteMigrationCascade(s.db, id)
-	if err != nil {
-		s.logf(r, "Error deleting migration %s: %v\n", id, err)
+	if err := db.DeleteMigrationCascade(api.db, id); err != nil {
+		api.logf(r, "Error deleting migration %s: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	err = db.DeleteSchedulesForTask(s.db, "migration", id)
-	if err != nil {
-		s.logf(r, "Warning: failed to delete schedules for migration %s: %v\n", id, err)
+	if err := db.DeleteSchedulesForTask(api.db, "migration", id); err != nil {
+		api.logf(r, "Warning: failed to delete schedules for migration %s: %v\n", id, err)
 	}
 
-	s.writeAudit(r, db.AuditMigrationDeleted, id, userID, nil)
+	api.writeAudit(r, db.AuditMigrationDeleted, id, userID, nil)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
+func (api *migrationAPI) loadOwnedMigration(w http.ResponseWriter, r *http.Request, errorLabel string) (*db.Migration, bool) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
-		return
+		return nil, false
 	}
 
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
-		return
+		return nil, false
 	}
 
-	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
 		} else {
-			s.logf(r, "Error fetching migration %s: %v\n", id, err)
+			if errorLabel != "" {
+				api.logf(r, "%s %s: %v\n", errorLabel, id, err)
+			}
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 		}
-		return
+		return nil, false
 	}
 
 	if !mig.UserID.Valid || mig.UserID.String != userID {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
+		return nil, false
+	}
+
+	return mig, true
+}
+
+func (api *migrationAPI) handleGetStatus(w http.ResponseWriter, r *http.Request) {
+	mig, ok := api.loadOwnedMigration(w, r, "Error fetching migration")
+	if !ok {
 		return
 	}
 
-	payload := s.migrationDetailPayload(r.Context(), mig)
+	payload := api.migrationDetailPayload(r.Context(), mig)
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
+func (api *migrationAPI) handleDownloadReport(w http.ResponseWriter, r *http.Request) {
+	mig, ok := api.loadOwnedMigration(w, r, "Error fetching migration for report")
+	if !ok {
 		return
 	}
+	id := mig.ID
 
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-
-	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
+	tasks, err := db.GetFailedTasksForReport(api.db, id)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
-		} else {
-			s.logf(r, "Error fetching migration %s for report: %v\n", id, err)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-		}
-		return
-	}
-
-	if !mig.UserID.Valid || mig.UserID.String != userID {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
-		return
-	}
-
-	tasks, err := db.GetFailedTasksForReport(s.db, id)
-	if err != nil {
-		s.logf(r, "Download report error: failed to get report: %v\n", err)
+		api.logf(r, "Download report error: failed to get report: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1264,9 +1173,9 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
-	indexErrs, err := db.GetIndexingErrorsForReport(s.db, id)
+	indexErrs, err := db.GetIndexingErrorsForReport(api.db, id)
 	if err != nil {
-		s.logf(r, "Download report error: failed to get indexing errors: %v\n", err)
+		api.logf(r, "Download report error: failed to get indexing errors: %v\n", err)
 	} else {
 		for _, ie := range indexErrs {
 			_ = writer.Write([]string{
@@ -1297,34 +1206,19 @@ func sanitizeErrorListItems(items []db.ErrorListItem) {
 	}
 }
 
-func (s *APIServer) handleMigrationErrors(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
-		return
-	}
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	owned, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil {
-		s.logf(r, "Error checking migration %s error-list ownership: %v", id, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
+func (api *migrationAPI) handleMigrationErrors(w http.ResponseWriter, r *http.Request) {
+	id, _, ok := api.requireOwnedMigration(w, r)
+	if !ok {
 		return
 	}
 	limit, offset := parseErrorListPagination(r)
-	items, total, err := db.GetMigrationErrorsContext(r.Context(), s.db, id, limit, offset)
+	items, total, err := db.GetMigrationErrorsContext(r.Context(), api.db, id, limit, offset)
 	if err != nil {
-		s.logf(r, "Error fetching migration %s errors: %v", id, err)
+		api.logf(r, "Error fetching migration %s errors: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if mig, mErr := db.GetMigrationContext(r.Context(), s.db, id); mErr == nil {
+	if mig, mErr := db.GetMigrationContext(r.Context(), api.db, id); mErr == nil {
 		for i := range items {
 			if items[i].Kind == "transfer" && items[i].ResourceType == "files" {
 				items[i].Path = processor.ResolveTargetPath(items[i].ResourceType, items[i].Path, items[i].Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
@@ -1337,14 +1231,14 @@ func (s *APIServer) handleMigrationErrors(w http.ResponseWriter, r *http.Request
 
 // migrationDetailPayload is the canonical, sanitized live migration payload
 // shared by the detail API and its SSE stream.
-func (s *APIServer) migrationDetailPayload(ctx context.Context, mig *db.Migration) map[string]interface{} {
-	activeFiles, err := db.GetActiveTaskPaths(s.db, ctx, mig.ID)
+func (api *migrationAPI) migrationDetailPayload(ctx context.Context, mig *db.Migration) map[string]interface{} {
+	activeFiles, err := db.GetActiveTaskPaths(api.db, ctx, mig.ID)
 	if err != nil {
-		s.logfContext(ctx, "Migration detail active paths error for %s: %v", mig.ID, err)
+		api.logfContext(ctx, "Migration detail active paths error for %s: %v", mig.ID, err)
 		activeFiles = nil
 	}
 	if mig.Status == "VERIFYING" && len(activeFiles) == 0 {
-		verifyingFiles, vErr := db.GetVerifyingTaskPaths(s.db, ctx, mig.ID)
+		verifyingFiles, vErr := db.GetVerifyingTaskPaths(api.db, ctx, mig.ID)
 		if vErr == nil && len(verifyingFiles) > 0 {
 			activeFiles = verifyingFiles
 		}
@@ -1384,36 +1278,50 @@ func (s *APIServer) migrationDetailPayload(ctx context.Context, mig *db.Migratio
 		payload["error_message"] = sanitize.SanitizeError(mig.ErrorMessage.String)
 	}
 
-	stats, err := db.GetMigrationResourceStats(s.db, mig.ID)
+	stats, err := db.GetMigrationResourceStats(api.db, mig.ID)
 	if err != nil {
-		s.logfContext(ctx, "Migration detail resource stats error for %s: %v", mig.ID, err)
+		api.logfContext(ctx, "Migration detail resource stats error for %s: %v", mig.ID, err)
 		return payload
 	}
 	payload["resource_stats"] = stats
 	return payload
 }
 
-// acquireStream applies the shared SSE request and concurrent-stream limits.
-// All stream types intentionally consume the same per-user pool.
-func (s *APIServer) acquireStream(w http.ResponseWriter, r *http.Request, userID, rateLimitScope string) bool {
-	if !s.rateLimiter.Allow(r.Context(), rateLimitScope, s.clientIP(r), streamRateLimit, streamRateWindow) {
+func acquireStreamLease(
+	w http.ResponseWriter,
+	r *http.Request,
+	limiter rateLimiter,
+	clientIP string,
+	pool streamSlotPool,
+	userID, rateLimitScope string,
+) bool {
+	if limiter == nil || !limiter.Allow(r.Context(), rateLimitScope, clientIP, streamRateLimit, streamRateWindow) {
 		w.Header().Set("Retry-After", "15")
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return false
 	}
-	s.streamMu.Lock()
-	defer s.streamMu.Unlock()
-	if s.activeStreams[userID] >= maxStreamsPerUser {
+	if pool == nil || !pool.Acquire(userID) {
 		w.Header().Set("Retry-After", "15")
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return false
 	}
-	s.activeStreams[userID]++
 	return true
 }
 
-func (s *APIServer) acquireMigrationStream(w http.ResponseWriter, r *http.Request, userID string) bool {
-	return s.acquireStream(w, r, userID, "migration-stream")
+// acquireStream applies the shared SSE request and concurrent-stream limits.
+// All stream types intentionally consume the same per-user pool.
+func (s *APIServer) acquireStream(w http.ResponseWriter, r *http.Request, userID, rateLimitScope string) bool {
+	return acquireStreamLease(w, r, s.rateLimiter, s.clientIP(r), s.streamPool(), userID, rateLimitScope)
+}
+
+func (api *migrationAPI) acquireMigrationStream(w http.ResponseWriter, r *http.Request, userID string) bool {
+	return acquireStreamLease(w, r, api.rateLimiter, api.clientIP(r), api.streamPool, userID, "migration-stream")
+}
+
+func (api *migrationAPI) releaseMigrationStream(userID string) {
+	if api.streamPool != nil {
+		api.streamPool.Release(userID)
+	}
 }
 
 func (s *APIServer) acquireSyncStream(w http.ResponseWriter, r *http.Request, userID string) bool {
@@ -1421,16 +1329,7 @@ func (s *APIServer) acquireSyncStream(w http.ResponseWriter, r *http.Request, us
 }
 
 func (s *APIServer) releaseStream(userID string) {
-	s.streamMu.Lock()
-	defer s.streamMu.Unlock()
-	s.activeStreams[userID]--
-	if s.activeStreams[userID] <= 0 {
-		delete(s.activeStreams, userID)
-	}
-}
-
-func (s *APIServer) releaseMigrationStream(userID string) {
-	s.releaseStream(userID)
+	s.streamPool().Release(userID)
 }
 
 // releaseSyncStream mirrors acquireSyncStream. Both stream types use the same
@@ -1448,22 +1347,22 @@ func isTerminalMigrationStatus(status string) bool {
 	return status == "COMPLETED" || status == "COMPLETED_WITH_ERRORS" || status == "FAILED"
 }
 
-func (s *APIServer) handleMigrationDetailStream(w http.ResponseWriter, r *http.Request) {
+func (api *migrationAPI) handleMigrationDetailStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	if !s.acquireMigrationStream(w, r, userID) {
+	if !api.acquireMigrationStream(w, r, userID) {
 		return
 	}
-	defer s.releaseMigrationStream(userID)
+	defer api.releaseMigrationStream(userID)
 
-	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
@@ -1487,7 +1386,7 @@ func (s *APIServer) handleMigrationDetailStream(w http.ResponseWriter, r *http.R
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1500,12 +1399,12 @@ func (s *APIServer) handleMigrationDetailStream(w http.ResponseWriter, r *http.R
 		return nil
 	}
 	writePayload := func(migration *db.Migration) ([]byte, error) {
-		return json.Marshal(s.migrationDetailPayload(r.Context(), migration))
+		return json.Marshal(api.migrationDetailPayload(r.Context(), migration))
 	}
 
 	previous, err := writePayload(mig)
 	if err != nil {
-		s.logf(r, "Migration detail stream initial payload error for %s: %v", id, err)
+		api.logf(r, "Migration detail stream initial payload error for %s: %v", id, err)
 		return
 	}
 	if err := writeEvent(previous); err != nil {
@@ -1530,13 +1429,13 @@ func (s *APIServer) handleMigrationDetailStream(w http.ResponseWriter, r *http.R
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			mig, err := db.GetMigrationContext(r.Context(), s.db, id)
+			mig, err := db.GetMigrationContext(r.Context(), api.db, id)
 			if err != nil {
 				return
 			}
 			current, err := writePayload(mig)
 			if err != nil {
-				s.logf(r, "Migration detail stream payload error for %s: %v", id, err)
+				api.logf(r, "Migration detail stream payload error for %s: %v", id, err)
 				return
 			}
 			if !bytes.Equal(current, previous) {
