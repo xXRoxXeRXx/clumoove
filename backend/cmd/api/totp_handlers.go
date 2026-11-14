@@ -61,67 +61,12 @@ func (api *accountAPI) handleTOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lockout must be checked BEFORE validating the code to avoid leaking
-	// attempt state via timing/responses. The lockout timestamp is already
-	// loaded by GetUserByID above, so no extra query is needed.
-	lockedUntil := u.TotpLockedUntil
-	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
-		retryAfter := int(time.Until(lockedUntil.Time).Seconds())
-		if retryAfter < 1 {
-			retryAfter = 1
-		}
-		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+	if !api.verifySecondFactor(w, r, u, req.Code, "handleTOTP", http.StatusUnauthorized) {
 		return
 	}
 
-	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, api.encryptionKey, crypto.DomainTOTPSecret)
-	if err != nil {
-		api.logf(r, "handleTOTP: failed to decrypt secret for user %s: %v\n", u.ID, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-
-	valid := totp2fa.Validate(secret, req.Code)
-	backupCodeConsumed := false
-	if !valid {
-		backupCodeConsumed, err = consumeTOTPBackupCode(r.Context(), api.db, u, req.Code)
-		if err != nil {
-			api.logf(r, "handleTOTP: failed to consume backup code for user %s: %v\n", u.ID, err)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
-		// A false result is either an invalid backup code or one another request
-		// already consumed; intentionally account for both as authentication failures.
-		valid = backupCodeConsumed
-	}
-
-	if !valid {
-		locked, lerr := db.IncrementTOTPFailed(api.db, u.ID, totpMaxAttempts, totpLockDuration)
-		if lerr != nil {
-			api.logf(r, "handleTOTP: failed to increment attempts for user %s: %v\n", u.ID, lerr)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
-		if locked {
-			w.Header().Set("Retry-After", strconv.Itoa(int(totpLockDuration.Seconds())))
-			writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-			return
-		}
-		writeError(w, http.StatusUnauthorized, ErrTotpInvalidCode)
-		return
-	}
-
-	// Success: clear failed attempts/lockout. Account state can change while a
-	// 2FA session is pending, so never mint an access token for an account that
-	// now requires a password rotation.
-	if !backupCodeConsumed {
-		if err := db.ResetTOTPFailed(api.db, u.ID); err != nil {
-			api.logf(r, "handleTOTP: failed to reset attempts for user %s: %v\n", u.ID, err)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
-	}
+	// Account state can change while a 2FA session is pending, so never mint an
+	// access token for an account that now requires a password rotation.
 	if u.MustChangePassword {
 		mustToken, err := auth.GenerateMustChangePasswordToken(u, api.jwtSecret)
 		if err != nil {
@@ -321,58 +266,8 @@ func (api *accountAPI) handle2FADisable(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	lockedUntil := u.TotpLockedUntil
-	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
-		retryAfter := int(time.Until(lockedUntil.Time).Seconds())
-		if retryAfter < 1 {
-			retryAfter = 1
-		}
-		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+	if !api.verifySecondFactor(w, r, u, req.Code, "handle2FADisable", http.StatusBadRequest) {
 		return
-	}
-
-	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, api.encryptionKey, crypto.DomainTOTPSecret)
-	if err != nil {
-		api.logf(r, "handle2FADisable: failed to decrypt secret for user %s: %v\n", userID, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-
-	valid := totp2fa.Validate(secret, req.Code)
-	usedBackupCode := false
-	if !valid {
-		usedBackupCode, err = consumeTOTPBackupCode(r.Context(), api.db, u, req.Code)
-		if err != nil {
-			api.logf(r, "handle2FADisable: failed to consume backup code for user %s: %v\n", u.ID, err)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
-		valid = usedBackupCode
-	}
-
-	if !valid {
-		locked, lerr := db.IncrementTOTPFailed(api.db, u.ID, totpMaxAttempts, totpLockDuration)
-		if lerr != nil {
-			api.logf(r, "handle2FADisable: failed to increment attempts for user %s: %v\n", u.ID, lerr)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
-		if locked {
-			w.Header().Set("Retry-After", strconv.Itoa(int(totpLockDuration.Seconds())))
-			writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-			return
-		}
-		writeError(w, http.StatusBadRequest, ErrTotpInvalidCode)
-		return
-	}
-
-	if !usedBackupCode {
-		if err := db.ResetTOTPFailed(api.db, u.ID); err != nil {
-			api.logf(r, "handle2FADisable: failed to reset attempts for user %s: %v\n", u.ID, err)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
 	}
 
 	if err := db.DisableUserTOTP(api.db, userID); err != nil {
@@ -401,6 +296,73 @@ func (api *accountAPI) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"totp_enabled": u.TotpEnabled})
+}
+
+// verifySecondFactor checks a TOTP code or single-use backup code for u and
+// enforces the shared failed-attempt lockout. The lockout is checked before the
+// code so a locked account leaks no attempt state via timing or responses. A
+// wrong code counts toward the lockout and is rejected with invalidStatus; a
+// valid TOTP code clears the counter. On failure the response has already been
+// written and false is returned.
+func (api *accountAPI) verifySecondFactor(w http.ResponseWriter, r *http.Request, u *db.User, code, operation string, invalidStatus int) bool {
+	lockedUntil := u.TotpLockedUntil
+	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
+		retryAfter := int(time.Until(lockedUntil.Time).Seconds())
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return false
+	}
+
+	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, api.encryptionKey, crypto.DomainTOTPSecret)
+	if err != nil {
+		api.logf(r, "%s: failed to decrypt secret for user %s: %v\n", operation, u.ID, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return false
+	}
+
+	valid := totp2fa.Validate(secret, code)
+	usedBackupCode := false
+	if !valid {
+		usedBackupCode, err = consumeTOTPBackupCode(r.Context(), api.db, u, code)
+		if err != nil {
+			api.logf(r, "%s: failed to consume backup code for user %s: %v\n", operation, u.ID, err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return false
+		}
+		// A false result is either an invalid backup code or one another request
+		// already consumed; intentionally account for both as authentication failures.
+		valid = usedBackupCode
+	}
+
+	if !valid {
+		locked, lerr := db.IncrementTOTPFailed(api.db, u.ID, totpMaxAttempts, totpLockDuration)
+		if lerr != nil {
+			api.logf(r, "%s: failed to increment attempts for user %s: %v\n", operation, u.ID, lerr)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return false
+		}
+		if locked {
+			w.Header().Set("Retry-After", strconv.Itoa(int(totpLockDuration.Seconds())))
+			writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+			return false
+		}
+		writeError(w, invalidStatus, ErrTotpInvalidCode)
+		return false
+	}
+
+	// Backup codes are single-use and consumed atomically; only a TOTP code
+	// clears the failed-attempt counter.
+	if !usedBackupCode {
+		if err := db.ResetTOTPFailed(api.db, u.ID); err != nil {
+			api.logf(r, "%s: failed to reset attempts for user %s: %v\n", operation, u.ID, err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return false
+		}
+	}
+	return true
 }
 
 // consumeTOTPBackupCode verifies a backup code against the user's loaded hashes
