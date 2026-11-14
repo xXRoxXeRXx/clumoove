@@ -452,7 +452,11 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 					// Recovery owns the execution transition, but incomplete discovery
 					// must be restarted by a fenced indexer before reconciliation can
 					// complete the migration.
-					go p.indexer.Start(ctx, id)
+					p.recoveredIndexers.Add(1)
+					go func() {
+						defer p.recoveredIndexers.Done()
+						p.indexer.Start(ctx, id)
+					}()
 				}
 			} else {
 				processorLogf("[RecoveryScheduler] Did not resume migration %s because its status changed", id)

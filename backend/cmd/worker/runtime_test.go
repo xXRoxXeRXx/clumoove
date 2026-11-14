@@ -3,14 +3,15 @@ package main
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
 
-func TestCoordinatorSupervisorTreatsLoopErrorAsTerminalFailure(t *testing.T) {
+func TestLoopSupervisorTreatsLoopErrorAsTerminalFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	supervisor := newCoordinatorSupervisor(cancel)
+	supervisor := newLoopSupervisor(cancel)
 
 	supervisor.Go(ctx, "restore", func(context.Context) error { return errors.New("poll exploded") })
 	supervisor.Wait()
@@ -18,37 +19,37 @@ func TestCoordinatorSupervisorTreatsLoopErrorAsTerminalFailure(t *testing.T) {
 	select {
 	case <-ctx.Done():
 	default:
-		t.Fatal("worker context was not cancelled after coordinator failure")
+		t.Fatal("worker context was not cancelled after loop failure")
 	}
 	err := supervisor.Err()
 	if err == nil {
 		t.Fatal("Err() = nil, want terminal failure")
 	}
-	var failure *coordinatorFailure
+	var failure *loopFailure
 	if !errors.As(err, &failure) || failure.Name != "restore" {
-		t.Fatalf("Err() = %v, want coordinatorFailure for restore", err)
+		t.Fatalf("Err() = %v, want loopFailure for restore", err)
 	}
 }
 
-func TestCoordinatorSupervisorTreatsUnexpectedNilReturnAsFailure(t *testing.T) {
+func TestLoopSupervisorTreatsUnexpectedNilReturnAsFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	supervisor := newCoordinatorSupervisor(cancel)
+	supervisor := newLoopSupervisor(cancel)
 
 	supervisor.Go(ctx, "backup", func(context.Context) error { return nil })
 	supervisor.Wait()
 
 	if supervisor.Err() == nil {
-		t.Fatal("coordinator returning nil without shutdown was not reported")
+		t.Fatal("loop returning nil without shutdown was not reported")
 	}
 	if ctx.Err() == nil {
-		t.Fatal("worker context was not cancelled after coordinator exit")
+		t.Fatal("worker context was not cancelled after loop exit")
 	}
 }
 
-func TestCoordinatorSupervisorTreatsShutdownCancellationAsCleanStop(t *testing.T) {
+func TestLoopSupervisorTreatsShutdownCancellationAsCleanStop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	supervisor := newCoordinatorSupervisor(cancel)
+	supervisor := newLoopSupervisor(cancel)
 	started := make(chan struct{})
 
 	supervisor.Go(ctx, "backup", func(ctx context.Context) error {
@@ -65,9 +66,9 @@ func TestCoordinatorSupervisorTreatsShutdownCancellationAsCleanStop(t *testing.T
 	}
 }
 
-func TestCoordinatorSupervisorReportsNonCancellationErrorDuringShutdown(t *testing.T) {
+func TestLoopSupervisorReportsNonCancellationErrorDuringShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	supervisor := newCoordinatorSupervisor(cancel)
+	supervisor := newLoopSupervisor(cancel)
 	started := make(chan struct{})
 
 	supervisor.Go(ctx, "restore", func(ctx context.Context) error {
@@ -79,16 +80,16 @@ func TestCoordinatorSupervisorReportsNonCancellationErrorDuringShutdown(t *testi
 	cancel()
 	supervisor.Wait()
 
-	var failure *coordinatorFailure
+	var failure *loopFailure
 	if err := supervisor.Err(); !errors.As(err, &failure) || failure.Name != "restore" {
 		t.Fatalf("Err() = %v, want failure: a real error is not cancellation even during shutdown", err)
 	}
 }
 
-func TestCoordinatorSupervisorTreatsLoopOwnCancellationAsFailure(t *testing.T) {
+func TestLoopSupervisorTreatsLoopOwnCancellationAsFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	supervisor := newCoordinatorSupervisor(cancel)
+	supervisor := newLoopSupervisor(cancel)
 
 	supervisor.Go(ctx, "backup", func(context.Context) error { return context.Canceled })
 	supervisor.Wait()
@@ -98,10 +99,10 @@ func TestCoordinatorSupervisorTreatsLoopOwnCancellationAsFailure(t *testing.T) {
 	}
 }
 
-func TestCoordinatorSupervisorStopsSiblingsAndKeepsFirstFailure(t *testing.T) {
+func TestLoopSupervisorStopsSiblingsAndKeepsFirstFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	supervisor := newCoordinatorSupervisor(cancel)
+	supervisor := newLoopSupervisor(cancel)
 	siblingRunning := make(chan struct{})
 
 	supervisor.Go(ctx, "backup", func(ctx context.Context) error {
@@ -117,10 +118,10 @@ func TestCoordinatorSupervisorStopsSiblingsAndKeepsFirstFailure(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("sibling coordinator was not stopped after failure")
+		t.Fatal("sibling loop was not stopped after failure")
 	}
 
-	var failure *coordinatorFailure
+	var failure *loopFailure
 	if err := supervisor.Err(); !errors.As(err, &failure) || failure.Name != "restore" {
 		t.Fatalf("Err() = %v, want first failure from restore", err)
 	}
@@ -131,7 +132,7 @@ func blockUntilCancelled(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func TestServeWorkerExitsNonZeroAfterDrainAndReleasesLeaseWhenCoordinatorFails(t *testing.T) {
+func TestRunWorkerExitsNonZeroAfterDrainAndReleasesLeaseWhenLoopFails(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var events []string
@@ -141,9 +142,9 @@ func TestServeWorkerExitsNonZeroAfterDrainAndReleasesLeaseWhenCoordinatorFails(t
 	}
 	release := func() { events = append(events, "released") }
 
-	code := serveWorker(ctx, cancel, drain, release,
-		coordinatorLoop{name: "backup", run: blockUntilCancelled},
-		coordinatorLoop{name: "restore", run: func(context.Context) error { return errors.New("poll exploded") }},
+	code := runWorker(ctx, cancel, drain, release,
+		backgroundLoop{name: "backup", run: blockUntilCancelled},
+		backgroundLoop{name: "restore", run: func(context.Context) error { return errors.New("poll exploded") }},
 	)
 
 	if code != 1 {
@@ -154,7 +155,7 @@ func TestServeWorkerExitsNonZeroAfterDrainAndReleasesLeaseWhenCoordinatorFails(t
 	}
 }
 
-func TestServeWorkerExitsZeroOnGracefulCancellation(t *testing.T) {
+func TestRunWorkerExitsZeroOnGracefulCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	released := false
 	drain := func(ctx context.Context) { <-ctx.Done() }
@@ -163,9 +164,9 @@ func TestServeWorkerExitsZeroOnGracefulCancellation(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
 	}()
-	code := serveWorker(ctx, cancel, drain, func() { released = true },
-		coordinatorLoop{name: "backup", run: blockUntilCancelled},
-		coordinatorLoop{name: "restore", run: blockUntilCancelled},
+	code := runWorker(ctx, cancel, drain, func() { released = true },
+		backgroundLoop{name: "backup", run: blockUntilCancelled},
+		backgroundLoop{name: "restore", run: blockUntilCancelled},
 	)
 
 	if code != 0 {
@@ -173,5 +174,62 @@ func TestServeWorkerExitsZeroOnGracefulCancellation(t *testing.T) {
 	}
 	if !released {
 		t.Fatal("lease was not released after graceful shutdown")
+	}
+}
+
+func TestRunWorkerWaitsForSlowLoopBeforeReleasingLease(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var mu sync.Mutex
+	var events []string
+	record := func(event string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, event)
+	}
+	drain := func(ctx context.Context) { <-ctx.Done() }
+	slow := func(ctx context.Context) error {
+		<-ctx.Done()
+		time.Sleep(50 * time.Millisecond)
+		record("slow-loop-stopped")
+		return ctx.Err()
+	}
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+	code := runWorker(ctx, cancel, drain, func() { record("released") },
+		backgroundLoop{name: "scheduler", run: slow},
+		backgroundLoop{name: "notifier", run: blockUntilCancelled},
+	)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 2 || events[0] != "slow-loop-stopped" || events[1] != "released" {
+		t.Fatalf("events = %v, want slow loop to finish before the lease is released", events)
+	}
+}
+
+func TestRunWorkerStopsLoopsWhenDrainReturnsWithoutCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	loopStopped := false
+
+	code := runWorker(ctx, cancel, func(context.Context) {}, func() {},
+		backgroundLoop{name: "scheduler", run: func(ctx context.Context) error {
+			<-ctx.Done()
+			loopStopped = true
+			return ctx.Err()
+		}},
+	)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0: loops stopping because the drain finished is not a failure", code)
+	}
+	if !loopStopped {
+		t.Fatal("loop was not stopped and awaited after the drain returned")
 	}
 }

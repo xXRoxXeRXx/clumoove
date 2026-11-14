@@ -54,6 +54,7 @@ type Processor struct {
 	migrationVerificationQueue chan verificationWork
 	syncVerificationQueue      chan verificationWork
 	verificationWG             sync.WaitGroup
+	recoveredIndexers          sync.WaitGroup
 	providerSlots              chan struct{}
 	// notifyDSN is the raw PostgreSQL DSN used to open a dedicated LISTEN
 	// connection for pg_notify-based wake-up (see ListenForTasks in queue).
@@ -576,7 +577,92 @@ func (p *Processor) clearConnLossTask(taskID string) {
 	p.connLossTaskAttempts.Delete(taskID)
 }
 
-// Start runs the worker dequeue loop and background schedulers
+// BackgroundLoop is a named long-running loop owned by the Processor but run
+// and supervised by the worker runtime, so every worker-owned goroutine shares
+// one cancellation lifecycle and is awaited before the process exits. A loop
+// must return only when its context is cancelled.
+type BackgroundLoop struct {
+	Name string
+	Run  func(ctx context.Context) error
+}
+
+// BackgroundLoops returns the schedulers, notifiers, and control-channel
+// subscribers that run alongside the transfer workers started by Start.
+func (p *Processor) BackgroundLoops() []BackgroundLoop {
+	loop := func(name string, run func(ctx context.Context)) BackgroundLoop {
+		return BackgroundLoop{Name: name, Run: func(ctx context.Context) error {
+			run(ctx)
+			return nil
+		}}
+	}
+	return []BackgroundLoop{
+		loop("worker_liveness", p.RunWorkerLiveness),
+		loop("abandoned_worker_cleanup", p.RunAbandonedWorkerCleanup),
+		loop("retry_scheduler", p.RunRetryScheduler),
+		loop("connection_recovery", func(ctx context.Context) {
+			p.RunConnectionRecoveryScheduler(ctx)
+			// Indexers the scheduler restarted share its lifetime.
+			p.recoveredIndexers.Wait()
+		}),
+		loop("orphaned_task_recovery", p.RunOrphanedRunningTasksRecovery),
+		loop("notifier", p.RunNotifier),
+		loop("progress_reconciler", p.RunProgressReconciler),
+		loop("checksum_verifier", p.RunChecksumVerifier),
+		loop("migration_cancel_events", func(ctx context.Context) {
+			p.queue.SubscribeToCancelEvents(ctx, p.handleMigrationCancelEvent)
+		}),
+		loop("sync_cancel_events", func(ctx context.Context) {
+			p.queue.SubscribeToSyncCancelEvents(ctx, p.handleSyncCancelEvent)
+		}),
+		loop("bandwidth_events", func(ctx context.Context) {
+			p.queue.SubscribeToBandwidthChanges(ctx, p.handleBandwidthEvent)
+		}),
+	}
+}
+
+func (p *Processor) handleMigrationCancelEvent(migrationID string) {
+	processorLogf("[Worker %s] Received Cancel Event for Migration: %s\n", p.workerID, migrationID)
+	p.activeTasks.Range(func(key, value interface{}) bool {
+		info, ok := value.(activeTaskInfo)
+		if ok && info.migrationID == migrationID {
+			processorLogf("[Worker %s] Cancelling active stream for task: %s\n", p.workerID, key)
+			info.cancel()
+		}
+		return true
+	})
+}
+
+// Sync transfers have their own control channel because their lifecycle is
+// coordinated by the sync engine rather than the migration processor.
+func (p *Processor) handleSyncCancelEvent(event queue.SyncCancelEvent) {
+	processorLogf("[Worker %s] Received Cancel Event for Sync Job: %s generation %d\n", p.workerID, event.SyncJobID, event.PassGeneration)
+	p.activeTasks.Range(func(key, value interface{}) bool {
+		info, ok := value.(activeTaskInfo)
+		if ok && info.syncJobID == event.SyncJobID && (event.AllGenerations || info.syncGeneration == event.PassGeneration) {
+			processorLogf("[Worker %s] Cancelling active sync stream for task: %s\n", p.workerID, key)
+			info.cancel()
+		}
+		return true
+	})
+}
+
+func (p *Processor) handleBandwidthEvent(event queue.BandwidthEvent) {
+	jobID := event.MigrationID
+	jobType := "migration"
+	if event.SyncJobID != "" {
+		jobID = event.SyncJobID
+		jobType = "sync job"
+	}
+	processorLogf("[Worker %s] Bandwidth change for %s %s: %d Mbps",
+		p.workerID, jobType, jobID, event.BandwidthLimitMbps)
+	if throttler, ok := p.throttlers.Load(jobID); ok {
+		throttler.(*throttle.MigrationThrottler).SetLimit(event.BandwidthLimitMbps)
+	}
+}
+
+// Start runs the worker dequeue loop and blocks until ctx is cancelled and all
+// in-flight tasks have finished. Background schedulers are not started here;
+// the worker runtime runs them from BackgroundLoops.
 func (p *Processor) Start(ctx context.Context) {
 	processorLogf("[Worker %s] Started and waiting for tasks with max %d threads...\n", p.workerID, p.maxThreads)
 
@@ -586,58 +672,6 @@ func (p *Processor) Start(ctx context.Context) {
 	}
 
 	p.startVerificationDispatcher(ctx)
-
-	// Spawn background schedulers
-	go p.RunWorkerLiveness(ctx)
-	go p.RunAbandonedWorkerCleanup(ctx)
-	go p.RunRetryScheduler(ctx)
-	go p.RunConnectionRecoveryScheduler(ctx)
-	go p.RunOrphanedRunningTasksRecovery(ctx)
-	go p.RunNotifier(ctx)
-	go p.RunProgressReconciler(ctx)
-	go p.RunChecksumVerifier(ctx)
-
-	// Start Cancel Listener
-	go p.queue.SubscribeToCancelEvents(ctx, func(migrationID string) {
-		processorLogf("[Worker %s] Received Cancel Event for Migration: %s\n", p.workerID, migrationID)
-		p.activeTasks.Range(func(key, value interface{}) bool {
-			info, ok := value.(activeTaskInfo)
-			if ok && info.migrationID == migrationID {
-				processorLogf("[Worker %s] Cancelling active stream for task: %s\n", p.workerID, key)
-				info.cancel()
-			}
-			return true
-		})
-	})
-
-	// Sync transfers have their own control channel because their lifecycle is
-	// coordinated by the sync engine rather than the migration processor.
-	go p.queue.SubscribeToSyncCancelEvents(ctx, func(event queue.SyncCancelEvent) {
-		processorLogf("[Worker %s] Received Cancel Event for Sync Job: %s generation %d\n", p.workerID, event.SyncJobID, event.PassGeneration)
-		p.activeTasks.Range(func(key, value interface{}) bool {
-			info, ok := value.(activeTaskInfo)
-			if ok && info.syncJobID == event.SyncJobID && (event.AllGenerations || info.syncGeneration == event.PassGeneration) {
-				processorLogf("[Worker %s] Cancelling active sync stream for task: %s\n", p.workerID, key)
-				info.cancel()
-			}
-			return true
-		})
-	})
-
-	// Start Bandwidth Change Listener
-	go p.queue.SubscribeToBandwidthChanges(ctx, func(event queue.BandwidthEvent) {
-		jobID := event.MigrationID
-		jobType := "migration"
-		if event.SyncJobID != "" {
-			jobID = event.SyncJobID
-			jobType = "sync job"
-		}
-		processorLogf("[Worker %s] Bandwidth change for %s %s: %d Mbps",
-			p.workerID, jobType, jobID, event.BandwidthLimitMbps)
-		if throttler, ok := p.throttlers.Load(jobID); ok {
-			throttler.(*throttle.MigrationThrottler).SetLimit(event.BandwidthLimitMbps)
-		}
-	})
 
 	// Start a PostgreSQL LISTEN watcher so idle threads can be woken up
 	// immediately when new tasks are inserted (pg_notify 'task_available').

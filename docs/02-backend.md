@@ -43,11 +43,13 @@ Key server struct fields: `db`, `queue`, `indexer`, `encryptionKey`, `jwtSecret`
 Responsibilities:
 
 - Initializes the same DB and Redis connections.
-- Builds a `processor.Processor` and calls `proc.Start(ctx)`.
-- Starts dedicated backup and restore coordinators in addition to the processor.
-- On `SIGINT`/`SIGTERM`, cancels the shared context. `proc.Start` drains transfer workers and the
-  verification dispatcher; the independently started backup and restore coordinators receive the same
-  cancellation but are not joined by the processor's wait group.
+- Builds a `processor.Processor` and the backup and restore coordinators, then hands them to the
+  runtime module (`cmd/worker/runtime.go`, `runWorker`).
+- The runtime runs `proc.Start(ctx)` (transfer workers and verification dispatcher) together with every
+  background loop: the coordinators and `Processor.BackgroundLoops()` (schedulers, notifier, verifier,
+  control-channel subscribers) under one shared context.
+- On `SIGINT`/`SIGTERM`, cancels the shared context. `runWorker` waits for the processor drain and every
+  loop to stop, then releases the worker lease; a loop that stops early is a terminal failure (exit 1).
 - Worker ID format: `worker-<hostname>-<pid>`.
 
 ---
