@@ -1,10 +1,32 @@
 package main
 
 import (
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+func TestAccountModuleSMTPAvailabilityRoutesReportInternalErrorWhenDatabaseFails(t *testing.T) {
+	database, err := sql.Open("postgres", "postgres://unused@127.0.0.1:1/unused?sslmode=disable")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	database.Close()
+
+	api := newAccountAPI(accountDependencies{db: database})
+	mux := http.NewServeMux()
+	noAuth := func(next http.Handler) http.Handler { return next }
+	api.registerRoutes(mux, noAuth, noAuth)
+
+	for _, path := range []string{"/api/auth/password-reset-available", "/api/auth/email-change-available"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			assertAPIResponseError(t, rec, http.StatusInternalServerError, ErrInternalError, path)
+		})
+	}
+}
 
 func TestAccountModuleRegistersAllRoutesWithExpectedAccessControls(t *testing.T) {
 	api := newAccountAPI(accountDependencies{

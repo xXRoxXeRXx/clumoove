@@ -106,10 +106,10 @@ func (api *accountAPI) routes() []routeSpec {
 		{pattern: "GET /api/auth/2fa/status", access: routeAuthenticated, handler: api.handle2FAStatus},
 
 		// Password reset and email change.
-		{pattern: "GET /api/auth/password-reset-available", access: routePublic, handler: api.handlePasswordResetAvailable},
+		{pattern: "GET /api/auth/password-reset-available", access: routePublic, handler: api.handleSMTPFeatureAvailable},
 		{pattern: "POST /api/auth/forgot-password", access: routePublic, handler: api.handleForgotPassword},
 		{pattern: "POST /api/auth/reset-password", access: routePublic, handler: api.handleResetPassword},
-		{pattern: "GET /api/auth/email-change-available", access: routePublic, handler: api.handleEmailChangeAvailable},
+		{pattern: "GET /api/auth/email-change-available", access: routePublic, handler: api.handleSMTPFeatureAvailable},
 		{pattern: "POST /api/auth/change-email", access: routeAuthenticated, handler: api.handleChangeEmail},
 		{pattern: "POST /api/auth/confirm-email-change", access: routePublic, handler: api.handleConfirmEmailChange},
 

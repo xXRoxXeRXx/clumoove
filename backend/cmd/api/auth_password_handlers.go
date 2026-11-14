@@ -18,7 +18,10 @@ import (
 	"backend/internal/email"
 )
 
-func (api *accountAPI) handlePasswordResetAvailable(w http.ResponseWriter, r *http.Request) {
+// handleSMTPFeatureAvailable reports whether instance SMTP is configured.
+// Password reset and email change both depend on outbound email, so their
+// availability endpoints share this handler.
+func (api *accountAPI) handleSMTPFeatureAvailable(w http.ResponseWriter, r *http.Request) {
 	available, err := db.IsInstanceSMTPConfigured(api.db)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -159,15 +162,6 @@ func (api *accountAPI) handleResetPassword(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
-}
-
-func (api *accountAPI) handleEmailChangeAvailable(w http.ResponseWriter, r *http.Request) {
-	available, err := db.IsInstanceSMTPConfigured(api.db)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"available": available})
 }
 
 func (api *accountAPI) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
