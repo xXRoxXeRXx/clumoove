@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -495,6 +496,16 @@ func TestBackupModuleVerificationLifecycleAndStream(t *testing.T) {
 		t.Fatalf("create verify body = %s err=%v", recCreate.Body.String(), err)
 	}
 	verifyID := createResp["id"]
+
+	// Creating another verify while one is active returns 400 BACKUP_VERIFY_INVALID.
+	assertAPIResponseError(t, performBackupModuleRequest(mux, http.MethodPost, "/api/backup/b-1/verify", "user-1", `{"mode":"METADATA"}`), http.StatusBadRequest, ErrBackupVerifyInvalid, "duplicate active verify")
+
+	// Empty backup ID on list verifies returns 400 BACKUP_ID_MISSING.
+	recMissingID := httptest.NewRecorder()
+	reqMissingID := httptest.NewRequest(http.MethodGet, "/api/backup//verify", nil)
+	reqMissingID.Header.Set("X-Test-User", "user-1")
+	headerAuthMiddleware(http.HandlerFunc(api.handleListBackupVerifies)).ServeHTTP(recMissingID, reqMissingID)
+	assertAPIResponseError(t, recMissingID, http.StatusBadRequest, ErrBackupIDMissing, "list verifies missing backup id")
 
 	// 2. List, get, and cross-backup isolation.
 	recList := performBackupModuleRequest(mux, http.MethodGet, "/api/backup/b-1/verify", "user-1", "")
@@ -1615,6 +1626,11 @@ func (s *backupModuleTestState) execQuery(query string, args []driver.NamedValue
 		j, ok := s.jobs[jobID]
 		if !ok || j.userID != userID || j.deletionState != "ACTIVE" {
 			return &backupProfileConnectionRows{columns: 1}, nil
+		}
+		for _, v := range s.verifies {
+			if v.backupJobID == jobID && v.kind == "VERIFY" && (v.state == "PENDING" || v.state == "RUNNING" || v.state == "RETRY_WAIT" || v.state == "CANCELLING") {
+				return nil, errors.New("idx_backup_maintenance_active_verify")
+			}
 		}
 		id := s.nextID("verify")
 		var budget sql.NullInt64

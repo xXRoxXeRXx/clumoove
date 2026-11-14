@@ -20,15 +20,19 @@ import (
 	"backend/internal/storage"
 )
 
+type backupScheduleAndTuning struct {
+	CronExpression string `json:"cron_expression"`
+	Timezone       string `json:"timezone"`
+	RetentionCount int    `json:"retention_count"`
+	Threads        int    `json:"threads"`
+}
+
 type createBackupRequest struct {
 	SourceProfileID string   `json:"source_profile_id"`
 	TargetProfileID string   `json:"target_profile_id"`
 	SelectedPaths   []string `json:"selected_paths"`
 	TargetDir       string   `json:"target_dir"`
-	CronExpression  string   `json:"cron_expression"`
-	Timezone        string   `json:"timezone"`
-	RetentionCount  int      `json:"retention_count"`
-	Threads         int      `json:"threads"`
+	backupScheduleAndTuning
 }
 
 type createRestorePreviewRequest struct {
@@ -98,12 +102,8 @@ func (api *backupAPI) handleListBackupSnapshots(w http.ResponseWriter, r *http.R
 	if !authenticated {
 		return
 	}
-	id := r.PathValue("id")
-	if id == "" {
-		writeValidationError(w, ErrBackupIDMissing)
-		return
-	}
-	if !api.requireBackupOwnership(w, r, id, userID) {
+	id, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
 		return
 	}
 	snapshots, err := db.ListVisibleBackupSnapshotsContext(r.Context(), api.db, id)
@@ -365,11 +365,8 @@ func (api *backupAPI) handleConsumeRestorePreview(w http.ResponseWriter, r *http
 			writeConflictError(w, ErrRestorePreviewExpired)
 		} else if errors.Is(err, db.ErrRestoreSnapshotUnavailable) || errors.Is(err, db.ErrRestorePreviewStale) || errors.Is(err, db.ErrRestoreRetryMismatch) {
 			writeConflictError(w, ErrRestorePreviewStale)
-		} else if errors.Is(err, db.ErrRestorePreviewInvalidState) || errors.Is(err, db.ErrRestoreRetryActive) {
-			writeConflictError(w, ErrRestorePreviewInvalidState)
 		} else {
-			api.logf(r, "consume restore preview failed: %v", err)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			writeConflictError(w, ErrRestorePreviewInvalidState)
 		}
 		return
 	}
@@ -559,24 +556,24 @@ func (api *backupAPI) requireOwnedBackupID(w http.ResponseWriter, r *http.Reques
 	return backupID, true
 }
 
-func validateBackupScheduleAndTuning(w http.ResponseWriter, cronExpr, timezone string, retentionCount, threads int) (time.Time, bool) {
-	if err := scheduler.ValidateCronExpression(cronExpr); err != nil {
+func validateBackupScheduleAndTuning(w http.ResponseWriter, cfg backupScheduleAndTuning) (time.Time, bool) {
+	if err := scheduler.ValidateCronExpression(cfg.CronExpression); err != nil {
 		writeValidationError(w, ErrBackupCronInvalid)
 		return time.Time{}, false
 	}
-	if _, err := time.LoadLocation(timezone); err != nil {
+	if _, err := time.LoadLocation(cfg.Timezone); err != nil {
 		writeValidationError(w, ErrBackupTimezoneInvalid)
 		return time.Time{}, false
 	}
-	if retentionCount < 1 || retentionCount > 365 {
+	if cfg.RetentionCount < 1 || cfg.RetentionCount > 365 {
 		writeValidationError(w, ErrBackupRetentionInvalid)
 		return time.Time{}, false
 	}
-	if threads < 1 || threads > 16 {
+	if cfg.Threads < 1 || cfg.Threads > 16 {
 		writeValidationError(w, ErrThreadsOutOfRange)
 		return time.Time{}, false
 	}
-	nextRun, err := scheduler.NextRunInLocation(cronExpr, timezone, time.Now())
+	nextRun, err := scheduler.NextRunInLocation(cfg.CronExpression, cfg.Timezone, time.Now())
 	if err != nil {
 		writeValidationError(w, ErrBackupCronInvalid)
 		return time.Time{}, false
@@ -715,7 +712,7 @@ func (api *backupAPI) handleCreateBackup(w http.ResponseWriter, r *http.Request)
 		writeValidationError(w, ErrBackupSourceTargetOverlap)
 		return
 	}
-	nextRun, valid := validateBackupScheduleAndTuning(w, req.CronExpression, req.Timezone, req.RetentionCount, req.Threads)
+	nextRun, valid := validateBackupScheduleAndTuning(w, req.backupScheduleAndTuning)
 	if !valid {
 		return
 	}
@@ -832,8 +829,7 @@ func (api *backupAPI) handleCreateBackupVerify(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err != nil {
-		api.logf(r, "create backup verify failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		writeValidationError(w, ErrBackupVerifyInvalid)
 		return
 	}
 	api.writeAudit(r, db.AuditRepositoryCheckCreated, id, userID, nil)
@@ -887,8 +883,8 @@ func (api *backupAPI) handleListBackupVerifies(w http.ResponseWriter, r *http.Re
 	if !authenticated {
 		return
 	}
-	backupID := r.PathValue("id")
-	if backupID == "" || !api.requireBackupOwnership(w, r, backupID, userID) {
+	backupID, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
 		return
 	}
 	checks, err := db.ListBackupVerifiesForOwnerContext(r.Context(), api.db, backupID, userID)
@@ -969,12 +965,8 @@ func (api *backupAPI) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	id := r.PathValue("id")
-	if id == "" {
-		writeValidationError(w, ErrBackupIDMissing)
-		return
-	}
-	if !api.requireBackupOwnership(w, r, id, userID) {
+	id, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
 		return
 	}
 	claim, err := db.ClaimBackupJobPassContext(r.Context(), api.db, id, "manual", nil)
@@ -1003,12 +995,8 @@ func (api *backupAPI) handleDeleteBackup(w http.ResponseWriter, r *http.Request)
 	if !authenticated {
 		return
 	}
-	id := r.PathValue("id")
-	if id == "" {
-		writeValidationError(w, ErrBackupIDMissing)
-		return
-	}
-	if !api.requireBackupOwnership(w, r, id, userID) {
+	id, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
 		return
 	}
 	started, err := db.RequestBackupRepositoryDeletionContext(r.Context(), api.db, id, userID)
@@ -1042,12 +1030,8 @@ func (api *backupAPI) handleBackupStateChange(w http.ResponseWriter, r *http.Req
 	if !authenticated {
 		return
 	}
-	id := r.PathValue("id")
-	if id == "" {
-		writeValidationError(w, ErrBackupIDMissing)
-		return
-	}
-	if !api.requireBackupOwnership(w, r, id, userID) {
+	id, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
 		return
 	}
 	tx, err := api.db.BeginTx(r.Context(), nil)
@@ -1198,12 +1182,8 @@ func (api *backupAPI) handleListBackupRuns(w http.ResponseWriter, r *http.Reques
 	if !authenticated {
 		return
 	}
-	id := r.PathValue("id")
-	if id == "" {
-		writeValidationError(w, ErrBackupIDMissing)
-		return
-	}
-	if !api.requireBackupOwnership(w, r, id, userID) {
+	id, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
 		return
 	}
 	runs, err := db.ListBackupRunsForOwnerContext(r.Context(), api.db, id, userID)
@@ -1218,12 +1198,7 @@ func (api *backupAPI) handleListBackupRuns(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, runs)
 }
 
-type updateBackupRequest struct {
-	CronExpression string `json:"cron_expression"`
-	Timezone       string `json:"timezone"`
-	RetentionCount int    `json:"retention_count"`
-	Threads        int    `json:"threads"`
-}
+type updateBackupRequest = backupScheduleAndTuning
 
 func (api *backupAPI) handleUpdateBackup(w http.ResponseWriter, r *http.Request) {
 	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
@@ -1234,12 +1209,8 @@ func (api *backupAPI) handleUpdateBackup(w http.ResponseWriter, r *http.Request)
 	if !authenticated {
 		return
 	}
-	id := r.PathValue("id")
-	if id == "" {
-		writeValidationError(w, ErrBackupIDMissing)
-		return
-	}
-	if !api.requireBackupOwnership(w, r, id, userID) {
+	id, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
 		return
 	}
 
@@ -1248,7 +1219,7 @@ func (api *backupAPI) handleUpdateBackup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	nextRun, valid := validateBackupScheduleAndTuning(w, req.CronExpression, req.Timezone, req.RetentionCount, req.Threads)
+	nextRun, valid := validateBackupScheduleAndTuning(w, req)
 	if !valid {
 		return
 	}
