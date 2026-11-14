@@ -178,18 +178,24 @@ func (server *APIServer) buildMux(overrideHandler http.HandlerFunc) *http.ServeM
 	migrations := server.migrations()
 	syncs := server.syncs()
 	backups := server.backups()
+	admin := server.administration()
+	notifications := server.notifications()
 	if overrideHandler == nil {
 		accounts.registerRoutes(mux, jwtMiddleware, allowMustChangeMiddleware)
 		files.registerRoutes(mux, jwtMiddleware)
 		migrations.registerRoutes(mux, jwtMiddleware)
 		syncs.registerRoutes(mux, jwtMiddleware)
 		backups.registerRoutes(mux, jwtMiddleware)
+		admin.registerRoutes(mux, jwtMiddleware, adminRouteMiddleware)
+		notifications.registerRoutes(mux, jwtMiddleware)
 	} else {
 		accounts.registerRoutesWithHandler(mux, jwtMiddleware, allowMustChangeMiddleware, overrideHandler)
 		files.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 		migrations.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 		syncs.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 		backups.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
+		admin.registerRoutesWithHandler(mux, jwtMiddleware, adminRouteMiddleware, overrideHandler)
+		notifications.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 	}
 
 	return mux
@@ -244,21 +250,7 @@ func wrapRouteAccess(
 }
 
 func (server *APIServer) gatewayRoutes() []routeSpec {
-	notifications := newNotificationAPI(notificationDependencies{
-		db:            server.db,
-		encryptionKey: server.encryptionKey,
-		rateLimiter:   server.rateLimiter,
-		requireUserID: server.requireUserID,
-		clientIP:      server.clientIP,
-		writeAudit:    server.writeAudit,
-		logf:          server.logf,
-	})
-
-	routes := []routeSpec{
-		// Instance settings
-		{pattern: "GET /api/settings", access: routePublic, handler: server.handleGetSettings},
-		{pattern: "PUT /api/settings", access: routeAdmin, handler: server.handleUpdateSetting},
-
+	return []routeSpec{
 		// Schedule Management Routes (Protected)
 		{pattern: "GET /api/schedule", access: routeAuthenticated, handler: server.handleListSchedules},
 		{pattern: "GET /api/schedule/{id}", access: routeAuthenticated, handler: server.handleGetSchedule},
@@ -271,27 +263,5 @@ func (server *APIServer) gatewayRoutes() []routeSpec {
 		{pattern: "PUT /api/profiles/{id}", access: routeAuthenticated, handler: server.handleUpdateConnectionProfile},
 		{pattern: "DELETE /api/profiles/{id}", access: routeAuthenticated, handler: server.handleDeleteProfile},
 		{pattern: "POST /api/profiles/{id}/test", access: routeAuthenticated, handler: server.handleTestProfile},
-
-		// Administrative routes require both a current JWT and the ADMIN role.
-		{pattern: "POST /api/admin/users", access: routeAdmin, handler: server.handleAdminCreateUser},
-		{pattern: "POST /api/admin/users/{id}/suspend", access: routeAdmin, handler: server.handleAdminSuspendUser},
-		{pattern: "POST /api/admin/users/{id}/reactivate", access: routeAdmin, handler: server.handleAdminReactivateUser},
-		{pattern: "DELETE /api/admin/users/{id}", access: routeAdmin, handler: server.handleAdminDeleteUser},
-		{pattern: "PUT /api/admin/users/{id}/role", access: routeAdmin, handler: server.handleAdminUpdateRole},
-		{pattern: "GET /api/admin/users", access: routeAdmin, handler: server.handleAdminListUsers},
-		{pattern: "GET /api/admin/stats", access: routeAdmin, handler: server.handleAdminStats},
-		{pattern: "GET /api/admin/migrations", access: routeAdmin, handler: server.handleAdminListMigrations},
-		{pattern: "GET /api/admin/syncs", access: routeAdmin, handler: server.handleAdminListSyncs},
-		{pattern: "GET /api/admin/settings/smtp", access: routeAdmin, handler: server.handleAdminGetSMTP},
-		{pattern: "PUT /api/admin/settings/smtp", access: routeAdmin, handler: server.handleAdminPutSMTP},
-		{pattern: "POST /api/admin/settings/smtp/test", access: routeAdmin, handler: server.handleAdminTestSMTP},
-		{pattern: "DELETE /api/admin/settings/smtp", access: routeAdmin, handler: server.handleAdminDeleteSMTP},
-		{pattern: "GET /api/admin/settings/oauth", access: routeAdmin, handler: server.handleAdminGetOAuth},
-		{pattern: "PUT /api/admin/settings/oauth/{provider}", access: routeAdmin, handler: server.handleAdminPutOAuth},
-		{pattern: "DELETE /api/admin/settings/oauth/{provider}", access: routeAdmin, handler: server.handleAdminDeleteOAuth},
-		{pattern: "GET /api/audit/log", access: routeAdmin, handler: server.handleAdminAuditLog},
 	}
-
-	routes = append(routes, notifications.routes()...)
-	return routes
 }

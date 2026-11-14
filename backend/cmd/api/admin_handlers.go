@@ -12,10 +12,10 @@ import (
 	"backend/internal/oauth"
 )
 
-func (s *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	val, err := db.GetSetting(s.db, "registrations_enabled")
+func (api *adminAPI) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	val, err := db.GetSetting(api.db, "registrations_enabled")
 	if err != nil {
-		s.logf(r, "handleGetSettings: failed to fetch registrations_enabled: %v\n", err)
+		api.logf(r, "handleGetSettings: failed to fetch registrations_enabled: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -23,9 +23,9 @@ func (s *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		val = "false"
 	}
 
-	needsSetup, err := db.IsSetupRequired(s.db)
+	needsSetup, err := db.IsSetupRequired(api.db)
 	if err != nil {
-		s.logf(r, "handleGetSettings: failed to check setup status: %v\n", err)
+		api.logf(r, "handleGetSettings: failed to check setup status: %v\n", err)
 		needsSetup = false
 	}
 
@@ -42,8 +42,8 @@ type UpdateSettingRequest struct {
 	Value string `json:"value"`
 }
 
-func (s *APIServer) handleUpdateSetting(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.adminActorID(w, r)
+func (api *adminAPI) handleUpdateSetting(w http.ResponseWriter, r *http.Request) {
+	actor, ok := api.adminActorID(w, r)
 	if !ok {
 		return
 	}
@@ -63,18 +63,18 @@ func (s *APIServer) handleUpdateSetting(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := db.SetSetting(s.db, req.Key, req.Value); err != nil {
-		s.logf(r, "handleUpdateSetting: failed to set setting: %v\n", err)
+	if err := db.SetSetting(api.db, req.Key, req.Value); err != nil {
+		api.logf(r, "handleUpdateSetting: failed to set setting: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditSettingUpdated, req.Key, actor, map[string]interface{}{"value": req.Value})
+	api.writeAudit(r, db.AuditSettingUpdated, req.Key, actor, map[string]interface{}{"value": req.Value})
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (s *APIServer) adminActorID(w http.ResponseWriter, r *http.Request) (string, bool) {
+func (api *adminAPI) adminActorID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	claims, ok := r.Context().Value(auth.ClaimsKey).(*auth.Claims)
 	// Admin routes are wrapped by adminMiddleware; this repeats the role check
 	// as defense in depth for direct handler use or future route changes.
@@ -92,8 +92,8 @@ type AdminCreateUserRequest struct {
 	Role        string `json:"role"`
 }
 
-func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.adminActorID(w, r)
+func (api *adminAPI) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := api.adminActorID(w, r)
 	if !ok {
 		return
 	}
@@ -122,7 +122,7 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if _, err := db.GetUserByEmail(r.Context(), s.db, req.Email); err == nil {
+	if _, err := db.GetUserByEmail(r.Context(), api.db, req.Email); err == nil {
 		writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
 		return
 	}
@@ -133,18 +133,18 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	u, err := db.CreateUserWithRole(s.db, req.Email, passHash, req.DisplayName, req.Role, false, "en")
+	u, err := db.CreateUserWithRole(api.db, req.Email, passHash, req.DisplayName, req.Role, false, "en")
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
 			return
 		}
-		s.logf(r, "Admin create user error: %v\n", err)
+		api.logf(r, "Admin create user error: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditUserCreated, u.ID, actor, map[string]interface{}{
+	api.writeAudit(r, db.AuditUserCreated, u.ID, actor, map[string]interface{}{
 		"email": req.Email,
 		"role":  req.Role,
 	})
@@ -152,8 +152,8 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusCreated, userResponse(u))
 }
 
-func (s *APIServer) handleAdminSuspendUser(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.adminActorID(w, r)
+func (api *adminAPI) handleAdminSuspendUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := api.adminActorID(w, r)
 	if !ok {
 		return
 	}
@@ -169,20 +169,20 @@ func (s *APIServer) handleAdminSuspendUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	syncJobIDs, err := db.SuspendUser(s.db, id)
+	syncJobIDs, err := db.SuspendUser(api.db, id)
 	if err != nil {
 		if errors.Is(err, db.ErrLastActiveAdmin) {
 			writeError(w, http.StatusConflict, ErrLastAdmin)
 			return
 		}
-		s.logf(r, "Admin suspend %s error: %v\n", id, err)
+		api.logf(r, "Admin suspend %s error: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	var failedSyncCancelEvents []string
 	for _, syncJobID := range syncJobIDs {
-		if err := s.syncPass.Cancel(r.Context(), syncJobID); err != nil {
-			s.logf(r, "Warning: failed to publish cancel event for suspended user's sync job %s: %v", syncJobID, err)
+		if err := api.cancelSyncJob(r.Context(), syncJobID); err != nil {
+			api.logf(r, "Warning: failed to publish cancel event for suspended user's sync job %s: %v", syncJobID, err)
 			failedSyncCancelEvents = append(failedSyncCancelEvents, syncJobID)
 		}
 	}
@@ -191,7 +191,7 @@ func (s *APIServer) handleAdminSuspendUser(w http.ResponseWriter, r *http.Reques
 	if len(failedSyncCancelEvents) > 0 {
 		auditDetails = map[string]interface{}{"sync_cancel_event_failures": failedSyncCancelEvents}
 	}
-	s.writeAudit(r, db.AuditUserSuspended, id, actor, auditDetails)
+	api.writeAudit(r, db.AuditUserSuspended, id, actor, auditDetails)
 	response := map[string]interface{}{"success": true, "active": false}
 	if len(failedSyncCancelEvents) > 0 {
 		// Suspension is committed, but a worker may need manual intervention if
@@ -201,8 +201,8 @@ func (s *APIServer) handleAdminSuspendUser(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *APIServer) handleAdminReactivateUser(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.adminActorID(w, r)
+func (api *adminAPI) handleAdminReactivateUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := api.adminActorID(w, r)
 	if !ok {
 		return
 	}
@@ -213,18 +213,18 @@ func (s *APIServer) handleAdminReactivateUser(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := db.UpdateUserActive(s.db, id, true); err != nil {
-		s.logf(r, "Admin reactivate %s error: %v\n", id, err)
+	if err := db.UpdateUserActive(api.db, id, true); err != nil {
+		api.logf(r, "Admin reactivate %s error: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditUserReactivated, id, actor, nil)
+	api.writeAudit(r, db.AuditUserReactivated, id, actor, nil)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "active": true})
 }
 
-func (s *APIServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.adminActorID(w, r)
+func (api *adminAPI) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := api.adminActorID(w, r)
 	if !ok {
 		return
 	}
@@ -240,17 +240,17 @@ func (s *APIServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := db.DeleteUser(s.db, id); err != nil {
+	if err := db.DeleteUser(api.db, id); err != nil {
 		if errors.Is(err, db.ErrLastActiveAdmin) {
 			writeError(w, http.StatusConflict, ErrLastAdmin)
 			return
 		}
-		s.logf(r, "Admin delete %s error: %v\n", id, err)
+		api.logf(r, "Admin delete %s error: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditUserDeleted, id, actor, nil)
+	api.writeAudit(r, db.AuditUserDeleted, id, actor, nil)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -258,8 +258,8 @@ type AdminUpdateRoleRequest struct {
 	Role string `json:"role"`
 }
 
-func (s *APIServer) handleAdminUpdateRole(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.adminActorID(w, r)
+func (api *adminAPI) handleAdminUpdateRole(w http.ResponseWriter, r *http.Request) {
+	actor, ok := api.adminActorID(w, r)
 	if !ok {
 		return
 	}
@@ -280,7 +280,7 @@ func (s *APIServer) handleAdminUpdateRole(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	target, err := db.GetUserByIDContext(r.Context(), s.db, id)
+	target, err := db.GetUserByIDContext(r.Context(), api.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrUserNotFound)
 		return
@@ -298,25 +298,25 @@ func (s *APIServer) handleAdminUpdateRole(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	if err := db.UpdateUserRole(s.db, id, req.Role); err != nil {
+	if err := db.UpdateUserRole(api.db, id, req.Role); err != nil {
 		if errors.Is(err, db.ErrLastActiveAdmin) {
 			writeError(w, http.StatusConflict, ErrLastAdmin)
 			return
 		}
-		s.logf(r, "Admin role change %s: %v\n", id, err)
+		api.logf(r, "Admin role change %s: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditUserRoleChanged, id, actor, map[string]interface{}{
+	api.writeAudit(r, db.AuditUserRoleChanged, id, actor, map[string]interface{}{
 		"from": target.Role,
 		"to":   req.Role,
 	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "role": req.Role})
 }
 
-func (s *APIServer) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.adminActorID(w, r); !ok {
+func (api *adminAPI) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
+	if _, ok := api.adminActorID(w, r); !ok {
 		return
 	}
 
@@ -337,7 +337,7 @@ func (s *APIServer) handleAdminListUsers(w http.ResponseWriter, r *http.Request)
 	}
 	search := strings.TrimSpace(q.Get("q"))
 
-	users, total, err := db.ListUsersContext(r.Context(), s.db, db.UserListParams{
+	users, total, err := db.ListUsersContext(r.Context(), api.db, db.UserListParams{
 		Page:   page,
 		Limit:  limit,
 		Role:   role,
@@ -345,7 +345,7 @@ func (s *APIServer) handleAdminListUsers(w http.ResponseWriter, r *http.Request)
 		Query:  search,
 	})
 	if err != nil {
-		s.logf(r, "Admin list users: %v\n", err)
+		api.logf(r, "Admin list users: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -358,22 +358,22 @@ func (s *APIServer) handleAdminListUsers(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func (s *APIServer) handleAdminStats(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.adminActorID(w, r); !ok {
+func (api *adminAPI) handleAdminStats(w http.ResponseWriter, r *http.Request) {
+	if _, ok := api.adminActorID(w, r); !ok {
 		return
 	}
 
-	stats, err := db.GetGlobalStats(s.db)
+	stats, err := db.GetGlobalStats(api.db)
 	if err != nil {
-		s.logf(r, "Admin stats: %v\n", err)
+		api.logf(r, "Admin stats: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
 }
 
-func (s *APIServer) handleAdminListMigrations(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.adminActorID(w, r); !ok {
+func (api *adminAPI) handleAdminListMigrations(w http.ResponseWriter, r *http.Request) {
+	if _, ok := api.adminActorID(w, r); !ok {
 		return
 	}
 
@@ -387,9 +387,9 @@ func (s *APIServer) handleAdminListMigrations(w http.ResponseWriter, r *http.Req
 		limit = 20
 	}
 
-	migrations, total, err := db.ListAllMigrationsContext(r.Context(), s.db, db.MigrationListParams{Page: page, Limit: limit})
+	migrations, total, err := db.ListAllMigrationsContext(r.Context(), api.db, db.MigrationListParams{Page: page, Limit: limit})
 	if err != nil {
-		s.logf(r, "Admin list migrations: %v\n", err)
+		api.logf(r, "Admin list migrations: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -402,8 +402,8 @@ func (s *APIServer) handleAdminListMigrations(w http.ResponseWriter, r *http.Req
 	})
 }
 
-func (s *APIServer) handleAdminListSyncs(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.adminActorID(w, r); !ok {
+func (api *adminAPI) handleAdminListSyncs(w http.ResponseWriter, r *http.Request) {
+	if _, ok := api.adminActorID(w, r); !ok {
 		return
 	}
 
@@ -417,9 +417,9 @@ func (s *APIServer) handleAdminListSyncs(w http.ResponseWriter, r *http.Request)
 		limit = 20
 	}
 
-	syncs, total, err := db.ListAllSyncJobsContext(r.Context(), s.db, db.SyncListParams{Page: page, Limit: limit})
+	syncs, total, err := db.ListAllSyncJobsContext(r.Context(), api.db, db.SyncListParams{Page: page, Limit: limit})
 	if err != nil {
-		s.logf(r, "Admin list syncs: %v\n", err)
+		api.logf(r, "Admin list syncs: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -432,8 +432,8 @@ func (s *APIServer) handleAdminListSyncs(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func (s *APIServer) handleAdminAuditLog(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.adminActorID(w, r); !ok {
+func (api *adminAPI) handleAdminAuditLog(w http.ResponseWriter, r *http.Request) {
+	if _, ok := api.adminActorID(w, r); !ok {
 		return
 	}
 
@@ -447,7 +447,7 @@ func (s *APIServer) handleAdminAuditLog(w http.ResponseWriter, r *http.Request) 
 		limit = 20
 	}
 
-	entries, total, err := db.ListAuditLog(s.db, db.AuditLogParams{
+	entries, total, err := db.ListAuditLog(api.db, db.AuditLogParams{
 		Page:   page,
 		Limit:  limit,
 		Action: q.Get("action"),
@@ -457,7 +457,7 @@ func (s *APIServer) handleAdminAuditLog(w http.ResponseWriter, r *http.Request) 
 		To:     q.Get("to"),
 	})
 	if err != nil {
-		s.logf(r, "Admin audit log: %v\n", err)
+		api.logf(r, "Admin audit log: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

@@ -22,11 +22,11 @@ type instanceSMTPRequest struct {
 	SMTPEncryption string `json:"smtp_encryption"`
 }
 
-func (s *APIServer) handleAdminGetSMTP(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.adminActorID(w, r); !ok {
+func (api *adminAPI) handleAdminGetSMTP(w http.ResponseWriter, r *http.Request) {
+	if _, ok := api.adminActorID(w, r); !ok {
 		return
 	}
-	cfg, err := db.GetInstanceSMTPSettings(s.db)
+	cfg, err := db.GetInstanceSMTPSettings(api.db)
 	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusOK, map[string]any{"configured": false, "smtp_password_set": false})
 		return
@@ -38,8 +38,8 @@ func (s *APIServer) handleAdminGetSMTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "smtp_host": cfg.SMTPHost, "smtp_port": cfg.SMTPPort, "smtp_username": cfg.SMTPUsername, "smtp_from_email": cfg.SMTPFromEmail, "smtp_from_name": cfg.SMTPFromName, "smtp_encryption": cfg.SMTPEncryption, "smtp_password_set": cfg.SMTPPasswordEnc != ""})
 }
 
-func (s *APIServer) handleAdminPutSMTP(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.adminActorID(w, r)
+func (api *adminAPI) handleAdminPutSMTP(w http.ResponseWriter, r *http.Request) {
+	actor, ok := api.adminActorID(w, r)
 	if !ok {
 		return
 	}
@@ -68,7 +68,7 @@ func (s *APIServer) handleAdminPutSMTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrSettingInvalid)
 		return
 	}
-	existing, err := db.GetInstanceSMTPSettings(s.db)
+	existing, err := db.GetInstanceSMTPSettings(api.db)
 	if err != nil && err != sql.ErrNoRows {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -82,7 +82,7 @@ func (s *APIServer) handleAdminPutSMTP(w http.ResponseWriter, r *http.Request) {
 		encrypted = existing.SMTPPasswordEnc
 	} else {
 		var e error
-		encrypted, e = crypto.EncryptWithDomain(req.SMTPPassword, s.encryptionKey, crypto.DomainSMTPPassword)
+		encrypted, e = crypto.EncryptWithDomain(req.SMTPPassword, api.encryptionKey, crypto.DomainSMTPPassword)
 		if e != nil {
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
@@ -92,57 +92,57 @@ func (s *APIServer) handleAdminPutSMTP(w http.ResponseWriter, r *http.Request) {
 	if fromName == "" {
 		fromName = "Clumoove"
 	}
-	if err := db.UpsertInstanceSMTPSettings(s.db, &db.InstanceSMTPSettings{SMTPHost: req.SMTPHost, SMTPPort: req.SMTPPort, SMTPUsername: req.SMTPUsername, SMTPPasswordEnc: encrypted, SMTPFromEmail: req.SMTPFromEmail, SMTPFromName: fromName, SMTPEncryption: req.SMTPEncryption}); err != nil {
+	if err := db.UpsertInstanceSMTPSettings(api.db, &db.InstanceSMTPSettings{SMTPHost: req.SMTPHost, SMTPPort: req.SMTPPort, SMTPUsername: req.SMTPUsername, SMTPPasswordEnc: encrypted, SMTPFromEmail: req.SMTPFromEmail, SMTPFromName: fromName, SMTPEncryption: req.SMTPEncryption}); err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	s.writeAudit(r, db.AuditSettingUpdated, "instance-smtp", actor, map[string]interface{}{})
+	api.writeAudit(r, db.AuditSettingUpdated, "instance-smtp", actor, map[string]interface{}{})
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
-func (s *APIServer) handleAdminTestSMTP(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.adminActorID(w, r)
+func (api *adminAPI) handleAdminTestSMTP(w http.ResponseWriter, r *http.Request) {
+	actor, ok := api.adminActorID(w, r)
 	if !ok {
 		return
 	}
-	cfg, err := db.GetInstanceSMTPSettings(s.db)
+	cfg, err := db.GetInstanceSMTPSettings(api.db)
 	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrSmtpNotConfigured})
 		return
 	}
 	if err != nil {
-		s.logf(r, "instance SMTP test configuration lookup failed")
+		api.logf(r, "instance SMTP test configuration lookup failed")
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrInternalError})
 		return
 	}
-	password, err := crypto.DecryptWithDomain(cfg.SMTPPasswordEnc, s.encryptionKey, crypto.DomainSMTPPassword)
+	password, err := crypto.DecryptWithDomain(cfg.SMTPPasswordEnc, api.encryptionKey, crypto.DomainSMTPPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrSmtpDecryptFailed})
 		return
 	}
-	user, err := db.GetUserByIDContext(r.Context(), s.db, actor)
+	user, err := db.GetUserByIDContext(r.Context(), api.db, actor)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrInternalError})
 		return
 	}
 	if err := email.SendMail(email.SMTPConfig{Host: cfg.SMTPHost, Port: strconv.Itoa(cfg.SMTPPort), Username: cfg.SMTPUsername, Password: password, FromEmail: cfg.SMTPFromEmail, FromName: cfg.SMTPFromName, Encryption: cfg.SMTPEncryption}, user.Email, email.SMTPTestSubject(user.Language), email.BuildTestEmailLocalized(user.Language)); err != nil {
-		s.logf(r, "instance SMTP test failed")
+		api.logf(r, "instance SMTP test failed")
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrSmtpTestFailed})
 		return
 	}
-	s.writeAudit(r, db.AuditSettingUpdated, "instance-smtp-test", actor, map[string]interface{}{})
+	api.writeAudit(r, db.AuditSettingUpdated, "instance-smtp-test", actor, map[string]interface{}{})
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
-func (s *APIServer) handleAdminDeleteSMTP(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.adminActorID(w, r)
+func (api *adminAPI) handleAdminDeleteSMTP(w http.ResponseWriter, r *http.Request) {
+	actor, ok := api.adminActorID(w, r)
 	if !ok {
 		return
 	}
-	if err := db.DeleteInstanceSMTPSettings(s.db); err != nil {
+	if err := db.DeleteInstanceSMTPSettings(api.db); err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	s.writeAudit(r, db.AuditSettingUpdated, "instance-smtp", actor, map[string]interface{}{"action": "delete"})
+	api.writeAudit(r, db.AuditSettingUpdated, "instance-smtp", actor, map[string]interface{}{"action": "delete"})
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }

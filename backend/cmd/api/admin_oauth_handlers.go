@@ -27,13 +27,13 @@ type instanceOAuthProviderView struct {
 	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
 }
 
-func (s *APIServer) handleAdminGetOAuth(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.adminActorID(w, r); !ok {
+func (api *adminAPI) handleAdminGetOAuth(w http.ResponseWriter, r *http.Request) {
+	if _, ok := api.adminActorID(w, r); !ok {
 		return
 	}
-	rows, err := db.ListInstanceOAuthProviders(s.db)
+	rows, err := db.ListInstanceOAuthProviders(api.db)
 	if err != nil {
-		s.logf(r, "instance OAuth settings lookup failed: %v", err)
+		api.logf(r, "instance OAuth settings lookup failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -56,13 +56,13 @@ func (s *APIServer) handleAdminGetOAuth(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"redirect_uri": s.getRedirectURI(r),
+		"redirect_uri": api.getRedirectURI(r),
 		"providers":    providers,
 	})
 }
 
-func (s *APIServer) handleAdminPutOAuth(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.adminActorID(w, r)
+func (api *adminAPI) handleAdminPutOAuth(w http.ResponseWriter, r *http.Request) {
+	actor, ok := api.adminActorID(w, r)
 	if !ok {
 		return
 	}
@@ -86,9 +86,9 @@ func (s *APIServer) handleAdminPutOAuth(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	existing, err := db.GetInstanceOAuthProvider(s.db, provider)
+	existing, err := db.GetInstanceOAuthProvider(api.db, provider)
 	if err != nil && err != sql.ErrNoRows {
-		s.logf(r, "instance OAuth lookup failed for %s: %v", provider, err)
+		api.logf(r, "instance OAuth lookup failed for %s: %v", provider, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -102,31 +102,31 @@ func (s *APIServer) handleAdminPutOAuth(w http.ResponseWriter, r *http.Request) 
 		// Keep the existing ciphertext; the secret is unchanged.
 		encrypted = existing.ClientSecretEnc
 	} else {
-		encrypted, err = crypto.EncryptWithDomain(req.ClientSecret, s.encryptionKey, crypto.DomainOAuthClientSecret)
+		encrypted, err = crypto.EncryptWithDomain(req.ClientSecret, api.encryptionKey, crypto.DomainOAuthClientSecret)
 		if err != nil {
-			s.logf(r, "instance OAuth secret encryption failed for %s: %v", provider, err)
+			api.logf(r, "instance OAuth secret encryption failed for %s: %v", provider, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
 	}
 
-	if err := db.UpsertInstanceOAuthProvider(s.db, &db.InstanceOAuthProvider{
+	if err := db.UpsertInstanceOAuthProvider(api.db, &db.InstanceOAuthProvider{
 		Provider:        provider,
 		ClientID:        req.ClientID,
 		ClientSecretEnc: encrypted,
 	}); err != nil {
-		s.logf(r, "instance OAuth upsert failed for %s: %v", provider, err)
+		api.logf(r, "instance OAuth upsert failed for %s: %v", provider, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	oauth.Invalidate()
-	s.writeAudit(r, db.AuditSettingUpdated, "instance-oauth-"+provider, actor, map[string]interface{}{})
+	api.writeAudit(r, db.AuditSettingUpdated, "instance-oauth-"+provider, actor, map[string]interface{}{})
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
-func (s *APIServer) handleAdminDeleteOAuth(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.adminActorID(w, r)
+func (api *adminAPI) handleAdminDeleteOAuth(w http.ResponseWriter, r *http.Request) {
+	actor, ok := api.adminActorID(w, r)
 	if !ok {
 		return
 	}
@@ -136,13 +136,13 @@ func (s *APIServer) handleAdminDeleteOAuth(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := db.DeleteInstanceOAuthProvider(s.db, provider); err != nil {
-		s.logf(r, "instance OAuth delete failed for %s: %v", provider, err)
+	if err := db.DeleteInstanceOAuthProvider(api.db, provider); err != nil {
+		api.logf(r, "instance OAuth delete failed for %s: %v", provider, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	oauth.Invalidate()
-	s.writeAudit(r, db.AuditSettingUpdated, "instance-oauth-"+provider, actor, map[string]interface{}{"action": "delete"})
+	api.writeAudit(r, db.AuditSettingUpdated, "instance-oauth-"+provider, actor, map[string]interface{}{"action": "delete"})
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }

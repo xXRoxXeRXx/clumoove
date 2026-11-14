@@ -64,3 +64,24 @@ func TestNotificationRoutesRequireAnAuthenticatedUser(t *testing.T) {
 		})
 	}
 }
+
+func TestNotificationModuleRegistersRoutesWithOverrideHandler(t *testing.T) {
+	api := newNotificationAPI(notificationDependencies{})
+	mux := http.NewServeMux()
+	authCalls := 0
+	api.registerRoutesWithHandler(mux, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authCalls++
+			next.ServeHTTP(w, r)
+		})
+	}, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+
+	for _, spec := range api.routes() {
+		authCalls = 0
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, requestForRoutePattern(spec.pattern))
+		if rec.Code != http.StatusNoContent || authCalls != 1 {
+			t.Errorf("%s: status=%d authCalls=%d, want 204 and 1", spec.pattern, rec.Code, authCalls)
+		}
+	}
+}
