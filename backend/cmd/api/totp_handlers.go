@@ -27,8 +27,8 @@ type TOTPVerifyRequest struct {
 // handleTOTP verifies the second factor during login and, on success, issues
 // the access + refresh tokens. Accepts either a TOTP code or a single-use
 // backup code. Enforces the failed-attempt lockout.
-func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "totp", s.clientIP(r), totpRateLimit, totpRateWindow) {
+func (api *accountAPI) handleTOTP(w http.ResponseWriter, r *http.Request) {
+	if !api.rateLimiter.Allow(r.Context(), "totp", api.clientIP(r), totpRateLimit, totpRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -44,15 +44,15 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := auth.Validate2FATempToken(req.TempSession, s.jwtSecret)
+	claims, err := auth.Validate2FATempToken(req.TempSession, api.jwtSecret)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, ErrTotpSessionInvalid)
 		return
 	}
 
-	u, err := db.GetUserByIDContext(r.Context(), s.db, claims.UserID)
+	u, err := db.GetUserByIDContext(r.Context(), api.db, claims.UserID)
 	if err != nil {
-		s.logf(r, "handleTOTP: failed to load user %s: %v\n", claims.UserID, err)
+		api.logf(r, "handleTOTP: failed to load user %s: %v\n", claims.UserID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -75,9 +75,9 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, s.encryptionKey, crypto.DomainTOTPSecret)
+	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, api.encryptionKey, crypto.DomainTOTPSecret)
 	if err != nil {
-		s.logf(r, "handleTOTP: failed to decrypt secret for user %s: %v\n", u.ID, err)
+		api.logf(r, "handleTOTP: failed to decrypt secret for user %s: %v\n", u.ID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -85,9 +85,9 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 	valid := totp2fa.Validate(secret, req.Code)
 	backupCodeConsumed := false
 	if !valid {
-		backupCodeConsumed, err = consumeTOTPBackupCode(r.Context(), s.db, u, req.Code)
+		backupCodeConsumed, err = consumeTOTPBackupCode(r.Context(), api.db, u, req.Code)
 		if err != nil {
-			s.logf(r, "handleTOTP: failed to consume backup code for user %s: %v\n", u.ID, err)
+			api.logf(r, "handleTOTP: failed to consume backup code for user %s: %v\n", u.ID, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
@@ -97,9 +97,9 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !valid {
-		locked, lerr := db.IncrementTOTPFailed(s.db, u.ID, totpMaxAttempts, totpLockDuration)
+		locked, lerr := db.IncrementTOTPFailed(api.db, u.ID, totpMaxAttempts, totpLockDuration)
 		if lerr != nil {
-			s.logf(r, "handleTOTP: failed to increment attempts for user %s: %v\n", u.ID, lerr)
+			api.logf(r, "handleTOTP: failed to increment attempts for user %s: %v\n", u.ID, lerr)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
@@ -116,16 +116,16 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 	// 2FA session is pending, so never mint an access token for an account that
 	// now requires a password rotation.
 	if !backupCodeConsumed {
-		if err := db.ResetTOTPFailed(s.db, u.ID); err != nil {
-			s.logf(r, "handleTOTP: failed to reset attempts for user %s: %v\n", u.ID, err)
+		if err := db.ResetTOTPFailed(api.db, u.ID); err != nil {
+			api.logf(r, "handleTOTP: failed to reset attempts for user %s: %v\n", u.ID, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
 	}
 	if u.MustChangePassword {
-		mustToken, err := auth.GenerateMustChangePasswordToken(u, s.jwtSecret)
+		mustToken, err := auth.GenerateMustChangePasswordToken(u, api.jwtSecret)
 		if err != nil {
-			s.logf(r, "handleTOTP: failed to generate must-change token for user %s: %v", u.ID, err)
+			api.logf(r, "handleTOTP: failed to generate must-change token for user %s: %v", u.ID, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
@@ -136,7 +136,7 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.issueTokens(w, r, u)
+	api.issueTokens(w, r, u)
 }
 
 // TOTPSetupResponse is returned by GET /api/auth/2fa/setup.
@@ -148,16 +148,16 @@ type TOTPSetupResponse struct {
 
 // handle2FASetup generates a new TOTP secret + QR, stores the encrypted secret
 // (still disabled — acceptance criterion 1), and returns the provisioning data.
-func (s *APIServer) handle2FASetup(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *accountAPI) handle2FASetup(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
 	// Load the user to obtain the email for the otpauth account name.
-	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "handle2FASetup: failed to load user %s: %v\n", userID, err)
+		api.logf(r, "handle2FASetup: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -172,21 +172,21 @@ func (s *APIServer) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 
 	secret, otpauthURI, qrPNG, err := totp2fa.GenerateProvisioning(u.Email)
 	if err != nil {
-		s.logf(r, "handle2FASetup: failed to generate provisioning for user %s: %v\n", userID, err)
+		api.logf(r, "handle2FASetup: failed to generate provisioning for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	encrypted, err := crypto.EncryptWithDomain(secret, s.encryptionKey, crypto.DomainTOTPSecret)
+	encrypted, err := crypto.EncryptWithDomain(secret, api.encryptionKey, crypto.DomainTOTPSecret)
 	if err != nil {
-		s.logf(r, "handle2FASetup: failed to encrypt secret for user %s: %v\n", userID, err)
+		api.logf(r, "handle2FASetup: failed to encrypt secret for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	ok, err := db.SetUserTOTPSecretContext(r.Context(), s.db, userID, encrypted)
+	ok, err := db.SetUserTOTPSecretContext(r.Context(), api.db, userID, encrypted)
 	if err != nil {
-		s.logf(r, "handle2FASetup: failed to store secret for user %s: %v\n", userID, err)
+		api.logf(r, "handle2FASetup: failed to store secret for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -209,8 +209,8 @@ type TOTPEnableRequest struct {
 
 // handle2FAEnable verifies the first code, enables 2FA, generates backup codes,
 // and returns the plaintext codes exactly once.
-func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *accountAPI) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -225,9 +225,9 @@ func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "handle2FAEnable: failed to load user %s: %v\n", userID, err)
+		api.logf(r, "handle2FAEnable: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -240,9 +240,9 @@ func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, s.encryptionKey, crypto.DomainTOTPSecret)
+	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, api.encryptionKey, crypto.DomainTOTPSecret)
 	if err != nil {
-		s.logf(r, "handle2FAEnable: failed to decrypt secret for user %s: %v\n", userID, err)
+		api.logf(r, "handle2FAEnable: failed to decrypt secret for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -254,21 +254,21 @@ func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 
 	plainCodes, hashes, err := totp2fa.GenerateBackupCodes()
 	if err != nil {
-		s.logf(r, "handle2FAEnable: failed to generate backup codes for user %s: %v\n", userID, err)
+		api.logf(r, "handle2FAEnable: failed to generate backup codes for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	ok, err := db.EnableUserTOTPContext(r.Context(), s.db, userID, u.TotpSecretEnc, db.StringArray(hashes))
+	ok, err := db.EnableUserTOTPContext(r.Context(), api.db, userID, u.TotpSecretEnc, db.StringArray(hashes))
 	if err != nil {
-		s.logf(r, "handle2FAEnable: failed to enable 2FA for user %s: %v\n", userID, err)
+		api.logf(r, "handle2FAEnable: failed to enable 2FA for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if !ok {
-		latest, lerr := db.GetUserByIDContext(r.Context(), s.db, userID)
+		latest, lerr := db.GetUserByIDContext(r.Context(), api.db, userID)
 		if lerr != nil {
-			s.logf(r, "handle2FAEnable: failed to triage !ok for user %s: %v\n", userID, lerr)
+			api.logf(r, "handle2FAEnable: failed to triage !ok for user %s: %v\n", userID, lerr)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
@@ -280,7 +280,7 @@ func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeAudit(r, db.Audit2FAEnabled, userID, userID, nil)
+	api.writeAudit(r, db.Audit2FAEnabled, userID, userID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success":      true,
@@ -294,8 +294,8 @@ type TOTPDisableRequest struct {
 }
 
 // handle2FADisable disables 2FA, requiring a valid 2FA TOTP code or backup code.
-func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *accountAPI) handle2FADisable(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -310,9 +310,9 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "handle2FADisable: failed to load user %s: %v\n", userID, err)
+		api.logf(r, "handle2FADisable: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -332,9 +332,9 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, s.encryptionKey, crypto.DomainTOTPSecret)
+	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, api.encryptionKey, crypto.DomainTOTPSecret)
 	if err != nil {
-		s.logf(r, "handle2FADisable: failed to decrypt secret for user %s: %v\n", userID, err)
+		api.logf(r, "handle2FADisable: failed to decrypt secret for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -342,9 +342,9 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	valid := totp2fa.Validate(secret, req.Code)
 	usedBackupCode := false
 	if !valid {
-		usedBackupCode, err = consumeTOTPBackupCode(r.Context(), s.db, u, req.Code)
+		usedBackupCode, err = consumeTOTPBackupCode(r.Context(), api.db, u, req.Code)
 		if err != nil {
-			s.logf(r, "handle2FADisable: failed to consume backup code for user %s: %v\n", u.ID, err)
+			api.logf(r, "handle2FADisable: failed to consume backup code for user %s: %v\n", u.ID, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
@@ -352,9 +352,9 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !valid {
-		locked, lerr := db.IncrementTOTPFailed(s.db, u.ID, totpMaxAttempts, totpLockDuration)
+		locked, lerr := db.IncrementTOTPFailed(api.db, u.ID, totpMaxAttempts, totpLockDuration)
 		if lerr != nil {
-			s.logf(r, "handle2FADisable: failed to increment attempts for user %s: %v\n", u.ID, lerr)
+			api.logf(r, "handle2FADisable: failed to increment attempts for user %s: %v\n", u.ID, lerr)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
@@ -368,34 +368,34 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !usedBackupCode {
-		if err := db.ResetTOTPFailed(s.db, u.ID); err != nil {
-			s.logf(r, "handle2FADisable: failed to reset attempts for user %s: %v\n", u.ID, err)
+		if err := db.ResetTOTPFailed(api.db, u.ID); err != nil {
+			api.logf(r, "handle2FADisable: failed to reset attempts for user %s: %v\n", u.ID, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
 	}
 
-	if err := db.DisableUserTOTP(s.db, userID); err != nil {
-		s.logf(r, "handle2FADisable: failed to disable 2FA for user %s: %v\n", userID, err)
+	if err := db.DisableUserTOTP(api.db, userID); err != nil {
+		api.logf(r, "handle2FADisable: failed to disable 2FA for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.Audit2FADisabled, userID, userID, nil)
+	api.writeAudit(r, db.Audit2FADisabled, userID, userID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 // handle2FAStatus reports whether 2FA is currently enabled.
-func (s *APIServer) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *accountAPI) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
-	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "handle2FAStatus: failed to load user %s: %v\n", userID, err)
+		api.logf(r, "handle2FAStatus: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -420,23 +420,23 @@ func consumeTOTPBackupCode(ctx context.Context, database *sql.DB, user *db.User,
 
 // issueTokens mints a fresh access + refresh token pair for the given user,
 // mirroring the token issuance in handleLogin.
-func (s *APIServer) issueTokens(w http.ResponseWriter, r *http.Request, u *db.User) {
-	if ts, err := db.UpdateLastLoginAt(s.db, u.ID); err != nil {
-		s.logf(r, "issueTokens: failed to update last_login_at for user %s: %v\n", u.ID, err)
+func (api *accountAPI) issueTokens(w http.ResponseWriter, r *http.Request, u *db.User) {
+	if ts, err := db.UpdateLastLoginAt(api.db, u.ID); err != nil {
+		api.logf(r, "issueTokens: failed to update last_login_at for user %s: %v\n", u.ID, err)
 	} else {
 		u.LastLoginAt = &ts
 	}
 
-	accessToken, err := auth.GenerateAccessToken(u, s.jwtSecret)
+	accessToken, err := auth.GenerateAccessToken(u, api.jwtSecret)
 	if err != nil {
-		s.logf(r, "issueTokens: failed to generate access token for user %s: %v\n", u.ID, err)
+		api.logf(r, "issueTokens: failed to generate access token for user %s: %v\n", u.ID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	refreshToken, err := auth.GenerateRefreshToken()
 	if err != nil {
-		s.logf(r, "issueTokens: failed to generate refresh token for user %s: %v\n", u.ID, err)
+		api.logf(r, "issueTokens: failed to generate refresh token for user %s: %v\n", u.ID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -444,8 +444,8 @@ func (s *APIServer) issueTokens(w http.ResponseWriter, r *http.Request, u *db.Us
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 	tokenHash := hashToken(refreshToken)
 
-	if err := db.StoreRefreshToken(r.Context(), s.db, tokenHash, u.ID, expiresAt, sessionUserAgent(r)); err != nil {
-		s.logf(r, "issueTokens: failed to store refresh token for user %s: %v\n", u.ID, err)
+	if err := db.StoreRefreshToken(r.Context(), api.db, tokenHash, u.ID, expiresAt, sessionUserAgent(r)); err != nil {
+		api.logf(r, "issueTokens: failed to store refresh token for user %s: %v\n", u.ID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

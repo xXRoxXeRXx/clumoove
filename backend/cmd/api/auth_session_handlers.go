@@ -24,15 +24,15 @@ type RegisterRequest struct {
 	Language    string `json:"language"`
 }
 
-func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "register", s.clientIP(r), registerRateLimit, registerRateWindow) {
+func (api *accountAPI) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if !api.rateLimiter.Allow(r.Context(), "register", api.clientIP(r), registerRateLimit, registerRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
-	regEnabled, err := db.GetSetting(s.db, "registrations_enabled")
+	regEnabled, err := db.GetSetting(api.db, "registrations_enabled")
 	if err != nil {
-		s.logf(r, "Register error: failed to check registrations_enabled: %v\n", err)
+		api.logf(r, "Register error: failed to check registrations_enabled: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -69,27 +69,27 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := db.GetUserByEmail(r.Context(), s.db, req.Email); err == nil {
+	if _, err := db.GetUserByEmail(r.Context(), api.db, req.Email); err == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
 	} else if err != sql.ErrNoRows {
-		s.logf(r, "Error checking existing user for %s: %v\n", req.Email, err)
+		api.logf(r, "Error checking existing user for %s: %v\n", req.Email, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	u, err := db.CreateUser(s.db, req.Email, passHash, req.DisplayName, req.Language)
+	u, err := db.CreateUser(api.db, req.Email, passHash, req.DisplayName, req.Language)
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 			return
 		}
-		s.logf(r, "Register error: failed to create user: %v\n", err)
+		api.logf(r, "Register error: failed to create user: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	s.writeAudit(r, db.AuditRegistration, req.Email, u.ID, map[string]interface{}{"email": req.Email})
+	api.writeAudit(r, db.AuditRegistration, req.Email, u.ID, map[string]interface{}{"email": req.Email})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -98,8 +98,8 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "login", s.clientIP(r), loginRateLimit, loginRateWindow) {
+func (api *accountAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !api.rateLimiter.Allow(r.Context(), "login", api.clientIP(r), loginRateLimit, loginRateWindow) {
 		// Retry-After describes the IP-wide limiter only. Do not emit it for an
 		// account lockout, since that would reveal account state to unauthenticated
 		// callers.
@@ -119,11 +119,11 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByEmail(r.Context(), s.db, req.Email)
+	u, err := db.GetUserByEmail(r.Context(), api.db, req.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			_ = auth.CheckPasswordHash(req.Password, s.dummyPasswordHash)
-			s.writeAudit(r, db.AuditLoginFailed, req.Email, "", map[string]interface{}{"reason": "no_such_user"})
+			_ = auth.CheckPasswordHash(req.Password, api.dummyPasswordHash)
+			api.writeAudit(r, db.AuditLoginFailed, req.Email, "", map[string]interface{}{"reason": "no_such_user"})
 			writeError(w, http.StatusUnauthorized, ErrCredentialsInvalid)
 		} else {
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -133,7 +133,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	passwordValid := auth.CheckPasswordHash(req.Password, u.PasswordHash)
 
 	if !u.Active {
-		s.writeAudit(r, db.AuditLoginFailed, req.Email, u.ID, map[string]interface{}{"reason": "disabled"})
+		api.writeAudit(r, db.AuditLoginFailed, req.Email, u.ID, map[string]interface{}{"reason": "disabled"})
 		writeError(w, http.StatusForbidden, ErrUserDisabled)
 		return
 	}
@@ -144,14 +144,14 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !passwordValid {
-		s.writeAudit(r, db.AuditLoginFailed, req.Email, u.ID, map[string]interface{}{"reason": "bad_password"})
-		locked, lerr := db.IncrementLoginFailed(s.db, u.ID, loginMaxAttempts, loginLockDuration)
+		api.writeAudit(r, db.AuditLoginFailed, req.Email, u.ID, map[string]interface{}{"reason": "bad_password"})
+		locked, lerr := db.IncrementLoginFailed(api.db, u.ID, loginMaxAttempts, loginLockDuration)
 		if lerr != nil {
-			s.logf(r, "Login error: failed to record failed attempt for user %s: %v\n", u.ID, lerr)
+			api.logf(r, "Login error: failed to record failed attempt for user %s: %v\n", u.ID, lerr)
 		}
 		if locked {
-			s.warnf(r, "Security: account %s locked for %v after reaching %d failed login attempts (source IP %s)",
-				u.ID, loginLockDuration, loginMaxAttempts, s.clientIP(r))
+			api.warnf(r, "Security: account %s locked for %v after reaching %d failed login attempts (source IP %s)",
+				u.ID, loginLockDuration, loginMaxAttempts, api.clientIP(r))
 			writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 			return
 		}
@@ -159,16 +159,16 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.ResetLoginFailed(s.db, u.ID); err != nil {
-		s.logf(r, "Login error: failed to reset failed attempts for user %s: %v\n", u.ID, err)
+	if err := db.ResetLoginFailed(api.db, u.ID); err != nil {
+		api.logf(r, "Login error: failed to reset failed attempts for user %s: %v\n", u.ID, err)
 	}
 
-	s.writeAudit(r, db.AuditLoginSuccess, req.Email, u.ID, nil)
+	api.writeAudit(r, db.AuditLoginSuccess, req.Email, u.ID, nil)
 
 	if u.MustChangePassword {
-		mustToken, err := auth.GenerateMustChangePasswordToken(u, s.jwtSecret)
+		mustToken, err := auth.GenerateMustChangePasswordToken(u, api.jwtSecret)
 		if err != nil {
-			s.logf(r, "Login error: failed to generate must-change token for user %s: %v\n", u.ID, err)
+			api.logf(r, "Login error: failed to generate must-change token for user %s: %v\n", u.ID, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
@@ -180,9 +180,9 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if u.TotpEnabled {
-		tempToken, err := auth.Generate2FATempToken(u, s.jwtSecret)
+		tempToken, err := auth.Generate2FATempToken(u, api.jwtSecret)
 		if err != nil {
-			s.logf(r, "Login error: failed to generate 2FA temp token for user %s: %v\n", u.ID, err)
+			api.logf(r, "Login error: failed to generate 2FA temp token for user %s: %v\n", u.ID, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
@@ -193,10 +193,10 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.issueTokens(w, r, u)
+	api.issueTokens(w, r, u)
 }
 
-func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
+func (api *accountAPI) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	if !requireTrustedCookieOrigin(w, r) {
 		return
 	}
@@ -207,7 +207,7 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oldTokenHash := hashToken(cookie.Value)
-	tx, err := s.db.BeginTx(r.Context(), nil)
+	tx, err := api.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -228,7 +228,7 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
 			return
 		}
-		s.logf(r, "Error consuming refresh token in tx: %v\n", err)
+		api.logf(r, "Error consuming refresh token in tx: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -240,7 +240,7 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
 			return
 		}
-		s.logf(r, "Error loading refresh-token user: %v\n", err)
+		api.logf(r, "Error loading refresh-token user: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -255,7 +255,7 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
 			return
 		}
-		s.logf(r, "Error locking refresh-token user: %v\n", err)
+		api.logf(r, "Error locking refresh-token user: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -263,13 +263,13 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		// Normally suspension has already deleted these rows. Removing them here
 		// also cleans up a residual token if an earlier operation was interrupted.
 		if _, err := tx.ExecContext(r.Context(), `DELETE FROM refresh_tokens WHERE user_id = $1`, u.ID); err != nil {
-			s.logf(r, "Error deleting suspended user's refresh tokens: %v\n", err)
+			api.logf(r, "Error deleting suspended user's refresh tokens: %v\n", err)
 			auth.ClearRefreshTokenCookie(w)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
 		if err := tx.Commit(); err != nil {
-			s.logf(r, "Error committing suspended-user refresh-token cleanup: %v\n", err)
+			api.logf(r, "Error committing suspended-user refresh-token cleanup: %v\n", err)
 			auth.ClearRefreshTokenCookie(w)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
@@ -292,20 +292,20 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1, $2, $3, $4)
 	`
 	if _, err := tx.ExecContext(r.Context(), insertQuery, newHashedToken, u.ID, userAgent, newExpiresAt); err != nil {
-		s.logf(r, "Error storing new refresh token in tx: %v\n", err)
+		api.logf(r, "Error storing new refresh token in tx: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if err := tx.Commit(); err != nil {
-		s.logf(r, "Error committing token rotation transaction: %v\n", err)
+		api.logf(r, "Error committing token rotation transaction: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	auth.SetRefreshTokenCookie(w, newRefreshToken, newExpiresAt)
 
-	accessToken, err := auth.GenerateAccessToken(u, s.jwtSecret)
+	accessToken, err := auth.GenerateAccessToken(u, api.jwtSecret)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -316,44 +316,44 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *APIServer) handleLogout(w http.ResponseWriter, r *http.Request) {
+func (api *accountAPI) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if !requireTrustedCookieOrigin(w, r) {
 		return
 	}
 	cookie, err := r.Cookie("refresh_token")
 	if err == nil {
 		tokenHash := hashToken(cookie.Value)
-		_ = db.DeleteRefreshToken(s.db, tokenHash)
+		_ = db.DeleteRefreshToken(api.db, tokenHash)
 	}
 
 	auth.ClearRefreshTokenCookie(w)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (s *APIServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "sessions", s.clientIP(r), connectRateLimit, connectRateWindow) {
+func (api *accountAPI) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	if !api.rateLimiter.Allow(r.Context(), "sessions", api.clientIP(r), connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	sessions, err := db.ListRefreshSessions(r.Context(), s.db, userID)
+	sessions, err := db.ListRefreshSessions(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "handleListSessions: failed to list sessions for user %s: %v", userID, err)
+		api.logf(r, "handleListSessions: failed to list sessions for user %s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"sessions": sessions})
 }
 
-func (s *APIServer) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "sessions", s.clientIP(r), connectRateLimit, connectRateWindow) {
+func (api *accountAPI) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	if !api.rateLimiter.Allow(r.Context(), "sessions", api.clientIP(r), connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -362,9 +362,9 @@ func (s *APIServer) handleDeleteSession(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, ErrSessionNotFound)
 		return
 	}
-	deleted, err := db.DeleteRefreshSessionForUser(r.Context(), s.db, sessionID, userID)
+	deleted, err := db.DeleteRefreshSessionForUser(r.Context(), api.db, sessionID, userID)
 	if err != nil {
-		s.logf(r, "handleDeleteSession: failed to revoke session for user %s: %v", userID, err)
+		api.logf(r, "handleDeleteSession: failed to revoke session for user %s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -372,7 +372,7 @@ func (s *APIServer) handleDeleteSession(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, ErrSessionNotFound)
 		return
 	}
-	s.writeAudit(r, db.AuditSessionRevoked, sessionID, userID, nil)
+	api.writeAudit(r, db.AuditSessionRevoked, sessionID, userID, nil)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -390,14 +390,14 @@ func sessionUserAgent(r *http.Request) string {
 	return userAgent
 }
 
-func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *accountAPI) handleMe(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "handleMe: failed to load user %s: %v\n", userID, err)
+		api.logf(r, "handleMe: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

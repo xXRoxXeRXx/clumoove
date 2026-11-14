@@ -74,7 +74,7 @@ func TestHandleTOTP_ConcurrentBackupCodeIsAcceptedOnce(t *testing.T) {
 			<-start
 			req := httptest.NewRequest(http.MethodPost, "/api/auth/totp", bytes.NewReader(body))
 			rec := httptest.NewRecorder()
-			s.handleTOTP(rec, req)
+			s.accounts().handleTOTP(rec, req)
 			responses <- rec
 		}()
 	}
@@ -142,7 +142,7 @@ func TestHandle2FASetup_RejectsWhenAlreadyEnabled(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/2fa/setup", nil)
 	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: user.ID}))
 	rec := httptest.NewRecorder()
-	s.handle2FASetup(rec, req)
+	s.accounts().handle2FASetup(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409 Conflict, got %d: %s", rec.Code, rec.Body.String())
@@ -200,7 +200,7 @@ func TestHandle2FAEnable_RejectsWhenSecretSuperseded(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/2fa/enable", bytes.NewReader(body))
 	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: user.ID}))
 	rec := httptest.NewRecorder()
-	s.handle2FAEnable(rec, req)
+	s.accounts().handle2FAEnable(rec, req)
 
 	if rec.Code == http.StatusOK {
 		t.Fatal("expected enable to be rejected when secret was superseded")
@@ -257,7 +257,7 @@ func TestHandle2FA_ConcurrentSetupAndEnable(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/2fa/enable", bytes.NewReader(body))
 		req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: user.ID}))
 		recEnable = httptest.NewRecorder()
-		s.handle2FAEnable(recEnable, req)
+		s.accounts().handle2FAEnable(recEnable, req)
 	}()
 
 	go func() {
@@ -266,7 +266,7 @@ func TestHandle2FA_ConcurrentSetupAndEnable(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/auth/2fa/setup", nil)
 		req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: user.ID}))
 		recSetup = httptest.NewRecorder()
-		s.handle2FASetup(recSetup, req)
+		s.accounts().handle2FASetup(recSetup, req)
 	}()
 
 	close(start)

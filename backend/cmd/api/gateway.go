@@ -173,16 +173,19 @@ func (server *APIServer) buildMux(overrideHandler http.HandlerFunc) *http.ServeM
 	adminRouteMiddleware := adminMiddleware(jwtMiddleware)
 
 	registerRouteSpecs(mux, server.gatewayRoutes(), jwtMiddleware, allowMustChangeMiddleware, adminRouteMiddleware, overrideHandler)
+	accounts := server.accounts()
 	files := server.files()
 	migrations := server.migrations()
 	syncs := server.syncs()
 	backups := server.backups()
 	if overrideHandler == nil {
+		accounts.registerRoutes(mux, jwtMiddleware, allowMustChangeMiddleware)
 		files.registerRoutes(mux, jwtMiddleware)
 		migrations.registerRoutes(mux, jwtMiddleware)
 		syncs.registerRoutes(mux, jwtMiddleware)
 		backups.registerRoutes(mux, jwtMiddleware)
 	} else {
+		accounts.registerRoutesWithHandler(mux, jwtMiddleware, allowMustChangeMiddleware, overrideHandler)
 		files.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 		migrations.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 		syncs.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
@@ -252,38 +255,9 @@ func (server *APIServer) gatewayRoutes() []routeSpec {
 	})
 
 	routes := []routeSpec{
-		// Auth Routes (Public)
-		{pattern: "GET /api/auth/setup-status", access: routePublic, handler: server.handleGetSetupStatus},
-		{pattern: "POST /api/auth/setup-admin", access: routePublic, handler: server.handleSetupAdmin},
-		{pattern: "POST /api/auth/register", access: routePublic, handler: server.handleRegister},
-		{pattern: "POST /api/auth/login", access: routePublic, handler: server.handleLogin},
-		{pattern: "POST /api/auth/totp", access: routePublic, handler: server.handleTOTP},
-		{pattern: "POST /api/auth/refresh", access: routePublic, handler: server.handleRefresh},
-		{pattern: "POST /api/auth/logout", access: routePublic, handler: server.handleLogout},
+		// Instance settings
 		{pattern: "GET /api/settings", access: routePublic, handler: server.handleGetSettings},
-
-		// Protected Auth Routes
-		{pattern: "GET /api/auth/me", access: routeAuthenticated, handler: server.handleMe},
-		{pattern: "GET /api/auth/sessions", access: routeAuthenticated, handler: server.handleListSessions},
-		{pattern: "DELETE /api/auth/sessions/{id}", access: routeAuthenticated, handler: server.handleDeleteSession},
-		{pattern: "PUT /api/auth/me", access: routeAuthenticated, handler: server.handleUpdateProfile},
-		{pattern: "PUT /api/auth/me/language", access: routeAuthenticated, handler: server.handleUpdateLanguage},
-		{pattern: "POST /api/auth/change-password", access: routeAllowMustChange, handler: server.handleChangePassword},
-		{pattern: "GET /api/auth/2fa/setup", access: routeAuthenticated, handler: server.handle2FASetup},
-		{pattern: "POST /api/auth/2fa/enable", access: routeAuthenticated, handler: server.handle2FAEnable},
-		{pattern: "POST /api/auth/2fa/disable", access: routeAuthenticated, handler: server.handle2FADisable},
-		{pattern: "GET /api/auth/2fa/status", access: routeAuthenticated, handler: server.handle2FAStatus},
-		{pattern: "POST /api/user/avatar", access: routeAuthenticated, handler: server.handleSetAvatar},
-		{pattern: "DELETE /api/user/avatar", access: routeAuthenticated, handler: server.handleDeleteAvatar},
 		{pattern: "PUT /api/settings", access: routeAdmin, handler: server.handleUpdateSetting},
-
-		{pattern: "GET /api/auth/password-reset-available", access: routePublic, handler: server.handlePasswordResetAvailable},
-		{pattern: "POST /api/auth/forgot-password", access: routePublic, handler: server.handleForgotPassword},
-		{pattern: "POST /api/auth/reset-password", access: routePublic, handler: server.handleResetPassword},
-
-		{pattern: "GET /api/auth/email-change-available", access: routePublic, handler: server.handleEmailChangeAvailable},
-		{pattern: "POST /api/auth/change-email", access: routeAuthenticated, handler: server.handleChangeEmail},
-		{pattern: "POST /api/auth/confirm-email-change", access: routePublic, handler: server.handleConfirmEmailChange},
 
 		// Schedule Management Routes (Protected)
 		{pattern: "GET /api/schedule", access: routeAuthenticated, handler: server.handleListSchedules},
@@ -316,10 +290,6 @@ func (server *APIServer) gatewayRoutes() []routeSpec {
 		{pattern: "PUT /api/admin/settings/oauth/{provider}", access: routeAdmin, handler: server.handleAdminPutOAuth},
 		{pattern: "DELETE /api/admin/settings/oauth/{provider}", access: routeAdmin, handler: server.handleAdminDeleteOAuth},
 		{pattern: "GET /api/audit/log", access: routeAdmin, handler: server.handleAdminAuditLog},
-
-		// OAuth callbacks use their own state validation.
-		{pattern: "GET /api/oauth/auth", access: routePublic, handler: server.handleOAuthAuth},
-		{pattern: "GET /api/oauth/callback", access: routePublic, handler: server.handleOAuthCallback},
 	}
 
 	routes = append(routes, notifications.routes()...)

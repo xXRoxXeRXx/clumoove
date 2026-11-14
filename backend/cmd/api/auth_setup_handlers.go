@@ -17,32 +17,32 @@ type SetupAdminRequest struct {
 	Language    string `json:"language"`
 }
 
-func (s *APIServer) handleGetSetupStatus(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "setup-status", s.clientIP(r), connectRateLimit, connectRateWindow) {
+func (api *accountAPI) handleGetSetupStatus(w http.ResponseWriter, r *http.Request) {
+	if !api.rateLimiter.Allow(r.Context(), "setup-status", api.clientIP(r), connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
-	needsSetup, err := db.IsSetupRequired(s.db)
+	needsSetup, err := db.IsSetupRequired(api.db)
 	if err != nil {
-		s.logf(r, "handleGetSetupStatus: failed to check setup status: %v\n", err)
+		api.logf(r, "handleGetSetupStatus: failed to check setup status: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"needs_setup": needsSetup})
 }
 
-func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "setup-admin", s.clientIP(r), registerRateLimit, registerRateWindow) {
+func (api *accountAPI) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
+	if !api.rateLimiter.Allow(r.Context(), "setup-admin", api.clientIP(r), registerRateLimit, registerRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
 	// Avoid expensive password hashing after bootstrap is permanently closed.
 	// CreateInitialAdmin repeats this check while holding its transaction lock.
-	needsSetup, err := db.IsSetupRequired(s.db)
+	needsSetup, err := db.IsSetupRequired(api.db)
 	if err != nil {
-		s.logf(r, "handleSetupAdmin: failed to check setup status: %v\n", err)
+		api.logf(r, "handleSetupAdmin: failed to check setup status: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -75,14 +75,14 @@ func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 
 	passHash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		s.logf(r, "handleSetupAdmin: password hashing error: %v\n", err)
+		api.logf(r, "handleSetupAdmin: password hashing error: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	u, err := db.CreateInitialAdmin(r.Context(), s.db, req.Email, passHash, req.DisplayName, req.Language)
+	u, err := db.CreateInitialAdmin(r.Context(), api.db, req.Email, passHash, req.DisplayName, req.Language)
 	if err != nil {
-		s.logf(r, "handleSetupAdmin: failed to create admin user: %v\n", err)
+		api.logf(r, "handleSetupAdmin: failed to create admin user: %v\n", err)
 		if errors.Is(err, db.ErrSetupAlreadyCompleted) {
 			writeError(w, http.StatusForbidden, ErrSetupAlreadyCompleted)
 			return
@@ -95,6 +95,6 @@ func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeAudit(r, db.AuditRegistration, req.Email, u.ID, map[string]interface{}{"role": "ADMIN", "setup": true})
-	s.issueTokens(w, r, u)
+	api.writeAudit(r, db.AuditRegistration, req.Email, u.ID, map[string]interface{}{"role": "ADMIN", "setup": true})
+	api.issueTokens(w, r, u)
 }

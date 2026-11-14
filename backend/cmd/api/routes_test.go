@@ -263,7 +263,8 @@ func TestGatewayRouteContracts(t *testing.T) {
 	}
 
 	// Verify the composed gateway and feature-module route tables match the independent contract table 1:1.
-	actualRoutes := append(server.gatewayRoutes(), server.files().routes()...)
+	actualRoutes := append(server.gatewayRoutes(), server.accounts().routes()...)
+	actualRoutes = append(actualRoutes, server.files().routes()...)
 	actualRoutes = append(actualRoutes, server.migrations().routes()...)
 	actualRoutes = append(actualRoutes, server.syncs().routes()...)
 	actualRoutes = append(actualRoutes, server.backups().routes()...)

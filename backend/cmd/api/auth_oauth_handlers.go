@@ -20,7 +20,7 @@ import (
 )
 
 // handleOAuthAuth handles the OAuth authorization redirect.
-func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
+func (api *accountAPI) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	provider := r.URL.Query().Get("provider")
 	logger := observability.Logger(r.Context()).With(slog.String("component", "oauth"))
 
@@ -80,7 +80,7 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 
 	stateParam := fmt.Sprintf("%s:%s:%s:%s", stateToken, provider, purpose, origin)
 
-	redirectURI := s.getRedirectURI(r)
+	redirectURI := api.getRedirectURI(r)
 	authURL, err := oauth.GetAuthURL(provider, redirectURI, stateParam)
 	if err != nil {
 		logger.ErrorContext(r.Context(), "oauth_authorization_failed", slog.String("operation", "authorize"), slog.String("provider", provider), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
@@ -92,7 +92,7 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 }
 
-func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
+func (api *accountAPI) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 
@@ -100,14 +100,14 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 	if code == "" || state == "" {
 		logger.WarnContext(r.Context(), "oauth_callback_rejected", slog.String("operation", "callback"), slog.String("error_kind", "validation"))
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthGenerationFailed)
+		api.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthGenerationFailed)
 		return
 	}
 
 	parts := strings.SplitN(state, ":", 4)
 	if len(parts) < 3 {
 		logger.WarnContext(r.Context(), "oauth_callback_rejected", slog.String("operation", "callback"), slog.String("error_kind", "validation"))
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthGenerationFailed)
+		api.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthGenerationFailed)
 		return
 	}
 	stateToken := parts[0]
@@ -122,14 +122,14 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		logger.WarnContext(r.Context(), "oauth_callback_rejected", slog.String("operation", "callback"), slog.String("provider", provider), slog.String("error_kind", "authorization"))
 		// Never reflect an untrusted origin into the callback document. Besides not
 		// being a valid postMessage target, it would be embedded in an inline script.
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthOriginUntrusted)
+		api.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthOriginUntrusted)
 		return
 	}
 
 	cookie, err := r.Cookie("oauth_state")
 	if err != nil || cookie.Value == "" || cookie.Value != stateToken {
 		logger.WarnContext(r.Context(), "oauth_callback_rejected", slog.String("operation", "callback"), slog.String("provider", provider), slog.String("error_kind", "authorization"))
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, ErrOauthGenerationFailed)
+		api.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, ErrOauthGenerationFailed)
 		return
 	}
 
@@ -145,14 +145,14 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	}
 	http.SetCookie(w, clearCookie)
 
-	redirectURI := s.getRedirectURI(r)
+	redirectURI := api.getRedirectURI(r)
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
 	tokenResp, err := oauth.ExchangeCode(ctx, provider, code, redirectURI)
 	if err != nil {
 		logger.ErrorContext(r.Context(), "oauth_exchange_failed", slog.String("operation", "exchange_code"), slog.String("provider", provider), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, ErrOauthExchangeFailed)
+		api.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, ErrOauthExchangeFailed)
 		return
 	}
 
@@ -163,10 +163,10 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	logger.InfoContext(r.Context(), "oauth_callback_completed", slog.String("operation", "callback"), slog.String("provider", provider))
-	s.renderOAuthResultHTML(w, provider, tokenResp.AccessToken, tokenResp.RefreshToken, tokenResp.ExpiresIn, username, purpose, origin)
+	api.renderOAuthResultHTML(w, provider, tokenResp.AccessToken, tokenResp.RefreshToken, tokenResp.ExpiresIn, username, purpose, origin)
 }
 
-func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token, refreshToken string, expiresIn int, username, purpose, targetOrigin string, errorCode ...APIErrorCode) {
+func (api *accountAPI) renderOAuthResultHTML(w http.ResponseWriter, provider, token, refreshToken string, expiresIn int, username, purpose, targetOrigin string, errorCode ...APIErrorCode) {
 	// targetOrigin is embedded in the callback's inline script. Keep this
 	// sink-level guard even though callback callers validate the state origin,
 	// so future call paths cannot reflect an untrusted value into JavaScript.

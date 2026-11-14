@@ -129,7 +129,7 @@ func changePasswordRequest(t *testing.T, s *APIServer, userID string) *httptest.
 	claims := &auth.Claims{UserID: userID, MustChangePassword: true}
 	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, claims))
 	rec := httptest.NewRecorder()
-	s.handleChangePassword(rec, req)
+	s.accounts().handleChangePassword(rec, req)
 	return rec
 }
 
@@ -187,7 +187,7 @@ func TestHandleChangePassword_MustChange_ReusingOriginalTokenAfterRotationIsReje
 	changeReq := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", strings.NewReader(`{"new_password":"BrandNewPassword-456","confirm_password":"BrandNewPassword-456"}`))
 	changeReq.Header.Set("Authorization", "Bearer "+mustChangeToken)
 	changeRec := httptest.NewRecorder()
-	auth.AuthMiddlewareAllowMustChange(s.db, s.jwtSecret)(http.HandlerFunc(s.handleChangePassword)).ServeHTTP(changeRec, changeReq)
+	auth.AuthMiddlewareAllowMustChange(s.db, s.jwtSecret)(http.HandlerFunc(s.accounts().handleChangePassword)).ServeHTTP(changeRec, changeReq)
 	if changeRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 from change-password, got %d: %s", changeRec.Code, changeRec.Body.String())
 	}
@@ -197,7 +197,7 @@ func TestHandleChangePassword_MustChange_ReusingOriginalTokenAfterRotationIsReje
 	meReq := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
 	meReq.Header.Set("Authorization", "Bearer "+mustChangeToken)
 	meRec := httptest.NewRecorder()
-	auth.AuthMiddleware(s.db, s.jwtSecret)(http.HandlerFunc(s.handleMe)).ServeHTTP(meRec, meReq)
+	auth.AuthMiddleware(s.db, s.jwtSecret)(http.HandlerFunc(s.accounts().handleMe)).ServeHTTP(meRec, meReq)
 
 	if meRec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 when reusing original must-change token on protected route, got %d: %s", meRec.Code, meRec.Body.String())
@@ -229,7 +229,7 @@ func TestHandle2FADisable_WithBackupCode(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/2fa/disable", strings.NewReader(`{"code":"`+backupCodes[0]+`"}`))
 	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: user.ID}))
 	rec := httptest.NewRecorder()
-	s.handle2FADisable(rec, req)
+	s.accounts().handle2FADisable(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -275,7 +275,7 @@ func TestSuspensionRevokesRefreshTokensAndBlocksRefresh(t *testing.T) {
 	req.Header.Set("Origin", "http://localhost:5173")
 	req.AddCookie(&http.Cookie{Name: "refresh_token", Value: refreshToken})
 	rec := httptest.NewRecorder()
-	s.handleRefresh(rec, req)
+	s.accounts().handleRefresh(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected suspended user refresh to return 403, got %d: %s", rec.Code, rec.Body.String())
