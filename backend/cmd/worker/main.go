@@ -118,6 +118,15 @@ func main() {
 	}
 	slog.Info("service_starting", slog.String("component", "worker"))
 
+	// Registered first so it runs after every other deferred cleanup (database
+	// close, signal teardown) when the worker stops because of a failure.
+	exitCode := 0
+	defer func() {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+	}()
+
 	// Load and validate all worker settings once, before any component starts.
 	config, err := loadWorkerConfig(os.Getenv)
 	if err != nil {
@@ -200,18 +209,19 @@ func main() {
 
 	// A second signal lets an operator abort a potentially long task drain.
 	go watchShutdownSignals(sigChan, cancel, os.Exit)
-	go func() {
-		if err := backupCoordinator.Run(ctx, time.Second); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Error("backup_coordinator_stopped", slog.String("component", "backup"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-		}
-	}()
-	go func() {
-		if err := restoreCoordinator.Run(ctx, time.Second); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Error("restore_coordinator_stopped", slog.String("component", "restore"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-		}
-	}()
+	// A coordinator loop that stops before shutdown is a terminal failure: the
+	// supervisor cancels the worker context so the drain below begins and the
+	// liveness heartbeat stops, then main exits non-zero for a platform restart.
+	supervisor := newCoordinatorSupervisor(cancel)
+	supervisor.Go(ctx, "backup", func(ctx context.Context) error { return backupCoordinator.Run(ctx, time.Second) })
+	supervisor.Go(ctx, "restore", func(ctx context.Context) error { return restoreCoordinator.Run(ctx, time.Second) })
 
 	// Block until context is cancelled AND all in-flight tasks have finished.
 	proc.Start(ctx)
+	if err := supervisor.Err(); err != nil {
+		slog.Error("service_failed", slog.String("component", "worker"), observability.Error(err), slog.String("error_kind", coordinatorFailureKind))
+		exitCode = 1
+		return
+	}
 	slog.Info("service_stopped", slog.String("component", "worker"))
 }

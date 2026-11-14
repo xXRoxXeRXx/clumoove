@@ -31,6 +31,7 @@ Started by `processor.Start()` in the worker process:
   - Two-phase restore workflow:
     1. **Preview (`POST /api/backup/{id}/snapshots/{snapshotID}/restore/previews`)**: Mandatory read-only preview with conflict counters, fingerprinting, and sample conflict items.
     2. **Execution (`POST /api/restore/previews/{previewID}/consume`)**: Streams blocks (via Range reads or `MAX_RESTORE_PACK_READERS` bounded pack buffers) to destination with case-insensitive path reservations.
+- **Supervision (`cmd/worker/supervisor.go`)**: The backup and restore coordinator loops run under `coordinatorSupervisor`. A loop that exits before shutdown begins (including a nil return or a restore `PollOnce` error) is a terminal failure: the supervisor logs `coordinator_stopped`, cancels the worker context (in-flight tasks drain, the liveness heartbeat stops), and the worker exits with code 1 so the platform restarts it. Exits after shutdown has begun are a clean stop (exit 0).
 - **Repository Checks (`backup_maintenance`, `backup_verify_targets`)**:
   - Supports `METADATA`, `BUDGETED` (64 MiB–1 TiB), or `FULL` checks with pack pins and live SSE progress.
 
