@@ -266,6 +266,7 @@ func TestGatewayRouteContracts(t *testing.T) {
 	actualRoutes := append(server.gatewayRoutes(), server.files().routes()...)
 	actualRoutes = append(actualRoutes, server.migrations().routes()...)
 	actualRoutes = append(actualRoutes, server.syncs().routes()...)
+	actualRoutes = append(actualRoutes, server.backups().routes()...)
 	actualByPattern := make(map[string]routeSpec, len(actualRoutes))
 	for _, r := range actualRoutes {
 		if r.handler == nil {

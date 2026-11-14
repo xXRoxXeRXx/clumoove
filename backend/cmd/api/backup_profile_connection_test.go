@@ -37,7 +37,7 @@ func TestCreateBackupUsesProfileResolvedCredentials(t *testing.T) {
 	request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
 	recorder := httptest.NewRecorder()
 
-	server.handleCreateBackup(recorder, request)
+	server.backups().handleCreateBackup(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -74,7 +74,7 @@ func TestCreateBackupMapsProfileCredentialFailureToBackupConnectionError(t *test
 	request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
 	recorder := httptest.NewRecorder()
 
-	server.handleCreateBackup(recorder, request)
+	server.backups().handleCreateBackup(recorder, request)
 
 	assertAPIError(t, recorder, http.StatusInternalServerError, ErrBackupConnectionFailed)
 }

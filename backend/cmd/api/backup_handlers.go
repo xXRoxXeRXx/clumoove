@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
@@ -52,27 +53,14 @@ type createBackupVerifyRequest struct {
 	ConfirmFull bool   `json:"confirm_full"`
 }
 
-func (s *APIServer) requireBackupOwnership(w http.ResponseWriter, r *http.Request, id, userID string) bool {
-	owned, err := db.VerifyBackupJobOwnershipContext(r.Context(), s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return false
-	}
-	if !owned {
-		writeError(w, http.StatusNotFound, ErrBackupNotFound)
-		return false
-	}
-	return true
-}
-
-func (s *APIServer) handleListBackups(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleListBackups(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	jobs, err := db.ListBackupJobsForOwnerContext(r.Context(), s.db, userID)
+	jobs, err := db.ListBackupJobsForOwnerContext(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "list backup jobs failed: %v", err)
+		api.logf(r, "list backup jobs failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -82,8 +70,8 @@ func (s *APIServer) handleListBackups(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, jobs)
 }
 
-func (s *APIServer) handleGetBackup(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleGetBackup(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -92,21 +80,21 @@ func (s *APIServer) handleGetBackup(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrBackupIDMissing)
 		return
 	}
-	job, err := db.GetBackupJobForOwnerContext(r.Context(), s.db, id, userID)
+	job, err := db.GetBackupJobForOwnerContext(r.Context(), api.db, id, userID)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
 	if err != nil {
-		s.logf(r, "get backup job failed: %v", err)
+		api.logf(r, "get backup job failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, job)
 }
 
-func (s *APIServer) handleListBackupSnapshots(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleListBackupSnapshots(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -115,12 +103,12 @@ func (s *APIServer) handleListBackupSnapshots(w http.ResponseWriter, r *http.Req
 		writeValidationError(w, ErrBackupIDMissing)
 		return
 	}
-	if !s.requireBackupOwnership(w, r, id, userID) {
+	if !api.requireBackupOwnership(w, r, id, userID) {
 		return
 	}
-	snapshots, err := db.ListVisibleBackupSnapshotsContext(r.Context(), s.db, id)
+	snapshots, err := db.ListVisibleBackupSnapshotsContext(r.Context(), api.db, id)
 	if err != nil {
-		s.logf(r, "list backup snapshots failed: %v", err)
+		api.logf(r, "list backup snapshots failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -130,8 +118,8 @@ func (s *APIServer) handleListBackupSnapshots(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, snapshots)
 }
 
-func (s *APIServer) handleListBackupSnapshotItems(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleListBackupSnapshotItems(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -140,11 +128,11 @@ func (s *APIServer) handleListBackupSnapshotItems(w http.ResponseWriter, r *http
 		writeValidationError(w, ErrBackupIDMissing)
 		return
 	}
-	if !s.requireBackupOwnership(w, r, id, userID) {
+	if !api.requireBackupOwnership(w, r, id, userID) {
 		return
 	}
 	directory := strings.TrimPrefix(r.URL.Query().Get("path"), "/")
-	items, err := db.ListBackupSnapshotChildrenContext(r.Context(), s.db, id, snapshotID, directory)
+	items, err := db.ListBackupSnapshotChildrenContext(r.Context(), api.db, id, snapshotID, directory)
 	if err != nil {
 		// Invalid paths and a snapshot outside this backup are deliberately not
 		// distinguishable from an absent catalog item.
@@ -152,7 +140,7 @@ func (s *APIServer) handleListBackupSnapshotItems(w http.ResponseWriter, r *http
 			writeValidationError(w, ErrFolderPathInvalid)
 			return
 		}
-		s.logf(r, "list backup snapshot items failed: %v", err)
+		api.logf(r, "list backup snapshot items failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -162,24 +150,29 @@ func (s *APIServer) handleListBackupSnapshotItems(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, items)
 }
 
-func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "restore-preview", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *backupAPI) handleCreateRestorePreview(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "restore-preview", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	backupID, snapshotID := r.PathValue("id"), r.PathValue("snapshotID")
-	if backupID == "" || snapshotID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+	backupID, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
+		return
+	}
+	snapshotID := r.PathValue("snapshotID")
+	if snapshotID == "" {
+		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
 	var req createRestorePreviewRequest
 	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
-	targetSnap, err := s.snapshotRequestConnection(r, requestConnectionInput{
+	targetSnap, err := api.profiles.SnapshotRequest(r.Context(), userID, requestConnectionInput{
 		ProfileID:      req.TargetProfileID,
 		NormalizeURL:   true,
 		Provider:       req.TargetProvider,
@@ -190,7 +183,7 @@ func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Re
 		TokenExpiresIn: req.TargetTokenExpiresIn,
 	})
 	if err != nil {
-		s.writeRequestSnapshotError(w, r, "", err)
+		writeRequestSnapshotErrorWith(w, r, api.logf, "resolve restore target connection", err)
 		return
 	}
 	targetProfileID := targetSnap.ProfileID
@@ -228,9 +221,14 @@ func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Re
 		writeValidationError(w, ErrRestoreRepositoryOverlap)
 		return
 	}
-	backupJob, err := db.GetBackupJobForOwnerContext(r.Context(), s.db, backupID, userID)
-	if err != nil {
+	backupJob, err := db.GetBackupJobForOwnerContext(r.Context(), api.db, backupID, userID)
+	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
+	if err != nil {
+		api.logf(r, "load backup job failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	sameRepositoryAccount := backupJob.TargetProfileID.Valid && targetProfileID.Valid && backupJob.TargetProfileID.String == targetProfileID.String
@@ -260,9 +258,9 @@ func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var exists bool
-	err = s.db.QueryRowContext(r.Context(), `SELECT EXISTS (SELECT 1 FROM backup_snapshots WHERE id = $1 AND backup_job_id = $2 AND state IN ('READY','PARTIAL') AND integrity_state <> 'DAMAGED')`, snapshotID, backupID).Scan(&exists)
+	err = api.db.QueryRowContext(r.Context(), `SELECT EXISTS (SELECT 1 FROM backup_snapshots WHERE id = $1 AND backup_job_id = $2 AND state IN ('READY','PARTIAL') AND integrity_state <> 'DAMAGED')`, snapshotID, backupID).Scan(&exists)
 	if err != nil {
-		s.logf(r, "check restore snapshot failed: %v", err)
+		api.logf(r, "check restore snapshot failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -284,7 +282,7 @@ func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Re
 		var existingFingerprint []byte
 		var retryBackupID, retrySnapshotID string
 		var active bool
-		err = s.db.QueryRowContext(r.Context(), `
+		err = api.db.QueryRowContext(r.Context(), `
 			SELECT j.config_fingerprint, j.source_backup_ref, j.source_snapshot_ref,
 				EXISTS (SELECT 1 FROM restore_runs r WHERE r.restore_job_id = j.id AND r.status IN ('QUEUED','PLANNING','RUNNING','VERIFYING','CANCELLING'))
 			FROM restore_jobs j WHERE j.id = $1 AND j.user_id = $2`, req.RetryRestoreJobID, userID).Scan(&existingFingerprint, &retryBackupID, &retrySnapshotID, &active)
@@ -299,46 +297,46 @@ func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Re
 		}
 		retryJobID = sql.NullString{String: req.RetryRestoreJobID, Valid: true}
 	}
-	previewID, err := db.CreateRestorePreviewContext(r.Context(), s.db, &db.RestorePreview{UserID: userID, BackupJobID: backupID, BackupSnapshotID: snapshotID, RetryRestoreJobID: retryJobID, TargetProfileID: targetProfileID, SelectedPaths: db.StringArray(paths), TargetProvider: targetSnap.Provider, TargetURL: targetSnap.URL, TargetUsername: targetSnap.Username, TargetPasswordEncrypted: sql.NullString{String: passwordEncrypted, Valid: passwordEncrypted != ""}, TargetRefreshTokenEncrypted: refreshEncrypted, TargetTokenExpiresAt: expiresAt, TargetMegaSessionIDEncrypted: sql.NullString{String: megaSessionID, Valid: megaSessionID != ""}, TargetMegaMasterKeyEncrypted: sql.NullString{String: megaMasterKey, Valid: megaMasterKey != ""}, TargetConnectionIdentity: identity, TargetRoot: targetRoot, ConflictStrategy: req.ConflictStrategy, Threads: req.Threads, BandwidthMbps: req.BandwidthMbps})
+	previewID, err := db.CreateRestorePreviewContext(r.Context(), api.db, &db.RestorePreview{UserID: userID, BackupJobID: backupID, BackupSnapshotID: snapshotID, RetryRestoreJobID: retryJobID, TargetProfileID: targetProfileID, SelectedPaths: db.StringArray(paths), TargetProvider: targetSnap.Provider, TargetURL: targetSnap.URL, TargetUsername: targetSnap.Username, TargetPasswordEncrypted: sql.NullString{String: passwordEncrypted, Valid: passwordEncrypted != ""}, TargetRefreshTokenEncrypted: refreshEncrypted, TargetTokenExpiresAt: expiresAt, TargetMegaSessionIDEncrypted: sql.NullString{String: megaSessionID, Valid: megaSessionID != ""}, TargetMegaMasterKeyEncrypted: sql.NullString{String: megaMasterKey, Valid: megaMasterKey != ""}, TargetConnectionIdentity: identity, TargetRoot: targetRoot, ConflictStrategy: req.ConflictStrategy, Threads: req.Threads, BandwidthMbps: req.BandwidthMbps})
 	if err != nil {
-		s.logf(r, "create restore preview failed: %v", err)
+		api.logf(r, "create restore preview failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	s.writeAudit(r, db.AuditRestorePreviewCreated, previewID, userID, nil)
+	api.writeAudit(r, db.AuditRestorePreviewCreated, previewID, userID, nil)
 	writeJSON(w, http.StatusAccepted, map[string]string{"id": previewID})
 }
 
-func (s *APIServer) handleGetRestorePreview(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleGetRestorePreview(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	preview, err := db.GetRestorePreviewForOwnerContext(r.Context(), s.db, r.PathValue("previewID"), userID)
+	preview, err := db.GetRestorePreviewForOwnerContext(r.Context(), api.db, r.PathValue("previewID"), userID)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
 		return
 	}
 	if err != nil {
-		s.logf(r, "get restore preview failed: %v", err)
+		api.logf(r, "get restore preview failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, preview)
 }
 
-func (s *APIServer) handleCancelRestorePreview(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "restore-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *backupAPI) handleCancelRestorePreview(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "restore-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	cancelled, err := db.CancelRestorePreviewForOwnerContext(r.Context(), s.db, r.PathValue("previewID"), userID)
+	cancelled, err := db.CancelRestorePreviewForOwnerContext(r.Context(), api.db, r.PathValue("previewID"), userID)
 	if err != nil {
-		s.logf(r, "cancel restore preview failed: %v", err)
+		api.logf(r, "cancel restore preview failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -346,20 +344,20 @@ func (s *APIServer) handleCancelRestorePreview(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
 		return
 	}
-	s.writeAudit(r, db.AuditRestorePreviewCancelled, r.PathValue("previewID"), userID, nil)
+	api.writeAudit(r, db.AuditRestorePreviewCancelled, r.PathValue("previewID"), userID, nil)
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-func (s *APIServer) handleConsumeRestorePreview(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "restore-consume", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *backupAPI) handleConsumeRestorePreview(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "restore-consume", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	job, run, err := db.ConsumeRestorePreviewContext(r.Context(), s.db, r.PathValue("previewID"), userID)
+	job, run, err := db.ConsumeRestorePreviewContext(r.Context(), api.db, r.PathValue("previewID"), userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, db.ErrRestorePreviewNotFound) {
 			writeError(w, http.StatusNotFound, ErrRestoreNotFound)
@@ -367,36 +365,39 @@ func (s *APIServer) handleConsumeRestorePreview(w http.ResponseWriter, r *http.R
 			writeConflictError(w, ErrRestorePreviewExpired)
 		} else if errors.Is(err, db.ErrRestoreSnapshotUnavailable) || errors.Is(err, db.ErrRestorePreviewStale) || errors.Is(err, db.ErrRestoreRetryMismatch) {
 			writeConflictError(w, ErrRestorePreviewStale)
-		} else {
+		} else if errors.Is(err, db.ErrRestorePreviewInvalidState) || errors.Is(err, db.ErrRestoreRetryActive) {
 			writeConflictError(w, ErrRestorePreviewInvalidState)
+		} else {
+			api.logf(r, "consume restore preview failed: %v", err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
 		}
 		return
 	}
-	s.writeAudit(r, db.AuditRestoreCreated, job.ID, userID, nil)
-	s.writeAudit(r, db.AuditRestoreStarted, run.ID, userID, nil)
+	api.writeAudit(r, db.AuditRestoreCreated, job.ID, userID, nil)
+	api.writeAudit(r, db.AuditRestoreStarted, run.ID, userID, nil)
 	writeJSON(w, http.StatusAccepted, map[string]string{"restore_job_id": job.ID, "restore_run_id": run.ID})
 }
 
-func (s *APIServer) handleListRestoreRuns(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleListRestoreRuns(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	runs, err := db.ListRestoreRunsForOwnerContext(r.Context(), s.db, userID)
+	runs, err := db.ListRestoreRunsForOwnerContext(r.Context(), api.db, userID)
 	if err != nil {
-		s.logf(r, "list restore runs failed: %v", err)
+		api.logf(r, "list restore runs failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, runs)
 }
 
-func (s *APIServer) handleGetRestoreRun(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleGetRestoreRun(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	run, err := db.GetRestoreRunForOwnerContext(r.Context(), s.db, r.PathValue("runID"), userID)
+	run, err := db.GetRestoreRunForOwnerContext(r.Context(), api.db, r.PathValue("runID"), userID)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
 		return
@@ -408,53 +409,220 @@ func (s *APIServer) handleGetRestoreRun(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, run)
 }
 
-func (s *APIServer) handleRestoreRunStream(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleRestoreRunStream(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	if !s.acquireStream(w, r, userID, "restore-stream") {
+	if !api.acquireBackupStream(w, r, userID, "restore-stream") {
 		return
 	}
-	defer s.releaseBackupStream(userID)
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
+	defer api.releaseBackupStream(userID)
 	runID := r.PathValue("runID")
-	run, err := db.GetRestoreRunForOwnerContext(r.Context(), s.db, runID, userID)
+	run, err := db.GetRestoreRunForOwnerContext(r.Context(), api.db, runID, userID)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
 		return
 	}
 	if err != nil {
+		api.logf(r, "stream restore run failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
+	}
+	api.serveBackupDetailSSE(w, r, "restore", run, func(ctx context.Context) (any, error) {
+		return db.GetRestoreRunForOwnerContext(ctx, api.db, runID, userID)
+	})
+}
+
+func (api *backupAPI) handleListRestoreRunItems(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	runID := r.PathValue("runID")
+	if _, err := db.GetRestoreRunForOwnerContext(r.Context(), api.db, runID, userID); err != nil {
+		if err == sql.ErrNoRows {
+			writeError(w, http.StatusNotFound, ErrRestoreNotFound)
+			return
+		}
+		api.logf(r, "list restore run items ownership check failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	items, err := db.ListRestoreItemsForOwnerContext(r.Context(), api.db, runID, userID)
+	if err != nil {
+		api.logf(r, "list restore items failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (api *backupAPI) handleCancelRestoreRun(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "restore-mutation", jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID, authenticated := api.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	cancelled, err := db.CancelRestoreRunForOwnerContext(r.Context(), api.db, r.PathValue("runID"), userID)
+	if err != nil {
+		api.logf(r, "cancel restore run failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !cancelled {
+		writeConflictError(w, ErrRestorePreviewInvalidState)
+		return
+	}
+	api.writeAudit(r, db.AuditRestoreCancelled, r.PathValue("runID"), userID, nil)
+	writeJSON(w, http.StatusAccepted, map[string]bool{"success": true})
+}
+
+func (api *backupAPI) handleDeleteRestoreJob(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "restore-mutation", jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID, authenticated := api.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	deleted, err := db.DeleteRestoreJobForOwnerContext(r.Context(), api.db, r.PathValue("jobID"), userID)
+	if err != nil {
+		api.logf(r, "delete restore job failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !deleted {
+		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
+		return
+	}
+	api.writeAudit(r, db.AuditRestoreDeleted, r.PathValue("jobID"), userID, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (api *backupAPI) handleDownloadRestoreReport(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	runID := r.PathValue("runID")
+	run, err := db.GetRestoreRunForOwnerContext(r.Context(), api.db, runID, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeError(w, http.StatusNotFound, ErrRestoreNotFound)
+			return
+		}
+		api.logf(r, "load restore report run failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if run.Status != "COMPLETED" && run.Status != "PARTIAL" && run.Status != "FAILED" && run.Status != "CANCELLED" {
+		writeConflictError(w, ErrRestorePreviewInvalidState)
+		return
+	}
+	items, err := db.ListRestoreItemsForRunOwnerContext(r.Context(), api.db, runID, userID)
+	if err != nil {
+		api.logf(r, "create restore report failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=restore-report.csv")
+	writer := csv.NewWriter(w)
+	if err := writer.Write([]string{"source_path", "target_path", "status", "verification", "size_bytes", "error_code"}); err != nil {
+		return
+	}
+	for _, item := range items {
+		if err := writer.Write([]string{csvCell(item.SnapshotRelativePath), csvCell(item.TargetPath), item.Status, csvCell(item.VerificationKind.String), fmt.Sprintf("%d", item.SizeBytes), csvCell(item.ErrorCode.String)}); err != nil {
+			return
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		api.logf(r, "write restore report failed: %v", err)
+	}
+}
+
+func (api *backupAPI) requireOwnedBackupID(w http.ResponseWriter, r *http.Request, userID string) (string, bool) {
+	backupID := r.PathValue("id")
+	if backupID == "" {
+		writeValidationError(w, ErrBackupIDMissing)
+		return "", false
+	}
+	if !api.requireBackupOwnership(w, r, backupID, userID) {
+		return "", false
+	}
+	return backupID, true
+}
+
+func validateBackupScheduleAndTuning(w http.ResponseWriter, cronExpr, timezone string, retentionCount, threads int) (time.Time, bool) {
+	if err := scheduler.ValidateCronExpression(cronExpr); err != nil {
+		writeValidationError(w, ErrBackupCronInvalid)
+		return time.Time{}, false
+	}
+	if _, err := time.LoadLocation(timezone); err != nil {
+		writeValidationError(w, ErrBackupTimezoneInvalid)
+		return time.Time{}, false
+	}
+	if retentionCount < 1 || retentionCount > 365 {
+		writeValidationError(w, ErrBackupRetentionInvalid)
+		return time.Time{}, false
+	}
+	if threads < 1 || threads > 16 {
+		writeValidationError(w, ErrThreadsOutOfRange)
+		return time.Time{}, false
+	}
+	nextRun, err := scheduler.NextRunInLocation(cronExpr, timezone, time.Now())
+	if err != nil {
+		writeValidationError(w, ErrBackupCronInvalid)
+		return time.Time{}, false
+	}
+	return nextRun, true
+}
+
+func (api *backupAPI) prepareBackupSSE(w http.ResponseWriter, r *http.Request) (http.Flusher, bool) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return nil, false
+	}
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		api.logf(r, "clear sse write deadline failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return nil, false
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+	return flusher, true
+}
+
+func (api *backupAPI) serveBackupDetailSSE(w http.ResponseWriter, r *http.Request, eventName string, initial any, fetch func(context.Context) (any, error)) {
+	flusher, ok := api.prepareBackupSSE(w, r)
+	if !ok {
 		return
 	}
-	write := func(value *db.RestoreRun) ([]byte, error) {
+	writeEvent := func(value any) ([]byte, error) {
 		payload, err := json.Marshal(value)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := fmt.Fprintf(w, "event: restore\ndata: %s\n\n", payload); err != nil {
+		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventName, payload); err != nil {
 			return nil, err
 		}
 		flusher.Flush()
 		return payload, nil
 	}
-	previous, err := write(run)
+	previous, err := writeEvent(initial)
 	if err != nil {
 		return
 	}
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(api.detailStreamPollInterval())
 	defer ticker.Stop()
 	keepalive := time.NewTicker(20 * time.Second)
 	defer keepalive.Stop()
@@ -468,7 +636,7 @@ func (s *APIServer) handleRestoreRunStream(w http.ResponseWriter, r *http.Reques
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			current, err := db.GetRestoreRunForOwnerContext(r.Context(), s.db, runID, userID)
+			current, err := fetch(r.Context())
 			if err != nil {
 				return
 			}
@@ -477,7 +645,7 @@ func (s *APIServer) handleRestoreRunStream(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			if !bytes.Equal(payload, previous) {
-				if _, err := fmt.Fprintf(w, "event: restore\ndata: %s\n\n", payload); err != nil {
+				if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventName, payload); err != nil {
 					return
 				}
 				flusher.Flush()
@@ -487,131 +655,12 @@ func (s *APIServer) handleRestoreRunStream(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (s *APIServer) handleListRestoreRunItems(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	runID := r.PathValue("runID")
-	if _, err := db.GetRestoreRunForOwnerContext(r.Context(), s.db, runID, userID); err != nil {
-		if err == sql.ErrNoRows {
-			writeError(w, http.StatusNotFound, ErrRestoreNotFound)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	items, err := db.ListRestoreItemsForOwnerContext(r.Context(), s.db, runID, userID)
-	if err != nil {
-		s.logf(r, "list restore items failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	writeJSON(w, http.StatusOK, items)
-}
-
-func (s *APIServer) handleCancelRestoreRun(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "restore-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *backupAPI) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	cancelled, err := db.CancelRestoreRunForOwnerContext(r.Context(), s.db, r.PathValue("runID"), userID)
-	if err != nil {
-		s.logf(r, "cancel restore run failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if !cancelled {
-		writeConflictError(w, ErrRestorePreviewInvalidState)
-		return
-	}
-	s.writeAudit(r, db.AuditRestoreCancelled, r.PathValue("runID"), userID, nil)
-	writeJSON(w, http.StatusAccepted, map[string]bool{"success": true})
-}
-
-func (s *APIServer) handleDeleteRestoreJob(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "restore-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-		return
-	}
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	deleted, err := db.DeleteRestoreJobForOwnerContext(r.Context(), s.db, r.PathValue("jobID"), userID)
-	if err != nil {
-		s.logf(r, "delete restore job failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if !deleted {
-		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
-		return
-	}
-	s.writeAudit(r, db.AuditRestoreDeleted, r.PathValue("jobID"), userID, nil)
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *APIServer) handleDownloadRestoreReport(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
-	if !authenticated {
-		return
-	}
-	runID := r.PathValue("runID")
-	run, err := db.GetRestoreRunForOwnerContext(r.Context(), s.db, runID, userID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			writeError(w, http.StatusNotFound, ErrRestoreNotFound)
-			return
-		}
-		s.logf(r, "load restore report run failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if run.Status != "COMPLETED" && run.Status != "PARTIAL" && run.Status != "FAILED" && run.Status != "CANCELLED" {
-		writeConflictError(w, ErrRestorePreviewInvalidState)
-		return
-	}
-	items, err := db.ListRestoreItemsForRunOwnerContext(r.Context(), s.db, runID, userID)
-	if err != nil {
-		s.logf(r, "create restore report failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", "attachment; filename=restore-report.csv")
-	writer := csv.NewWriter(w)
-	if err := writer.Write([]string{"source_path", "target_path", "status", "verification", "size_bytes", "error_code"}); err != nil {
-		return
-	}
-	for _, item := range items {
-		if err := writer.Write([]string{neutralizeCSV(item.SnapshotRelativePath), neutralizeCSV(item.TargetPath), item.Status, neutralizeCSV(item.VerificationKind.String), fmt.Sprintf("%d", item.SizeBytes), neutralizeCSV(item.ErrorCode.String)}); err != nil {
-			return
-		}
-	}
-	writer.Flush()
-	if err := writer.Error(); err != nil {
-		s.logf(r, "write restore report failed: %v", err)
-	}
-}
-
-func neutralizeCSV(value string) string {
-	if value != "" && strings.ContainsRune("=+-@\t\r", rune(value[0])) {
-		return "'" + value
-	}
-	return value
-}
-
-func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-		return
-	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -623,14 +672,14 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrMissingRequiredFields)
 		return
 	}
-	sourceSnap, err := s.profiles().SnapshotOwned(r.Context(), userID, req.SourceProfileID)
+	sourceSnap, err := api.profiles.SnapshotOwned(r.Context(), userID, req.SourceProfileID)
 	if err != nil {
-		s.writeBackupProfileResolutionError(w, err)
+		api.writeBackupProfileResolutionError(w, err)
 		return
 	}
-	targetSnap, err := s.profiles().SnapshotOwned(r.Context(), userID, req.TargetProfileID)
+	targetSnap, err := api.profiles.SnapshotOwned(r.Context(), userID, req.TargetProfileID)
 	if err != nil {
-		s.writeBackupProfileResolutionError(w, err)
+		api.writeBackupProfileResolutionError(w, err)
 		return
 	}
 	source, sourcePersisted := sourceSnap.Profile, sourceSnap.Creds
@@ -666,31 +715,14 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrBackupSourceTargetOverlap)
 		return
 	}
-	if err := scheduler.ValidateCronExpression(req.CronExpression); err != nil {
-		writeValidationError(w, ErrBackupCronInvalid)
-		return
-	}
-	if _, err := time.LoadLocation(req.Timezone); err != nil {
-		writeValidationError(w, ErrBackupTimezoneInvalid)
-		return
-	}
-	if req.RetentionCount < 1 || req.RetentionCount > 365 {
-		writeValidationError(w, ErrBackupRetentionInvalid)
-		return
-	}
-	if req.Threads < 1 || req.Threads > 16 {
-		writeValidationError(w, ErrThreadsOutOfRange)
-		return
-	}
-	nextRun, err := scheduler.NextRunInLocation(req.CronExpression, req.Timezone, time.Now())
-	if err != nil {
-		writeValidationError(w, ErrBackupCronInvalid)
+	nextRun, valid := validateBackupScheduleAndTuning(w, req.CronExpression, req.Timezone, req.RetentionCount, req.Threads)
+	if !valid {
 		return
 	}
 	// The repository UUID is generated once by PostgreSQL and used in the same
 	// statement to make the immutable root unguessable and collision-free.
 	var id string
-	tx, err := s.db.BeginTx(r.Context(), nil)
+	tx, err := api.db.BeginTx(r.Context(), nil)
 	if err == nil {
 		err = tx.QueryRowContext(r.Context(), `WITH repository AS (SELECT gen_random_uuid() AS id)
 			INSERT INTO backup_jobs (user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,
@@ -713,15 +745,15 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		_ = tx.Rollback()
 	}
 	if err != nil {
-		s.logf(r, "create backup job failed: %v", err)
+		api.logf(r, "create backup job failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	s.writeAudit(r, db.AuditBackupCreated, id, userID, map[string]interface{}{"source_provider": source.Provider, "target_provider": target.Provider})
+	api.writeAudit(r, db.AuditBackupCreated, id, userID, map[string]interface{}{"source_provider": source.Provider, "target_provider": target.Provider})
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
-func (s *APIServer) writeBackupProfileResolutionError(w http.ResponseWriter, err error) {
+func (api *backupAPI) writeBackupProfileResolutionError(w http.ResponseWriter, err error) {
 	if errors.Is(err, errProfileNotFound) || errors.Is(err, errProfileNotOwned) {
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
@@ -761,17 +793,17 @@ func backupPathContains(parent, candidate string) bool {
 	return parent == "/" || candidate == parent || strings.HasPrefix(candidate, parent+"/")
 }
 
-func (s *APIServer) handleCreateBackupVerify(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "backup-verify", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *backupAPI) handleCreateBackupVerify(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "backup-verify", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	backupID := r.PathValue("id")
-	if backupID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+	backupID, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
 		return
 	}
 	var req createBackupVerifyRequest
@@ -794,30 +826,31 @@ func (s *APIServer) handleCreateBackupVerify(w http.ResponseWriter, r *http.Requ
 		writeValidationError(w, ErrBackupVerifyInvalid)
 		return
 	}
-	id, err := db.CreateBackupVerifyContext(r.Context(), s.db, backupID, userID, req.Mode, req.ByteBudget)
+	id, err := db.CreateBackupVerifyContext(r.Context(), api.db, backupID, userID, req.Mode, req.ByteBudget)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
 	if err != nil {
-		writeValidationError(w, ErrBackupVerifyInvalid)
+		api.logf(r, "create backup verify failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	s.writeAudit(r, db.AuditRepositoryCheckCreated, id, userID, nil)
+	api.writeAudit(r, db.AuditRepositoryCheckCreated, id, userID, nil)
 	writeJSON(w, http.StatusAccepted, map[string]string{"id": id})
 }
 
-func (s *APIServer) handleCancelBackupVerify(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "backup-verify", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *backupAPI) handleCancelBackupVerify(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "backup-verify", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	backupID := r.PathValue("id")
-	if backupID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+	backupID, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
 		return
 	}
 	verifyID := r.PathValue("verifyID")
@@ -825,19 +858,19 @@ func (s *APIServer) handleCancelBackupVerify(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
-	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
+	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), api.db, verifyID, userID)
 	if err == sql.ErrNoRows || (check != nil && check.BackupJobID != backupID) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
 	if err != nil {
-		s.logf(r, "verify check lookup failed: %v", err)
+		api.logf(r, "verify check lookup failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	cancelled, err := db.CancelBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
+	cancelled, err := db.CancelBackupVerifyForOwnerContext(r.Context(), api.db, verifyID, userID)
 	if err != nil {
-		s.logf(r, "cancel repository check failed: %v", err)
+		api.logf(r, "cancel repository check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -845,35 +878,35 @@ func (s *APIServer) handleCancelBackupVerify(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
-	s.writeAudit(r, db.AuditRepositoryCheckCancelled, verifyID, userID, nil)
+	api.writeAudit(r, db.AuditRepositoryCheckCancelled, verifyID, userID, nil)
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-func (s *APIServer) handleListBackupVerifies(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleListBackupVerifies(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 	backupID := r.PathValue("id")
-	if backupID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+	if backupID == "" || !api.requireBackupOwnership(w, r, backupID, userID) {
 		return
 	}
-	checks, err := db.ListBackupVerifiesForOwnerContext(r.Context(), s.db, backupID, userID)
+	checks, err := db.ListBackupVerifiesForOwnerContext(r.Context(), api.db, backupID, userID)
 	if err != nil {
-		s.logf(r, "list repository checks failed: %v", err)
+		api.logf(r, "list repository checks failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, checks)
 }
 
-func (s *APIServer) handleGetBackupVerify(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleGetBackupVerify(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	backupID := r.PathValue("id")
-	if backupID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+	backupID, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
 		return
 	}
 	verifyID := r.PathValue("verifyID")
@@ -881,26 +914,26 @@ func (s *APIServer) handleGetBackupVerify(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
-	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
+	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), api.db, verifyID, userID)
 	if err == sql.ErrNoRows || (check != nil && check.BackupJobID != backupID) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
 	if err != nil {
-		s.logf(r, "get repository check failed: %v", err)
+		api.logf(r, "get repository check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, check)
 }
 
-func (s *APIServer) handleBackupVerifyStream(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleBackupVerifyStream(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
-	backupID := r.PathValue("id")
-	if backupID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+	backupID, ok := api.requireOwnedBackupID(w, r, userID)
+	if !ok {
 		return
 	}
 	verifyID := r.PathValue("verifyID")
@@ -908,85 +941,31 @@ func (s *APIServer) handleBackupVerifyStream(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
-	if !s.acquireStream(w, r, userID, "backup-verify-stream") {
+	if !api.acquireBackupStream(w, r, userID, "backup-verify-stream") {
 		return
 	}
-	defer s.releaseBackupStream(userID)
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
+	defer api.releaseBackupStream(userID)
+	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), api.db, verifyID, userID)
 	if err == sql.ErrNoRows || (check != nil && check.BackupJobID != backupID) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
 	if err != nil {
+		api.logf(r, "stream repository check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
-		return
-	}
-	write := func(value *db.BackupMaintenance) ([]byte, error) {
-		payload, err := json.Marshal(value)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := fmt.Fprintf(w, "event: repository-check\ndata: %s\n\n", payload); err != nil {
-			return nil, err
-		}
-		flusher.Flush()
-		return payload, nil
-	}
-	previous, err := write(check)
-	if err != nil {
-		return
-	}
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	keepalive := time.NewTicker(20 * time.Second)
-	defer keepalive.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-keepalive.C:
-			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
-				return
-			}
-			flusher.Flush()
-		case <-ticker.C:
-			current, err := db.GetBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
-			if err != nil {
-				return
-			}
-			payload, err := json.Marshal(current)
-			if err != nil {
-				return
-			}
-			if !bytes.Equal(payload, previous) {
-				if _, err := fmt.Fprintf(w, "event: repository-check\ndata: %s\n\n", payload); err != nil {
-					return
-				}
-				flusher.Flush()
-				previous = payload
-			}
-		}
-	}
+	api.serveBackupDetailSSE(w, r, "repository-check", check, func(ctx context.Context) (any, error) {
+		return db.GetBackupVerifyForOwnerContext(ctx, api.db, verifyID, userID)
+	})
 }
 
-func (s *APIServer) handleRunBackup(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *backupAPI) handleRunBackup(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -995,12 +974,12 @@ func (s *APIServer) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrBackupIDMissing)
 		return
 	}
-	if !s.requireBackupOwnership(w, r, id, userID) {
+	if !api.requireBackupOwnership(w, r, id, userID) {
 		return
 	}
-	claim, err := db.ClaimBackupJobPassContext(r.Context(), s.db, id, "manual", nil)
+	claim, err := db.ClaimBackupJobPassContext(r.Context(), api.db, id, "manual", nil)
 	if err != nil {
-		s.logf(r, "claim backup run failed: %v", err)
+		api.logf(r, "claim backup run failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1008,19 +987,19 @@ func (s *APIServer) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 		writeConflictError(w, ErrBackupInvalidState)
 		return
 	}
-	s.writeAudit(r, db.AuditBackupStarted, id, userID, nil)
+	api.writeAudit(r, db.AuditBackupStarted, id, userID, nil)
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 // handleDeleteBackup starts durable repository cleanup. It intentionally does
 // not remove the catalog synchronously: worker-side cleanup owns decrypted
 // target credentials and can retry provider failures safely.
-func (s *APIServer) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *backupAPI) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -1029,12 +1008,12 @@ func (s *APIServer) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrBackupIDMissing)
 		return
 	}
-	if !s.requireBackupOwnership(w, r, id, userID) {
+	if !api.requireBackupOwnership(w, r, id, userID) {
 		return
 	}
-	started, err := db.RequestBackupRepositoryDeletionContext(r.Context(), s.db, id, userID)
+	started, err := db.RequestBackupRepositoryDeletionContext(r.Context(), api.db, id, userID)
 	if err != nil {
-		s.logf(r, "request backup repository deletion failed: %v", err)
+		api.logf(r, "request backup repository deletion failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1042,24 +1021,24 @@ func (s *APIServer) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 		writeConflictError(w, ErrBackupInvalidState)
 		return
 	}
-	s.writeAudit(r, db.AuditBackupDeleted, id, userID, nil)
+	api.writeAudit(r, db.AuditBackupDeleted, id, userID, nil)
 	writeJSON(w, http.StatusAccepted, map[string]bool{"success": true})
 }
 
-func (s *APIServer) handlePauseBackup(w http.ResponseWriter, r *http.Request) {
-	s.handleBackupStateChange(w, r, true)
+func (api *backupAPI) handlePauseBackup(w http.ResponseWriter, r *http.Request) {
+	api.handleBackupStateChange(w, r, true)
 }
 
-func (s *APIServer) handleResumeBackup(w http.ResponseWriter, r *http.Request) {
-	s.handleBackupStateChange(w, r, false)
+func (api *backupAPI) handleResumeBackup(w http.ResponseWriter, r *http.Request) {
+	api.handleBackupStateChange(w, r, false)
 }
 
-func (s *APIServer) handleBackupStateChange(w http.ResponseWriter, r *http.Request, pause bool) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *backupAPI) handleBackupStateChange(w http.ResponseWriter, r *http.Request, pause bool) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -1068,12 +1047,12 @@ func (s *APIServer) handleBackupStateChange(w http.ResponseWriter, r *http.Reque
 		writeValidationError(w, ErrBackupIDMissing)
 		return
 	}
-	if !s.requireBackupOwnership(w, r, id, userID) {
+	if !api.requireBackupOwnership(w, r, id, userID) {
 		return
 	}
-	tx, err := s.db.BeginTx(r.Context(), nil)
+	tx, err := api.db.BeginTx(r.Context(), nil)
 	if err != nil {
-		s.logf(r, "begin backup state change failed: %v", err)
+		api.logf(r, "begin backup state change failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1117,7 +1096,7 @@ func (s *APIServer) handleBackupStateChange(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if err != nil {
-		s.logf(r, "change backup state failed: %v", err)
+		api.logf(r, "change backup state failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1127,14 +1106,14 @@ func (s *APIServer) handleBackupStateChange(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := tx.Commit(); err != nil {
-		s.logf(r, "commit backup state change failed: %v", err)
+		api.logf(r, "commit backup state change failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if pause {
-		s.writeAudit(r, db.AuditBackupPaused, id, userID, nil)
+		api.writeAudit(r, db.AuditBackupPaused, id, userID, nil)
 	} else {
-		s.writeAudit(r, db.AuditBackupResumed, id, userID, nil)
+		api.writeAudit(r, db.AuditBackupResumed, id, userID, nil)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
@@ -1214,8 +1193,8 @@ func normalizeRestoreSnapshotPaths(paths []string) ([]string, bool) {
 	return normalized, true
 }
 
-func (s *APIServer) handleListBackupRuns(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleListBackupRuns(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -1224,12 +1203,12 @@ func (s *APIServer) handleListBackupRuns(w http.ResponseWriter, r *http.Request)
 		writeValidationError(w, ErrBackupIDMissing)
 		return
 	}
-	if !s.requireBackupOwnership(w, r, id, userID) {
+	if !api.requireBackupOwnership(w, r, id, userID) {
 		return
 	}
-	runs, err := db.ListBackupRunsForOwnerContext(r.Context(), s.db, id, userID)
+	runs, err := db.ListBackupRunsForOwnerContext(r.Context(), api.db, id, userID)
 	if err != nil {
-		s.logf(r, "list backup runs failed: %v", err)
+		api.logf(r, "list backup runs failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1246,12 +1225,12 @@ type updateBackupRequest struct {
 	Threads        int    `json:"threads"`
 }
 
-func (s *APIServer) handleUpdateBackup(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+func (api *backupAPI) handleUpdateBackup(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "migration-sync-mutation", jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID, authenticated := s.requireUserID(w, r)
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
@@ -1260,7 +1239,7 @@ func (s *APIServer) handleUpdateBackup(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrBackupIDMissing)
 		return
 	}
-	if !s.requireBackupOwnership(w, r, id, userID) {
+	if !api.requireBackupOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -1269,41 +1248,23 @@ func (s *APIServer) handleUpdateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := scheduler.ValidateCronExpression(req.CronExpression); err != nil {
-		writeValidationError(w, ErrBackupCronInvalid)
-		return
-	}
-	if _, err := time.LoadLocation(req.Timezone); err != nil {
-		writeValidationError(w, ErrBackupTimezoneInvalid)
-		return
-	}
-	if req.RetentionCount < 1 || req.RetentionCount > 365 {
-		writeValidationError(w, ErrBackupRetentionInvalid)
-		return
-	}
-	if req.Threads < 1 || req.Threads > 16 {
-		writeValidationError(w, ErrThreadsOutOfRange)
+	nextRun, valid := validateBackupScheduleAndTuning(w, req.CronExpression, req.Timezone, req.RetentionCount, req.Threads)
+	if !valid {
 		return
 	}
 
-	nextRun, err := scheduler.NextRunInLocation(req.CronExpression, req.Timezone, time.Now())
-	if err != nil {
-		writeValidationError(w, ErrBackupCronInvalid)
-		return
-	}
-
-	err = db.UpdateBackupJobContext(r.Context(), s.db, id, userID, req.CronExpression, req.Timezone, req.RetentionCount, req.Threads, &nextRun)
+	err := db.UpdateBackupJobContext(r.Context(), api.db, id, userID, req.CronExpression, req.Timezone, req.RetentionCount, req.Threads, &nextRun)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
 	if err != nil {
-		s.logf(r, "update backup job failed: %v", err)
+		api.logf(r, "update backup job failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	job, err := db.GetBackupJobForOwnerContext(r.Context(), s.db, id, userID)
+	job, err := db.GetBackupJobForOwnerContext(r.Context(), api.db, id, userID)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 		return
@@ -1311,35 +1272,23 @@ func (s *APIServer) handleUpdateBackup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, job)
 }
 
-func (s *APIServer) handleBackupStream(w http.ResponseWriter, r *http.Request) {
-	userID, authenticated := s.requireUserID(w, r)
+func (api *backupAPI) handleBackupStream(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
 		return
 	}
 
-	if !s.acquireStream(w, r, userID, "backup-stream") {
+	if !api.acquireBackupStream(w, r, userID, "backup-stream") {
 		return
 	}
-	defer s.releaseBackupStream(userID)
+	defer api.releaseBackupStream(userID)
 
-	rc := http.NewResponseController(w)
-	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-
-	flusher, ok := w.(http.Flusher)
+	flusher, ok := api.prepareBackupSSE(w, r)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(api.listStreamPollInterval())
 	defer ticker.Stop()
 
 	heartbeat := time.NewTicker(15 * time.Second)
@@ -1352,10 +1301,12 @@ func (s *APIServer) handleBackupStream(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-heartbeat.C:
-			fmt.Fprint(w, ": ping\n\n")
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				return
+			}
 			flusher.Flush()
 		case <-ticker.C:
-			jobs, err := db.ListBackupJobsForOwnerContext(r.Context(), s.db, userID)
+			jobs, err := db.ListBackupJobsForOwnerContext(r.Context(), api.db, userID)
 			if err != nil {
 				continue
 			}
@@ -1372,9 +1323,11 @@ func (s *APIServer) handleBackupStream(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			lastJSON = data
-			fmt.Fprintf(w, "event: backup_jobs\ndata: %s\n\n", data)
+			if _, err := fmt.Fprintf(w, "event: backup_jobs\ndata: %s\n\n", data); err != nil {
+				return
+			}
 			flusher.Flush()
+			lastJSON = data
 		}
 	}
 }

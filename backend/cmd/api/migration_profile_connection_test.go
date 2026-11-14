@@ -179,7 +179,7 @@ func TestSyncAndBackupProfileFailuresRemainMachineReadable(t *testing.T) {
 		request := requestContext(httptest.NewRequest(http.MethodPost, "/api/backups", bytes.NewBufferString(`{"source_profile_id":"missing-profile","target_profile_id":"target-profile"}`)))
 		recorder := httptest.NewRecorder()
 
-		server.handleCreateBackup(recorder, request)
+		server.backups().handleCreateBackup(recorder, request)
 
 		assertAPIError(t, recorder, http.StatusNotFound, ErrProfileNotFound)
 	})

@@ -1308,12 +1308,6 @@ func acquireStreamLease(
 	return true
 }
 
-// acquireStream applies the shared SSE request and concurrent-stream limits.
-// All stream types intentionally consume the same per-user pool.
-func (s *APIServer) acquireStream(w http.ResponseWriter, r *http.Request, userID, rateLimitScope string) bool {
-	return acquireStreamLease(w, r, s.rateLimiter, s.clientIP(r), s.streamPool(), userID, rateLimitScope)
-}
-
 func (api *migrationAPI) acquireMigrationStream(w http.ResponseWriter, r *http.Request, userID string) bool {
 	return acquireStreamLease(w, r, api.rateLimiter, api.clientIP(r), api.streamPool, userID, "migration-stream")
 }
@@ -1322,15 +1316,6 @@ func (api *migrationAPI) releaseMigrationStream(userID string) {
 	if api.streamPool != nil {
 		api.streamPool.Release(userID)
 	}
-}
-
-func (s *APIServer) releaseStream(userID string) {
-	s.streamPool().Release(userID)
-}
-
-// releaseBackupStream mirrors acquireStream for backup endpoints.
-func (s *APIServer) releaseBackupStream(userID string) {
-	s.releaseStream(userID)
 }
 
 func isTerminalMigrationStatus(status string) bool {

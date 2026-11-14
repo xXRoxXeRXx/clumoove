@@ -176,14 +176,17 @@ func (server *APIServer) buildMux(overrideHandler http.HandlerFunc) *http.ServeM
 	files := server.files()
 	migrations := server.migrations()
 	syncs := server.syncs()
+	backups := server.backups()
 	if overrideHandler == nil {
 		files.registerRoutes(mux, jwtMiddleware)
 		migrations.registerRoutes(mux, jwtMiddleware)
 		syncs.registerRoutes(mux, jwtMiddleware)
+		backups.registerRoutes(mux, jwtMiddleware)
 	} else {
 		files.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 		migrations.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 		syncs.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
+		backups.registerRoutesWithHandler(mux, jwtMiddleware, overrideHandler)
 	}
 
 	return mux
@@ -281,37 +284,6 @@ func (server *APIServer) gatewayRoutes() []routeSpec {
 		{pattern: "GET /api/auth/email-change-available", access: routePublic, handler: server.handleEmailChangeAvailable},
 		{pattern: "POST /api/auth/change-email", access: routeAuthenticated, handler: server.handleChangeEmail},
 		{pattern: "POST /api/auth/confirm-email-change", access: routePublic, handler: server.handleConfirmEmailChange},
-
-		// Backup Routes
-		{pattern: "GET /api/backup", access: routeAuthenticated, handler: server.handleListBackups},
-		{pattern: "GET /api/backup/stream", access: routeAuthenticated, handler: server.handleBackupStream},
-		{pattern: "POST /api/backup", access: routeAuthenticated, handler: server.handleCreateBackup},
-		{pattern: "GET /api/backup/{id}", access: routeAuthenticated, handler: server.handleGetBackup},
-		{pattern: "PUT /api/backup/{id}", access: routeAuthenticated, handler: server.handleUpdateBackup},
-		{pattern: "GET /api/backup/{id}/runs", access: routeAuthenticated, handler: server.handleListBackupRuns},
-		{pattern: "POST /api/backup/{id}/run", access: routeAuthenticated, handler: server.handleRunBackup},
-		{pattern: "POST /api/backup/{id}/verify", access: routeAuthenticated, handler: server.handleCreateBackupVerify},
-		{pattern: "GET /api/backup/{id}/verify", access: routeAuthenticated, handler: server.handleListBackupVerifies},
-		{pattern: "GET /api/backup/{id}/verify/{verifyID}/stream", access: routeAuthenticated, handler: server.handleBackupVerifyStream},
-		{pattern: "GET /api/backup/{id}/verify/{verifyID}", access: routeAuthenticated, handler: server.handleGetBackupVerify},
-		{pattern: "POST /api/backup/{id}/verify/{verifyID}/cancel", access: routeAuthenticated, handler: server.handleCancelBackupVerify},
-		{pattern: "POST /api/backup/{id}/pause", access: routeAuthenticated, handler: server.handlePauseBackup},
-		{pattern: "POST /api/backup/{id}/resume", access: routeAuthenticated, handler: server.handleResumeBackup},
-		{pattern: "DELETE /api/backup/{id}", access: routeAuthenticated, handler: server.handleDeleteBackup},
-		{pattern: "GET /api/backup/{id}/snapshots", access: routeAuthenticated, handler: server.handleListBackupSnapshots},
-		{pattern: "GET /api/backup/{id}/snapshots/{snapshotID}/items", access: routeAuthenticated, handler: server.handleListBackupSnapshotItems},
-		{pattern: "POST /api/backup/{id}/snapshots/{snapshotID}/restore/previews", access: routeAuthenticated, handler: server.handleCreateRestorePreview},
-		{pattern: "GET /api/restore/previews/{previewID}", access: routeAuthenticated, handler: server.handleGetRestorePreview},
-		{pattern: "POST /api/restore/previews/{previewID}/cancel", access: routeAuthenticated, handler: server.handleCancelRestorePreview},
-		{pattern: "POST /api/restore/previews/{previewID}/consume", access: routeAuthenticated, handler: server.handleConsumeRestorePreview},
-		{pattern: "GET /api/restore", access: routeAuthenticated, handler: server.handleListRestoreRuns},
-		{pattern: "GET /api/restore/runs", access: routeAuthenticated, handler: server.handleListRestoreRuns},
-		{pattern: "GET /api/restore/runs/{runID}/stream", access: routeAuthenticated, handler: server.handleRestoreRunStream},
-		{pattern: "GET /api/restore/runs/{runID}", access: routeAuthenticated, handler: server.handleGetRestoreRun},
-		{pattern: "GET /api/restore/runs/{runID}/items", access: routeAuthenticated, handler: server.handleListRestoreRunItems},
-		{pattern: "POST /api/restore/runs/{runID}/cancel", access: routeAuthenticated, handler: server.handleCancelRestoreRun},
-		{pattern: "GET /api/restore/runs/{runID}/report", access: routeAuthenticated, handler: server.handleDownloadRestoreReport},
-		{pattern: "DELETE /api/restore/jobs/{jobID}", access: routeAuthenticated, handler: server.handleDeleteRestoreJob},
 
 		// Schedule Management Routes (Protected)
 		{pattern: "GET /api/schedule", access: routeAuthenticated, handler: server.handleListSchedules},
