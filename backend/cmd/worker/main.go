@@ -25,8 +25,10 @@ type workerConfig struct {
 	databaseURL           string
 	databaseURLDefaulted  bool
 	redisURL              string
+	redisPassword         string
 	encryptionKey         string
 	maxThreads            int
+	indexingTimeout       time.Duration
 	dbMaxConns            int
 	maxBackupPackWriters  int
 	maxRestorePackReaders int
@@ -46,6 +48,7 @@ func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
 		databaseURL:           databaseURL,
 		databaseURLDefaulted:  databaseURLDefaulted,
 		redisURL:              redisURL,
+		redisPassword:         getenv("REDIS_PASSWORD"),
 		encryptionKey:         getenv("ENCRYPTION_SECRET_KEY"),
 		maxThreads:            defaultMaxThreads,
 		maxBackupPackWriters:  1,
@@ -56,6 +59,9 @@ func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
 	}
 	var err error
 	if workerCfg.maxThreads, err = intSetting(getenv, "MAX_THREADS", defaultMaxThreads, 1, maxThreadsCeiling); err != nil {
+		return workerConfig{}, err
+	}
+	if workerCfg.indexingTimeout, err = config.IndexingTimeout(getenv("INDEXING_TIMEOUT_MINUTES")); err != nil {
 		return workerConfig{}, err
 	}
 	workerCfg.dbMaxConns = db.MaxConnsForThreads(workerCfg.maxThreads)
@@ -86,10 +92,11 @@ func intSetting(getenv func(string) string, name string, def, min, max int) (int
 // processor; the database DSN doubles as the pg_notify LISTEN connection.
 func (c workerConfig) processorConfig(workerID string) processor.Config {
 	return processor.Config{
-		WorkerID:   workerID,
-		SecretKey:  c.encryptionKey,
-		MaxThreads: c.maxThreads,
-		NotifyDSN:  c.databaseURL,
+		WorkerID:        workerID,
+		SecretKey:       c.encryptionKey,
+		MaxThreads:      c.maxThreads,
+		NotifyDSN:       c.databaseURL,
+		IndexingTimeout: c.indexingTimeout,
 	}
 }
 
@@ -138,7 +145,7 @@ func main() {
 	oauth.Configure(oauth.NewDBLoader(database), config.encryptionKey)
 
 	// 2. Initialize Redis Queue
-	q, err := queue.NewQueue(config.redisURL)
+	q, err := queue.NewQueue(config.redisURL, config.redisPassword)
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "queue"), slog.String("reason", "init_failed"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		os.Exit(1)
@@ -164,20 +171,27 @@ func main() {
 		slog.Error("startup_failed", slog.String("component", "restore"), observability.Error(err), slog.String("error_kind", "configuration"))
 		os.Exit(1)
 	}
-	backupCoordinator, err := backup.NewCoordinator(database, config.encryptionKey, config.maxBackupPackWriters, packReaders)
+	backupCoordinator, err := backup.NewCoordinator(database, backup.Config{
+		EncryptionKey:  config.encryptionKey,
+		WorkerID:       workerID,
+		OAuthLocker:    q,
+		MaxPackWriters: config.maxBackupPackWriters,
+		PackReaders:    packReaders,
+	})
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "backup"), slog.String("reason", "invalid_pack_writer_limit"), observability.Error(err), slog.String("error_kind", "configuration"))
 		os.Exit(1)
 	}
-	backupCoordinator.SetWorkerID(workerID)
-	backupCoordinator.SetOAuthLocker(q)
-	restoreCoordinator, err := restore.NewCoordinator(database, config.encryptionKey, packReaders)
+	restoreCoordinator, err := restore.NewCoordinator(database, restore.Config{
+		EncryptionKey: config.encryptionKey,
+		WorkerID:      workerID,
+		OAuthLocker:   q,
+		PackReaders:   packReaders,
+	})
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "restore"), observability.Error(err), slog.String("error_kind", "configuration"))
 		os.Exit(1)
 	}
-	restoreCoordinator.SetWorkerID(workerID)
-	restoreCoordinator.SetOAuthLocker(q)
 
 	// Context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

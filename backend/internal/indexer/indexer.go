@@ -7,13 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"backend/internal/config"
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/megasecret"
@@ -47,6 +46,7 @@ type Indexer struct {
 	encryptionKey string
 	queue         *queue.Queue
 	sourceFactory SourceFactoryFunc
+	timeout       time.Duration
 }
 
 // SetSourceFactory overrides source provider creation for tests or read-only source adapters.
@@ -54,12 +54,18 @@ func (idx *Indexer) SetSourceFactory(factory SourceFactoryFunc) {
 	idx.sourceFactory = factory
 }
 
-// NewIndexer creates a new Indexer instance
-func NewIndexer(database *sql.DB, encryptionKey string, q *queue.Queue) *Indexer {
+// NewIndexer creates a new Indexer instance. timeout bounds one indexing run;
+// callers pass the validated INDEXING_TIMEOUT_MINUTES value, and a non-positive
+// value selects config.DefaultIndexingTimeout.
+func NewIndexer(database *sql.DB, encryptionKey string, q *queue.Queue, timeout time.Duration) *Indexer {
+	if timeout <= 0 {
+		timeout = config.DefaultIndexingTimeout
+	}
 	return &Indexer{
 		db:            database,
 		encryptionKey: encryptionKey,
 		queue:         q,
+		timeout:       timeout,
 	}
 }
 
@@ -68,7 +74,7 @@ func NewIndexer(database *sql.DB, encryptionKey string, q *queue.Queue) *Indexer
 // credentials at the last moment, and creates PENDING tasks. On any failure it
 // marks the migration FAILED with a descriptive error message.
 func (idx *Indexer) Start(serverCtx context.Context, migID string) {
-	ctx, cancel := context.WithTimeout(serverCtx, indexingTimeout())
+	ctx, cancel := context.WithTimeout(serverCtx, idx.timeout)
 	defer cancel()
 	logger := observability.Logger(ctx).With(
 		slog.String("component", "indexer"),
@@ -105,7 +111,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		return
 	}
 	discoveryGeneration = mig.DiscoveryGeneration
-	leaseDuration, leaseRenewal := indexingLeaseSettings(indexingTimeout())
+	leaseDuration, leaseRenewal := indexingLeaseSettings(idx.timeout)
 	leaseCtx, leaseCancel := context.WithTimeout(context.WithoutCancel(serverCtx), 5*time.Second)
 	owned, leaseErr := db.RenewMigrationIndexingLease(leaseCtx, idx.db, migID, discoveryGeneration, leaseDuration)
 	leaseCancel()
@@ -890,18 +896,6 @@ func isImmichMedia(name string) bool {
 		return true
 	}
 	return false
-}
-
-// indexingTimeout returns the maximum allowed duration for a single indexing run.
-// Configurable via INDEXING_TIMEOUT_MINUTES (default 20) so large trees are not
-// killed by the global deadline.
-func indexingTimeout() time.Duration {
-	if v := os.Getenv("INDEXING_TIMEOUT_MINUTES"); v != "" {
-		if mins, err := strconv.Atoi(v); err == nil && mins > 0 {
-			return time.Duration(mins) * time.Minute
-		}
-	}
-	return 20 * time.Minute
 }
 
 func indexingLeaseSettings(timeout time.Duration) (time.Duration, time.Duration) {

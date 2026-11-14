@@ -33,7 +33,7 @@ Downloads and raw uploads are streamed without API buffering. The frontend nginx
 | `CLUMOOVE_API_URL` | Origin-only API URL injected by the frontend nginx container at startup; unset for same-origin proxying. | unset |
 | `POSTGRES_MAX_CONNECTIONS` | PostgreSQL connection limit for the production Compose stack; increase when scaling workers. | `300` |
 | `VITE_ALLOWED_HOSTS` | Allowed hosts for the Vite dev server. | – |
-| `INDEXING_TIMEOUT_MINUTES` | Max duration of one indexing run. | `20` |
+| `INDEXING_TIMEOUT_MINUTES` | Max duration of one indexing run. Positive integer; the API and worker refuse to start otherwise. | `20` |
 | `WEBDAV_LISTING_TIMEOUT_SECONDS` | Per-PROPFIND listing timeout. | `120` |
 | `MAX_THREADS` | Global max parallel tasks per worker process (also sizes DB pool). Integer from `1` to `256`; the worker refuses to start otherwise. | `16` (`50` in production Compose) |
 | `MAX_BACKUP_PACK_WRITERS` | Worker-only limit for concurrent immutable backup-pack writers; values outside `1..4` refuse worker startup. | `1` |

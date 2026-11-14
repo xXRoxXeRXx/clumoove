@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 )
@@ -40,7 +41,7 @@ func TestGenerateRandomLockToken(t *testing.T) {
 
 func TestRedisOAuthLockOwnership(t *testing.T) {
 	redisURL := "redis://:dev_redis_secure_pass_999@localhost:6379"
-	q, err := NewQueue(redisURL)
+	q, err := NewQueue(redisURL, os.Getenv("REDIS_PASSWORD"))
 	if err != nil {
 		t.Skipf("Redis not available; skipping Redis-backed lock test: %v", err)
 	}

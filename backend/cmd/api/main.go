@@ -110,6 +110,12 @@ func main() {
 	}
 
 	redisURL, _ := config.RedisURL(os.Getenv("REDIS_URL"))
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+	indexingTimeout, err := config.IndexingTimeout(os.Getenv("INDEXING_TIMEOUT_MINUTES"))
+	if err != nil {
+		slog.Error("startup_failed", slog.String("component", "api"), slog.String("error_kind", "configuration"), observability.Error(err))
+		os.Exit(1)
+	}
 
 	encryptionKey := os.Getenv("ENCRYPTION_SECRET_KEY")
 	jwtSecret := os.Getenv("JWT_SECRET_KEY")
@@ -149,7 +155,7 @@ func main() {
 	oauth.Configure(oauth.NewDBLoader(database), encryptionKey)
 
 	// 2. Initialize Redis Queue
-	q, err := queue.NewQueue(redisURL)
+	q, err := queue.NewQueue(redisURL, redisPassword)
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "queue"), slog.String("reason", "init_failed"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		os.Exit(1)
@@ -171,7 +177,7 @@ func main() {
 	server, err := newAPIGateway(gatewayConfig{
 		DB:                database,
 		Queue:             q,
-		Indexer:           indexer.NewIndexer(database, encryptionKey, q),
+		Indexer:           indexer.NewIndexer(database, encryptionKey, q, indexingTimeout),
 		SyncPass:          syncEng.Pass(),
 		EncryptionKey:     encryptionKey,
 		JWTSecret:         jwtSecret,

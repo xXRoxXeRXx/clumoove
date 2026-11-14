@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"backend/internal/auth"
+	"backend/internal/config"
 	"backend/internal/indexer"
 	"backend/internal/queue"
 	appSync "backend/internal/sync"
@@ -78,7 +79,7 @@ func newAPIGateway(cfg gatewayConfig) (*APIServer, error) {
 
 	idx := cfg.Indexer
 	if idx == nil && cfg.DB != nil {
-		idx = indexer.NewIndexer(cfg.DB, cfg.EncryptionKey, cfg.Queue)
+		idx = indexer.NewIndexer(cfg.DB, cfg.EncryptionKey, cfg.Queue, config.DefaultIndexingTimeout)
 	}
 
 	return &APIServer{

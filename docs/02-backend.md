@@ -176,7 +176,7 @@ Redis is used for:
 - The API's distributed rate limiter, using atomic Redis counters with key TTLs.
 - File-manager one-time download tickets and per-user upload/download stream leases.
 
-`NewQueue` **rejects empty or known-default passwords** (`redis_secret`, `dev_redis_secure_pass_999`).
+`NewQueue(redisURL, redisPassword)` receives the startup-loaded `REDIS_PASSWORD` explicitly and **rejects empty or known-default passwords** (`redis_secret`, `dev_redis_secure_pass_999`).
 
 ---
 
@@ -306,7 +306,7 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 6. On any fatal error, `failMigration` marks `FAILED` (with a sanitized, credential-redacted message)
    and writes an audit log entry.
 
-`indexingTimeout()` is configurable via `INDEXING_TIMEOUT_MINUTES` (default 20).
+The indexing timeout is configurable via `INDEXING_TIMEOUT_MINUTES` (default 20, positive integer). `config.IndexingTimeout` validates it once at API and worker startup (invalid values stop startup) and it is passed to `indexer.NewIndexer`.
 `sanitizeError` redacts `user:pass@` from any URL embedded in error strings before persisting.
 
 ---

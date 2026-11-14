@@ -97,11 +97,6 @@ type Coordinator struct {
 	oauthLocker       oauth.TokenLocker
 }
 
-// SetOAuthLocker sets the distributed OAuth refresh lock backend for this coordinator.
-func (c *Coordinator) SetOAuthLocker(locker oauth.TokenLocker) {
-	c.oauthLocker = locker
-}
-
 // backupRunLogger supplies the stable correlation fields used by every
 // run-scoped record. Repository paths and credentials deliberately never leave
 // the worker through these attributes.
@@ -131,29 +126,33 @@ func backupFailureAttrs(code string, cause error) []slog.Attr {
 	return attrs
 }
 
-// NewCoordinator configures a worker-side coordinator. maxPackWriters is the
-// validated value of MAX_BACKUP_PACK_WRITERS supplied by worker configuration.
-func NewCoordinator(database *sql.DB, encryptionKey string, maxPackWriters int, packReaders ...*restore.PackReaderLimiter) (*Coordinator, error) {
+// Config is the explicit worker-side configuration of a Coordinator.
+type Config struct {
+	EncryptionKey string
+	// WorkerID binds claims and heartbeats to the process liveness identity. An
+	// empty value selects "backup-worker" for narrow unit tests.
+	WorkerID string
+	// OAuthLocker is the distributed OAuth refresh lock backend.
+	OAuthLocker oauth.TokenLocker
+	// MaxPackWriters is the validated value of MAX_BACKUP_PACK_WRITERS (1-4).
+	MaxPackWriters int
+	// PackReaders optionally shares the restore pack reader limiter.
+	PackReaders *restore.PackReaderLimiter
+}
+
+// NewCoordinator configures a worker-side coordinator.
+func NewCoordinator(database *sql.DB, cfg Config) (*Coordinator, error) {
 	if database == nil {
 		return nil, errors.New("backup database is required")
 	}
-	if maxPackWriters < 1 || maxPackWriters > 4 {
+	if cfg.MaxPackWriters < 1 || cfg.MaxPackWriters > 4 {
 		return nil, fmt.Errorf("MAX_BACKUP_PACK_WRITERS must be between 1 and 4")
 	}
-	if len(packReaders) > 1 {
-		return nil, errors.New("only one restore pack reader limiter may be configured")
+	workerID := "backup-worker"
+	if strings.TrimSpace(cfg.WorkerID) != "" {
+		workerID = cfg.WorkerID
 	}
-	var limiter *restore.PackReaderLimiter
-	if len(packReaders) == 1 {
-		limiter = packReaders[0]
-	}
-	return &Coordinator{db: database, encryptionKey: encryptionKey, packWriterSlots: make(chan struct{}, maxPackWriters), packReaderSlots: limiter, workerID: "backup-worker"}, nil
-}
-
-func (c *Coordinator) SetWorkerID(workerID string) {
-	if strings.TrimSpace(workerID) != "" {
-		c.workerID = workerID
-	}
+	return &Coordinator{db: database, encryptionKey: cfg.EncryptionKey, packWriterSlots: make(chan struct{}, cfg.MaxPackWriters), packReaderSlots: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
 }
 
 func (c *Coordinator) SetProviderFactory(factory ProviderFactoryFunc) {

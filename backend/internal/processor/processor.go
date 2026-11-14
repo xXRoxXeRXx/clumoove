@@ -353,6 +353,8 @@ type Config struct {
 	// for pg_notify-based wake-up of idle worker threads. If empty, the worker
 	// falls back to periodic polling.
 	NotifyDSN string
+	// IndexingTimeout bounds one indexing run.
+	IndexingTimeout time.Duration
 }
 
 // NewProcessor builds a Processor from validated configuration.
@@ -364,7 +366,7 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 	return &Processor{
 		db:                         database,
 		queue:                      q,
-		indexer:                    indexer.NewIndexer(database, cfg.SecretKey, q),
+		indexer:                    indexer.NewIndexer(database, cfg.SecretKey, q, cfg.IndexingTimeout),
 		workerID:                   cfg.WorkerID,
 		secretKey:                  cfg.SecretKey,
 		maxThreads:                 cfg.MaxThreads,

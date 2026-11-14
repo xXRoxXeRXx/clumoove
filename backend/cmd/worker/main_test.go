@@ -103,14 +103,15 @@ func TestLoadWorkerConfigDerivesDatabasePoolSizeFromMaxThreads(t *testing.T) {
 
 func TestWorkerConfigProcessorConfigCarriesExplicitSettings(t *testing.T) {
 	config, err := loadWorkerConfig(workerEnv(map[string]string{
-		"DATABASE_URL": "postgres://db.example/clumoove?sslmode=require",
-		"MAX_THREADS":  "7",
+		"DATABASE_URL":             "postgres://db.example/clumoove?sslmode=require",
+		"MAX_THREADS":              "7",
+		"INDEXING_TIMEOUT_MINUTES": "9",
 	}))
 	if err != nil {
 		t.Fatalf("loadWorkerConfig() error = %v", err)
 	}
 	got := config.processorConfig("worker-1")
-	if got.WorkerID != "worker-1" || got.SecretKey != "encryption-secret" || got.MaxThreads != 7 || got.NotifyDSN != "postgres://db.example/clumoove?sslmode=require" {
+	if got.WorkerID != "worker-1" || got.SecretKey != "encryption-secret" || got.MaxThreads != 7 || got.NotifyDSN != "postgres://db.example/clumoove?sslmode=require" || got.IndexingTimeout != 9*time.Minute {
 		t.Fatalf("processorConfig() = %#v", got)
 	}
 }
@@ -127,6 +128,44 @@ func TestLoadWorkerConfigValidatesBackupPackWriterLimit(t *testing.T) {
 	}
 	if config, err = loadWorkerConfig(workerEnv(nil)); err != nil || config.maxBackupPackWriters != 1 {
 		t.Fatalf("default backup writer limit = %d, error = %v", config.maxBackupPackWriters, err)
+	}
+}
+
+func TestLoadWorkerConfigDefaultsIndexingTimeoutToTwentyMinutes(t *testing.T) {
+	config, err := loadWorkerConfig(workerEnv(nil))
+	if err != nil {
+		t.Fatalf("loadWorkerConfig() error = %v", err)
+	}
+	if config.indexingTimeout != 20*time.Minute {
+		t.Fatalf("indexingTimeout = %v, want 20m", config.indexingTimeout)
+	}
+}
+
+func TestLoadWorkerConfigUsesConfiguredIndexingTimeout(t *testing.T) {
+	config, err := loadWorkerConfig(workerEnv(map[string]string{"INDEXING_TIMEOUT_MINUTES": "5"}))
+	if err != nil {
+		t.Fatalf("loadWorkerConfig() error = %v", err)
+	}
+	if config.indexingTimeout != 5*time.Minute {
+		t.Fatalf("indexingTimeout = %v, want 5m", config.indexingTimeout)
+	}
+}
+
+func TestLoadWorkerConfigRejectsInvalidIndexingTimeout(t *testing.T) {
+	for _, value := range []string{"0", "-5", "soon", "1.5"} {
+		if _, err := loadWorkerConfig(workerEnv(map[string]string{"INDEXING_TIMEOUT_MINUTES": value})); err == nil {
+			t.Errorf("INDEXING_TIMEOUT_MINUTES=%q succeeded", value)
+		}
+	}
+}
+
+func TestLoadWorkerConfigCarriesRedisPassword(t *testing.T) {
+	config, err := loadWorkerConfig(workerEnv(map[string]string{"REDIS_PASSWORD": "queue-secret"}))
+	if err != nil {
+		t.Fatalf("loadWorkerConfig() error = %v", err)
+	}
+	if config.redisPassword != "queue-secret" {
+		t.Fatalf("redisPassword = %q, want configured value", config.redisPassword)
 	}
 }
 

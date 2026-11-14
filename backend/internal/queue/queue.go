@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -60,18 +59,21 @@ func (q *Queue) RedisClient() *redis.Client {
 	return q.client
 }
 
-func NewQueue(redisAddr string) (*Queue, error) {
+// NewQueue connects to Redis at redisAddr. redisPassword is the validated
+// REDIS_PASSWORD supplied by the process's startup configuration; a password
+// embedded in a Redis URL takes precedence.
+func NewQueue(redisAddr, redisPassword string) (*Queue, error) {
 	opt, err := redis.ParseURL(redisAddr)
 	var client *redis.Client
 	if err != nil {
 		// Fallback to simple address if not a full URL
 		client = redis.NewClient(&redis.Options{
 			Addr:     redisAddr,
-			Password: os.Getenv("REDIS_PASSWORD"),
+			Password: redisPassword,
 		})
 	} else {
 		if opt.Password == "" {
-			opt.Password = os.Getenv("REDIS_PASSWORD")
+			opt.Password = redisPassword
 		}
 		client = redis.NewClient(opt)
 	}

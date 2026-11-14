@@ -91,11 +91,6 @@ type Coordinator struct {
 	oauthLocker             oauth.TokenLocker
 }
 
-// SetOAuthLocker sets the distributed OAuth refresh lock backend for this coordinator.
-func (c *Coordinator) SetOAuthLocker(locker oauth.TokenLocker) {
-	c.oauthLocker = locker
-}
-
 // SetPreviewTargetFactory overrides preview target creation for tests or read-only adapters.
 func (c *Coordinator) SetPreviewTargetFactory(factory PreviewTargetFactoryFunc) {
 	c.previewTargetFactory = factory
@@ -113,26 +108,27 @@ func (c *Coordinator) SetRestoreTargetFactory(factory RestoreTargetFactoryFunc) 
 
 var ErrRestoreTypeConflict = errors.New("restore target type conflict")
 
-func NewCoordinator(database *sql.DB, encryptionKey string, packReaders ...*PackReaderLimiter) (*Coordinator, error) {
-	if database == nil || encryptionKey == "" {
-		return nil, errors.New("restore database is required")
-	}
-	var limiter *PackReaderLimiter
-	if len(packReaders) > 1 {
-		return nil, errors.New("only one restore pack reader limiter may be configured")
-	}
-	if len(packReaders) == 1 {
-		limiter = packReaders[0]
-	}
-	return &Coordinator{db: database, encryptionKey: encryptionKey, packReaders: limiter, workerID: "restore-worker"}, nil
+// Config is the explicit worker-side configuration of a Coordinator.
+type Config struct {
+	EncryptionKey string
+	// WorkerID binds claims and heartbeats to the process liveness identity. An
+	// empty value selects "restore-worker" for narrow unit tests.
+	WorkerID string
+	// OAuthLocker is the distributed OAuth refresh lock backend.
+	OAuthLocker oauth.TokenLocker
+	// PackReaders optionally bounds concurrent full-pack memory buffers.
+	PackReaders *PackReaderLimiter
 }
 
-// SetWorkerID binds claims and heartbeats to the process liveness identity.
-// It is optional for narrow unit tests, but production workers always set it.
-func (c *Coordinator) SetWorkerID(workerID string) {
-	if strings.TrimSpace(workerID) != "" {
-		c.workerID = workerID
+func NewCoordinator(database *sql.DB, cfg Config) (*Coordinator, error) {
+	if database == nil || cfg.EncryptionKey == "" {
+		return nil, errors.New("restore database is required")
 	}
+	workerID := "restore-worker"
+	if strings.TrimSpace(cfg.WorkerID) != "" {
+		workerID = cfg.WorkerID
+	}
+	return &Coordinator{db: database, encryptionKey: cfg.EncryptionKey, packReaders: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
 }
 
 // PollOnce claims a single preview. The durable status transition is the
