@@ -24,6 +24,8 @@ type stubRotationDB struct {
 	mu                sync.Mutex
 	rows              map[string]stubRotationRow
 	execErr           error
+	execFailUser      string
+	execFailErr       error
 	queryErr          error
 	waitCtxDoneOnExec bool
 }
@@ -51,6 +53,9 @@ func (c *stubRotationConn) ExecContext(ctx context.Context, query string, args [
 		defer c.db.mu.Unlock()
 		if c.db.execErr != nil {
 			return nil, c.db.execErr
+		}
+		if c.db.execFailUser != "" && fmt.Sprint(args[0].Value) == c.db.execFailUser && c.db.execFailErr != nil {
+			return nil, c.db.execFailErr
 		}
 		if c.db.rows == nil {
 			c.db.rows = make(map[string]stubRotationRow)
@@ -660,9 +665,9 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "u1", "google", "B", now, "A")
 		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "u1", "google", "Y", now, "X")
 
-		// Pre-populate PostgreSQL with newer A -> C before stale A -> B repair arrives,
-		// and ensure DeleteOAuthRotationBackup refuses when rotatedHash differs.
-		if err := RecordRotatedRefreshToken(context.Background(), sqlDB, nil, key, "u1", "google", "C", now, "A"); err != nil {
+		// Pre-populate PostgreSQL with newer rotation B -> C (with alias A -> C) before stale
+		// A -> B repair arrives, and ensure DeleteOAuthRotationBackup refuses mismatches.
+		if err := RecordRotatedRefreshToken(context.Background(), sqlDB, nil, key, "u1", "google", "C", now, "B", "A"); err != nil {
 			t.Fatalf("Record(A->C) error = %v", err)
 		}
 		deleted, derr := sharedBackup.DeleteOAuthRotationBackup(context.Background(), "u1", "google", db.OAuthTokenRotationHash("u1", "google", "A"), "wrong-hash", "wrong-enc")
@@ -686,6 +691,69 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		gotA, okA, errA := LookupRotatedRefreshToken(context.Background(), sqlDB, nil, key, "u1", "google", "A", now)
 		if errA != nil || !okA || gotA != "C" {
 			t.Fatalf("Lookup(A) after stale repair = (%q, %v, %v), want (C, true, nil)", gotA, okA, errA)
+		}
+	})
+
+	t.Run("repair preserves newer backup when postgresql has older row and lookup still resolves newer token", func(t *testing.T) {
+		state := &stubRotationDB{}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		// PostgreSQL holds older A -> B; Redis holds newer A -> C (while B -> C failed).
+		if err := RecordRotatedRefreshToken(context.Background(), sqlDB, nil, key, "u1", "google", "B", now, "A"); err != nil {
+			t.Fatalf("Record(A->B) error = %v", err)
+		}
+		sharedBackup := &stubBackupStore{}
+		if err := RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "u1", "google", "C", now, "A"); err != nil {
+			t.Fatalf("BackupRecord(A->C) error = %v", err)
+		}
+
+		repairState := NewRotationRepairState()
+		repaired, err := repairState.RepairWithLimit(context.Background(), sqlDB, sharedBackup, 10, now)
+		if err != nil || repaired != 0 {
+			t.Fatalf("RepairWithLimit() = (%d, %v), want (0, nil)", repaired, err)
+		}
+		if len(sharedBackup.entries) != 1 {
+			t.Fatalf("backup entries after diverging DB repair = %d, want 1 (A->C preserved)", len(sharedBackup.entries))
+		}
+
+		gotA, okA, errA := LookupRotatedRefreshTokenWithStore(context.Background(), sqlDB, sharedBackup, nil, key, "u1", "google", "A", now)
+		if errA != nil || !okA || gotA != "C" {
+			t.Fatalf("Lookup(A) with DB(A->B) + backup(A->C) = (%q, %v, %v), want (C, true, nil)", gotA, okA, errA)
+		}
+		if len(sharedBackup.entries) != 1 {
+			t.Fatalf("backup entries after lookup = %d, want 1 (A->C preserved)", len(sharedBackup.entries))
+		}
+	})
+
+	t.Run("repeatedly failing repair entries do not starve later valid entries", func(t *testing.T) {
+		fkErr := errors.New("pq: insert or update on table oauth_token_rotations violates foreign key constraint")
+		state := &stubRotationDB{execFailUser: "deleted-user", execFailErr: fkErr}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		sharedBackup := &stubBackupStore{}
+		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "deleted-user", "google", "B1", now, "A1")
+		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "deleted-user", "google", "B2", now, "A2")
+		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "healthy-user", "google", "B3", now, "A3")
+
+		repairState := NewRotationRepairState()
+		// Even with batch limit = 2 and both failing entries visited first, subsequent
+		// passes must advance past cooled entries and repair healthy-user -> B3.
+		sawHealthyRepaired := false
+		for pass := 0; pass < 3; pass++ {
+			repaired, _ := repairState.RepairWithLimit(context.Background(), sqlDB, sharedBackup, 2, now)
+			if repaired > 0 {
+				sawHealthyRepaired = true
+				break
+			}
+		}
+		if !sawHealthyRepaired {
+			t.Fatal("later valid entry remained starved behind failing entries across repair passes")
+		}
+		gotHealthy, okHealthy, errHealthy := LookupRotatedRefreshToken(context.Background(), sqlDB, nil, key, "healthy-user", "google", "A3", now)
+		if errHealthy != nil || !okHealthy || gotHealthy != "B3" {
+			t.Fatalf("Lookup(healthy-user) = (%q, %v, %v), want (B3, true, nil)", gotHealthy, okHealthy, errHealthy)
 		}
 	})
 }
