@@ -325,6 +325,13 @@ func isOAuthRotationAlreadyResolved(currentRefreshEnc, freshRefreshEnc string) b
 
 func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 	logger := oauthRotationLogger(ctx)
+	if s.queue != nil {
+		if repaired, repairErr := oauth.RepairRotationBackups(ctx, s.db, s.queue); repairErr != nil {
+			logger.ErrorContext(ctx, "oauth_rotation_backup_repair_failed", observability.Error(repairErr), slog.String("error_kind", observability.ErrorKind(repairErr)))
+		} else if repaired > 0 {
+			logger.InfoContext(ctx, "oauth_rotation_backups_repaired", slog.Int("repaired_count", repaired))
+		}
+	}
 	expiringMig, err := db.GetExpiringOAuthMigrations(s.db)
 	if err != nil {
 		logger.ErrorContext(ctx, "oauth_rotation_scan_failed", slog.String("job_type", "migration"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))

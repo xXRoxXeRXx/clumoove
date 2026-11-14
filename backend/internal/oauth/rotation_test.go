@@ -146,11 +146,13 @@ type stubBackupStore struct {
 	entries   map[string]stubRotationRow
 	recordErr error
 	sawCtxErr error
+	lastTTL   time.Duration
 }
 
-func (s *stubBackupStore) RecordOAuthRotationBackup(ctx context.Context, userID, provider, prevHash, rotatedHash, encryptedToken string, _ time.Duration) error {
+func (s *stubBackupStore) RecordOAuthRotationBackup(ctx context.Context, userID, provider, prevHash, rotatedHash, encryptedToken string, ttl time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.lastTTL = ttl
 	if s.sawCtxErr == nil && ctx.Err() != nil {
 		s.sawCtxErr = ctx.Err()
 	}
@@ -177,6 +179,29 @@ func (s *stubBackupStore) LookupOAuthRotationBackup(_ context.Context, userID, p
 		return "", "", false, nil
 	}
 	return v.nextHash, v.encrypted, true, nil
+}
+
+func (s *stubBackupStore) VisitOAuthRotationBackups(_ context.Context, visit func(userID, provider, prevHash, rotatedHash, encryptedToken string) error) error {
+	s.mu.Lock()
+	snapshot := make(map[string]stubRotationRow, len(s.entries))
+	for k, v := range s.entries {
+		snapshot[k] = v
+	}
+	s.mu.Unlock()
+	for k, v := range snapshot {
+		parts := strings.SplitN(k, "\x00", 3)
+		if err := visit(parts[0], parts[1], parts[2], v.nextHash, v.encrypted); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *stubBackupStore) DeleteOAuthRotationBackup(_ context.Context, userID, provider, prevHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.entries, fmt.Sprintf("%s\x00%s\x00%s", userID, provider, prevHash))
+	return nil
 }
 
 func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
@@ -536,6 +561,51 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		gotDB, okDB, errDB := LookupRotatedRefreshToken(context.Background(), sqlDB, nil, key, "u1", "google", "T1", now)
 		if errDB != nil || !okDB || gotDB != "T2" {
 			t.Fatalf("LookupRotatedRefreshToken(after repair, no backup) = (%q, %v, %v), want (T2, true, nil)", gotDB, okDB, errDB)
+		}
+		if len(sharedBackup.entries) != 0 {
+			t.Fatalf("backup entries remaining after read repair = %d, want 0", len(sharedBackup.entries))
+		}
+	})
+
+	t.Run("backup lookup surfaces repair failure and proactive sweep repairs dormant entries without expiry", func(t *testing.T) {
+		repairErr := errors.New("pq: disk full")
+		state := &stubRotationDB{execErr: repairErr}
+		sqlDB := sql.OpenDB(state)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+
+		sharedBackup := &stubBackupStore{}
+		if err := RecordRotatedRefreshTokenWithStore(context.Background(), sqlDB, sharedBackup, nil, key, "u1", "google", "T2", now, "T1"); !errors.Is(err, repairErr) {
+			t.Fatalf("setup RecordRotatedRefreshTokenWithStore error = %v, want %v", err, repairErr)
+		}
+		if sharedBackup.lastTTL != 0 {
+			t.Fatalf("backup TTL = %v, want 0 (persistent until repaired)", sharedBackup.lastTTL)
+		}
+
+		// While PostgreSQL writes fail, read repair must surface ErrRotationPersistence rather than ignoring the error.
+		if _, _, err := LookupRotatedRefreshTokenWithStore(context.Background(), sqlDB, sharedBackup, nil, key, "u1", "google", "T1", now); !errors.Is(err, repairErr) {
+			t.Fatalf("LookupRotatedRefreshTokenWithStore(failing repair) error = %v, want %v", err, repairErr)
+		}
+		if repaired, err := RepairRotationBackups(context.Background(), sqlDB, sharedBackup); !errors.Is(err, repairErr) || repaired != 0 {
+			t.Fatalf("RepairRotationBackups(failing) = (%d, %v), want (0, %v)", repaired, err, repairErr)
+		}
+		if len(sharedBackup.entries) != 1 {
+			t.Fatalf("backup entries kept on failed repair = %d, want 1", len(sharedBackup.entries))
+		}
+
+		// Once PostgreSQL recovers, proactive sweep repairs dormant entries even if never looked up.
+		state.mu.Lock()
+		state.execErr = nil
+		state.mu.Unlock()
+		repaired, err := RepairRotationBackups(context.Background(), sqlDB, sharedBackup)
+		if err != nil || repaired != 1 {
+			t.Fatalf("RepairRotationBackups(recovered) = (%d, %v), want (1, nil)", repaired, err)
+		}
+		if len(sharedBackup.entries) != 0 {
+			t.Fatalf("backup entries remaining after proactive sweep = %d, want 0", len(sharedBackup.entries))
+		}
+		gotDB, okDB, errDB := LookupRotatedRefreshToken(context.Background(), sqlDB, nil, key, "u1", "google", "T1", now)
+		if errDB != nil || !okDB || gotDB != "T2" {
+			t.Fatalf("LookupRotatedRefreshToken(after sweep) = (%q, %v, %v), want (T2, true, nil)", gotDB, okDB, errDB)
 		}
 	})
 }

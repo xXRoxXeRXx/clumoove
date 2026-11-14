@@ -15,7 +15,9 @@ import (
 
 const (
 	rotationCacheTTL       = 24 * time.Hour
-	rotationBackupTTL      = 7 * 24 * time.Hour
+	// Fallback entries stay in Redis without TTL expiry until PostgreSQL repair
+	// explicitly removes them, preventing dormant tokens from losing history.
+	rotationBackupTTL      = 0
 	rotationCacheMaxSize   = 1024
 	maxRotationHops        = 32
 	tokenPreRefreshTimeout = 5 * time.Second
@@ -46,6 +48,15 @@ type TokenLocker interface {
 type RotationBackupStore interface {
 	RecordOAuthRotationBackup(ctx context.Context, userID, provider, prevHash, rotatedHash, encryptedToken string, ttl time.Duration) error
 	LookupOAuthRotationBackup(ctx context.Context, userID, provider, tokenHash string) (rotatedHash, encryptedToken string, found bool, err error)
+}
+
+// RotationBackupRepairStore extends RotationBackupStore with enumeration and
+// deletion so dormant backup-only mappings can be proactively repaired into
+// PostgreSQL and cleared once durable.
+type RotationBackupRepairStore interface {
+	RotationBackupStore
+	VisitOAuthRotationBackups(ctx context.Context, visit func(userID, provider, prevHash, rotatedHash, encryptedToken string) error) error
+	DeleteOAuthRotationBackup(ctx context.Context, userID, provider, prevHash string) error
 }
 
 type keyedLockEntry struct {
@@ -302,8 +313,18 @@ func lookupOneRotationHop(ctx context.Context, database *sql.DB, backup Rotation
 					rotatedHash = db.OAuthTokenRotationHash(userID, provider, plain)
 				}
 				repairCtx, cancelRepair := context.WithTimeout(ctx, tokenRepairTimeout)
-				_ = db.RecordOAuthTokenRotation(repairCtx, database, userID, provider, tokenHash, rotatedHash, encrypted)
+				repairErr := db.RecordOAuthTokenRotation(repairCtx, database, userID, provider, tokenHash, rotatedHash, encrypted)
 				cancelRepair()
+				if repairErr != nil && !errors.Is(repairErr, driver.ErrSkip) {
+					return "", false, fmt.Errorf("%w: repair oauth token rotation: %w", ErrRotationPersistence, repairErr)
+				}
+				if repairErr == nil {
+					if rs, ok := backup.(RotationBackupRepairStore); ok {
+						delCtx, cancelDel := context.WithTimeout(ctx, tokenRepairTimeout)
+						_ = rs.DeleteOAuthRotationBackup(delCtx, userID, provider, tokenHash)
+						cancelDel()
+					}
+				}
 			}
 			return plain, true, nil
 		}
@@ -392,6 +413,47 @@ func RecordRotatedRefreshTokenWithStore(ctx context.Context, database *sql.DB, b
 		}
 	}
 	return persistErr
+}
+
+// RepairRotationBackups reconciles pending rotation mappings from the shared
+// backup store back into PostgreSQL and removes each backup entry once durable.
+func RepairRotationBackups(ctx context.Context, database *sql.DB, store RotationBackupRepairStore) (int, error) {
+	if database == nil || store == nil {
+		return 0, nil
+	}
+	type pendingRecord struct {
+		userID, provider, prevHash, rotatedHash, encrypted string
+	}
+	var pending []pendingRecord
+	if err := store.VisitOAuthRotationBackups(ctx, func(userID, provider, prevHash, rotatedHash, encryptedToken string) error {
+		pending = append(pending, pendingRecord{
+			userID:      userID,
+			provider:    provider,
+			prevHash:    prevHash,
+			rotatedHash: rotatedHash,
+			encrypted:   encryptedToken,
+		})
+		return nil
+	}); err != nil {
+		return 0, fmt.Errorf("%w: scan oauth rotation backups: %w", ErrRotationPersistence, err)
+	}
+	repaired := 0
+	var repairErrs []error
+	for _, rec := range pending {
+		if err := db.RecordOAuthTokenRotation(ctx, database, rec.userID, rec.provider, rec.prevHash, rec.rotatedHash, rec.encrypted); err != nil {
+			if errors.Is(err, driver.ErrSkip) {
+				continue
+			}
+			repairErrs = append(repairErrs, fmt.Errorf("%w: repair oauth token rotation: %w", ErrRotationPersistence, err))
+			continue
+		}
+		if derr := store.DeleteOAuthRotationBackup(ctx, rec.userID, rec.provider, rec.prevHash); derr != nil {
+			repairErrs = append(repairErrs, fmt.Errorf("%w: cleanup oauth rotation backup: %w", ErrRotationPersistence, derr))
+			continue
+		}
+		repaired++
+	}
+	return repaired, errors.Join(repairErrs...)
 }
 
 // RotationRefreshRequest configures a token-locked, chain-aware OAuth refresh.

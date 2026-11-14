@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/lib/pq"
@@ -341,6 +342,9 @@ func (q *Queue) ReleaseOAuthLock(ctx context.Context, jobType, jobID, role strin
 }
 
 type redisOAuthRotationEntry struct {
+	UserID                string `json:"user_id,omitempty"`
+	Provider              string `json:"provider,omitempty"`
+	PrevHash              string `json:"prev_hash,omitempty"`
 	RotatedHash           string `json:"rotated_hash"`
 	RefreshTokenEncrypted string `json:"refresh_token_encrypted"`
 }
@@ -357,6 +361,9 @@ func (q *Queue) RecordOAuthRotationBackup(ctx context.Context, userID, provider,
 		return nil
 	}
 	payload, err := json.Marshal(redisOAuthRotationEntry{
+		UserID:                userID,
+		Provider:              provider,
+		PrevHash:              prevHash,
 		RotatedHash:           rotatedHash,
 		RefreshTokenEncrypted: encryptedToken,
 	})
@@ -386,6 +393,60 @@ func (q *Queue) LookupOAuthRotationBackup(ctx context.Context, userID, provider,
 		return "", "", false, nil
 	}
 	return entry.RotatedHash, entry.RefreshTokenEncrypted, true, nil
+}
+
+// VisitOAuthRotationBackups iterates pending encrypted OAuth rotation backups
+// stored in Redis so background reconciliation can repair them into PostgreSQL.
+func (q *Queue) VisitOAuthRotationBackups(ctx context.Context, visit func(userID, provider, prevHash, rotatedHash, encryptedToken string) error) error {
+	if q == nil || q.client == nil || visit == nil {
+		return nil
+	}
+	var cursor uint64
+	for {
+		keys, nextCursor, err := q.client.Scan(ctx, cursor, "oauth:rotation:*", 100).Result()
+		if err != nil {
+			return err
+		}
+		for _, key := range keys {
+			raw, gerr := q.client.Get(ctx, key).Result()
+			if errors.Is(gerr, redis.Nil) {
+				continue
+			}
+			if gerr != nil {
+				return gerr
+			}
+			var entry redisOAuthRotationEntry
+			if uerr := json.Unmarshal([]byte(raw), &entry); uerr != nil {
+				return uerr
+			}
+			if entry.UserID == "" || entry.Provider == "" || entry.PrevHash == "" {
+				trimmed := strings.TrimPrefix(key, "oauth:rotation:")
+				if parts := strings.SplitN(trimmed, ":", 3); len(parts) == 3 {
+					entry.UserID, entry.Provider, entry.PrevHash = parts[0], parts[1], parts[2]
+				}
+			}
+			if entry.UserID == "" || entry.Provider == "" || entry.PrevHash == "" || entry.RotatedHash == "" || entry.RefreshTokenEncrypted == "" {
+				continue
+			}
+			if verr := visit(entry.UserID, entry.Provider, entry.PrevHash, entry.RotatedHash, entry.RefreshTokenEncrypted); verr != nil {
+				return verr
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	return nil
+}
+
+// DeleteOAuthRotationBackup removes a Redis backup entry after PostgreSQL has
+// durably persisted the rotation mapping.
+func (q *Queue) DeleteOAuthRotationBackup(ctx context.Context, userID, provider, prevHash string) error {
+	if q == nil || q.client == nil || userID == "" || provider == "" || prevHash == "" {
+		return nil
+	}
+	return q.client.Del(ctx, oauthRotationRedisKey(userID, provider, prevHash)).Err()
 }
 
 // RegisterActiveWorker registers/refreshes the worker's active status in Redis
