@@ -66,9 +66,10 @@ type RotationBackupRepairStore interface {
 	DeleteOAuthRotationBackup(ctx context.Context, userID, provider, prevHash, expectedRotatedHash, expectedEncrypted string) (bool, error)
 }
 
-// OAuthRotationScanResumer may be implemented by RotationBackupRepairStore
+// OAuthRotationScanResumer should be implemented by RotationBackupRepairStore
 // stores (such as Queue) that persist scan progress internally across
-// VisitOAuthRotationBackups calls.
+// VisitOAuthRotationBackups calls so sweeps resume past large or slow prefixes
+// rather than restarting from the head on every pass.
 type OAuthRotationScanResumer interface {
 	ResumesOAuthRotationScan() bool
 }
@@ -668,6 +669,7 @@ type pendingBackupRecord struct {
 	key, userID, provider, prevHash, rotatedHash, encrypted string
 	failures                                                int
 	lastAttempt                                             time.Time
+	postAnchor                                              bool
 }
 
 // RepairWithLimit reconciles at most limit pending mappings per pass, giving
@@ -711,6 +713,7 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 			encrypted:   encryptedToken,
 			failures:    st.failures,
 			lastAttempt: st.lastAttempt,
+			postAnchor:  passedAnchor,
 		}
 		if !passedAnchor {
 			if k == anchor {
@@ -795,7 +798,7 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 	}
 	repaired := 0
 	var repairErrs []error
-	var lastSurvivingAnchor string
+	var lastPostAnchorSurviving, lastPrefixSurviving string
 	anchorDeleted := false
 	for _, rec := range pending {
 		if ctx.Err() != nil {
@@ -811,17 +814,23 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 			repairErrs = append(repairErrs, rerr)
 		}
 		if survived {
-			lastSurvivingAnchor = cooldownKey
+			if rec.postAnchor {
+				lastPostAnchorSurviving = cooldownKey
+			} else {
+				lastPrefixSurviving = cooldownKey
+			}
 		} else if !resumesScan && cooldownKey == anchor {
 			anchorDeleted = true
 		}
 	}
 	if !resumesScan {
 		switch {
-		case lastSurvivingAnchor != "":
-			s.setResumeAnchor(lastSurvivingAnchor)
+		case lastPostAnchorSurviving != "":
+			s.setResumeAnchor(lastPostAnchorSurviving)
 		case sawAnchor && !anchorDeleted:
 			s.setResumeAnchor(anchor)
+		case lastPrefixSurviving != "":
+			s.setResumeAnchor(lastPrefixSurviving)
 		default:
 			s.setResumeAnchor("")
 		}

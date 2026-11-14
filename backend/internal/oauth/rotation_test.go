@@ -1039,29 +1039,26 @@ func TestRepairWithLimitDeletedAnchorAndResumer(t *testing.T) {
 			resumingBackupStore: &resumingBackupStore{
 				boundedScanBackupStore: &boundedScanBackupStore{stubBackupStore: backing},
 			},
-			perVisitDelay: 8 * time.Millisecond,
 		}
 
 		repairState := NewRotationRepairState()
-		// First pass records all 12 entries as failed (without delay).
-		slowStore.perVisitDelay = 0
+		// First pass records all 12 entries as failed without stalling.
 		if _, err := repairState.RepairWithLimit(context.Background(), sqlDB, slowStore, 12, now); err == nil {
 			t.Fatal("expected initial failure pass to record retry state")
 		}
 
-		// DB recovers, cooldown has elapsed, and scanning all 12 entries now exceeds the
-		// sweep deadline (12 * 10ms = 120ms > 50ms). Each bounded-deadline sweep must stop
-		// scanning at its half-budget and repair the collected due retries instead of discarding them.
+		// DB recovers and cooldown has elapsed. Blocking after 5 visits waits deterministically
+		// for scanCtx's half-deadline while leaving plenty of parent deadline for repairs.
 		state.mu.Lock()
 		state.execFailUser = ""
 		state.execFailErr = nil
 		state.mu.Unlock()
-		slowStore.perVisitDelay = 10 * time.Millisecond
+		slowStore.blockAfterVisits = 5
 
 		totalRepaired := 0
 		sweepTime := now.Add(repairFailureCooldown + time.Second)
-		for pass := 0; pass < 8 && len(backing.entries) > 0; pass++ {
-			sweepCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		for pass := 0; pass < 4 && len(backing.entries) > 0; pass++ {
+			sweepCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 			repaired, err := repairState.RepairWithLimit(sweepCtx, sqlDB, slowStore, 5, sweepTime.Add(time.Duration(pass)*5*time.Minute))
 			cancel()
 			if err != nil {
@@ -1077,19 +1074,16 @@ func TestRepairWithLimitDeletedAnchorAndResumer(t *testing.T) {
 
 type slowDeadlineResumingStore struct {
 	*resumingBackupStore
-	perVisitDelay time.Duration
+	blockAfterVisits int
 }
 
 func (s *slowDeadlineResumingStore) VisitOAuthRotationBackups(ctx context.Context, visit func(userID, provider, prevHash, rotatedHash, encryptedToken string) error) error {
+	seen := 0
 	return s.resumingBackupStore.VisitOAuthRotationBackups(ctx, func(userID, provider, prevHash, rotatedHash, encryptedToken string) error {
-		if s.perVisitDelay > 0 {
-			timer := time.NewTimer(s.perVisitDelay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
+		seen++
+		if s.blockAfterVisits > 0 && seen > s.blockAfterVisits {
+			<-ctx.Done()
+			return ctx.Err()
 		}
 		return visit(userID, provider, prevHash, rotatedHash, encryptedToken)
 	})
