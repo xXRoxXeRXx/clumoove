@@ -67,13 +67,7 @@ func (api *notificationAPI) registerRoutes(mux *http.ServeMux, authenticated fun
 }
 
 func (api *notificationAPI) registerRoutesWithHandler(mux *http.ServeMux, authenticated func(http.Handler) http.Handler, overrideHandler http.HandlerFunc) {
-	routes := api.routes()
-	for _, r := range routes {
-		if r.access != routeAuthenticated {
-			panic("notification routes must require authentication")
-		}
-	}
-	registerRouteSpecs(mux, routes, authenticated, nil, nil, overrideHandler)
+	registerAuthenticatedRouteSpecs("notification", mux, api.routes(), authenticated, overrideHandler)
 }
 
 func secretKeys(typ string) map[string]bool {

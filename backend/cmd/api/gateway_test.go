@@ -200,6 +200,18 @@ func TestGatewayServesEveryContractRoute(t *testing.T) {
 		}
 	}
 
+	// Each contract path must reject a method no module registers for it, so a
+	// route cannot silently widen to accept extra verbs.
+	for _, c := range expectedRouteContracts {
+		_, path, _ := strings.Cut(c.pattern, " ")
+		req := requestForRoutePattern("PATCH " + path)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("PATCH %s status = %d, want 405", path, rec.Code)
+		}
+	}
+
 	// A path that no module owns must stay unrouted.
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/not-a-route", nil))
