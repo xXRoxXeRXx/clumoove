@@ -34,17 +34,17 @@ type fileTransferSummary struct {
 	SkippedFiles      int    `json:"skipped_files"`
 }
 
-func (s *APIServer) handleFileTransfersList(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileTransfersList(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
 	profileID := r.PathValue("profileID")
-	if _, err := s.loadOwnedFileProfile(r.Context(), userID, profileID); err != nil {
-		s.writeFileProfileError(w, err)
+	if _, err := api.loadOwnedFileProfile(r.Context(), userID, profileID); err != nil {
+		api.writeFileProfileError(w, err)
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := api.db.QueryContext(r.Context(), `
 		SELECT m.id::text, m.picker_session_id, m.status, COALESCE(source.name, ''), COALESCE(target.name, ''),
 		       m.total_files, m.processed_files, m.failed_files, m.skipped_files
 		FROM migrations m
@@ -58,7 +58,7 @@ func (s *APIServer) handleFileTransfersList(w http.ResponseWriter, r *http.Reque
 		  )
 		ORDER BY m.created_at DESC LIMIT 20`, userID, profileID)
 	if err != nil {
-		s.logf(r, "file transfer list: %v", err)
+		api.logf(r, "file transfer list: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -81,37 +81,39 @@ func (s *APIServer) handleFileTransfersList(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "transfers": transfers})
 }
 
-func (s *APIServer) handleFileTransferCancel(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileTransferCancel(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
 	id := r.PathValue("id")
-	migration, err := db.GetMigrationContext(r.Context(), s.db, id)
+	migration, err := db.GetMigrationContext(r.Context(), api.db, id)
 	if err != nil || !migration.UserID.Valid || migration.UserID.String != userID || !strings.HasPrefix(migration.PickerSessionID, fileManagerTransferMarker) {
 		writeError(w, http.StatusNotFound, ErrFilesNotFound)
 		return
 	}
-	if err := db.UpdateMigrationStatus(s.db, id, "CANCELLED", nil); err != nil {
+	if err := db.UpdateMigrationStatus(api.db, id, "CANCELLED", nil); err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if err := db.CancelPendingTasks(s.db, id); err != nil {
-		s.logf(r, "file transfer cancel pending tasks %s: %v", id, err)
+	if err := db.CancelPendingTasks(api.db, id); err != nil {
+		api.logf(r, "file transfer cancel pending tasks %s: %v", id, err)
 	}
-	if err := s.queue.PublishCancelEvent(r.Context(), id); err != nil {
-		s.logf(r, "file transfer cancel event %s: %v", id, err)
+	if api.publishCancelEvent != nil {
+		if err := api.publishCancelEvent(r.Context(), id); err != nil {
+			api.logf(r, "file transfer cancel event %s: %v", id, err)
+		}
 	}
-	s.writeAudit(r, db.AuditMigrationCancelled, id, userID, map[string]interface{}{"origin": "file_manager"})
+	api.writeAudit(r, db.AuditMigrationCancelled, id, userID, map[string]interface{}{"origin": "file_manager"})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-func (s *APIServer) handleFileTransferCreate(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileTransferCreate(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-transfer", fileMutationRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-transfer", fileMutationRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -137,7 +139,7 @@ func (s *APIServer) handleFileTransferCreate(w http.ResponseWriter, r *http.Requ
 		writeValidationError(w, ErrInvalidBody)
 		return
 	}
-	items, err := s.openBatchReferences(req.Refs, userID, sourceProfileID)
+	items, err := api.openBatchReferences(req.Refs, userID, sourceProfileID)
 	if err != nil {
 		writeValidationError(w, ErrFilesInvalidRef)
 		return
@@ -148,14 +150,14 @@ func (s *APIServer) handleFileTransferCreate(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	sourceSnap, err := s.profiles().SnapshotOwned(r.Context(), userID, sourceProfileID)
+	sourceSnap, err := api.profiles.SnapshotOwned(r.Context(), userID, sourceProfileID)
 	if err != nil {
-		s.writeFileProfileError(w, mapFileProfileError(err))
+		api.writeFileProfileError(w, mapFileProfileError(err))
 		return
 	}
-	targetSnap, err := s.profiles().SnapshotOwned(r.Context(), userID, req.TargetProfileID)
+	targetSnap, err := api.profiles.SnapshotOwned(r.Context(), userID, req.TargetProfileID)
 	if err != nil {
-		s.writeFileProfileError(w, mapFileProfileError(err))
+		api.writeFileProfileError(w, mapFileProfileError(err))
 		return
 	}
 	source, sourcePersisted := sourceSnap.Profile, sourceSnap.Creds
@@ -166,7 +168,7 @@ func (s *APIServer) handleFileTransferCreate(w http.ResponseWriter, r *http.Requ
 	}
 	targetDir := managedRootPath()
 	if req.TargetParentRef != "" {
-		reference, refErr := openFileReference(req.TargetParentRef, s.encryptionKey, userID, req.TargetProfileID)
+		reference, refErr := openFileReference(req.TargetParentRef, api.encryptionKey, userID, req.TargetProfileID)
 		if refErr != nil || reference.Kind != "directory" || reference.Locator.Path == "" {
 			writeValidationError(w, ErrFilesInvalidRef)
 			return
@@ -189,13 +191,15 @@ func (s *APIServer) handleFileTransferCreate(w http.ResponseWriter, r *http.Requ
 		Status: "INDEXING", ConflictStrategy: strategy, TargetDir: targetDir, SelectedPaths: db.StringArray(selectedPaths), Threads: 4,
 		PickerSessionID: fileManagerTransferMarker + strings.ToLower(operation),
 	}
-	id, err := db.CreateMigration(s.db, migration)
+	id, err := db.CreateMigration(api.db, migration)
 	if err != nil {
-		s.logf(r, "file transfer create: %v", err)
+		api.logf(r, "file transfer create: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	s.writeAudit(r, db.AuditMigrationCreated, id, userID, map[string]interface{}{"origin": "file_manager", "operation": strings.ToLower(operation), "source_profile": source.ID, "target_profile": target.ID})
-	go s.indexer.Start(s.backgroundCtx, id)
+	api.writeAudit(r, db.AuditMigrationCreated, id, userID, map[string]interface{}{"origin": "file_manager", "operation": strings.ToLower(operation), "source_profile": source.ID, "target_profile": target.ID})
+	if api.startTransferIndexer != nil {
+		go api.startTransferIndexer(api.backgroundCtx, id)
+	}
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{"success": true, "transfer_id": id})
 }

@@ -41,6 +41,10 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any, limit int64
 // call it defensively so an accidentally unprotected route cannot be mistaken
 // for an ownership failure.
 func (s *APIServer) requireUserID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	return requireAuthenticatedUserID(w, r)
+}
+
+func requireAuthenticatedUserID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
 		writeError(w, http.StatusUnauthorized, ErrUnauthorized)

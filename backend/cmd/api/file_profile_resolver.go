@@ -30,8 +30,8 @@ func mapFileProfileError(err error) error {
 
 // loadOwnedFileProfile keeps the file-manager read-only profile lookup seam
 // while delegating ownership resolution to the shared module.
-func (s *APIServer) loadOwnedFileProfile(ctx context.Context, userID, profileID string) (*db.ConnectionProfile, error) {
-	profile, err := s.profiles().LoadOwned(ctx, userID, profileID)
+func (api *fileAPI) loadOwnedFileProfile(ctx context.Context, userID, profileID string) (*db.ConnectionProfile, error) {
+	profile, err := api.profiles.LoadOwned(ctx, userID, profileID)
 	if err != nil {
 		return nil, mapFileProfileError(err)
 	}
@@ -42,8 +42,8 @@ func (s *APIServer) loadOwnedFileProfile(ctx context.Context, userID, profileID 
 // are never accepted by file-manager endpoints. The shared connection module
 // owns profile ownership, credential lifecycles, provider construction, and
 // plaintext cleanup; this adapter only adds file-manager connection semantics.
-func (s *APIServer) resolveFileProfile(ctx context.Context, userID, profileID string) (*resolvedFileProfile, error) {
-	connection, err := s.profiles().OpenOwned(ctx, userID, profileID)
+func (api *fileAPI) resolveFileProfile(ctx context.Context, userID, profileID string) (*resolvedFileProfile, error) {
+	connection, err := api.profiles.OpenOwned(ctx, userID, profileID)
 	if err != nil {
 		return nil, mapFileProfileError(err)
 	}

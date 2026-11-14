@@ -167,6 +167,7 @@ func (server *APIServer) gatewayRoutes() []routeSpec {
 		writeAudit:    server.writeAudit,
 		logf:          server.logf,
 	})
+	files := server.files()
 
 	routes := []routeSpec{
 		// Auth Routes (Public)
@@ -288,30 +289,6 @@ func (server *APIServer) gatewayRoutes() []routeSpec {
 		{pattern: "DELETE /api/profiles/{id}", access: routeAuthenticated, handler: server.handleDeleteProfile},
 		{pattern: "POST /api/profiles/{id}/test", access: routeAuthenticated, handler: server.handleTestProfile},
 
-		// Profile-bound cloud file manager. All management endpoints use saved
-		// profile IDs only; the ticket consumer authenticates with a short-lived,
-		// single-use Redis ticket rather than a JWT in the download URL.
-		{pattern: "GET /api/files/profiles/{profileID}/capabilities", access: routeAuthenticated, handler: server.handleFileCapabilities},
-		{pattern: "POST /api/files/profiles/{profileID}/entries:list", access: routeAuthenticated, handler: server.handleFileEntriesList},
-		{pattern: "POST /api/files/profiles/{profileID}/entries:resolve", access: routeAuthenticated, handler: server.handleFileEntriesResolve},
-		{pattern: "DELETE /api/files/profiles/{profileID}/entries", access: routeAuthenticated, handler: server.handleFileEntryDelete},
-		{pattern: "POST /api/files/profiles/{profileID}/entries:rename", access: routeAuthenticated, handler: server.handleFileEntryRename},
-		{pattern: "POST /api/files/profiles/{profileID}/entries:copy", access: routeAuthenticated, handler: server.handleFileEntryCopy},
-		{pattern: "POST /api/files/profiles/{profileID}/entries:move", access: routeAuthenticated, handler: server.handleFileEntryMove},
-		{pattern: "PUT /api/files/profiles/{profileID}/content", access: routeAuthenticated, handler: server.handleFileUpload},
-		{pattern: "POST /api/files/profiles/{profileID}/directories", access: routeAuthenticated, handler: server.handleFileDirectoryCreate},
-		{pattern: "POST /api/files/profiles/{profileID}/download-tickets", access: routeAuthenticated, handler: server.handleFileDownloadTicket},
-		{pattern: "POST /api/files/profiles/{profileID}/archive-tickets", access: routeAuthenticated, handler: server.handleFileArchiveTicket},
-		{pattern: "POST /api/files/profiles/{profileID}/entries:batch-delete", access: routeAuthenticated, handler: server.handleFileEntriesBatchDelete},
-		{pattern: "POST /api/files/profiles/{profileID}/entries:batch-copy", access: routeAuthenticated, handler: server.handleFileEntriesBatchCopy},
-		{pattern: "POST /api/files/profiles/{profileID}/entries:batch-move", access: routeAuthenticated, handler: server.handleFileEntriesBatchMove},
-		{pattern: "POST /api/files/profiles/{profileID}/transfers", access: routeAuthenticated, handler: server.handleFileTransferCreate},
-		{pattern: "GET /api/files/profiles/{profileID}/transfers", access: routeAuthenticated, handler: server.handleFileTransfersList},
-		{pattern: "POST /api/files/transfers/{id}/cancel", access: routeAuthenticated, handler: server.handleFileTransferCancel},
-		{pattern: "POST /api/files/profiles/{profileID}/thumbnail", access: routeAuthenticated, handler: server.handleFileThumbnail},
-		{pattern: "GET /api/files/download/{ticket}", access: routePublic, handler: server.handleFileDownload},
-		{pattern: "GET /api/files/archive/{ticket}", access: routePublic, handler: server.handleFileArchive},
-
 		// Administrative routes require both a current JWT and the ADMIN role.
 		{pattern: "POST /api/admin/users", access: routeAdmin, handler: server.handleAdminCreateUser},
 		{pattern: "POST /api/admin/users/{id}/suspend", access: routeAdmin, handler: server.handleAdminSuspendUser},
@@ -337,5 +314,6 @@ func (server *APIServer) gatewayRoutes() []routeSpec {
 	}
 
 	routes = append(routes, notifications.routes()...)
+	routes = append(routes, files.routes()...)
 	return routes
 }

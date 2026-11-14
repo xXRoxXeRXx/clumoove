@@ -200,7 +200,7 @@ func TestSyncAndBackupProfileFailuresRemainMachineReadable(t *testing.T) {
 		request.SetPathValue("profileID", "missing-profile")
 		recorder := httptest.NewRecorder()
 
-		transferServer.handleFileTransferCreate(recorder, request)
+		transferServer.files().handleFileTransferCreate(recorder, request)
 
 		assertAPIError(t, recorder, http.StatusNotFound, ErrProfileNotFound)
 	})

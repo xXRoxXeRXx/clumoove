@@ -68,7 +68,7 @@ func TestFileEntriesListUsesOnlyOwnedProfileCredentials(t *testing.T) {
 	request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
 	recorder := httptest.NewRecorder()
 
-	server.handleFileEntriesList(recorder, request)
+	server.files().handleFileEntriesList(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -97,7 +97,7 @@ func TestResolveFileProfileMapsProviderSetupFailure(t *testing.T) {
 		},
 	}
 
-	_, err = server.resolveFileProfile(context.Background(), "user-1", "profile-1")
+	_, err = server.files().resolveFileProfile(context.Background(), "user-1", "profile-1")
 
 	if !errors.Is(err, errFileProviderUnavailable) {
 		t.Fatalf("resolveFileProfile() error = %v, want errFileProviderUnavailable", err)
@@ -142,7 +142,7 @@ func TestResolveFileProfileRejectsConnectionOnlyProvider(t *testing.T) {
 			return provider, nil
 		},
 	}
-	_, err = server.resolveFileProfile(context.Background(), "user-1", "profile-1")
+	_, err = server.files().resolveFileProfile(context.Background(), "user-1", "profile-1")
 	if !errors.Is(err, errFileProviderUnavailable) {
 		t.Fatalf("error = %v, want errFileProviderUnavailable", err)
 	}
@@ -175,7 +175,7 @@ func TestFileEntriesListMapsProviderSetupFailure(t *testing.T) {
 	request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
 	recorder := httptest.NewRecorder()
 
-	server.handleFileEntriesList(recorder, request)
+	server.files().handleFileEntriesList(recorder, request)
 
 	assertAPIError(t, recorder, http.StatusBadGateway, ErrFilesProviderUnavailable)
 	if !providerSetupCalled {

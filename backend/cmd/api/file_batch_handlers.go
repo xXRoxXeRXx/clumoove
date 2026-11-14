@@ -46,7 +46,7 @@ type batchReference struct {
 	recursive bool
 }
 
-func (s *APIServer) openBatchReferences(refs []string, userID, profileID string) ([]batchReference, error) {
+func (api *fileAPI) openBatchReferences(refs []string, userID, profileID string) ([]batchReference, error) {
 	if len(refs) == 0 || len(refs) > fileBatchMaximumItems {
 		return nil, errors.New("invalid batch size")
 	}
@@ -61,7 +61,7 @@ func (s *APIServer) openBatchReferences(refs []string, userID, profileID string)
 			return nil, errors.New("duplicate reference")
 		}
 		seen[ref] = struct{}{}
-		reference, err := openFileReference(ref, s.encryptionKey, userID, profileID)
+		reference, err := openFileReference(ref, api.encryptionKey, userID, profileID)
 		if err != nil {
 			return nil, err
 		}
@@ -124,12 +124,12 @@ func fileBatchError(err error) APIErrorCode {
 	}
 }
 
-func (s *APIServer) handleFileEntriesBatchDelete(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileEntriesBatchDelete(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -144,7 +144,7 @@ func (s *APIServer) handleFileEntriesBatchDelete(w http.ResponseWriter, r *http.
 		recursiveByRef[request.Items[i].Ref] = request.Items[i].Recursive
 	}
 	profileID := r.PathValue("profileID")
-	items, err := s.openBatchReferences(refs, userID, profileID)
+	items, err := api.openBatchReferences(refs, userID, profileID)
 	if err != nil {
 		writeValidationError(w, ErrFilesInvalidRef)
 		return
@@ -152,9 +152,9 @@ func (s *APIServer) handleFileEntriesBatchDelete(w http.ResponseWriter, r *http.
 	for i := range items {
 		items[i].recursive = recursiveByRef[items[i].ref]
 	}
-	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	resolved, err := api.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	defer resolved.close()
@@ -178,25 +178,25 @@ func (s *APIServer) handleFileEntriesBatchDelete(w http.ResponseWriter, r *http.
 		if err := resolved.manager.DeleteManagerItem(resolved.ctx, item.reference.Locator, item.recursive); err != nil {
 			result.Status, result.ErrorCode = "failed", fileBatchError(err)
 		}
-		s.writeAudit(r, db.AuditFileItemDeleted, profileID, userID, map[string]interface{}{"provider": resolved.profile.Provider, "item_kind": item.reference.Kind, "recursive": item.recursive, "outcome": result.Status})
+		api.writeAudit(r, db.AuditFileItemDeleted, profileID, userID, map[string]interface{}{"provider": resolved.profile.Provider, "item_kind": item.reference.Kind, "recursive": item.recursive, "outcome": result.Status})
 		results = append(results, result)
 	}
 	writeJSON(w, http.StatusOK, fileBatchResponse{Results: results})
 }
 
-func (s *APIServer) handleFileEntriesBatchCopy(w http.ResponseWriter, r *http.Request) {
-	s.handleFileEntriesBatchMutation(w, r, "copy")
+func (api *fileAPI) handleFileEntriesBatchCopy(w http.ResponseWriter, r *http.Request) {
+	api.handleFileEntriesBatchMutation(w, r, "copy")
 }
-func (s *APIServer) handleFileEntriesBatchMove(w http.ResponseWriter, r *http.Request) {
-	s.handleFileEntriesBatchMutation(w, r, "move")
+func (api *fileAPI) handleFileEntriesBatchMove(w http.ResponseWriter, r *http.Request) {
+	api.handleFileEntriesBatchMutation(w, r, "move")
 }
 
-func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *http.Request, operation string) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileEntriesBatchMutation(w http.ResponseWriter, r *http.Request, operation string) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -205,14 +205,14 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 		return
 	}
 	profileID := r.PathValue("profileID")
-	items, err := s.openBatchReferences(request.Refs, userID, profileID)
+	items, err := api.openBatchReferences(request.Refs, userID, profileID)
 	if err != nil {
 		writeValidationError(w, ErrFilesInvalidRef)
 		return
 	}
 	destination := storage.ManagerLocator{Path: managedRootPath()}
 	if request.DestinationParentRef != "" {
-		destinationRef, destinationErr := openFileReference(request.DestinationParentRef, s.encryptionKey, userID, profileID)
+		destinationRef, destinationErr := openFileReference(request.DestinationParentRef, api.encryptionKey, userID, profileID)
 		if destinationErr != nil || destinationRef.Kind != "directory" {
 			writeValidationError(w, ErrFilesInvalidRef)
 			return
@@ -224,9 +224,9 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 		writeValidationError(w, ErrInvalidBody)
 		return
 	}
-	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	resolved, err := api.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	defer resolved.close()
@@ -247,11 +247,11 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 	}
 	if operation == "copy" && !capabilities.NativeCopy {
 		streamID := generateRandomString(16)
-		if streamID == "" || !s.acquireFileStream(r.Context(), userID, "batch-mutation", streamID, fileStreamLease) {
+		if streamID == "" || !api.acquireFileStream(r.Context(), userID, "batch-mutation", streamID, fileStreamLease) {
 			writeError(w, http.StatusTooManyRequests, ErrFilesStreamLimitReached)
 			return
 		}
-		defer s.releaseFileStream(r.Context(), userID, "batch-mutation", streamID)
+		defer api.releaseFileStream(r.Context(), userID, "batch-mutation", streamID)
 	}
 	results := make([]fileBatchItemResult, 0, len(items))
 	for i, item := range items {
@@ -295,7 +295,7 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 		if operation == "move" {
 			action = db.AuditFileItemMoved
 		}
-		s.writeAudit(r, action, profileID, userID, map[string]interface{}{"provider": resolved.profile.Provider, "source_item_kind": item.reference.Kind, "destination_item_kind": "directory", "conflict_strategy": strategy, "native": result.Native, "outcome": result.Status})
+		api.writeAudit(r, action, profileID, userID, map[string]interface{}{"provider": resolved.profile.Provider, "source_item_kind": item.reference.Kind, "destination_item_kind": "directory", "conflict_strategy": strategy, "native": result.Native, "outcome": result.Status})
 		results = append(results, result)
 	}
 	response := fileBatchResponse{Results: results}

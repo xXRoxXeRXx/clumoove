@@ -161,7 +161,7 @@ func TestHandleFileUploadRequiresKnownLength(t *testing.T) {
 	request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-a"}))
 	recorder := httptest.NewRecorder()
 
-	server.handleFileUpload(recorder, request)
+	server.files().handleFileUpload(recorder, request)
 
 	if recorder.Code != http.StatusLengthRequired {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusLengthRequired)
@@ -192,7 +192,7 @@ func TestHandleFileUploadUsesUploadRateLimit(t *testing.T) {
 	request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-a"}))
 	recorder := httptest.NewRecorder()
 
-	server.handleFileUpload(recorder, request)
+	server.files().handleFileUpload(recorder, request)
 
 	if limiter.scope != "files-upload" || limiter.limit != 600 {
 		t.Fatalf("scope = %q (limit %d), want files-upload with limit 600", limiter.scope, limiter.limit)
@@ -269,7 +269,7 @@ func TestHandleFileCapabilitiesAuthAndRateLimit(t *testing.T) {
 	// 1. Missing claims -> 401 Unauthorized
 	req := httptest.NewRequest(http.MethodGet, "/api/files/profiles/p1/capabilities", nil)
 	rec := httptest.NewRecorder()
-	server.handleFileCapabilities(rec, req)
+	server.files().handleFileCapabilities(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
@@ -279,7 +279,7 @@ func TestHandleFileCapabilitiesAuthAndRateLimit(t *testing.T) {
 	reqBlocked := httptest.NewRequest(http.MethodGet, "/api/files/profiles/p1/capabilities", nil)
 	reqBlocked = reqBlocked.WithContext(context.WithValue(reqBlocked.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
 	recBlocked := httptest.NewRecorder()
-	serverBlocked.handleFileCapabilities(recBlocked, reqBlocked)
+	serverBlocked.files().handleFileCapabilities(recBlocked, reqBlocked)
 	if recBlocked.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want %d", recBlocked.Code, http.StatusTooManyRequests)
 	}
@@ -356,7 +356,7 @@ func TestHandleFileEntriesListValidation(t *testing.T) {
 				req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, tt.claims))
 			}
 			rec := httptest.NewRecorder()
-			s.handleFileEntriesList(rec, req)
+			s.files().handleFileEntriesList(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
@@ -439,7 +439,7 @@ func TestHandleFileEntriesResolveValidation(t *testing.T) {
 				req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, tt.claims))
 			}
 			rec := httptest.NewRecorder()
-			s.handleFileEntriesResolve(rec, req)
+			s.files().handleFileEntriesResolve(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
@@ -460,7 +460,7 @@ func TestHandleFileDownloadTicketValidation(t *testing.T) {
 	// 1. Missing claims
 	req := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/download-tickets", strings.NewReader(`{"ref":"abc"}`))
 	rec := httptest.NewRecorder()
-	server.handleFileDownloadTicket(rec, req)
+	server.files().handleFileDownloadTicket(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
@@ -470,7 +470,7 @@ func TestHandleFileDownloadTicketValidation(t *testing.T) {
 	reqBlocked := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/download-tickets", strings.NewReader(`{"ref":"abc"}`))
 	reqBlocked = reqBlocked.WithContext(context.WithValue(reqBlocked.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
 	recBlocked := httptest.NewRecorder()
-	serverBlocked.handleFileDownloadTicket(recBlocked, reqBlocked)
+	serverBlocked.files().handleFileDownloadTicket(recBlocked, reqBlocked)
 	if recBlocked.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want %d", recBlocked.Code, http.StatusTooManyRequests)
 	}
@@ -488,7 +488,7 @@ func TestHandleFileDownloadTicketValidation(t *testing.T) {
 	reqDir.SetPathValue("profileID", "p1")
 	reqDir = reqDir.WithContext(context.WithValue(reqDir.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
 	recDir := httptest.NewRecorder()
-	server.handleFileDownloadTicket(recDir, reqDir)
+	server.files().handleFileDownloadTicket(recDir, reqDir)
 	if recDir.Code != http.StatusBadRequest || !strings.Contains(recDir.Body.String(), string(ErrFilesInvalidRef)) {
 		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recDir.Code, recDir.Body.String())
 	}
@@ -562,7 +562,7 @@ func TestHandleFileUploadHeaderValidations(t *testing.T) {
 				req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, tt.claims))
 			}
 			rec := httptest.NewRecorder()
-			s.handleFileUpload(rec, req)
+			s.files().handleFileUpload(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
@@ -581,7 +581,7 @@ func TestHandleFileDownloadTicketConsumption(t *testing.T) {
 	serverBlocked := &APIServer{rateLimiter: blockAllFileRateLimiter{}}
 	reqBlocked := httptest.NewRequest(http.MethodGet, "/api/files/download/ticket123", nil)
 	recBlocked := httptest.NewRecorder()
-	serverBlocked.handleFileDownload(recBlocked, reqBlocked)
+	serverBlocked.files().handleFileDownload(recBlocked, reqBlocked)
 	if recBlocked.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want %d", recBlocked.Code, http.StatusTooManyRequests)
 	}
@@ -589,7 +589,7 @@ func TestHandleFileDownloadTicketConsumption(t *testing.T) {
 	// Empty ticket in path
 	reqEmpty := httptest.NewRequest(http.MethodGet, "/api/files/download/", nil)
 	recEmpty := httptest.NewRecorder()
-	server.handleFileDownload(recEmpty, reqEmpty)
+	server.files().handleFileDownload(recEmpty, reqEmpty)
 	if recEmpty.Code != http.StatusNotFound || !strings.Contains(recEmpty.Body.String(), string(ErrFilesDownloadTicketInvalid)) {
 		t.Fatalf("status = %d, want 404 ErrFilesDownloadTicketInvalid", recEmpty.Code)
 	}
@@ -652,7 +652,7 @@ func TestFileProviderErrorMapping(t *testing.T) {
 
 	for _, tt := range tests {
 		rec := httptest.NewRecorder()
-		server.writeFileProviderError(rec, tt.err)
+		server.files().writeFileProviderError(rec, tt.err)
 		if rec.Code != tt.wantStatus {
 			t.Errorf("writeFileProviderError(%v) status = %d, want %d", tt.err, rec.Code, tt.wantStatus)
 		}
@@ -803,7 +803,7 @@ func TestHandleFileDirectoryCreateValidations(t *testing.T) {
 				req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, tt.claims))
 			}
 			rec := httptest.NewRecorder()
-			s.handleFileDirectoryCreate(rec, req)
+			s.files().handleFileDirectoryCreate(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
@@ -824,7 +824,7 @@ func TestHandleFileThumbnailValidations(t *testing.T) {
 	// 1. Missing claims
 	req := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/thumbnail", strings.NewReader(`{"ref":"abc"}`))
 	rec := httptest.NewRecorder()
-	server.handleFileThumbnail(rec, req)
+	server.files().handleFileThumbnail(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
@@ -834,7 +834,7 @@ func TestHandleFileThumbnailValidations(t *testing.T) {
 	reqBlocked := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/thumbnail", strings.NewReader(`{"ref":"abc"}`))
 	reqBlocked = reqBlocked.WithContext(context.WithValue(reqBlocked.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
 	recBlocked := httptest.NewRecorder()
-	serverBlocked.handleFileThumbnail(recBlocked, reqBlocked)
+	serverBlocked.files().handleFileThumbnail(recBlocked, reqBlocked)
 	if recBlocked.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want %d", recBlocked.Code, http.StatusTooManyRequests)
 	}
@@ -852,7 +852,7 @@ func TestHandleFileThumbnailValidations(t *testing.T) {
 	reqDir.SetPathValue("profileID", "p1")
 	reqDir = reqDir.WithContext(context.WithValue(reqDir.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
 	recDir := httptest.NewRecorder()
-	server.handleFileThumbnail(recDir, reqDir)
+	server.files().handleFileThumbnail(recDir, reqDir)
 	if recDir.Code != http.StatusBadRequest || !strings.Contains(recDir.Body.String(), string(ErrFilesInvalidRef)) {
 		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recDir.Code, recDir.Body.String())
 	}
@@ -886,10 +886,12 @@ func TestHandleFileMutationValidations(t *testing.T) {
 		encryptionKey: "test-encryption-key-for-files!!",
 	}
 
+	files := server.files()
+
 	// 1. Missing claims
 	req := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/entries:copy", strings.NewReader(`{"ref":"abc"}`))
 	rec := httptest.NewRecorder()
-	server.handleFileEntryCopy(rec, req)
+	files.handleFileEntryCopy(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
@@ -899,7 +901,7 @@ func TestHandleFileMutationValidations(t *testing.T) {
 	reqInvalid.SetPathValue("profileID", "p1")
 	reqInvalid = reqInvalid.WithContext(context.WithValue(reqInvalid.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
 	recInvalid := httptest.NewRecorder()
-	server.handleFileEntryMove(recInvalid, reqInvalid)
+	files.handleFileEntryMove(recInvalid, reqInvalid)
 	if recInvalid.Code != http.StatusBadRequest || !strings.Contains(recInvalid.Body.String(), string(ErrFilesInvalidRef)) {
 		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recInvalid.Code, recInvalid.Body.String())
 	}
@@ -924,7 +926,7 @@ func TestHandleFileMutationValidations(t *testing.T) {
 	reqDestFile.SetPathValue("profileID", "p1")
 	reqDestFile = reqDestFile.WithContext(context.WithValue(reqDestFile.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
 	recDestFile := httptest.NewRecorder()
-	server.handleFileEntryCopy(recDestFile, reqDestFile)
+	files.handleFileEntryCopy(recDestFile, reqDestFile)
 	if recDestFile.Code != http.StatusBadRequest || !strings.Contains(recDestFile.Body.String(), string(ErrFilesInvalidRef)) {
 		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recDestFile.Code, recDestFile.Body.String())
 	}
@@ -936,10 +938,12 @@ func TestHandleFileRenameValidations(t *testing.T) {
 		encryptionKey: "test-encryption-key-for-files!!",
 	}
 
+	files := server.files()
+
 	// 1. Missing claims -> 401 Unauthorized
 	req := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/entries:rename", strings.NewReader(`{"ref":"abc","new_name":"test.txt"}`))
 	rec := httptest.NewRecorder()
-	server.handleFileEntryRename(rec, req)
+	files.handleFileEntryRename(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
@@ -949,7 +953,7 @@ func TestHandleFileRenameValidations(t *testing.T) {
 	reqInvalid.SetPathValue("profileID", "p1")
 	reqInvalid = reqInvalid.WithContext(context.WithValue(reqInvalid.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
 	recInvalid := httptest.NewRecorder()
-	server.handleFileEntryRename(recInvalid, reqInvalid)
+	files.handleFileEntryRename(recInvalid, reqInvalid)
 	if recInvalid.Code != http.StatusBadRequest || !strings.Contains(recInvalid.Body.String(), string(ErrFilesInvalidRef)) {
 		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recInvalid.Code, recInvalid.Body.String())
 	}
@@ -967,7 +971,7 @@ func TestHandleFileRenameValidations(t *testing.T) {
 	reqSlash.SetPathValue("profileID", "p1")
 	reqSlash = reqSlash.WithContext(context.WithValue(reqSlash.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
 	recSlash := httptest.NewRecorder()
-	server.handleFileEntryRename(recSlash, reqSlash)
+	files.handleFileEntryRename(recSlash, reqSlash)
 	if recSlash.Code != http.StatusBadRequest || !strings.Contains(recSlash.Body.String(), string(ErrInvalidBody)) {
 		t.Fatalf("status = %d, body = %s, want 400 ErrInvalidBody", recSlash.Code, recSlash.Body.String())
 	}
@@ -1004,6 +1008,8 @@ func TestFileHandlersUseStorageManagerAdapter(t *testing.T) {
 		},
 	}
 
+	files := server.files()
+
 	authedRequest := func(method, target, profileID, body string) *http.Request {
 		req := httptest.NewRequest(method, target, strings.NewReader(body))
 		req.SetPathValue("profileID", profileID)
@@ -1012,7 +1018,7 @@ func TestFileHandlersUseStorageManagerAdapter(t *testing.T) {
 
 	// 1. Emulated list pagination via storage.FileManager, then 409 when dir mutates.
 	rec1 := httptest.NewRecorder()
-	server.handleFileEntriesList(rec1, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:list", "p-webdav", `{"resource_type":"files","limit":2}`))
+	files.handleFileEntriesList(rec1, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:list", "p-webdav", `{"resource_type":"files","limit":2}`))
 	if rec1.Code != http.StatusOK {
 		t.Fatalf("list page 1 status = %d, body = %s", rec1.Code, rec1.Body.String())
 	}
@@ -1030,14 +1036,14 @@ func TestFileHandlersUseStorageManagerAdapter(t *testing.T) {
 
 	stub.listings["/"] = append(stub.listings["/"], storage.CloudResource{Path: "/c.txt", Name: "c.txt"})
 	recChanged := httptest.NewRecorder()
-	server.handleFileEntriesList(recChanged, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:list", "p-webdav", `{"resource_type":"files","limit":2,"cursor":"`+listResp.NextCursor+`"}`))
+	files.handleFileEntriesList(recChanged, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:list", "p-webdav", `{"resource_type":"files","limit":2,"cursor":"`+listResp.NextCursor+`"}`))
 	if recChanged.Code != http.StatusConflict || !strings.Contains(recChanged.Body.String(), string(ErrFilesDirectoryChanged)) {
 		t.Fatalf("mutated dir cursor status = %d, body = %s, want 409 %s", recChanged.Code, recChanged.Body.String(), ErrFilesDirectoryChanged)
 	}
 
 	// 2. Path resolution fallback via storage.FileManager.
 	recResolve := httptest.NewRecorder()
-	server.handleFileEntriesResolve(recResolve, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:resolve", "p-webdav", `{"resource_type":"files","path":"/docs/missing"}`))
+	files.handleFileEntriesResolve(recResolve, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:resolve", "p-webdav", `{"resource_type":"files","path":"/docs/missing"}`))
 	if recResolve.Code != http.StatusOK {
 		t.Fatalf("resolve status = %d, body = %s", recResolve.Code, recResolve.Body.String())
 	}
@@ -1057,14 +1063,14 @@ func TestFileHandlersUseStorageManagerAdapter(t *testing.T) {
 		UserID: "u1", ProfileID: "p-webdav", ResourceType: "files", Kind: "directory", Locator: storage.ManagerLocator{Path: "/docs"},
 	}, key)
 	recMkdir := httptest.NewRecorder()
-	server.handleFileDirectoryCreate(recMkdir, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/directories", "p-webdav", `{"parent_ref":"`+parentRef+`","name":"existing"}`))
+	files.handleFileDirectoryCreate(recMkdir, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/directories", "p-webdav", `{"parent_ref":"`+parentRef+`","name":"existing"}`))
 	if recMkdir.Code != http.StatusConflict || !strings.Contains(recMkdir.Body.String(), string(ErrFilesConflict)) {
 		t.Fatalf("mkdir conflict status = %d, body = %s, want 409 %s", recMkdir.Code, recMkdir.Body.String(), ErrFilesConflict)
 	}
 
 	// 4. Virtual provider stub never falls back to path operations (returns 501).
 	recUnsupported := httptest.NewRecorder()
-	server.handleFileEntriesList(recUnsupported, authedRequest(http.MethodPost, "/api/files/profiles/p-immich/entries:list", "p-immich", `{"resource_type":"files","limit":10}`))
+	files.handleFileEntriesList(recUnsupported, authedRequest(http.MethodPost, "/api/files/profiles/p-immich/entries:list", "p-immich", `{"resource_type":"files","limit":10}`))
 	if recUnsupported.Code != http.StatusNotImplemented || !strings.Contains(recUnsupported.Body.String(), string(ErrFilesUnsupportedOperation)) {
 		t.Fatalf("incomplete virtual list status = %d, body = %s, want 501 %s", recUnsupported.Code, recUnsupported.Body.String(), ErrFilesUnsupportedOperation)
 	}
@@ -1078,32 +1084,32 @@ func TestFileHandlersUseStorageManagerAdapter(t *testing.T) {
 	}, key)
 
 	recRename := httptest.NewRecorder()
-	server.handleFileEntryRename(recRename, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:rename", "p-webdav", `{"ref":"`+fileRef+`","new_name":"b2.txt"}`))
+	files.handleFileEntryRename(recRename, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:rename", "p-webdav", `{"ref":"`+fileRef+`","new_name":"b2.txt"}`))
 	if recRename.Code != http.StatusOK || len(stub.renamed) != 1 || stub.renamed[0] != [2]string{"/b.txt", "/b2.txt"} {
 		t.Fatalf("rename status = %d, body = %s, renamed = %v", recRename.Code, recRename.Body.String(), stub.renamed)
 	}
 
 	recDeleteRoot := httptest.NewRecorder()
-	server.handleFileEntryDelete(recDeleteRoot, authedRequest(http.MethodDelete, "/api/files/profiles/p-webdav/entries", "p-webdav", `{"ref":"`+rootRef+`"}`))
+	files.handleFileEntryDelete(recDeleteRoot, authedRequest(http.MethodDelete, "/api/files/profiles/p-webdav/entries", "p-webdav", `{"ref":"`+rootRef+`"}`))
 	if recDeleteRoot.Code != http.StatusBadRequest || !strings.Contains(recDeleteRoot.Body.String(), string(ErrFilesRootMutationForbidden)) {
 		t.Fatalf("delete root status = %d, body = %s, want 400 %s", recDeleteRoot.Code, recDeleteRoot.Body.String(), ErrFilesRootMutationForbidden)
 	}
 
 	recDelete := httptest.NewRecorder()
-	server.handleFileEntryDelete(recDelete, authedRequest(http.MethodDelete, "/api/files/profiles/p-webdav/entries", "p-webdav", `{"ref":"`+fileRef+`"}`))
+	files.handleFileEntryDelete(recDelete, authedRequest(http.MethodDelete, "/api/files/profiles/p-webdav/entries", "p-webdav", `{"ref":"`+fileRef+`"}`))
 	if recDelete.Code != http.StatusNoContent || len(stub.deleted) != 1 || stub.deleted[0] != "/b.txt" {
 		t.Fatalf("delete status = %d, body = %s, deleted = %v", recDelete.Code, recDelete.Body.String(), stub.deleted)
 	}
 
 	// 6. Batch handlers delegate cleanly through storage.FileManager and reject root/unsupported ops.
 	recBatchDel := httptest.NewRecorder()
-	server.handleFileEntriesBatchDelete(recBatchDel, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:batch-delete", "p-webdav", `{"items":[{"ref":"`+fileRef+`"}]}`))
+	files.handleFileEntriesBatchDelete(recBatchDel, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:batch-delete", "p-webdav", `{"items":[{"ref":"`+fileRef+`"}]}`))
 	if recBatchDel.Code != http.StatusOK || len(stub.deleted) != 2 {
 		t.Fatalf("batch delete status = %d, body = %s, deleted = %v", recBatchDel.Code, recBatchDel.Body.String(), stub.deleted)
 	}
 
 	recBatchDelRoot := httptest.NewRecorder()
-	server.handleFileEntriesBatchDelete(recBatchDelRoot, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:batch-delete", "p-webdav", `{"items":[{"ref":"`+rootRef+`"}]}`))
+	files.handleFileEntriesBatchDelete(recBatchDelRoot, authedRequest(http.MethodPost, "/api/files/profiles/p-webdav/entries:batch-delete", "p-webdav", `{"items":[{"ref":"`+rootRef+`"}]}`))
 	if recBatchDelRoot.Code != http.StatusNotImplemented || !strings.Contains(recBatchDelRoot.Body.String(), string(ErrFilesUnsupportedOperation)) {
 		t.Fatalf("batch delete root status = %d, body = %s, want 501 %s", recBatchDelRoot.Code, recBatchDelRoot.Body.String(), ErrFilesUnsupportedOperation)
 	}
@@ -1112,7 +1118,7 @@ func TestFileHandlersUseStorageManagerAdapter(t *testing.T) {
 		UserID: "u1", ProfileID: "p-immich", ResourceType: "files", Kind: "file", Name: "img.jpg", Locator: storage.ManagerLocator{NativeID: "asset-1"},
 	}, key)
 	recBatchMoveUnsupported := httptest.NewRecorder()
-	server.handleFileEntriesBatchMove(recBatchMoveUnsupported, authedRequest(http.MethodPost, "/api/files/profiles/p-immich/entries:batch-move", "p-immich", `{"refs":["`+immichFileRef+`"]}`))
+	files.handleFileEntriesBatchMove(recBatchMoveUnsupported, authedRequest(http.MethodPost, "/api/files/profiles/p-immich/entries:batch-move", "p-immich", `{"refs":["`+immichFileRef+`"]}`))
 	if recBatchMoveUnsupported.Code != http.StatusNotImplemented || !strings.Contains(recBatchMoveUnsupported.Body.String(), string(ErrFilesUnsupportedOperation)) {
 		t.Fatalf("immich batch move status = %d, body = %s, want 501 %s", recBatchMoveUnsupported.Code, recBatchMoveUnsupported.Body.String(), ErrFilesUnsupportedOperation)
 	}

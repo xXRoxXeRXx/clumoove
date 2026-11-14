@@ -190,12 +190,12 @@ func inspectArchiveFile(resolved *resolvedFileProfile, locator storage.ManagerLo
 	return download.Item, nil
 }
 
-func (s *APIServer) handleFileArchiveTicket(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileArchiveTicket(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-archive", fileMutationRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-archive", fileMutationRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -204,14 +204,14 @@ func (s *APIServer) handleFileArchiveTicket(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	profileID := r.PathValue("profileID")
-	items, err := s.openBatchReferences(request.Refs, userID, profileID)
+	items, err := api.openBatchReferences(request.Refs, userID, profileID)
 	if err != nil {
 		writeValidationError(w, ErrFilesInvalidRef)
 		return
 	}
-	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	resolved, err := api.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	defer resolved.close()
@@ -229,30 +229,30 @@ func (s *APIServer) handleFileArchiveTicket(w http.ResponseWriter, r *http.Reque
 		if errors.Is(err, storage.ErrManagerDirectoryTooLarge) || errors.Is(err, storage.ErrManagerDirectoryCycle) {
 			writeError(w, http.StatusRequestEntityTooLarge, ErrFilesArchiveLimitExceeded)
 		} else {
-			s.writeFileProviderError(w, err)
+			api.writeFileProviderError(w, err)
 		}
 		return
 	}
 	ticket, streamID := generateRandomString(32), generateRandomString(16)
-	if ticket == "" || streamID == "" || !s.acquireFileStream(r.Context(), userID, "archive", streamID, fileTicketTTL) {
+	if ticket == "" || streamID == "" || !api.acquireFileStream(r.Context(), userID, "archive", streamID, fileTicketTTL) {
 		writeError(w, http.StatusTooManyRequests, ErrFilesStreamLimitReached)
 		return
 	}
 	payload, err := json.Marshal(fileArchiveTicket{UserID: userID, ProfileID: profileID, Refs: request.Refs, StreamID: streamID})
-	if err != nil || s.queue.RedisClient().Set(r.Context(), fileArchiveTicketRedisKey(ticket), payload, fileTicketTTL).Err() != nil {
-		s.releaseFileStream(r.Context(), userID, "archive", streamID)
+	if err != nil || api.setFileTicket(r.Context(), fileArchiveTicketRedisKey(ticket), payload, fileTicketTTL) != nil {
+		api.releaseFileStream(r.Context(), userID, "archive", streamID)
 		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"download_url": "/api/files/archive/" + ticket})
 }
 
-func (s *APIServer) handleFileArchive(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "files-archive-ticket-consume", s.clientIP(r), fileMutationRateLimit, fileRateWindow) {
+func (api *fileAPI) handleFileArchive(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "files-archive-ticket-consume", api.clientIP(r), fileMutationRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	payload, err := s.queue.RedisClient().GetDel(r.Context(), fileArchiveTicketRedisKey(r.PathValue("ticket"))).Bytes()
+	payload, err := api.consumeFileTicket(r.Context(), fileArchiveTicketRedisKey(r.PathValue("ticket")))
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrFilesDownloadTicketInvalid)
 		return
@@ -262,17 +262,17 @@ func (s *APIServer) handleFileArchive(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, ErrFilesDownloadTicketInvalid)
 		return
 	}
-	items, err := s.openBatchReferences(ticket.Refs, ticket.UserID, ticket.ProfileID)
+	items, err := api.openBatchReferences(ticket.Refs, ticket.UserID, ticket.ProfileID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrFilesDownloadTicketInvalid)
 		return
 	}
-	defer s.releaseFileStream(r.Context(), ticket.UserID, "archive", ticket.StreamID)
-	if !s.renewFileStream(r.Context(), ticket.UserID, "archive", ticket.StreamID, fileStreamLease) {
+	defer api.releaseFileStream(r.Context(), ticket.UserID, "archive", ticket.StreamID)
+	if !api.renewFileStream(r.Context(), ticket.UserID, "archive", ticket.StreamID, fileStreamLease) {
 		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
 		return
 	}
-	resolved, err := s.resolveFileProfile(r.Context(), ticket.UserID, ticket.ProfileID)
+	resolved, err := api.resolveFileProfile(r.Context(), ticket.UserID, ticket.ProfileID)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
 		return

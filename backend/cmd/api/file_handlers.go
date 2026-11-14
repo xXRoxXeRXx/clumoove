@@ -163,12 +163,19 @@ redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `)
 
-func (s *APIServer) fileRateKey(r *http.Request, userID string) string {
-	return userID + "|" + s.clientIP(r)
+func (api *fileAPI) fileRateKey(r *http.Request, userID string) string {
+	return userID + "|" + api.clientIP(r)
 }
 
-func (s *APIServer) allowFileRequest(r *http.Request, userID, scope string, limit int) bool {
-	return s.rateLimiter.Allow(r.Context(), scope, s.fileRateKey(r, userID), limit, fileRateWindow)
+func (api *fileAPI) allowRateLimit(r *http.Request, scope, key string, limit int) bool {
+	if api.rateLimiter == nil {
+		return false
+	}
+	return api.rateLimiter.Allow(r.Context(), scope, key, limit, fileRateWindow)
+}
+
+func (api *fileAPI) allowFileRequest(r *http.Request, userID, scope string, limit int) bool {
+	return api.allowRateLimit(r, scope, api.fileRateKey(r, userID), limit)
 }
 
 func sealFileReference(reference fileReference, encryptionKey string) (string, error) {
@@ -269,12 +276,12 @@ func allowedFileActions(capabilities storage.ManagerCapabilities, isDir bool) []
 	return actions
 }
 
-func (s *APIServer) handleFileEntryDelete(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileEntryDelete(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -283,14 +290,14 @@ func (s *APIServer) handleFileEntryDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 	profileID := r.PathValue("profileID")
-	reference, referenceErr := openFileReference(request.Ref, s.encryptionKey, userID, profileID)
+	reference, referenceErr := openFileReference(request.Ref, api.encryptionKey, userID, profileID)
 	if referenceErr != nil {
 		writeValidationError(w, ErrFilesInvalidRef)
 		return
 	}
-	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	resolved, err := api.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	defer resolved.close()
@@ -307,10 +314,10 @@ func (s *APIServer) handleFileEntryDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := resolved.manager.DeleteManagerItem(resolved.ctx, reference.Locator, request.Recursive); err != nil {
-		s.writeFileProviderError(w, err)
+		api.writeFileProviderError(w, err)
 		return
 	}
-	s.writeAudit(r, db.AuditFileItemDeleted, profileID, userID, map[string]interface{}{
+	api.writeAudit(r, db.AuditFileItemDeleted, profileID, userID, map[string]interface{}{
 		"provider":  resolved.profile.Provider,
 		"item_kind": reference.Kind,
 		"recursive": request.Recursive,
@@ -318,24 +325,24 @@ func (s *APIServer) handleFileEntryDelete(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *APIServer) handleFileEntryRename(w http.ResponseWriter, r *http.Request) {
-	s.handleFileEntryMutation(w, r, "rename")
+func (api *fileAPI) handleFileEntryRename(w http.ResponseWriter, r *http.Request) {
+	api.handleFileEntryMutation(w, r, "rename")
 }
 
-func (s *APIServer) handleFileEntryCopy(w http.ResponseWriter, r *http.Request) {
-	s.handleFileEntryMutation(w, r, "copy")
+func (api *fileAPI) handleFileEntryCopy(w http.ResponseWriter, r *http.Request) {
+	api.handleFileEntryMutation(w, r, "copy")
 }
 
-func (s *APIServer) handleFileEntryMove(w http.ResponseWriter, r *http.Request) {
-	s.handleFileEntryMutation(w, r, "move")
+func (api *fileAPI) handleFileEntryMove(w http.ResponseWriter, r *http.Request) {
+	api.handleFileEntryMutation(w, r, "move")
 }
 
-func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Request, operation string) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileEntryMutation(w http.ResponseWriter, r *http.Request, operation string) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -344,7 +351,7 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	profileID := r.PathValue("profileID")
-	source, err := openFileReference(request.Ref, s.encryptionKey, userID, profileID)
+	source, err := openFileReference(request.Ref, api.encryptionKey, userID, profileID)
 	if err != nil {
 		writeValidationError(w, ErrFilesInvalidRef)
 		return
@@ -362,16 +369,16 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 	}
 	destination := storage.ManagerLocator{Path: managedRootPath()}
 	if request.DestinationParentRef != "" {
-		destinationRef, destinationErr := openFileReference(request.DestinationParentRef, s.encryptionKey, userID, profileID)
+		destinationRef, destinationErr := openFileReference(request.DestinationParentRef, api.encryptionKey, userID, profileID)
 		if destinationErr != nil || destinationRef.Kind != "directory" {
 			writeValidationError(w, ErrFilesInvalidRef)
 			return
 		}
 		destination = destinationRef.Locator
 	}
-	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	resolved, err := api.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	defer resolved.close()
@@ -407,14 +414,14 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 	var result storage.ManagerMutationResult
 	if operation == "copy" && !capabilities.NativeCopy {
 		streamID := generateRandomString(16)
-		if streamID == "" || !s.acquireFileStream(r.Context(), userID, "mutation", streamID, fileStreamLease) {
+		if streamID == "" || !api.acquireFileStream(r.Context(), userID, "mutation", streamID, fileStreamLease) {
 			writeError(w, http.StatusTooManyRequests, ErrFilesStreamLimitReached)
 			return
 		}
-		defer s.releaseFileStream(r.Context(), userID, "mutation", streamID)
+		defer api.releaseFileStream(r.Context(), userID, "mutation", streamID)
 		stopLeaseRenewal := make(chan struct{})
 		defer close(stopLeaseRenewal)
-		go s.renewFileStreamLease(stopLeaseRenewal, userID, "mutation", streamID)
+		go api.renewFileStreamLease(stopLeaseRenewal, userID, "mutation", streamID)
 	}
 	switch operation {
 	case "rename":
@@ -425,7 +432,7 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 		result, err = resolved.manager.MoveManagerItem(resolved.ctx, source.Locator, destination, name, options)
 	}
 	if err != nil {
-		s.writeFileMutationError(w, err, capabilities)
+		api.writeFileMutationError(w, err, capabilities)
 		return
 	}
 	if result.FinalName == "" {
@@ -438,7 +445,7 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 	} else if operation == "move" {
 		action = db.AuditFileItemMoved
 	}
-	s.writeAudit(r, action, profileID, userID, map[string]interface{}{
+	api.writeAudit(r, action, profileID, userID, map[string]interface{}{
 		"provider":              resolved.profile.Provider,
 		"source_item_kind":      source.Kind,
 		"destination_item_kind": "directory",
@@ -449,7 +456,7 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, fileMutationResponse{Success: true, Status: result.Status, Name: result.FinalName, Native: result.Native})
 }
 
-func (s *APIServer) writeFileMutationError(w http.ResponseWriter, err error, capabilities storage.ManagerCapabilities) {
+func (api *fileAPI) writeFileMutationError(w http.ResponseWriter, err error, capabilities storage.ManagerCapabilities) {
 	switch {
 	case errors.Is(err, storage.ErrManagerConflict):
 		strategies := make([]string, 0, 3)
@@ -470,23 +477,23 @@ func (s *APIServer) writeFileMutationError(w http.ResponseWriter, err error, cap
 	case errors.Is(err, storage.ErrManagerPartial):
 		writeError(w, http.StatusConflict, ErrFilesPartialOperation)
 	default:
-		s.writeFileProviderError(w, err)
+		api.writeFileProviderError(w, err)
 	}
 }
 
-func (s *APIServer) handleFileCapabilities(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileCapabilities(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-browse", fileBrowseRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-browse", fileBrowseRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 	profileID := r.PathValue("profileID")
-	profile, err := s.loadOwnedFileProfile(r.Context(), userID, profileID)
+	profile, err := api.loadOwnedFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	capabilities := storage.ManagerCapabilitiesFor(profile.Provider)
@@ -501,12 +508,12 @@ func (s *APIServer) handleFileCapabilities(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileEntriesList(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-browse", fileBrowseRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-browse", fileBrowseRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -526,9 +533,9 @@ func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request
 		return
 	}
 	profileID := r.PathValue("profileID")
-	profile, err := s.loadOwnedFileProfile(r.Context(), userID, profileID)
+	profile, err := api.loadOwnedFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	capabilities := storage.ManagerCapabilitiesFor(profile.Provider)
@@ -536,9 +543,9 @@ func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
 	}
-	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	resolved, err := api.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	defer resolved.close()
@@ -546,7 +553,7 @@ func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request
 	parent := storage.ManagerLocator{Path: managedRootPath()}
 	parentRef := request.ParentRef
 	if request.ParentRef != "" {
-		reference, referenceErr := openFileReference(request.ParentRef, s.encryptionKey, userID, profileID)
+		reference, referenceErr := openFileReference(request.ParentRef, api.encryptionKey, userID, profileID)
 		if referenceErr != nil || reference.Kind != "directory" {
 			writeValidationError(w, ErrFilesInvalidRef)
 			return
@@ -555,7 +562,7 @@ func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request
 	}
 	providerCursor := ""
 	if request.Cursor != "" {
-		cursor, cursorErr := openFileCursor(request.Cursor, s.encryptionKey, userID, profileID)
+		cursor, cursorErr := openFileCursor(request.Cursor, api.encryptionKey, userID, profileID)
 		if cursorErr != nil || !sameManagedLocator(cursor.Parent, parent) {
 			writeValidationError(w, ErrFilesInvalidCursor)
 			return
@@ -565,7 +572,7 @@ func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request
 
 	page, listErr := resolved.manager.ListManager(resolved.ctx, parent, storage.ManagerListOptions{Cursor: providerCursor, Limit: request.Limit})
 	if listErr != nil {
-		s.writeFileProviderError(w, listErr)
+		api.writeFileProviderError(w, listErr)
 		return
 	}
 	if len(page.Items) > request.Limit {
@@ -579,7 +586,7 @@ func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request
 		if resource.IsDir {
 			kind = "directory"
 		}
-		ref, sealErr := sealFileReference(fileReference{UserID: userID, ProfileID: profileID, ResourceType: "files", Kind: kind, Name: resource.Name, Locator: resource.Locator}, s.encryptionKey)
+		ref, sealErr := sealFileReference(fileReference{UserID: userID, ProfileID: profileID, ResourceType: "files", Kind: kind, Name: resource.Name, Locator: resource.Locator}, api.encryptionKey)
 		if sealErr != nil {
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
@@ -598,7 +605,7 @@ func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request
 	}
 	nextCursor := ""
 	if page.NextCursor != "" {
-		nextCursor, err = sealFileCursor(fileCursor{UserID: userID, ProfileID: profileID, ResourceType: "files", Parent: parent, ProviderCursor: page.NextCursor}, s.encryptionKey)
+		nextCursor, err = sealFileCursor(fileCursor{UserID: userID, ProfileID: profileID, ResourceType: "files", Parent: parent, ProviderCursor: page.NextCursor}, api.encryptionKey)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
@@ -615,12 +622,12 @@ func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (s *APIServer) handleFileEntriesResolve(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileEntriesResolve(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-browse", fileBrowseRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-browse", fileBrowseRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -641,9 +648,9 @@ func (s *APIServer) handleFileEntriesResolve(w http.ResponseWriter, r *http.Requ
 	}
 	request.Path = path.Clean(request.Path)
 	profileID := r.PathValue("profileID")
-	profile, err := s.loadOwnedFileProfile(r.Context(), userID, profileID)
+	profile, err := api.loadOwnedFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	capabilities := storage.ManagerCapabilitiesFor(profile.Provider)
@@ -651,21 +658,21 @@ func (s *APIServer) handleFileEntriesResolve(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
 	}
-	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	resolved, err := api.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	defer resolved.close()
 	locator, breadcrumbs, fallback, resolveErr := resolved.manager.ResolveManagerPath(resolved.ctx, request.Path)
 	if resolveErr != nil {
-		s.writeFileProviderError(w, resolveErr)
+		api.writeFileProviderError(w, resolveErr)
 		return
 	}
 	responseBreadcrumbs := make([]fileBreadcrumb, 0, len(breadcrumbs)+1)
 	responseBreadcrumbs = append(responseBreadcrumbs, fileBreadcrumb{Name: resolved.profile.Name})
 	for _, breadcrumb := range breadcrumbs {
-		ref, sealErr := sealFileReference(fileReference{UserID: userID, ProfileID: profileID, ResourceType: "files", Kind: "directory", Locator: breadcrumb.Locator}, s.encryptionKey)
+		ref, sealErr := sealFileReference(fileReference{UserID: userID, ProfileID: profileID, ResourceType: "files", Kind: "directory", Locator: breadcrumb.Locator}, api.encryptionKey)
 		if sealErr != nil {
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
@@ -675,7 +682,7 @@ func (s *APIServer) handleFileEntriesResolve(w http.ResponseWriter, r *http.Requ
 	ref := ""
 	if locator.NativeID != "" || locator.Path != managedRootPath() {
 		var sealErr error
-		ref, sealErr = sealFileReference(fileReference{UserID: userID, ProfileID: profileID, ResourceType: "files", Kind: "directory", Locator: locator}, s.encryptionKey)
+		ref, sealErr = sealFileReference(fileReference{UserID: userID, ProfileID: profileID, ResourceType: "files", Kind: "directory", Locator: locator}, api.encryptionKey)
 		if sealErr != nil {
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
@@ -689,12 +696,12 @@ func (s *APIServer) handleFileEntriesResolve(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-func (s *APIServer) handleFileDownloadTicket(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileDownloadTicket(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -703,35 +710,35 @@ func (s *APIServer) handleFileDownloadTicket(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	profileID := r.PathValue("profileID")
-	reference, referenceErr := openFileReference(request.Ref, s.encryptionKey, userID, profileID)
+	reference, referenceErr := openFileReference(request.Ref, api.encryptionKey, userID, profileID)
 	if referenceErr != nil || reference.Kind != "file" {
 		writeValidationError(w, ErrFilesInvalidRef)
 		return
 	}
-	profile, err := s.loadOwnedFileProfile(r.Context(), userID, profileID)
+	profile, err := api.loadOwnedFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	if !storage.ManagerCapabilitiesFor(profile.Provider).Download {
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
 	}
-	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	resolved, err := api.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	defer resolved.close()
 	ticket := generateRandomString(32)
 	streamID := generateRandomString(16)
-	if ticket == "" || streamID == "" || !s.acquireFileStream(r.Context(), userID, "download", streamID, fileTicketTTL) {
+	if ticket == "" || streamID == "" || !api.acquireFileStream(r.Context(), userID, "download", streamID, fileTicketTTL) {
 		writeError(w, http.StatusTooManyRequests, ErrFilesStreamLimitReached)
 		return
 	}
 	payload, marshalErr := json.Marshal(fileDownloadTicket{UserID: userID, ProfileID: profileID, Ref: request.Ref, StreamID: streamID})
-	if marshalErr != nil || s.queue.RedisClient().Set(r.Context(), fileTicketRedisKey(ticket), payload, fileTicketTTL).Err() != nil {
-		s.releaseFileStream(r.Context(), userID, "download", streamID)
+	if marshalErr != nil || api.setFileTicket(r.Context(), fileTicketRedisKey(ticket), payload, fileTicketTTL) != nil {
+		api.releaseFileStream(r.Context(), userID, "download", streamID)
 		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
 		return
 	}
@@ -741,12 +748,12 @@ func (s *APIServer) handleFileDownloadTicket(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-func (s *APIServer) handleFileThumbnail(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileThumbnail(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-thumbnail", fileThumbnailRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-thumbnail", fileThumbnailRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -755,14 +762,14 @@ func (s *APIServer) handleFileThumbnail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	profileID := r.PathValue("profileID")
-	reference, referenceErr := openFileReference(request.Ref, s.encryptionKey, userID, profileID)
+	reference, referenceErr := openFileReference(request.Ref, api.encryptionKey, userID, profileID)
 	if referenceErr != nil || reference.Kind != "file" {
 		writeValidationError(w, ErrFilesInvalidRef)
 		return
 	}
-	profile, err := s.loadOwnedFileProfile(r.Context(), userID, profileID)
+	profile, err := api.loadOwnedFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	capabilities := storage.ManagerCapabilitiesFor(profile.Provider)
@@ -770,9 +777,9 @@ func (s *APIServer) handleFileThumbnail(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
 	}
-	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	resolved, err := api.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	defer resolved.close()
@@ -785,7 +792,7 @@ func (s *APIServer) handleFileThumbnail(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusUnsupportedMediaType, ErrFilesUnsupportedOperation)
 			return
 		}
-		s.writeFileProviderError(w, thumbnailErr)
+		api.writeFileProviderError(w, thumbnailErr)
 		return
 	}
 	if stream == nil {
@@ -837,12 +844,12 @@ func computeThumbnailDimensions(requestedWidth, requestedHeight int) (int, int) 
 // handleFileUpload accepts only a raw file body. Parent locators remain sealed
 // references and the filename is encoded in a header so no private location or
 // credential-adjacent value is ever placed in a request URL.
-func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileUpload(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-upload", fileUploadRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-upload", fileUploadRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -852,9 +859,9 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	profileID := r.PathValue("profileID")
-	profile, err := s.loadOwnedFileProfile(r.Context(), userID, profileID)
+	profile, err := api.loadOwnedFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	capabilities := storage.ManagerCapabilitiesFor(profile.Provider)
@@ -875,7 +882,7 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 
 	parent := storage.ManagerLocator{Path: managedRootPath()}
 	if parentRef := r.Header.Get("X-Clumoove-Parent-Ref"); parentRef != "" {
-		reference, referenceErr := openFileReference(parentRef, s.encryptionKey, userID, profileID)
+		reference, referenceErr := openFileReference(parentRef, api.encryptionKey, userID, profileID)
 		if referenceErr != nil || reference.Kind != "directory" {
 			writeValidationError(w, ErrFilesInvalidRef)
 			return
@@ -883,22 +890,22 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		parent = reference.Locator
 	}
 
-	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	resolved, err := api.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	defer resolved.close()
 
 	streamID := generateRandomString(16)
-	if streamID == "" || !s.acquireFileStream(r.Context(), userID, "upload", streamID, fileStreamLease) {
+	if streamID == "" || !api.acquireFileStream(r.Context(), userID, "upload", streamID, fileStreamLease) {
 		writeError(w, http.StatusTooManyRequests, ErrFilesStreamLimitReached)
 		return
 	}
-	defer s.releaseFileStream(r.Context(), userID, "upload", streamID)
+	defer api.releaseFileStream(r.Context(), userID, "upload", streamID)
 	stopLeaseRenewal := make(chan struct{})
 	defer close(stopLeaseRenewal)
-	go s.renewFileStreamLease(stopLeaseRenewal, userID, "upload", streamID)
+	go api.renewFileStreamLease(stopLeaseRenewal, userID, "upload", streamID)
 
 	controller := http.NewResponseController(w)
 	_ = controller.SetReadDeadline(time.Time{})
@@ -915,7 +922,7 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(uploadErr, storage.ErrManagerConflict), errors.Is(uploadErr, storage.ErrAmbiguousPath):
 			writeConflictError(w, ErrFilesConflict)
 		default:
-			s.writeFileProviderError(w, uploadErr)
+			api.writeFileProviderError(w, uploadErr)
 		}
 		return
 	}
@@ -923,7 +930,7 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
 		return
 	}
-	s.writeAudit(r, db.AuditFileUploadCompleted, profileID, userID, map[string]interface{}{
+	api.writeAudit(r, db.AuditFileUploadCompleted, profileID, userID, map[string]interface{}{
 		"provider":  profile.Provider,
 		"item_kind": "file",
 		"result":    result.Status,
@@ -935,12 +942,12 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, fileUploadResponse{Success: true, Status: result.Status, Name: result.FinalName})
 }
 
-func (s *APIServer) handleFileDirectoryCreate(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireUserID(w, r)
+func (api *fileAPI) handleFileDirectoryCreate(w http.ResponseWriter, r *http.Request) {
+	userID, ok := api.requireUserID(w, r)
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
+	if !api.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -956,9 +963,9 @@ func (s *APIServer) handleFileDirectoryCreate(w http.ResponseWriter, r *http.Req
 	}
 
 	profileID := r.PathValue("profileID")
-	profile, err := s.loadOwnedFileProfile(r.Context(), userID, profileID)
+	profile, err := api.loadOwnedFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	capabilities := storage.ManagerCapabilitiesFor(profile.Provider)
@@ -969,7 +976,7 @@ func (s *APIServer) handleFileDirectoryCreate(w http.ResponseWriter, r *http.Req
 
 	parent := storage.ManagerLocator{Path: managedRootPath()}
 	if request.ParentRef != "" {
-		reference, referenceErr := openFileReference(request.ParentRef, s.encryptionKey, userID, profileID)
+		reference, referenceErr := openFileReference(request.ParentRef, api.encryptionKey, userID, profileID)
 		if referenceErr != nil || reference.Kind != "directory" {
 			writeValidationError(w, ErrFilesInvalidRef)
 			return
@@ -977,9 +984,9 @@ func (s *APIServer) handleFileDirectoryCreate(w http.ResponseWriter, r *http.Req
 		parent = reference.Locator
 	}
 
-	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	resolved, err := api.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
-		s.writeFileProfileError(w, err)
+		api.writeFileProfileError(w, err)
 		return
 	}
 	defer resolved.close()
@@ -991,12 +998,12 @@ func (s *APIServer) handleFileDirectoryCreate(w http.ResponseWriter, r *http.Req
 		case errors.Is(createErr, storage.ErrManagerConflict), errors.Is(createErr, storage.ErrAmbiguousPath):
 			writeConflictError(w, ErrFilesConflict)
 		default:
-			s.writeFileProviderError(w, createErr)
+			api.writeFileProviderError(w, createErr)
 		}
 		return
 	}
 
-	s.writeAudit(r, db.AuditFileDirectoryCreated, profileID, userID, map[string]interface{}{
+	api.writeAudit(r, db.AuditFileDirectoryCreated, profileID, userID, map[string]interface{}{
 		"provider":  profile.Provider,
 		"item_kind": "directory",
 	})
@@ -1033,8 +1040,8 @@ func parseManagerUploadOptions(value string, capabilities storage.ManagerCapabil
 	return storage.ManagerUploadOptions{ConflictStrategy: strategy}, nil
 }
 
-func (s *APIServer) handleFileDownload(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(r.Context(), "files-ticket-consume", s.clientIP(r), fileMutationRateLimit, fileRateWindow) {
+func (api *fileAPI) handleFileDownload(w http.ResponseWriter, r *http.Request) {
+	if !api.allowRateLimit(r, "files-ticket-consume", api.clientIP(r), fileMutationRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -1043,7 +1050,7 @@ func (s *APIServer) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, ErrFilesDownloadTicketInvalid)
 		return
 	}
-	payload, err := s.queue.RedisClient().GetDel(r.Context(), fileTicketRedisKey(ticket)).Bytes()
+	payload, err := api.consumeFileTicket(r.Context(), fileTicketRedisKey(ticket))
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrFilesDownloadTicketInvalid)
 		return
@@ -1055,20 +1062,20 @@ func (s *APIServer) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate the reference before acquiring the stream slot so that a
 	// malformed-reference ticket cannot exhaust the per-user slot budget.
-	reference, referenceErr := openFileReference(downloadTicket.Ref, s.encryptionKey, downloadTicket.UserID, downloadTicket.ProfileID)
+	reference, referenceErr := openFileReference(downloadTicket.Ref, api.encryptionKey, downloadTicket.UserID, downloadTicket.ProfileID)
 	if referenceErr != nil || reference.Kind != "file" {
 		writeError(w, http.StatusNotFound, ErrFilesDownloadTicketInvalid)
 		return
 	}
-	defer s.releaseFileStream(r.Context(), downloadTicket.UserID, "download", downloadTicket.StreamID)
-	if !s.renewFileStream(r.Context(), downloadTicket.UserID, "download", downloadTicket.StreamID, fileStreamLease) {
+	defer api.releaseFileStream(r.Context(), downloadTicket.UserID, "download", downloadTicket.StreamID)
+	if !api.renewFileStream(r.Context(), downloadTicket.UserID, "download", downloadTicket.StreamID, fileStreamLease) {
 		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
 		return
 	}
 	stopLeaseRenewal := make(chan struct{})
 	defer close(stopLeaseRenewal)
-	go s.renewFileStreamLease(stopLeaseRenewal, downloadTicket.UserID, "download", downloadTicket.StreamID)
-	resolved, resolveErr := s.resolveFileProfile(r.Context(), downloadTicket.UserID, downloadTicket.ProfileID)
+	go api.renewFileStreamLease(stopLeaseRenewal, downloadTicket.UserID, "download", downloadTicket.StreamID)
+	resolved, resolveErr := api.resolveFileProfile(r.Context(), downloadTicket.UserID, downloadTicket.ProfileID)
 	if resolveErr != nil {
 		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
 		return
@@ -1076,7 +1083,7 @@ func (s *APIServer) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 	defer resolved.close()
 	download, downloadErr := resolved.manager.DownloadManager(resolved.ctx, reference.Locator)
 	if downloadErr != nil {
-		s.writeFileProviderError(w, downloadErr)
+		api.writeFileProviderError(w, downloadErr)
 		return
 	}
 	if download.Stream == nil || download.Item.IsDir {
@@ -1111,23 +1118,42 @@ func (s *APIServer) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 func fileTicketRedisKey(ticket string) string       { return "files:download-ticket:" + hashToken(ticket) }
 func fileStreamRedisKey(userID, kind string) string { return "files:stream:" + kind + ":" + userID }
 
-func (s *APIServer) acquireFileStream(ctx context.Context, userID, kind, streamID string, ttl time.Duration) bool {
-	now := time.Now()
-	result, err := acquireFileStreamScript.Run(ctx, s.queue.RedisClient(), []string{fileStreamRedisKey(userID, kind)}, now.UnixMilli(), fileMaxStreamsPerUser, now.Add(ttl).UnixMilli(), streamID, ttl.Milliseconds()).Int()
-	return err == nil && result == 1
+func (api *fileAPI) setFileTicket(ctx context.Context, key string, payload []byte, ttl time.Duration) error {
+	if api.sessionStore == nil {
+		return errors.New("file session store unavailable")
+	}
+	return api.sessionStore.SetTicket(ctx, key, payload, ttl)
 }
 
-func (s *APIServer) releaseFileStream(ctx context.Context, userID, kind, streamID string) {
-	_ = s.queue.RedisClient().ZRem(ctx, fileStreamRedisKey(userID, kind), streamID).Err()
+func (api *fileAPI) consumeFileTicket(ctx context.Context, key string) ([]byte, error) {
+	if api.sessionStore == nil {
+		return nil, errors.New("file session store unavailable")
+	}
+	return api.sessionStore.ConsumeTicket(ctx, key)
 }
 
-func (s *APIServer) renewFileStream(ctx context.Context, userID, kind, streamID string, ttl time.Duration) bool {
-	now := time.Now()
-	result, err := renewFileStreamScript.Run(ctx, s.queue.RedisClient(), []string{fileStreamRedisKey(userID, kind)}, now.UnixMilli(), now.Add(ttl).UnixMilli(), ttl.Milliseconds(), streamID).Int()
-	return err == nil && result == 1
+func (api *fileAPI) acquireFileStream(ctx context.Context, userID, kind, streamID string, ttl time.Duration) bool {
+	if api.sessionStore == nil {
+		return false
+	}
+	return api.sessionStore.AcquireStream(ctx, userID, kind, streamID, ttl)
 }
 
-func (s *APIServer) renewFileStreamLease(stop <-chan struct{}, userID, kind, streamID string) {
+func (api *fileAPI) releaseFileStream(ctx context.Context, userID, kind, streamID string) {
+	if api.sessionStore == nil {
+		return
+	}
+	api.sessionStore.ReleaseStream(ctx, userID, kind, streamID)
+}
+
+func (api *fileAPI) renewFileStream(ctx context.Context, userID, kind, streamID string, ttl time.Duration) bool {
+	if api.sessionStore == nil {
+		return false
+	}
+	return api.sessionStore.RenewStream(ctx, userID, kind, streamID, ttl)
+}
+
+func (api *fileAPI) renewFileStreamLease(stop <-chan struct{}, userID, kind, streamID string) {
 	ticker := time.NewTicker(fileStreamLease / 2)
 	defer ticker.Stop()
 	for {
@@ -1137,16 +1163,16 @@ func (s *APIServer) renewFileStreamLease(stop <-chan struct{}, userID, kind, str
 		case <-ticker.C:
 			// Renewal extends both the member score and the ZSET key TTL. If the
 			// lease has already disappeared, the script refuses to recreate it.
-			ctx := s.backgroundCtx
+			ctx := api.backgroundCtx
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			_ = s.renewFileStream(ctx, userID, kind, streamID, fileStreamLease)
+			_ = api.renewFileStream(ctx, userID, kind, streamID, fileStreamLease)
 		}
 	}
 }
 
-func (s *APIServer) writeFileProfileError(w http.ResponseWriter, err error) {
+func (api *fileAPI) writeFileProfileError(w http.ResponseWriter, err error) {
 	if errors.Is(err, errFileProfileNotFound) {
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
@@ -1158,7 +1184,7 @@ func (s *APIServer) writeFileProfileError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
 }
 
-func (s *APIServer) writeFileProviderError(w http.ResponseWriter, err error) {
+func (api *fileAPI) writeFileProviderError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, storage.ErrManagerDirectoryChanged):
 		writeConflictError(w, ErrFilesDirectoryChanged)
