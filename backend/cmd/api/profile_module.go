@@ -12,6 +12,7 @@ import (
 // by the root server and are injected as narrow functions.
 type profileDependencies struct {
 	db            *sql.DB
+	encryptionKey string
 	profiles      *ownedProfileAccess
 	rateLimiter   rateLimiter
 	requireUserID func(http.ResponseWriter, *http.Request) (string, bool)
@@ -26,7 +27,7 @@ type profileAPI struct {
 
 func newProfileAPI(deps profileDependencies) *profileAPI {
 	if deps.profiles == nil {
-		deps.profiles = &ownedProfileAccess{db: deps.db}
+		deps.profiles = &ownedProfileAccess{db: deps.db, encryptionKey: deps.encryptionKey}
 	}
 	if deps.requireUserID == nil {
 		deps.requireUserID = requireAuthenticatedUserID
@@ -50,6 +51,7 @@ func newProfileAPI(deps profileDependencies) *profileAPI {
 func (s *APIServer) connectionProfiles() *profileAPI {
 	return newProfileAPI(profileDependencies{
 		db:            s.db,
+		encryptionKey: s.encryptionKey,
 		profiles:      s.profiles(),
 		rateLimiter:   s.rateLimiter,
 		requireUserID: s.requireUserID,

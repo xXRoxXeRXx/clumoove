@@ -14,8 +14,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"backend/internal/auth"
 )
 
 var scheduleModuleDriverID atomic.Uint64
@@ -137,18 +135,7 @@ func newScheduleModuleTestAPI(t *testing.T, state *scheduleModuleState) *schedul
 // pass-through authentication middleware that injects the given user.
 func serveSchedule(t *testing.T, api *scheduleAPI, method, path, userID string) *httptest.ResponseRecorder {
 	t.Helper()
-	mux := http.NewServeMux()
-	api.registerRoutesWithHandler(mux, func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if userID != "" {
-				r = r.WithContext(context.WithValue(r.Context(), auth.ClaimsKey, &auth.Claims{UserID: userID}))
-			}
-			next.ServeHTTP(w, r)
-		})
-	}, nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
-	return rec
+	return serveAsUser(t, api.registerRoutesWithHandler, method, path, userID)
 }
 
 func TestScheduleModuleOwnsItsRoutes(t *testing.T) {
@@ -177,23 +164,7 @@ func TestScheduleModuleOwnsItsRoutes(t *testing.T) {
 
 func TestScheduleModuleRegistersRoutesWithOverrideHandler(t *testing.T) {
 	api := newScheduleAPI(scheduleDependencies{})
-	mux := http.NewServeMux()
-	authCalls := 0
-	api.registerRoutesWithHandler(mux, func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authCalls++
-			next.ServeHTTP(w, r)
-		})
-	}, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-
-	for _, spec := range api.routes() {
-		authCalls = 0
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, requestForRoutePattern(spec.pattern))
-		if rec.Code != http.StatusNoContent || authCalls != 1 {
-			t.Errorf("%s: status=%d authCalls=%d, want 204 and 1", spec.pattern, rec.Code, authCalls)
-		}
-	}
+	assertRoutesUseOverrideHandler(t, api.routes(), api.registerRoutesWithHandler)
 }
 
 func TestScheduleModuleListRequiresUserAndReturnsOnlyOwnedSchedules(t *testing.T) {

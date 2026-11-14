@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql/driver"
 	"errors"
 	"net/http"
@@ -9,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"backend/internal/auth"
 	"backend/internal/crypto"
 )
 
@@ -42,39 +40,12 @@ func TestProfileModuleOwnsItsRoutes(t *testing.T) {
 
 func TestProfileModuleRegistersRoutesWithOverrideHandler(t *testing.T) {
 	api := newProfileAPI(profileDependencies{})
-	mux := http.NewServeMux()
-	authCalls := 0
-	api.registerRoutesWithHandler(mux, func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authCalls++
-			next.ServeHTTP(w, r)
-		})
-	}, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-
-	for _, spec := range api.routes() {
-		authCalls = 0
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, requestForRoutePattern(spec.pattern))
-		if rec.Code != http.StatusNoContent || authCalls != 1 {
-			t.Errorf("%s: status=%d authCalls=%d, want 204 and 1", spec.pattern, rec.Code, authCalls)
-		}
-	}
+	assertRoutesUseOverrideHandler(t, api.routes(), api.registerRoutesWithHandler)
 }
 
 func serveProfile(t *testing.T, api *profileAPI, method, path, userID string) *httptest.ResponseRecorder {
 	t.Helper()
-	mux := http.NewServeMux()
-	api.registerRoutesWithHandler(mux, func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if userID != "" {
-				r = r.WithContext(context.WithValue(r.Context(), auth.ClaimsKey, &auth.Claims{UserID: userID}))
-			}
-			next.ServeHTTP(w, r)
-		})
-	}, nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
-	return rec
+	return serveAsUser(t, api.registerRoutesWithHandler, method, path, userID)
 }
 
 func TestProfileModuleRateLimitsMutatingAndTestRoutes(t *testing.T) {
@@ -126,7 +97,8 @@ func TestProfileModuleGetMapsOwnershipOutcomes(t *testing.T) {
 		"profile-1": profileTestRow("profile-1", "user-1", "nextcloud", "https://saved.example.test", "saved-user", password),
 	})
 	api := newProfileAPI(profileDependencies{
-		profiles:      &ownedProfileAccess{db: database, encryptionKey: key},
+		db:            database,
+		encryptionKey: key,
 		rateLimiter:   allowAllFileRateLimiter{},
 		requireUserID: requireAuthenticatedUserID,
 		logf:          func(*http.Request, string, ...any) {},

@@ -344,3 +344,44 @@ func TestGatewayRouteContracts(t *testing.T) {
 		})
 	}
 }
+
+// assertRoutesUseOverrideHandler checks that a module registers every route
+// behind the authenticated middleware and terminates in the override handler.
+func assertRoutesUseOverrideHandler(t *testing.T, routes []routeSpec, register authenticatedRegistrar) {
+	t.Helper()
+	mux := http.NewServeMux()
+	authCalls := 0
+	register(mux, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authCalls++
+			next.ServeHTTP(w, r)
+		})
+	}, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+
+	for _, spec := range routes {
+		authCalls = 0
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, requestForRoutePattern(spec.pattern))
+		if rec.Code != http.StatusNoContent || authCalls != 1 {
+			t.Errorf("%s: status=%d authCalls=%d, want 204 and 1", spec.pattern, rec.Code, authCalls)
+		}
+	}
+}
+
+// serveAsUser serves one request through a module's registered routes behind a
+// pass-through authentication middleware that injects userID (none when empty).
+func serveAsUser(t *testing.T, register authenticatedRegistrar, method, path, userID string) *httptest.ResponseRecorder {
+	t.Helper()
+	mux := http.NewServeMux()
+	register(mux, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if userID != "" {
+				r = r.WithContext(context.WithValue(r.Context(), auth.ClaimsKey, &auth.Claims{UserID: userID}))
+			}
+			next.ServeHTTP(w, r)
+		})
+	}, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+	return rec
+}

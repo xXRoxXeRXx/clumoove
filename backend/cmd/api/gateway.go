@@ -181,12 +181,12 @@ type featureModule struct {
 // routes only need the authenticated middleware.
 type authenticatedRegistrar func(mux *http.ServeMux, authenticated func(http.Handler) http.Handler, overrideHandler http.HandlerFunc)
 
-func authenticatedModule(name string, mw routeMiddleware, routes []routeSpec, register authenticatedRegistrar) featureModule {
+func authenticatedModule(name string, authenticated func(http.Handler) http.Handler, routes []routeSpec, register authenticatedRegistrar) featureModule {
 	return featureModule{
 		name:   name,
 		routes: routes,
 		register: func(mux *http.ServeMux, overrideHandler http.HandlerFunc) {
-			register(mux, mw.authenticated, overrideHandler)
+			register(mux, authenticated, overrideHandler)
 		},
 	}
 }
@@ -211,12 +211,12 @@ func (server *APIServer) featureModules(mw routeMiddleware) []featureModule {
 				accounts.registerRoutesWithHandler(mux, mw.authenticated, mw.allowMustChange, o)
 			},
 		},
-		authenticatedModule("files", mw, files.routes(), files.registerRoutesWithHandler),
-		authenticatedModule("migrations", mw, migrations.routes(), migrations.registerRoutesWithHandler),
-		authenticatedModule("syncs", mw, syncs.routes(), syncs.registerRoutesWithHandler),
-		authenticatedModule("backups", mw, backups.routes(), backups.registerRoutesWithHandler),
-		authenticatedModule("schedules", mw, schedules.routes(), schedules.registerRoutesWithHandler),
-		authenticatedModule("profiles", mw, profiles.routes(), profiles.registerRoutesWithHandler),
+		authenticatedModule("files", mw.authenticated, files.routes(), files.registerRoutesWithHandler),
+		authenticatedModule("migrations", mw.authenticated, migrations.routes(), migrations.registerRoutesWithHandler),
+		authenticatedModule("syncs", mw.authenticated, syncs.routes(), syncs.registerRoutesWithHandler),
+		authenticatedModule("backups", mw.authenticated, backups.routes(), backups.registerRoutesWithHandler),
+		authenticatedModule("schedules", mw.authenticated, schedules.routes(), schedules.registerRoutesWithHandler),
+		authenticatedModule("profiles", mw.authenticated, profiles.routes(), profiles.registerRoutesWithHandler),
 		{
 			name:   "administration",
 			routes: admin.routes(),
@@ -224,7 +224,7 @@ func (server *APIServer) featureModules(mw routeMiddleware) []featureModule {
 				admin.registerRoutesWithHandler(mux, mw.authenticated, mw.adminOnly, o)
 			},
 		},
-		authenticatedModule("notifications", mw, notifications.routes(), notifications.registerRoutesWithHandler),
+		authenticatedModule("notifications", mw.authenticated, notifications.routes(), notifications.registerRoutesWithHandler),
 	}
 }
 
