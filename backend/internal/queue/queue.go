@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lib/pq"
@@ -46,7 +47,10 @@ type BandwidthEvent struct {
 }
 
 type Queue struct {
-	client *redis.Client
+	client          *redis.Client
+	backupScanMu    sync.Mutex
+	backupScanCur   uint64
+	backupScanBatch []string
 }
 
 // RedisClient returns the authenticated Redis client shared by API components.
@@ -396,18 +400,38 @@ func (q *Queue) LookupOAuthRotationBackup(ctx context.Context, userID, provider,
 }
 
 // VisitOAuthRotationBackups iterates pending encrypted OAuth rotation backups
-// stored in Redis so background reconciliation can repair them into PostgreSQL.
+// stored in Redis across passes using a persistent SCAN cursor so large backlogs
+// advance round-robin instead of restarting from the head of the keyspace.
 func (q *Queue) VisitOAuthRotationBackups(ctx context.Context, visit func(userID, provider, prevHash, rotatedHash, encryptedToken string) error) error {
 	if q == nil || q.client == nil || visit == nil {
 		return nil
 	}
-	var cursor uint64
+	q.backupScanMu.Lock()
+	defer q.backupScanMu.Unlock()
+
+	maxZeroCrossings := 1
+	if q.backupScanCur != 0 || len(q.backupScanBatch) > 0 {
+		maxZeroCrossings = 2
+	}
+	zeroCrossings := 0
 	for {
-		keys, nextCursor, err := q.client.Scan(ctx, cursor, "oauth:rotation:*", 100).Result()
-		if err != nil {
-			return err
+		if len(q.backupScanBatch) == 0 {
+			if zeroCrossings >= maxZeroCrossings {
+				break
+			}
+			keys, nextCursor, err := q.client.Scan(ctx, q.backupScanCur, "oauth:rotation:*", 100).Result()
+			if err != nil {
+				return err
+			}
+			q.backupScanCur = nextCursor
+			q.backupScanBatch = keys
+			if nextCursor == 0 {
+				zeroCrossings++
+			}
 		}
-		for _, key := range keys {
+		for len(q.backupScanBatch) > 0 {
+			key := q.backupScanBatch[0]
+			q.backupScanBatch = q.backupScanBatch[1:]
 			raw, gerr := q.client.Get(ctx, key).Result()
 			if errors.Is(gerr, redis.Nil) {
 				continue
@@ -431,10 +455,6 @@ func (q *Queue) VisitOAuthRotationBackups(ctx context.Context, visit func(userID
 			if verr := visit(entry.UserID, entry.Provider, entry.PrevHash, entry.RotatedHash, entry.RefreshTokenEncrypted); verr != nil {
 				return verr
 			}
-		}
-		cursor = nextCursor
-		if cursor == 0 {
-			break
 		}
 	}
 	return nil

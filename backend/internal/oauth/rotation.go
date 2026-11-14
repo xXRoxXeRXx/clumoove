@@ -547,12 +547,14 @@ type repairFailureEntry struct {
 	nextRetry   time.Time
 }
 
-// RotationRepairState tracks per-entry failure backoff and attempt counts
-// across repair sweeps so persistently failing keys cannot starve untouched or
-// less-failing backup entries regardless of backlog size or scan order.
+// RotationRepairState tracks per-entry failure backoff, attempt counts, and
+// a round-robin resume anchor across repair sweeps so persistently failing keys
+// cannot starve untouched or less-failing entries even when backlogs exceed
+// repairCooldownMaxSize.
 type RotationRepairState struct {
-	mu       sync.Mutex
-	failures map[string]repairFailureEntry
+	mu           sync.Mutex
+	failures     map[string]repairFailureEntry
+	resumeAnchor string
 }
 
 // NewRotationRepairState allocates a bounded fair-scheduling tracker for
@@ -562,6 +564,24 @@ func NewRotationRepairState() *RotationRepairState {
 }
 
 var defaultRepairState = NewRotationRepairState()
+
+func (s *RotationRepairState) getResumeAnchor() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resumeAnchor
+}
+
+func (s *RotationRepairState) setResumeAnchor(anchor string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.resumeAnchor = anchor
+	s.mu.Unlock()
+}
 
 func (s *RotationRepairState) key(userID, provider, prevHash string) string {
 	return userID + "\x00" + provider + "\x00" + prevHash
@@ -646,14 +666,18 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 		return 0, nil
 	}
 	type pendingRecord struct {
-		userID, provider, prevHash, rotatedHash, encrypted string
-		failures                                           int
-		lastAttempt                                        time.Time
+		key, userID, provider, prevHash, rotatedHash, encrypted string
+		failures                                                int
+		lastAttempt                                             time.Time
 	}
-	var fresh, dueRetries, cooled []pendingRecord
+	anchor := s.getResumeAnchor()
+	passedAnchor := anchor == ""
+	var fresh, wrappedFresh, dueRetries, cooled []pendingRecord
 	visitErr := store.VisitOAuthRotationBackups(ctx, func(userID, provider, prevHash, rotatedHash, encryptedToken string) error {
-		st, hasFailed := s.failureState(s.key(userID, provider, prevHash))
+		k := s.key(userID, provider, prevHash)
+		st, hasFailed := s.failureState(k)
 		rec := pendingRecord{
+			key:         k,
 			userID:      userID,
 			provider:    provider,
 			prevHash:    prevHash,
@@ -661,6 +685,21 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 			encrypted:   encryptedToken,
 			failures:    st.failures,
 			lastAttempt: st.lastAttempt,
+		}
+		if !passedAnchor {
+			if k == anchor {
+				passedAnchor = true
+			}
+			if !hasFailed || st.failures == 0 {
+				if limit <= 0 || len(wrappedFresh) < limit {
+					wrappedFresh = append(wrappedFresh, rec)
+				}
+			} else if !now.Before(st.nextRetry) {
+				dueRetries = append(dueRetries, rec)
+			} else {
+				cooled = append(cooled, rec)
+			}
+			return nil
 		}
 		if !hasFailed || st.failures == 0 {
 			fresh = append(fresh, rec)
@@ -689,6 +728,14 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 	}
 	pending := fresh
 	if limit <= 0 || len(pending) < limit {
+		for _, rec := range wrappedFresh {
+			pending = append(pending, rec)
+			if limit > 0 && len(pending) >= limit {
+				break
+			}
+		}
+	}
+	if limit <= 0 || len(pending) < limit {
 		sortFair(dueRetries)
 		for _, rec := range dueRetries {
 			pending = append(pending, rec)
@@ -705,6 +752,11 @@ func (s *RotationRepairState) RepairWithLimit(ctx context.Context, database *sql
 				break
 			}
 		}
+	}
+	if len(pending) > 0 {
+		s.setResumeAnchor(pending[len(pending)-1].key)
+	} else {
+		s.setResumeAnchor("")
 	}
 	repaired := 0
 	var repairErrs []error

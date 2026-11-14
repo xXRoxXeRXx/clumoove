@@ -814,5 +814,32 @@ func TestRefreshWithRotationLockEdgeCases(t *testing.T) {
 		if !recovered {
 			t.Fatal("previously-failed healthy entry stayed starved behind 119 permanently-failing entries")
 		}
+
+		// Exceed repairCooldownMaxSize (4,096) with failing entries strictly ahead of
+		// a healthy entry in sorted scan order. Even after earlier failure records are
+		// evicted from the cooldown tracker, the persistent scan anchor must reach and
+		// repair the healthy entry instead of restarting from the evicted head.
+		overCapCount := repairCooldownMaxSize + 150
+		for i := 0; i < overCapCount; i++ {
+			_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "deleted-user", "google", fmt.Sprintf("F-%04d", i), now, fmt.Sprintf("E-%04d", i))
+		}
+		_ = RecordRotatedRefreshTokenWithStore(context.Background(), nil, sharedBackup, nil, key, "healthy-user", "google", "B-overcap", now, "A-overcap")
+
+		overCapState := NewRotationRepairState()
+		repairedOverCap := false
+		for pass := 0; pass < 120; pass++ {
+			sweepNow := now.Add(time.Duration(pass) * 5 * time.Minute)
+			if rep, _ := overCapState.RepairWithLimit(context.Background(), sqlDB, sharedBackup, 50, sweepNow); rep > 0 {
+				repairedOverCap = true
+				break
+			}
+		}
+		if !repairedOverCap {
+			t.Fatalf("healthy entry remained starved behind %d (> repairCooldownMaxSize=%d) failing entries", overCapCount, repairCooldownMaxSize)
+		}
+		gotOverCap, okOverCap, errOverCap := LookupRotatedRefreshToken(context.Background(), sqlDB, nil, key, "healthy-user", "google", "A-overcap", now)
+		if errOverCap != nil || !okOverCap || gotOverCap != "B-overcap" {
+			t.Fatalf("Lookup(healthy-user overcap) = (%q, %v, %v), want (B-overcap, true, nil)", gotOverCap, okOverCap, errOverCap)
+		}
 	})
 }
