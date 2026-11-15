@@ -353,7 +353,7 @@ type recoveryState struct {
 
 type recoveryCandidate struct {
 	id, userID, sourceURL, sourceUsername, sourcePassword, targetURL, targetUsername, targetPassword, sourceProvider, targetProvider string
-	updatedAt                                                                                                                          time.Time
+	updatedAt                                                                                                                        time.Time
 }
 
 func (m *workerMaintenance) recoveryCursor(syncJob bool) string {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"backend/internal/db"
+	"backend/internal/oauth"
 	"backend/internal/storage"
 )
 
@@ -952,7 +953,7 @@ func TestMigrationHelpersAcceptFocusedAdapters(t *testing.T) {
 	}
 
 	task := &db.Task{SourceHash: sql.NullString{String: "MD5:abc123", Valid: true}}
-	if !tryInlineHashVerify(context.Background(), task, &hasherOnly{hashes: map[string]string{"/dest.txt": "MD5:abc123"}}, "files", "/dest.txt") {
+	if !tryInlineHashVerify(context.Background(), task, &hasherOnly{hashes: map[string]string{"/dest.txt": "MD5:abc123"}}, "files", "/dest.txt", "") {
 		t.Fatal("tryInlineHashVerify() = false for matching hasher adapter")
 	}
 
@@ -962,5 +963,28 @@ func TestMigrationHelpersAcceptFocusedAdapters(t *testing.T) {
 	var _ syncTransferTarget = tgt
 	var _ = func(p *Processor) {
 		_ = p.executeMigrationTransfer(context.Background(), nil, nil, nil, src, tgt, nil)
+	}
+}
+
+func TestProcessorSharesConfiguredTokenRefresherAndReusesDefaultInstance(t *testing.T) {
+	shared := oauth.NewJobTokenRefresher(nil, "secret", nil)
+	proc, err := NewProcessor(nil, nil, Config{
+		WorkerID:       "worker-1",
+		SecretKey:      "secret",
+		MaxThreads:     1,
+		TokenRefresher: shared,
+	})
+	if err != nil {
+		t.Fatalf("NewProcessor() error = %v", err)
+	}
+	if proc.tokenRefresher() != shared {
+		t.Fatalf("tokenRefresher() did not reuse configured shared instance")
+	}
+
+	bare := &Processor{secretKey: "secret"}
+	first := bare.tokenRefresher()
+	second := bare.tokenRefresher()
+	if first == nil || first != second {
+		t.Fatalf("expected bare Processor.tokenRefresher() to lazily initialize once, got %p vs %p", first, second)
 	}
 }

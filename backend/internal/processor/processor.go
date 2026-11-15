@@ -40,14 +40,15 @@ type activeTaskInfo struct {
 }
 
 type Processor struct {
-	db             *sql.DB
-	queue          *queue.Queue
-	oauthRefresher *oauth.JobTokenRefresher
-	workerID       string
-	secretKey      string
-	maxThreads     int
-	transferWorkers int
-	providerSlots  chan struct{}
+	db                 *sql.DB
+	queue              *queue.Queue
+	oauthRefresher     *oauth.JobTokenRefresher
+	oauthRefresherOnce sync.Once
+	workerID           string
+	secretKey          string
+	maxThreads         int
+	transferWorkers    int
+	providerSlots      chan struct{}
 	// notifyDSN is the raw PostgreSQL DSN used to open a dedicated LISTEN
 	// connection for pg_notify-based wake-up (see ListenForTasks in queue).
 	// Supplied via Config.NotifyDSN. If empty, the worker falls back to periodic
@@ -332,6 +333,17 @@ type Config struct {
 	// transfer workers and runtime verification dispatchers. When nil, the
 	// processor allocates a semaphore sized to MaxThreads.
 	ProviderSlots chan struct{}
+	// TokenRefresher optionally supplies a shared OAuth job token refresher so
+	// concurrent transfer and verification refreshes for the same job and role
+	// serialize on the same in-process lock set. When nil, NewProcessor builds one.
+	TokenRefresher *oauth.JobTokenRefresher
+}
+
+func queueTokenLocker(q *queue.Queue) oauth.TokenLocker {
+	if q == nil {
+		return nil
+	}
+	return q
 }
 
 // NewProcessor builds a Processor from validated configuration.
@@ -343,14 +355,14 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 	if slots == nil {
 		slots = make(chan struct{}, cfg.MaxThreads)
 	}
-	var locker oauth.TokenLocker
-	if q != nil {
-		locker = q
+	refresher := cfg.TokenRefresher
+	if refresher == nil {
+		refresher = oauth.NewJobTokenRefresher(database, cfg.SecretKey, queueTokenLocker(q))
 	}
 	return &Processor{
 		db:              database,
 		queue:           q,
-		oauthRefresher:  oauth.NewJobTokenRefresher(database, cfg.SecretKey, locker),
+		oauthRefresher:  refresher,
 		workerID:        cfg.WorkerID,
 		secretKey:       cfg.SecretKey,
 		maxThreads:      cfg.MaxThreads,
@@ -362,14 +374,12 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 }
 
 func (p *Processor) tokenRefresher() *oauth.JobTokenRefresher {
-	if p.oauthRefresher != nil {
-		return p.oauthRefresher
-	}
-	var locker oauth.TokenLocker
-	if p.queue != nil {
-		locker = p.queue
-	}
-	return oauth.NewJobTokenRefresher(p.db, p.secretKey, locker)
+	p.oauthRefresherOnce.Do(func() {
+		if p.oauthRefresher == nil {
+			p.oauthRefresher = oauth.NewJobTokenRefresher(p.db, p.secretKey, queueTokenLocker(p.queue))
+		}
+	})
+	return p.oauthRefresher
 }
 
 func (p *Processor) acquireProviderSlot(ctx context.Context) bool {

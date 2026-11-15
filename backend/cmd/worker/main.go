@@ -92,12 +92,14 @@ func intSetting(getenv func(string) string, name string, def, min, max int) (int
 
 // processorConfig is the explicit execution configuration handed to the
 // processor; the database DSN doubles as the pg_notify LISTEN connection.
-func (c workerConfig) processorConfig(workerID string) processor.Config {
+func (c workerConfig) processorConfig(workerID string, providerSlots chan struct{}, tokenRefresher *oauth.JobTokenRefresher) processor.Config {
 	return processor.Config{
-		WorkerID:   workerID,
-		SecretKey:  c.encryptionKey,
-		MaxThreads: c.maxThreads,
-		NotifyDSN:  c.databaseURL,
+		WorkerID:       workerID,
+		SecretKey:      c.encryptionKey,
+		MaxThreads:     c.maxThreads,
+		NotifyDSN:      c.databaseURL,
+		ProviderSlots:  providerSlots,
+		TokenRefresher: tokenRefresher,
 	}
 }
 
@@ -182,9 +184,8 @@ func main() {
 	// The worker only processes queued tasks. Sync-pass coordinators are owned
 	// by API instances and started exclusively by the API scheduler.
 	providerSlots := make(chan struct{}, config.maxThreads)
-	procCfg := config.processorConfig(workerID)
-	procCfg.ProviderSlots = providerSlots
-	proc, err := processor.NewProcessor(database, q, procCfg)
+	tokenRefresher := oauth.NewJobTokenRefresher(database, config.encryptionKey, q)
+	proc, err := processor.NewProcessor(database, q, config.processorConfig(workerID, providerSlots, tokenRefresher))
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "processor"), observability.Error(err), slog.String("error_kind", "configuration"))
 		os.Exit(1)
@@ -196,7 +197,7 @@ func main() {
 	}
 	maint := newWorkerMaintenance(database, q, idx, workerID, config.encryptionKey)
 	notif := newNotifier(database, config.encryptionKey)
-	verifier := newChecksumVerifier(database, config.encryptionKey, config.maxThreads, providerSlots, oauth.NewJobTokenRefresher(database, config.encryptionKey, q))
+	verifier := newChecksumVerifier(database, config.encryptionKey, config.maxThreads, providerSlots, tokenRefresher)
 	packReaders, err := restore.NewPackReaderLimiter(config.maxRestorePackReaders)
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "restore"), observability.Error(err), slog.String("error_kind", "configuration"))

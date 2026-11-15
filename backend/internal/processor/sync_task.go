@@ -566,7 +566,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		// Size was already verified by verifyTargetSize above.
 		task.ChecksumVerified = true
 	} else if tgtClient.VerificationMode() == storage.VerificationCryptographicHash {
-		tryInlineHashVerify(ctx, task, tgtClient, task.ResourceType, tgtPath)
+		tryInlineHashVerify(ctx, task, tgtClient, task.ResourceType, tgtPath, "")
 	}
 	return db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 1, 0, 0, task.FileSize) // filesDelta=1, changedDelta=1, bytesDelta=task.FileSize
 }

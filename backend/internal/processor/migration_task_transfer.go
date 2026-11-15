@@ -348,7 +348,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 			task.ChecksumVerified = true
 		} else if targetClient.VerificationMode() == storage.VerificationCryptographicHash {
 			// Fast inline verification using the existing connected targetClient
-			tryInlineHashVerifyByResourceID(ctx, task, targetClient, task.ResourceType, targetPath, transfer.UploadReceipt.TargetResourceID)
+			tryInlineHashVerify(ctx, task, targetClient, task.ResourceType, targetPath, transfer.UploadReceipt.TargetResourceID)
 		}
 	} else {
 		task.WorkerHash = sql.NullString{String: "DYNAMIC", Valid: true}

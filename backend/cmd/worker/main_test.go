@@ -7,6 +7,7 @@ import (
 	"time"
 
 	configpkg "backend/internal/config"
+	"backend/internal/oauth"
 )
 
 func TestLoadWorkerConfigUsesConfiguredValues(t *testing.T) {
@@ -111,8 +112,12 @@ func TestWorkerConfigProcessorConfigCarriesExplicitSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadWorkerConfig() error = %v", err)
 	}
-	got := config.processorConfig("worker-1")
-	if got.WorkerID != "worker-1" || got.SecretKey != "encryption-secret" || got.MaxThreads != 7 || got.NotifyDSN != "postgres://db.example/clumoove?sslmode=require" {
+	slots := make(chan struct{}, config.maxThreads)
+	refresher := &oauth.JobTokenRefresher{}
+	got := config.processorConfig("worker-1", slots, refresher)
+	if got.WorkerID != "worker-1" || got.SecretKey != "encryption-secret" || got.MaxThreads != 7 ||
+		got.NotifyDSN != "postgres://db.example/clumoove?sslmode=require" ||
+		got.ProviderSlots != slots || got.TokenRefresher != refresher {
 		t.Fatalf("processorConfig() = %#v", got)
 	}
 }

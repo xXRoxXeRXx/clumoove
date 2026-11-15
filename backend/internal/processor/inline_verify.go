@@ -12,11 +12,7 @@ import (
 // tryInlineHashVerify attempts an immediate cryptographic checksum verification
 // directly after an upload using the existing connected target provider client.
 // Returns true if verification succeeded and updates task.ChecksumVerified and task.TargetHash.
-func tryInlineHashVerify(ctx context.Context, task *db.Task, targetClient storage.FileHasher, resourceType, targetPath string) bool {
-	return tryInlineHashVerifyByResourceID(ctx, task, targetClient, resourceType, targetPath, "")
-}
-
-func tryInlineHashVerifyByResourceID(ctx context.Context, task *db.Task, targetClient storage.FileHasher, resourceType, targetPath, targetResourceID string) bool {
+func tryInlineHashVerify(ctx context.Context, task *db.Task, targetClient storage.FileHasher, resourceType, targetPath, targetResourceID string) bool {
 	verifyCtx, verifyCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer verifyCancel()
 

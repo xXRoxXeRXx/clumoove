@@ -96,12 +96,12 @@ func TestJobTokenStateRoleIsolation(t *testing.T) {
 	}
 
 	states := []struct {
-		name      string
-		state     jobOAuthTokenState
-		wantSrcP  string
-		wantTgtP  string
-		origTgtA  string
-		origSrcA  string
+		name     string
+		state    jobOAuthTokenState
+		wantSrcP string
+		wantTgtP string
+		origTgtA string
+		origSrcA string
 	}{
 		{
 			name:     "migration",
@@ -144,6 +144,15 @@ func TestJobTokenStateRoleIsolation(t *testing.T) {
 			}
 		})
 	}
+
+	if mig.SourcePasswordEncrypted != "src-access-new" || mig.SourceRefreshTokenEncrypted.String != "src-refresh-new" || !mig.SourceTokenExpiresAt.Time.Equal(srcExpires.Time) ||
+		mig.TargetPasswordEncrypted != "tgt-access-new" || mig.TargetRefreshTokenEncrypted.String != "tgt-refresh-new" || !mig.TargetTokenExpiresAt.Time.Equal(tgtExpires.Time) {
+		t.Fatalf("underlying migration fields mismatch: %+v", mig)
+	}
+	if syncJob.SourcePasswordEncrypted != "src-access-new" || syncJob.SourceRefreshTokenEncrypted.String != "src-refresh-new" || !syncJob.SourceTokenExpiresAt.Time.Equal(srcExpires.Time) ||
+		syncJob.TargetPasswordEncrypted != "tgt-access-new" || syncJob.TargetRefreshTokenEncrypted.String != "tgt-refresh-new" || !syncJob.TargetTokenExpiresAt.Time.Equal(tgtExpires.Time) {
+		t.Fatalf("underlying syncJob fields mismatch: %+v", syncJob)
+	}
 }
 
 type testJobTokenState struct {
@@ -154,11 +163,11 @@ type testJobTokenState struct {
 	onReload func(*testJobTokenState)
 }
 
-func (s *testJobTokenState) OAuthWorkKind() string                  { return s.kind }
-func (s *testJobTokenState) OAuthJobID() string                     { return s.id }
-func (s *testJobTokenState) OAuthUserID() string                    { return "user-1" }
+func (s *testJobTokenState) OAuthWorkKind() string                    { return s.kind }
+func (s *testJobTokenState) OAuthJobID() string                       { return s.id }
+func (s *testJobTokenState) OAuthUserID() string                      { return "user-1" }
 func (s *testJobTokenState) OAuthTokens(string) jobOAuthTokenSnapshot { return s.snapshot }
-func (s *testJobTokenState) OAuthUpdatedAt() time.Time              { return time.Time{} }
+func (s *testJobTokenState) OAuthUpdatedAt() time.Time                { return time.Time{} }
 func (s *testJobTokenState) ApplyOAuthTokens(_ string, access string, refresh sql.NullString, expires sql.NullTime) {
 	s.snapshot.accessEnc, s.snapshot.refreshEnc, s.snapshot.expiresAt = access, refresh, expires
 }

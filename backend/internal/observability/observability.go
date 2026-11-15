@@ -439,3 +439,19 @@ func redactAttr(attr slog.Attr, debug bool) slog.Attr {
 }
 
 var _ io.Writer = legacyWriter{}
+
+// LogLegacyf emits a legacy formatted operational message as a structured slog
+// record so existing call sites pass through the redaction boundary while new
+// code writes slog events directly.
+func LogLegacyf(event, component, format string, args ...any) {
+	message := strings.TrimSpace(fmt.Sprintf(format, args...))
+	level := slog.LevelInfo
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "error") || strings.Contains(lower, "failed") || strings.Contains(lower, "cannot") || strings.Contains(lower, "warning") {
+		level = slog.LevelError
+	}
+	slog.LogAttrs(context.Background(), level, event,
+		slog.String("component", component),
+		slog.String("message", message),
+	)
+}

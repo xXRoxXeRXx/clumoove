@@ -147,7 +147,7 @@ func TestCompareTargetHash(t *testing.T) {
 			name:       "no source hash",
 			targetHash: "SHA1:target-sha1",
 			want: HashComparison{
-				HasSource: false,
+				HasSource:  false,
 				TargetAlgo: "SHA1", TargetValue: "target-sha1",
 				Comparable: false, Matched: false,
 			},

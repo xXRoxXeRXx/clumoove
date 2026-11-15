@@ -9,9 +9,9 @@ import (
 )
 
 type stubControlSubscriber struct {
-	migrationIDs   []string
-	syncEvents     []queue.SyncCancelEvent
-	bandwidthEvts  []queue.BandwidthEvent
+	migrationIDs    []string
+	syncEvents      []queue.SyncCancelEvent
+	bandwidthEvents []queue.BandwidthEvent
 }
 
 func (s *stubControlSubscriber) SubscribeToCancelEvents(_ context.Context, cb func(string)) {
@@ -27,7 +27,7 @@ func (s *stubControlSubscriber) SubscribeToSyncCancelEvents(_ context.Context, c
 }
 
 func (s *stubControlSubscriber) SubscribeToBandwidthChanges(_ context.Context, cb func(queue.BandwidthEvent)) {
-	for _, evt := range s.bandwidthEvts {
+	for _, evt := range s.bandwidthEvents {
 		cb(evt)
 	}
 }
@@ -67,7 +67,7 @@ func TestControlLoopsSubscribeAndDispatch(t *testing.T) {
 			{SyncJobID: "sync-1", PassGeneration: 3, AllGenerations: false},
 			{SyncJobID: "sync-2", PassGeneration: 0, AllGenerations: true},
 		},
-		bandwidthEvts: []queue.BandwidthEvent{
+		bandwidthEvents: []queue.BandwidthEvent{
 			{MigrationID: "mig-1", BandwidthLimitMbps: 25},
 			{MigrationID: "mig-ignored", SyncJobID: "sync-1", BandwidthLimitMbps: 10},
 		},
