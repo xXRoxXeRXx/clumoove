@@ -89,6 +89,7 @@ type ProviderFactoryFunc func(ctx context.Context, job *db.BackupJob) (SourcePro
 // scoped, preventing independently claimed jobs from exhausting memory/network.
 type Coordinator struct {
 	db                *sql.DB
+	store             db.BackupStore
 	encryptionKey     string
 	packWriterSlots   chan struct{}
 	packReaderSlots   *restore.PackReaderLimiter
@@ -150,7 +151,7 @@ func NewCoordinator(database *sql.DB, cfg Config) (*Coordinator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("backup coordinator: %w", err)
 	}
-	return &Coordinator{db: database, encryptionKey: cfg.EncryptionKey, packWriterSlots: make(chan struct{}, cfg.MaxPackWriters), packReaderSlots: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
+	return &Coordinator{db: database, store: db.NewBackupStore(database), encryptionKey: cfg.EncryptionKey, packWriterSlots: make(chan struct{}, cfg.MaxPackWriters), packReaderSlots: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
 }
 
 func (c *Coordinator) SetProviderFactory(factory ProviderFactoryFunc) {
@@ -160,7 +161,7 @@ func (c *Coordinator) SetProviderFactory(factory ProviderFactoryFunc) {
 // PollOnce claims and executes at most one queued run. Callers can invoke it
 // from their existing worker poll loop without creating another scheduler.
 func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
-	if _, err := db.RecoverStaleBackupRunsContext(ctx, c.db); err != nil {
+	if _, err := c.store.RecoverStaleBackupRunsContext(ctx); err != nil {
 		return false, err
 	}
 	if c.preferMaintenance {
@@ -169,7 +170,7 @@ func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
 			return claimed, err
 		}
 	}
-	job, run, err := db.ClaimNextQueuedBackupRunContext(ctx, c.db)
+	job, run, err := c.store.ClaimNextQueuedBackupRunContext(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -197,7 +198,7 @@ func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
 }
 
 func (c *Coordinator) pollMaintenance(ctx context.Context) (bool, error) {
-	maintenance, err := db.ClaimNextBackupMaintenanceForWorkerContext(ctx, c.db, c.workerID)
+	maintenance, err := c.store.ClaimNextBackupMaintenanceForWorkerContext(ctx, c.workerID)
 	if err != nil || maintenance == nil {
 		return maintenance != nil, err
 	}
@@ -206,7 +207,7 @@ func (c *Coordinator) pollMaintenance(ctx context.Context) (bool, error) {
 	conn, err := c.db.Conn(ctx)
 	if err != nil {
 		logger.LogAttrs(ctx, slog.LevelError, "backup_maintenance_lock_failed", backupFailureAttrs("BACKUP_LOCK_UNAVAILABLE", err)...)
-		if retryErr := db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_LOCK_UNAVAILABLE"); retryErr != nil {
+		if retryErr := c.store.RetryBackupMaintenanceContext(context.Background(), maintenance.ID, "BACKUP_LOCK_UNAVAILABLE"); retryErr != nil {
 			logger.Error("backup_maintenance_retry_persist_failed", observability.Error(retryErr), slog.String("error_kind", observability.ErrorKind(retryErr)))
 		}
 		return true, nil
@@ -214,7 +215,7 @@ func (c *Coordinator) pollMaintenance(ctx context.Context) (bool, error) {
 	defer conn.Close()
 	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, maintenance.LockID); err != nil {
 		logger.LogAttrs(ctx, slog.LevelError, "backup_maintenance_lock_failed", backupFailureAttrs("BACKUP_LOCK_UNAVAILABLE", err)...)
-		if retryErr := db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_LOCK_UNAVAILABLE"); retryErr != nil {
+		if retryErr := c.store.RetryBackupMaintenanceContext(context.Background(), maintenance.ID, "BACKUP_LOCK_UNAVAILABLE"); retryErr != nil {
 			logger.Error("backup_maintenance_retry_persist_failed", observability.Error(retryErr), slog.String("error_kind", observability.ErrorKind(retryErr)))
 		}
 		return true, nil
@@ -222,18 +223,18 @@ func (c *Coordinator) pollMaintenance(ctx context.Context) (bool, error) {
 	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, maintenance.LockID)
 	if err := c.executeMaintenance(ctx, maintenance); err != nil {
 		if errors.Is(err, errVerifyMoreWork) {
-			if retryErr := db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_VERIFY_CONTINUING"); retryErr != nil {
+			if retryErr := c.store.RetryBackupMaintenanceContext(context.Background(), maintenance.ID, "BACKUP_VERIFY_CONTINUING"); retryErr != nil {
 				return true, retryErr
 			}
 			return true, nil
 		}
 		logger.LogAttrs(ctx, slog.LevelError, "backup_maintenance_failed", backupFailureAttrs("BACKUP_MAINTENANCE_FAILED", err)...)
-		if retryErr := db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_MAINTENANCE_FAILED"); retryErr != nil {
+		if retryErr := c.store.RetryBackupMaintenanceContext(context.Background(), maintenance.ID, "BACKUP_MAINTENANCE_FAILED"); retryErr != nil {
 			logger.Error("backup_maintenance_retry_persist_failed", observability.Error(retryErr), slog.String("error_kind", observability.ErrorKind(retryErr)))
 		}
 		return true, nil
 	}
-	if err := db.CompleteBackupMaintenanceContext(ctx, c.db, maintenance.ID); err != nil {
+	if err := c.store.CompleteBackupMaintenanceContext(ctx, maintenance.ID); err != nil {
 		logger.Error("backup_maintenance_completion_persist_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		return true, err
 	}
@@ -242,7 +243,7 @@ func (c *Coordinator) pollMaintenance(ctx context.Context) (bool, error) {
 }
 
 func (c *Coordinator) executeMaintenance(ctx context.Context, maintenance *db.BackupMaintenance) error {
-	job, err := db.GetBackupJobForOwnerContext(ctx, c.db, maintenance.BackupJobID, maintenance.UserID)
+	job, err := c.store.GetBackupJobForOwnerContext(ctx, maintenance.BackupJobID, maintenance.UserID)
 	if err != nil {
 		return err
 	}
@@ -273,7 +274,7 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 	if maintenance.VerifyMode.String != db.BackupVerifyMetadata && maintenance.VerifyMode.String != db.BackupVerifyFull && maintenance.VerifyMode.String != db.BackupVerifyBudgeted {
 		return errors.New("invalid repository check mode")
 	}
-	if err := db.SnapshotBackupVerifyTargetsContext(ctx, c.db, maintenance.ID, job.ID); err != nil {
+	if err := c.store.SnapshotBackupVerifyTargetsContext(ctx, maintenance.ID, job.ID); err != nil {
 		return err
 	}
 	const maxVerifyClaimBytes int64 = 512 << 20
@@ -281,7 +282,7 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 	claimRead := int64(0)
 	totalRead := maintenance.ProcessedBytes
 	for {
-		verifyTarget, err := db.ClaimNextBackupVerifyTargetContext(ctx, c.db, maintenance.ID, c.workerID)
+		verifyTarget, err := c.store.ClaimNextBackupVerifyTargetContext(ctx, maintenance.ID, c.workerID)
 		if err != nil {
 			return err
 		}
@@ -289,41 +290,41 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 			break
 		}
 		if time.Now().After(deadline) {
-			_ = db.ReleaseBackupVerifyTargetClaimContext(ctx, c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+			_ = c.store.ReleaseBackupVerifyTargetClaimContext(ctx, verifyTarget.ID, verifyTarget.ClaimEpoch)
 			return errVerifyMoreWork
 		}
-		cancelling, err := db.IsBackupMaintenanceCancellingContext(ctx, c.db, maintenance.ID)
+		cancelling, err := c.store.IsBackupMaintenanceCancellingContext(ctx, maintenance.ID)
 		if err != nil {
 			return err
 		}
 		if cancelling {
-			_ = db.ReleaseBackupVerifyTargetClaimContext(ctx, c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+			_ = c.store.ReleaseBackupVerifyTargetClaimContext(ctx, verifyTarget.ID, verifyTarget.ClaimEpoch)
 			return nil
 		}
 		exists, size, err := target.FileExists(ctx, "files", verifyTarget.RemotePath)
 		if err != nil {
-			_ = db.ReleaseBackupVerifyTargetClaimContext(context.Background(), c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+			_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.ID, verifyTarget.ClaimEpoch)
 			return err
 		}
 		state := "COMPLETED"
 		if !exists || size != verifyTarget.SizeBytes {
-			state, err = db.CompleteBackupVerifyTargetContext(ctx, c.db, verifyTarget.ID, exists, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
+			state, err = c.store.CompleteBackupVerifyTargetContext(ctx, verifyTarget.ID, exists, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
 			if err != nil {
 				return err
 			}
 		} else if maintenance.VerifyMode.String == db.BackupVerifyFull || (maintenance.VerifyMode.String == db.BackupVerifyBudgeted && totalRead < maintenance.ByteBudget.Int64) {
 			if claimRead > 0 && claimRead+verifyTarget.SizeBytes > maxVerifyClaimBytes {
-				_ = db.ReleaseBackupVerifyTargetClaimContext(ctx, c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+				_ = c.store.ReleaseBackupVerifyTargetClaimContext(ctx, verifyTarget.ID, verifyTarget.ClaimEpoch)
 				return errVerifyMoreWork
 			}
 			if err := c.packReaderSlots.Acquire(ctx); err != nil {
-				_ = db.ReleaseBackupVerifyTargetClaimContext(context.Background(), c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+				_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.ID, verifyTarget.ClaimEpoch)
 				return err
 			}
 			reader, err := target.StreamDownload(ctx, "files", verifyTarget.RemotePath)
 			if err != nil {
 				c.packReaderSlots.Release()
-				_ = db.ReleaseBackupVerifyTargetClaimContext(context.Background(), c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+				_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.ID, verifyTarget.ClaimEpoch)
 				// A provider/network failure is retryable maintenance work, not
 				// evidence that an immutable repository pack is damaged.
 				return err
@@ -343,48 +344,48 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 			c.packReaderSlots.Release()
 			if validationErr != nil {
 				if isRetryableVerifyReadError(validationErr) {
-					_ = db.ReleaseBackupVerifyTargetClaimContext(context.Background(), c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+					_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.ID, verifyTarget.ClaimEpoch)
 					return validationErr
 				}
 				state = "DAMAGED"
-				if err := db.MarkBackupVerifyTargetDamagedContext(ctx, c.db, verifyTarget.ID, verifyTarget.ClaimEpoch); err != nil {
+				if err := c.store.MarkBackupVerifyTargetDamagedContext(ctx, verifyTarget.ID, verifyTarget.ClaimEpoch); err != nil {
 					return err
 				}
 			} else {
 				claimRead += verifyTarget.SizeBytes
 				totalRead += verifyTarget.SizeBytes
-				if err := db.AddBackupVerifyProcessedBytesContext(ctx, c.db, maintenance.ID, verifyTarget.SizeBytes); err != nil {
+				if err := c.store.AddBackupVerifyProcessedBytesContext(ctx, maintenance.ID, verifyTarget.SizeBytes); err != nil {
 					return err
 				}
-				if err := db.MarkBackupVerifyTargetReadContext(ctx, c.db, verifyTarget.ID, verifyTarget.SizeBytes, verifyTarget.ClaimEpoch); err != nil {
+				if err := c.store.MarkBackupVerifyTargetReadContext(ctx, verifyTarget.ID, verifyTarget.SizeBytes, verifyTarget.ClaimEpoch); err != nil {
 					return err
 				}
 				if verifyTarget.PackID.Valid {
-					if err := db.MarkBackupPacksCheckedContext(ctx, c.db, job.ID, []string{verifyTarget.PackID.String}); err != nil {
+					if err := c.store.MarkBackupPacksCheckedContext(ctx, job.ID, []string{verifyTarget.PackID.String}); err != nil {
 						return err
 					}
 				}
-				state, err = db.CompleteBackupVerifyTargetContext(ctx, c.db, verifyTarget.ID, true, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
+				state, err = c.store.CompleteBackupVerifyTargetContext(ctx, verifyTarget.ID, true, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
 				if err != nil {
 					return err
 				}
 			}
 		} else {
-			state, err = db.CompleteBackupVerifyTargetContext(ctx, c.db, verifyTarget.ID, true, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
+			state, err = c.store.CompleteBackupVerifyTargetContext(ctx, verifyTarget.ID, true, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
 			if err != nil {
 				return err
 			}
 		}
 		if state != "COMPLETED" && verifyTarget.PackID.Valid {
-			if err := db.MarkBackupPackDamagedContext(ctx, c.db, job.ID, verifyTarget.PackID.String); err != nil {
+			if err := c.store.MarkBackupPackDamagedContext(ctx, job.ID, verifyTarget.PackID.String); err != nil {
 				return err
 			}
 		}
-		if err := db.AdvanceBackupVerifyCursorContext(ctx, c.db, maintenance.ID, verifyTarget.ID); err != nil {
+		if err := c.store.AdvanceBackupVerifyCursorContext(ctx, maintenance.ID, verifyTarget.ID); err != nil {
 			return err
 		}
 	}
-	return db.CompleteBackupVerifyContext(ctx, c.db, maintenance.ID)
+	return c.store.CompleteBackupVerifyContext(ctx, maintenance.ID)
 }
 
 func isRetryableVerifyReadError(err error) bool {
@@ -407,10 +408,10 @@ func deleteRemotePack(ctx context.Context, target packDeleterTarget, pack db.Bac
 }
 
 func (c *Coordinator) applyRetention(ctx context.Context, job *db.BackupJob, target packDeleterTarget) error {
-	if err := db.ExpireBackupSnapshotsContext(ctx, c.db, job.ID, job.RetentionCount); err != nil {
+	if err := c.store.ExpireBackupSnapshotsContext(ctx, job.ID, job.RetentionCount); err != nil {
 		return err
 	}
-	packs, err := db.ListBackupReclaimablePacksContext(ctx, c.db, job.ID, 1000)
+	packs, err := c.store.ListBackupReclaimablePacksContext(ctx, job.ID, 1000)
 	if err != nil {
 		return err
 	}
@@ -418,31 +419,31 @@ func (c *Coordinator) applyRetention(ctx context.Context, job *db.BackupJob, tar
 		if err := deleteRemotePack(ctx, target, pack); err != nil {
 			return err
 		}
-		if err := db.MarkBackupPackDeletedContext(ctx, c.db, job.ID, pack.ID); err != nil {
+		if err := c.store.MarkBackupPackDeletedContext(ctx, job.ID, pack.ID); err != nil {
 			return err
 		}
 	}
 	if len(packs) == 1000 {
-		return db.EnqueueBackupMaintenanceContext(ctx, c.db, job.ID, "RETENTION")
+		return c.store.EnqueueBackupMaintenanceContext(ctx, job.ID, "RETENTION")
 	}
-	candidate, err := db.FindBackupCompactionCandidateContext(ctx, c.db, job.ID)
+	candidate, err := c.store.FindBackupCompactionCandidateContext(ctx, job.ID)
 	if err != nil {
 		return err
 	}
 	if candidate != nil {
 		// This maintenance claim holds the job advisory lock. The queued claim
 		// runs only after this lock is released, so it cannot overlap retention.
-		return db.EnqueueBackupMaintenanceContext(ctx, c.db, job.ID, "COMPACTION")
+		return c.store.EnqueueBackupMaintenanceContext(ctx, job.ID, "COMPACTION")
 	}
 	return nil
 }
 
 func (c *Coordinator) compactOnePack(ctx context.Context, job *db.BackupJob, target compactionTarget) error {
-	pack, err := db.FindBackupCompactionCandidateContext(ctx, c.db, job.ID)
+	pack, err := c.store.FindBackupCompactionCandidateContext(ctx, job.ID)
 	if err != nil || pack == nil {
 		return err
 	}
-	liveBlocks, err := db.ListBackupLiveBlocksContext(ctx, c.db, job.ID, pack.ID)
+	liveBlocks, err := c.store.ListBackupLiveBlocksContext(ctx, job.ID, pack.ID)
 	if err != nil {
 		return err
 	}
@@ -525,25 +526,25 @@ func (c *Coordinator) compactOnePack(ctx context.Context, job *db.BackupJob, tar
 	if err != nil || entryIndex != len(entries) {
 		return errors.New("replacement backup pack validation failed")
 	}
-	if _, err := db.ReplaceBackupPackLocatorsContext(ctx, c.db, job.ID, pack.ID, remotePath, replacement.ID[:], replacement.Size, locators, blockIDs); err != nil {
+	if _, err := c.store.ReplaceBackupPackLocatorsContext(ctx, job.ID, pack.ID, remotePath, replacement.ID[:], replacement.Size, locators, blockIDs); err != nil {
 		return err
 	}
 	if err := deleteRemotePack(ctx, target, *pack); err != nil {
 		return err
 	}
-	if err := db.MarkBackupPackDeletedContext(ctx, c.db, job.ID, pack.ID); err != nil {
+	if err := c.store.MarkBackupPackDeletedContext(ctx, job.ID, pack.ID); err != nil {
 		return err
 	}
-	if next, err := db.FindBackupCompactionCandidateContext(ctx, c.db, job.ID); err != nil {
+	if next, err := c.store.FindBackupCompactionCandidateContext(ctx, job.ID); err != nil {
 		return err
 	} else if next != nil {
-		return db.EnqueueBackupMaintenanceContext(ctx, c.db, job.ID, "COMPACTION")
+		return c.store.EnqueueBackupMaintenanceContext(ctx, job.ID, "COMPACTION")
 	}
 	return nil
 }
 
 func (c *Coordinator) deleteRepository(ctx context.Context, maintenance *db.BackupMaintenance, job *db.BackupJob, target packDeleterTarget) error {
-	packs, err := db.ListBackupPacksForDeletionContext(ctx, c.db, job.ID, 1000)
+	packs, err := c.store.ListBackupPacksForDeletionContext(ctx, job.ID, 1000)
 	if err != nil {
 		return err
 	}
@@ -551,14 +552,14 @@ func (c *Coordinator) deleteRepository(ctx context.Context, maintenance *db.Back
 		if err := deleteRemotePack(ctx, target, pack); err != nil {
 			return err
 		}
-		if err := db.MarkBackupPackDeletedContext(ctx, c.db, job.ID, pack.ID); err != nil {
+		if err := c.store.MarkBackupPackDeletedContext(ctx, job.ID, pack.ID); err != nil {
 			return err
 		}
 	}
 	if len(packs) == 1000 {
 		// The claim's object budget is complete. A subsequent request resumes
 		// from catalog state instead of relying on a remote directory listing.
-		return db.RetryBackupMaintenanceContext(ctx, c.db, maintenance.ID, "")
+		return c.store.RetryBackupMaintenanceContext(ctx, maintenance.ID, "")
 	}
 	formatPath, err := repositoryPath(job.RepositoryRoot, "format-v1.json")
 	if err != nil {
@@ -573,7 +574,7 @@ func (c *Coordinator) deleteRepository(ctx context.Context, maintenance *db.Back
 			return err
 		}
 	}
-	deleted, err := db.DeleteBackupJobAfterRepositoryCleanupContext(ctx, c.db, job.ID)
+	deleted, err := c.store.DeleteBackupJobAfterRepositoryCleanupContext(ctx, job.ID)
 	if err != nil {
 		return err
 	}
@@ -735,7 +736,7 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 		return
 	}
 	defer func() { <-c.packWriterSlots }()
-	if ok, err := db.TransitionBackupRunContext(ctx, c.db, job.ID, run.Generation, run.ID, "SCANNING", "RUNNING"); err != nil || !ok {
+	if ok, err := c.store.TransitionBackupRunContext(ctx, job.ID, run.Generation, run.ID, "SCANNING", "RUNNING"); err != nil || !ok {
 		if err == nil {
 			err = errors.New("backup run changed state before transfer start")
 		}
@@ -744,20 +745,20 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 	}
 	run.State = "RUNNING"
 	logger.Info("backup_transfer_started")
-	snapshotID, err := db.CreateBackupSnapshotDraftContext(ctx, c.db, job.ID, run.ID, job.SelectedPaths)
+	snapshotID, err := c.store.CreateBackupSnapshotDraftContext(ctx, job.ID, run.ID, job.SelectedPaths)
 	if err != nil {
 		c.fail(ctx, job, run, "BACKUP_CATALOG_FAILED", err)
 		return
 	}
 
 	var previousCatalog map[string]db.BackupSnapshotCatalogItem
-	previousSnapshotID, err := db.GetLatestValidBackupSnapshotIDContext(ctx, c.db, job.ID)
+	previousSnapshotID, err := c.store.GetLatestValidBackupSnapshotIDContext(ctx, job.ID)
 	if err != nil {
 		c.fail(ctx, job, run, "BACKUP_CATALOG_FAILED", err)
 		return
 	}
 	if previousSnapshotID != "" {
-		catalog, err := db.GetBackupSnapshotFileCatalogContext(ctx, c.db, previousSnapshotID)
+		catalog, err := c.store.GetBackupSnapshotFileCatalogContext(ctx, previousSnapshotID)
 		if err != nil {
 			c.fail(ctx, job, run, "BACKUP_CATALOG_FAILED", err)
 			return
@@ -847,14 +848,14 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 		stats.processedFiles++
 		stats.processedBytes += item.file.size
 	}
-	if err := db.BatchCreateBackupSnapshotItemsAndBlocksContext(ctx, c.db, snapshotID, batchItems); err != nil {
+	if err := c.store.BatchCreateBackupSnapshotItemsAndBlocksContext(ctx, snapshotID, batchItems); err != nil {
 		c.finishOrFail(ctx, job, run, "RUNNING", errors.New("backup catalog write failed"), stats)
 		return
 	}
 	if !c.runActive(ctx, job, run, snapshotID) {
 		return
 	}
-	if ok, err := db.TransitionBackupRunContext(ctx, c.db, job.ID, run.Generation, run.ID, "RUNNING", "VERIFYING"); err != nil || !ok {
+	if ok, err := c.store.TransitionBackupRunContext(ctx, job.ID, run.Generation, run.ID, "RUNNING", "VERIFYING"); err != nil || !ok {
 		if err == nil {
 			err = errors.New("backup run changed state before verification")
 		}
@@ -871,7 +872,7 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 	if stats.unstableFiles > 0 {
 		snapshotState, runState = "PARTIAL", "PARTIAL"
 	}
-	published, err := db.PublishBackupSnapshotAndFinalizeContext(ctx, c.db, job.ID, run.Generation, run.ID, snapshotID, snapshotState, runState, stats.totalFiles, stats.totalDirs, stats.totalBytes, stats.processedFiles, stats.processedBytes, stats.deduplicatedBytes, stats.unstableFiles, stats.failedFiles)
+	published, err := c.store.PublishBackupSnapshotAndFinalizeContext(ctx, job.ID, run.Generation, run.ID, snapshotID, snapshotState, runState, stats.totalFiles, stats.totalDirs, stats.totalBytes, stats.processedFiles, stats.processedBytes, stats.deduplicatedBytes, stats.unstableFiles, stats.failedFiles)
 	if err != nil || !published {
 		if err == nil {
 			err = errors.New("backup snapshot publication lost its state claim")
@@ -899,7 +900,7 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 // before publication. Each selected pack is fully parsed, which validates its
 // framing, pack ID, and every block without requiring range-read support.
 func (c *Coordinator) verifySnapshotSample(ctx context.Context, job *db.BackupJob, snapshotID string, target packVerifierTarget) error {
-	packs, err := db.ListBackupSnapshotPacksContext(ctx, c.db, job.ID, snapshotID)
+	packs, err := c.store.ListBackupSnapshotPacksContext(ctx, job.ID, snapshotID)
 	if err != nil {
 		return err
 	}
@@ -949,11 +950,11 @@ func (c *Coordinator) verifySnapshotSample(ctx context.Context, job *db.BackupJo
 			break
 		}
 	}
-	return db.MarkBackupPacksCheckedContext(ctx, c.db, job.ID, checked)
+	return c.store.MarkBackupPacksCheckedContext(ctx, job.ID, checked)
 }
 
 func (c *Coordinator) runActive(ctx context.Context, job *db.BackupJob, run *db.BackupRun, snapshotID string) bool {
-	active, err := db.BackupRunActiveContext(ctx, c.db, job.ID, run.Generation, run.ID)
+	active, err := c.store.BackupRunActiveContext(ctx, job.ID, run.Generation, run.ID)
 	if err != nil {
 		c.fail(ctx, job, run, "BACKUP_CATALOG_FAILED", err)
 		return false
@@ -961,7 +962,7 @@ func (c *Coordinator) runActive(ctx context.Context, job *db.BackupJob, run *db.
 	if !active {
 		logger := backupRunLogger(ctx, job, run)
 		logger.Info("backup_run_no_longer_active")
-		if err := db.DiscardBackupSnapshotDraftContext(context.Background(), c.db, snapshotID, job.ID, run.ID); err != nil {
+		if err := c.store.DiscardBackupSnapshotDraftContext(context.Background(), snapshotID, job.ID, run.ID); err != nil {
 			logger.Warn("backup_snapshot_draft_discard_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		}
 		return false
@@ -978,7 +979,7 @@ func (c *Coordinator) heartbeatRun(ctx context.Context, job *db.BackupJob, run *
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := db.TouchBackupRunContext(ctx, c.db, job.ID, run.Generation, run.ID); err != nil && ctx.Err() == nil {
+			if err := c.store.TouchBackupRunContext(ctx, job.ID, run.Generation, run.ID); err != nil && ctx.Err() == nil {
 				backupRunLogger(ctx, job, run).Warn("backup_run_heartbeat_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			}
 		}
@@ -1101,7 +1102,7 @@ func (c *Coordinator) ensureFreshOAuthToken(ctx context.Context, job *db.BackupJ
 			return token, nil
 		},
 		OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
-			latestJob, lerr := db.GetBackupJobForOwnerContext(lockCtx, c.db, job.ID, job.UserID)
+			latestJob, lerr := c.store.GetBackupJobForOwnerContext(lockCtx, job.ID, job.UserID)
 			if lerr != nil || latestJob == nil {
 				return "", false, "", nil
 			}
@@ -1136,7 +1137,7 @@ func (c *Coordinator) ensureFreshOAuthToken(ctx context.Context, job *db.BackupJ
 				expiresIn = 3600
 			}
 			newExpiry := time.Now().Add(time.Duration(expiresIn) * time.Second)
-			if err := db.UpdateBackupJobOAuthTokens(persistCtx, c.db, job.ID, role, access, rotatedRefresh, newExpiry, expectedRefreshEnc); err != nil {
+			if err := c.store.UpdateBackupJobOAuthTokens(persistCtx, job.ID, role, access, rotatedRefresh, newExpiry, expectedRefreshEnc); err != nil {
 				return "", false, fmt.Errorf("persist backup OAuth token: %w", err)
 			}
 			persistedAccess = access
@@ -1188,7 +1189,7 @@ func (c *Coordinator) backupFile(ctx context.Context, job *db.BackupJob, source 
 				stats.deduplicatedBytes += int64(len(entry.Data))
 				return nil
 			}
-			blockID, found, err := db.FindBackupBlockContext(ctx, c.db, job.ID, entry.Hash[:])
+			blockID, found, err := c.store.FindBackupBlockContext(ctx, job.ID, entry.Hash[:])
 			if err != nil {
 				return err
 			}
@@ -1323,7 +1324,7 @@ func (b *packBuilder) flush(ctx context.Context) error {
 	if err != nil || validated.Size != pack.Size || entryIndex != len(b.entries) {
 		return errors.New("remote pack validation failed")
 	}
-	ids, err := db.RecordBackupPackAndBlocksContext(ctx, b.coordinator.db, b.job.ID, remotePath, pack.ID[:], pack.Size, blocks)
+	ids, err := b.coordinator.store.RecordBackupPackAndBlocksContext(ctx, b.job.ID, remotePath, pack.ID[:], pack.Size, blocks)
 	if err != nil {
 		return err
 	}
@@ -1498,7 +1499,7 @@ func (c *Coordinator) sameBackupConnection(ctx context.Context, job *db.BackupJo
 		return true, nil
 	}
 	if oauth.IsProvider(job.SourceProvider) || oauth.IsProvider(job.TargetProvider) {
-		same, err := db.BackupProfilesSameOAuthAccountContext(ctx, c.db, job.SourceProfileID, job.TargetProfileID)
+		same, err := c.store.BackupProfilesSameOAuthAccountContext(ctx, job.SourceProfileID, job.TargetProfileID)
 		if err != nil || same {
 			return same, err
 		}
@@ -1553,7 +1554,7 @@ func (c *Coordinator) finishOrFail(ctx context.Context, job *db.BackupJob, run *
 			observability.Error(err),
 			slog.String("error_kind", observability.ErrorKind(err)),
 		)
-		finalized, finalizeErr := db.FinalizeBackupRunContext(context.Background(), c.db, job.ID, run.Generation, run.ID, state, "CANCELLED", stats.totalFiles, stats.totalBytes, stats.processedFiles, stats.processedBytes, stats.deduplicatedBytes, stats.failedFiles, nil)
+		finalized, finalizeErr := c.store.FinalizeBackupRunContext(context.Background(), job.ID, run.Generation, run.ID, state, "CANCELLED", stats.totalFiles, stats.totalBytes, stats.processedFiles, stats.processedBytes, stats.deduplicatedBytes, stats.failedFiles, nil)
 		if finalizeErr != nil {
 			logger.Error("backup_cancellation_persist_failed", observability.Error(finalizeErr), slog.String("error_kind", observability.ErrorKind(finalizeErr)))
 		} else if !finalized {
@@ -1569,7 +1570,7 @@ func (c *Coordinator) fail(ctx context.Context, job *db.BackupJob, run *db.Backu
 	attrs := backupFailureAttrs(code, cause)
 	attrs = append(attrs, slog.String("state", run.State))
 	logger.LogAttrs(ctx, slog.LevelError, "backup_run_failed", attrs...)
-	failed, err := db.FailBackupRunContext(context.Background(), c.db, job.ID, run.Generation, run.ID, run.State, code)
+	failed, err := c.store.FailBackupRunContext(context.Background(), job.ID, run.Generation, run.ID, run.State, code)
 	if err != nil {
 		logger.Error("backup_failure_persist_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		return
@@ -1593,7 +1594,7 @@ func failureCodeForState(state string) string {
 }
 
 func (c *Coordinator) markPackDamaged(job *db.BackupJob, packID string) {
-	if err := db.MarkBackupPackDamagedContext(context.Background(), c.db, job.ID, packID); err == nil {
+	if err := c.store.MarkBackupPackDamagedContext(context.Background(), job.ID, packID); err == nil {
 		c.audit(job, db.AuditBackupSnapshotDamaged)
 	}
 }

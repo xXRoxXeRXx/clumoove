@@ -19,6 +19,7 @@ import (
 // Scheduler is the core daemon that manages scheduled tasks
 type Scheduler struct {
 	db       *sql.DB
+	backups  db.BackupStore
 	queue    *queue.Queue
 	indexer  *indexer.Indexer
 	syncPass atomic.Pointer[syncPassSlot]
@@ -45,6 +46,7 @@ func schedulerLogger(ctx context.Context) *slog.Logger {
 func NewScheduler(database *sql.DB, q *queue.Queue, idx *indexer.Indexer) *Scheduler {
 	return &Scheduler{
 		db:      database,
+		backups: db.NewBackupStore(database),
 		queue:   q,
 		indexer: idx,
 	}
@@ -208,7 +210,7 @@ func (s *Scheduler) nextRunForSchedule(ctx context.Context, schedule *db.Schedul
 		return nextSyncRunAt(job.IntervalMinutes, time.Now())
 	}
 	if schedule.TaskType == "backup" {
-		job, err := db.GetBackupScheduleInfoContext(ctx, s.db, schedule.TaskID)
+		job, err := s.backups.GetBackupScheduleInfoContext(ctx, schedule.TaskID)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("get backup job schedule: %w", err)
 		}
@@ -261,7 +263,7 @@ func (s *Scheduler) isJobActive(ctx context.Context, taskType, taskID string) (b
 		return isJobActiveStatus(job.Status), nil
 
 	case "backup":
-		job, err := db.GetBackupScheduleInfoContext(ctx, s.db, taskID)
+		job, err := s.backups.GetBackupScheduleInfoContext(ctx, taskID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return false, nil
@@ -342,7 +344,7 @@ func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
 // triggerBackup atomically queues a backup run. Execution is intentionally
 // worker-owned so the API scheduler never handles decrypted credentials.
 func (s *Scheduler) triggerBackup(ctx context.Context, schedule *db.Schedule) error {
-	job, err := db.GetBackupScheduleInfoContext(ctx, s.db, schedule.TaskID)
+	job, err := s.backups.GetBackupScheduleInfoContext(ctx, schedule.TaskID)
 	if err != nil {
 		return fmt.Errorf("get backup job %s: %w", schedule.TaskID, err)
 	}
@@ -359,7 +361,7 @@ func (s *Scheduler) triggerBackup(ctx context.Context, schedule *db.Schedule) er
 		return fmt.Errorf("load backup timezone: %w", err)
 	}
 	localKey := dueAt.In(location).Format("2006-01-02T15:04")
-	claim, err := db.ClaimBackupJobPassContext(ctx, s.db, schedule.TaskID, "schedule", &localKey)
+	claim, err := s.backups.ClaimBackupJobPassContext(ctx, schedule.TaskID, "schedule", &localKey)
 	if err != nil {
 		return fmt.Errorf("claim backup job %s: %w", schedule.TaskID, err)
 	}
