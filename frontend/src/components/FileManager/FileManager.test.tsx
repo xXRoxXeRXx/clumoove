@@ -674,7 +674,8 @@ describe('FileManager component', () => {
       'jwt-token',
       'profile-1',
       'My New Folder',
-      null
+      null,
+      expect.any(AbortSignal)
     );
 
     // Dialog should be closed
