@@ -950,7 +950,7 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 			return tokenResp, nil
 		},
 		OnWait: func(context.Context) (string, bool) {
-			if latestJob, lerr := db.GetSyncJob(e.db, syncJobID); lerr == nil {
+			if latestJob, lerr := e.syncs.GetSyncJob(syncJobID); lerr == nil {
 				latestExpiry, _, _, latestAccessEnc := tokenSet(latestJob)
 				if !shouldRefreshToken(latestExpiry) {
 					if latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
@@ -961,7 +961,7 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 			return "", false
 		},
 		OnLocked: func(_ context.Context, target string) (string, bool, string, error) {
-			latestJob, lerr := db.GetSyncJob(e.db, syncJobID)
+			latestJob, lerr := e.syncs.GetSyncJob(syncJobID)
 			if lerr != nil {
 				return "", false, "", nil
 			}
@@ -1003,10 +1003,10 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 				expiresIn = 3600
 			}
 			newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
-			err = db.UpdateSyncJobOAuthTokensContext(persistCtx, e.db, syncJobID, role, newAccessEnc, newRefreshEnc, newExpiresAt, expectedRefreshEnc)
+			err = e.syncs.UpdateSyncJobOAuthTokensContext(persistCtx, syncJobID, role, newAccessEnc, newRefreshEnc, newExpiresAt, expectedRefreshEnc)
 			if errors.Is(err, db.ErrOAuthTokenConflict) {
 				slog.Info("sync OAuth token update conflicted; adopting stored winner", "sync_job_id", syncJobID, "role", role)
-				if latestJob, lerr := db.GetSyncJobContext(persistCtx, e.db, syncJobID); lerr == nil {
+				if latestJob, lerr := e.syncs.GetSyncJobContext(persistCtx, syncJobID); lerr == nil {
 					_, _, _, latestAccessEnc := tokenSet(latestJob)
 					if latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
 						return latestAccess, true, nil

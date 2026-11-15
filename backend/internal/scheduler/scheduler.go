@@ -20,6 +20,7 @@ import (
 type Scheduler struct {
 	db       *sql.DB
 	backups  db.BackupStore
+	syncs    db.SyncStore
 	queue    *queue.Queue
 	indexer  *indexer.Indexer
 	syncPass atomic.Pointer[syncPassSlot]
@@ -47,6 +48,7 @@ func NewScheduler(database *sql.DB, q *queue.Queue, idx *indexer.Indexer) *Sched
 	return &Scheduler{
 		db:      database,
 		backups: db.NewBackupStore(database),
+		syncs:   db.NewSyncStore(database),
 		queue:   q,
 		indexer: idx,
 	}
@@ -203,7 +205,7 @@ func shouldDeactivateScheduleForTriggerError(err error) bool {
 // schedules that may still contain an old invalid cron expression.
 func (s *Scheduler) nextRunForSchedule(ctx context.Context, schedule *db.Schedule) (time.Time, error) {
 	if schedule.TaskType == "sync" {
-		job, err := db.GetSyncJobContext(ctx, s.db, schedule.TaskID)
+		job, err := s.syncs.GetSyncJobContext(ctx, schedule.TaskID)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("get sync job interval: %w", err)
 		}
@@ -253,7 +255,7 @@ func (s *Scheduler) isJobActive(ctx context.Context, taskType, taskID string) (b
 		return isJobActiveStatus(mig.Status), nil
 
 	case "sync":
-		job, err := db.GetSyncJobContext(ctx, s.db, taskID)
+		job, err := s.syncs.GetSyncJobContext(ctx, taskID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return false, nil

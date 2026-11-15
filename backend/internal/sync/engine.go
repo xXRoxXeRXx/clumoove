@@ -35,6 +35,7 @@ type ProviderFactoryFunc func(ctx context.Context, job *db.SyncJob) (PassClient,
 
 type Engine struct {
 	db              *sql.DB
+	syncs           db.SyncStore
 	queue           *queue.Queue
 	encryptionKey   string
 	passStore       passStore
@@ -61,7 +62,11 @@ func NewEngine(database *sql.DB, q *queue.Queue, encryptionKey string) *Engine {
 		encryptionKey:     encryptionKey,
 		activePassCancels: make(map[string]activePassCancel),
 	}
-	engine.passStore = postgresPassStore{db: database}
+	// Tests build engines without a database; NewSyncStore rejects a nil handle.
+	if database != nil {
+		engine.syncs = db.NewSyncStore(database)
+	}
+	engine.passStore = postgresPassStore{db: database, syncs: engine.syncs}
 	engine.passRunner = engine
 	engine.passSignals = enginePassSignals{engine: engine, queue: q}
 	return engine
@@ -175,7 +180,7 @@ type fileState struct {
 // one asynchronous pass. The public Pass interface owns callers' lifecycle
 // semantics; this is an internal runner adapter.
 func (e *Engine) startSyncPass(serverCtx context.Context, syncJobID string) (bool, error) {
-	generation, claimed, err := db.ClaimSyncJobPass(e.db, syncJobID)
+	generation, claimed, err := e.syncs.ClaimSyncJobPass(syncJobID)
 	if err != nil || !claimed {
 		return claimed, err
 	}
@@ -228,7 +233,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Error("failed to lock sync pass", "sync_job_id", syncJobID, "error", err)
-			if released, releaseErr := db.ReleaseUnstartedSyncPass(e.db, syncJobID, generation); releaseErr != nil {
+			if released, releaseErr := e.syncs.ReleaseUnstartedSyncPass(syncJobID, generation); releaseErr != nil {
 				slog.Error("failed to release unstarted sync pass", "sync_job_id", syncJobID, "error", releaseErr)
 			} else if !released {
 				slog.Warn("sync pass changed state before lock failure recovery", "sync_job_id", syncJobID)
@@ -260,7 +265,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	// Refuse to run if the claim was superseded (for example by deletion or an
 	// administrative status transition) before this goroutine was scheduled.
 	// Only the engine's Start* methods can reach this private method.
-	job, err := db.GetSyncJob(e.db, syncJobID)
+	job, err := e.syncs.GetSyncJob(syncJobID)
 	if err != nil {
 		slog.Error("failed to load claimed sync job", "sync_job_id", syncJobID, "error", err)
 		return
@@ -334,7 +339,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	}
 
 	// 5. Load previous state from DB to enable ETag folder skipping and fast delta checks
-	prevStates, err := db.ListSyncStateByJob(e.db, job.ID)
+	prevStates, err := e.syncs.ListSyncStateByJob(job.ID)
 	if err != nil {
 		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to load sync state: %v", err))
 		return
@@ -746,12 +751,12 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 			Metadata:           metaJSON,
 		})
 	}
-	if err := db.BulkCreateSyncTasks(ctx, e.db, dbTasks); err != nil {
+	if err := e.syncs.BulkCreateSyncTasks(ctx, dbTasks); err != nil {
 		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to create tasks in DB: %v", err))
 		return
 	}
 	// Update totals
-	updated, err := db.UpdateSyncJobTotals(e.db, job.ID, generation, totalCreatedTasks, totalBytes)
+	updated, err := e.syncs.UpdateSyncJobTotals(job.ID, generation, totalCreatedTasks, totalBytes)
 	if err != nil {
 		slog.Error("failed to update sync totals", "sync_job_id", syncJobID, "error", err)
 		return
@@ -762,7 +767,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	}
 
 	// Transition to RUNNING
-	running, err := db.TransitionSyncJobToRunning(e.db, job.ID, generation)
+	running, err := e.syncs.TransitionSyncJobToRunning(job.ID, generation)
 	if err != nil {
 		slog.Error("failed to set sync job running", "sync_job_id", syncJobID, "error", err)
 		return
@@ -829,7 +834,7 @@ SyncTaskPoll:
 	}
 	if unverifiedCount > 0 {
 		slog.Info("transitioning sync job to verification", "sync_job_id", syncJobID, "unverified_tasks", unverifiedCount)
-		verifying, err := db.TransitionSyncJobToVerifying(e.db, job.ID, generation)
+		verifying, err := e.syncs.TransitionSyncJobToVerifying(job.ID, generation)
 		if err != nil {
 			slog.Error("failed to set sync job verifying", "sync_job_id", syncJobID, "error", err)
 			return
@@ -845,7 +850,7 @@ SyncTaskPoll:
 		for verifying := true; verifying; {
 			select {
 			case <-ctx.Done():
-				_, _ = db.AbortSyncJobVerification(e.db, job.ID, generation)
+				_, _ = e.syncs.AbortSyncJobVerification(job.ID, generation)
 				verifying = false
 			case <-verifyTicker.C:
 				var currentStatus string
@@ -868,7 +873,7 @@ SyncTaskPoll:
 	// A task worker may have stopped this pass while the engine was polling or
 	// verifying (for example after an authentication failure). Do not derive
 	// outcomes or update sync state for an interrupted pass.
-	currentJob, err := db.GetSyncJob(e.db, job.ID)
+	currentJob, err := e.syncs.GetSyncJob(job.ID)
 	if err != nil {
 		slog.Error("failed to read final sync job status", "sync_job_id", syncJobID, "error", err)
 		return
@@ -1025,7 +1030,7 @@ func waitForNoRunningTasks(ctx context.Context, interval time.Duration, countRun
 func (e *Engine) failSync(id string, generation int, errMsg string) {
 	errMsg = sanitize.SanitizeError(errMsg)
 	slog.Error("sync pass failed", "sync_job_id", id, "error", errMsg)
-	failed, err := db.FailSyncJobPass(e.db, id, generation, errMsg)
+	failed, err := e.syncs.FailSyncJobPass(id, generation, errMsg)
 	if err != nil {
 		slog.Error("failed to record failed sync pass", "sync_job_id", id, "error", err)
 		return
@@ -1034,7 +1039,7 @@ func (e *Engine) failSync(id string, generation int, errMsg string) {
 		slog.Warn("sync job status changed before failure recording", "sync_job_id", id)
 		return
 	}
-	if ownerID, err := db.GetSyncJobOwnerID(e.db, id); err == nil {
+	if ownerID, err := e.syncs.GetSyncJobOwnerID(id); err == nil {
 		db.WriteAuditLog(e.db, db.AuditEntry{
 			UserID: sql.NullString{String: ownerID, Valid: ownerID != ""},
 			Action: db.AuditSyncFailed,

@@ -219,10 +219,15 @@ func IsActivePassStatus(status string) bool {
 	return status == "RUNNING" || status == "INDEXING" || status == "VERIFYING" || status == "PAUSED_CONNECTION_LOSS"
 }
 
-type postgresPassStore struct{ db *sql.DB }
+// postgresPassStore keeps its *sql.DB only for the recovery queries and audit
+// log, which are not part of db.SyncStore yet.
+type postgresPassStore struct {
+	db    *sql.DB
+	syncs db.SyncStore
+}
 
 func (s postgresPassStore) Status(ctx context.Context, id string) (string, error) {
-	job, err := db.GetSyncJobContext(ctx, s.db, id)
+	job, err := s.syncs.GetSyncJobContext(ctx, id)
 	if err != nil {
 		return "", err
 	}
@@ -231,16 +236,16 @@ func (s postgresPassStore) Status(ctx context.Context, id string) (string, error
 
 func (s postgresPassStore) Pause(ctx context.Context, id string) (int, bool, error) {
 	emptyError := ""
-	return db.PauseSyncJobAndDeactivateSchedules(ctx, s.db, id, &emptyError)
+	return s.syncs.PauseSyncJobAndDeactivateSchedules(ctx, id, &emptyError)
 }
 
 func (s postgresPassStore) Resume(ctx context.Context, id string, nextRunAt time.Time) (bool, error) {
 	emptyError := ""
-	return db.ResumeSyncJobAndReactivateSchedules(ctx, s.db, id, &emptyError, nextRunAt)
+	return s.syncs.ResumeSyncJobAndReactivateSchedules(ctx, id, &emptyError, nextRunAt)
 }
 
 func (s postgresPassStore) Delete(_ context.Context, id string) error {
-	return db.DeleteSyncJobCascade(s.db, id)
+	return s.syncs.DeleteSyncJobCascade(id)
 }
 
 func (s postgresPassStore) Recover(ctx context.Context) ([]RecoveredPass, error) {
@@ -306,9 +311,9 @@ func (s postgresPassStore) AuditRecovered(ctx context.Context, pass RecoveredPas
 
 func (s postgresPassStore) Finalize(finalization Finalization) (bool, error) {
 	if finalization.Empty {
-		return db.FinalizeEmptySyncJobPassWithStates(s.db, finalization.JobID, finalization.Generation, finalization.Status, finalization.Error, finalization.Total, finalization.Processed, finalization.Changed, finalization.Deleted, finalization.Failed, finalization.StateUpserts, finalization.StateDeletes)
+		return s.syncs.FinalizeEmptySyncJobPassWithStates(finalization.JobID, finalization.Generation, finalization.Status, finalization.Error, finalization.Total, finalization.Processed, finalization.Changed, finalization.Deleted, finalization.Failed, finalization.StateUpserts, finalization.StateDeletes)
 	}
-	return db.FinalizeSyncJobPassWithStates(s.db, finalization.JobID, finalization.Generation, finalization.Status, finalization.Error, finalization.Total, finalization.Processed, finalization.Changed, finalization.Deleted, finalization.Failed, finalization.StateUpserts, finalization.StateDeletes)
+	return s.syncs.FinalizeSyncJobPassWithStates(finalization.JobID, finalization.Generation, finalization.Status, finalization.Error, finalization.Total, finalization.Processed, finalization.Changed, finalization.Deleted, finalization.Failed, finalization.StateUpserts, finalization.StateDeletes)
 }
 
 type enginePassSignals struct {
