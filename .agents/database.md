@@ -6,6 +6,12 @@
   - The same change must also be added as an idempotent `CREATE TABLE IF NOT EXISTS` or `ALTER TABLE … ADD COLUMN IF NOT EXISTS` statement inside `InitDB()` in [backend/internal/db/db.go](../backend/internal/db/db.go) for automatic startup migrations.
 - **Parameterized SQL**: All database operations must use parameterized placeholders (`$1`, `$2`, …). Never format or concatenate untrusted inputs into SQL strings.
 
+## Domain Stores
+- Backup, restore, and sync orchestration persist through `db.BackupStore`, `db.RestoreStore`, and `db.SyncStore` (`NewBackupStore(sqlDB)` etc. in `backend/internal/db/*_store.go`). They delegate to the package-level functions; fencing, ownership, and claim-epoch predicates stay in those functions, never in the store wrappers.
+- Add a new orchestration persistence call to the store interface and its delegating method in the same change, so consumers can fake it.
+- `BackupRepositoryCredentials` is shared by the backup and restore stores.
+- Naming note: "repository" in the backup domain means the pack repository, so the persistence modules are called stores.
+
 ## Multi-Tenancy & Ownership Enforcement
 - **Resource Ownership**:
   - Migration endpoints (`GET /api/migration/{id}`, `DELETE /api/migration/{id}`, `GET /api/migration/{id}/report`, SSE stream) must retrieve the caller's ID via `auth.GetUserIDFromContext(r.Context())` and compare with `migration.UserID`. Return `403 Forbidden` on mismatch.
