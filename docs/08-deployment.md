@@ -181,7 +181,7 @@ of 300 is suitable for up to two 50-thread workers; set it to at least `500` bef
   for HTTP work, request ID. Repeated logs for wrapped or propagated copies of the same error are avoided.
 - **Graceful shutdown:** API and worker catch `SIGINT`/`SIGTERM`; the worker drains in-flight tasks
   before exiting.
-- **Completion notifications:** the worker's `RunNotifier` drains durable per-channel deliveries for
+- **Completion notifications:** the worker's notifier loop (`cmd/worker/notifications.go`) drains durable per-channel deliveries for
   email, Gotify, ntfy, Telegram, and Discord. Each channel retries independently; it also cleans
   expired reset/email-change tokens hourly. Legacy SMTP settings are bridged into the email channel.
 - **Migration retention:** the API's hourly garbage collector automatically deletes terminal migrations

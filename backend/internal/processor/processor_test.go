@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"io"
 	"os"
@@ -51,15 +52,15 @@ func TestEffectiveTargetPathPrefersPersistedDestination(t *testing.T) {
 		FilePath:           "/a.txt",
 		ResolvedTargetPath: "/dest/a_copy1.txt",
 	}
-	if got := effectiveTargetPath(task, "/dest", "nextcloud", "nextcloud"); got != "/dest/a_copy1.txt" {
-		t.Fatalf("effectiveTargetPath() = %q, want persisted destination", got)
+	if got := EffectiveTargetPath(task, "/dest", "nextcloud", "nextcloud"); got != "/dest/a_copy1.txt" {
+		t.Fatalf("EffectiveTargetPath() = %q, want persisted destination", got)
 	}
 }
 
 func TestEffectiveTargetPathFallsBackToSourceResolution(t *testing.T) {
 	task := &db.Task{ResourceType: "files", FilePath: "/a.txt"}
-	if got := effectiveTargetPath(task, "/dest", "nextcloud", "nextcloud"); got != "/dest/a.txt" {
-		t.Fatalf("effectiveTargetPath() = %q, want computed destination", got)
+	if got := EffectiveTargetPath(task, "/dest", "nextcloud", "nextcloud"); got != "/dest/a.txt" {
+		t.Fatalf("EffectiveTargetPath() = %q, want computed destination", got)
 	}
 }
 
@@ -111,9 +112,8 @@ func TestOAuthAuthFailureRole(t *testing.T) {
 }
 
 func TestOAuthSyncAuthFailureRole(t *testing.T) {
-	job := &db.SyncJob{SourceProvider: "nextcloud", TargetProvider: "onedrive"}
-	if got := oauthSyncAuthFailureRole(job, "failed to upload to target: authentication failed"); got != "target" {
-		t.Fatalf("oauthSyncAuthFailureRole() = %q, want target", got)
+	if got := oauthAuthFailureRoleForProviders("nextcloud", "onedrive", "failed to upload to target: authentication failed"); got != "target" {
+		t.Fatalf("oauthAuthFailureRoleForProviders() = %q, want target", got)
 	}
 }
 
@@ -129,20 +129,6 @@ func TestExpectedSizeReaderVerifyCompleteWithoutRead(t *testing.T) {
 	}
 	if err := empty.VerifyComplete(); err != nil {
 		t.Fatalf("successful VerifyComplete() is not idempotent: %v", err)
-	}
-}
-
-func TestVerifyTargetSizeStopsWhenContextCancelled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	started := time.Now()
-	_, _, err := verifyTargetSize(ctx, &sizeRetryProvider{}, "files", "/file")
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("verifyTargetSize() error = %v, want context.Canceled", err)
-	}
-	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
-		t.Fatalf("verifyTargetSize() waited %v after cancellation", elapsed)
 	}
 }
 
@@ -746,18 +732,11 @@ func TestLockMegaTargetSerializesSameAccount(t *testing.T) {
 	}
 }
 
-func TestRefreshOAuthTokenIfNeededNoTokenTakesNoLock(t *testing.T) {
-	p := &Processor{}
-	mig := &db.Migration{ID: "m1", SourceRefreshTokenEncrypted: sql.NullString{}}
-	got, err := p.refreshOAuthTokenIfNeeded(context.Background(), mig, "source", "tok", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "tok" {
-		t.Fatalf("got = %q, want %q", got, "tok")
-	}
-	if got := p.refreshLocks.entryCount(); got != 0 {
-		t.Fatalf("refreshLocks.entryCount = %d, want 0", got)
+func TestFormatWorkerHashValueUsesQuickXorBase64(t *testing.T) {
+	h := storage.NewQuickXorHasher()
+	_, _ = h.Write([]byte("quickxor"))
+	if got, want := formatWorkerHashValue("QUICKXOR", h), base64.StdEncoding.EncodeToString(h.Sum(nil)); got != want {
+		t.Fatalf("formatWorkerHashValue() = %q, want %q", got, want)
 	}
 }
 
@@ -851,84 +830,10 @@ func TestShouldEvictThrottler(t *testing.T) {
 	}
 }
 
-func TestApplyOAuthTokensToMigration(t *testing.T) {
-	expTime := time.Date(2026, 9, 23, 14, 0, 0, 0, time.UTC)
-	expiresAt := sql.NullTime{Time: expTime, Valid: true}
-	refreshEnc := sql.NullString{String: "enc-refresh", Valid: true}
-
-	t.Run("updates source fields and preserves target", func(t *testing.T) {
-		mig := &db.Migration{
-			SourcePasswordEncrypted:     "old-src-pass",
-			SourceRefreshTokenEncrypted: sql.NullString{String: "old-src-ref", Valid: true},
-			TargetPasswordEncrypted:     "target-pass",
-			TargetRefreshTokenEncrypted: sql.NullString{String: "target-ref", Valid: true},
-		}
-		applyOAuthTokensToMigration(mig, "source", "new-src-pass", refreshEnc, expiresAt)
-
-		if mig.SourcePasswordEncrypted != "new-src-pass" {
-			t.Fatalf("SourcePasswordEncrypted = %q, want new-src-pass", mig.SourcePasswordEncrypted)
-		}
-		if mig.SourceRefreshTokenEncrypted != refreshEnc {
-			t.Fatalf("SourceRefreshTokenEncrypted = %v, want %v", mig.SourceRefreshTokenEncrypted, refreshEnc)
-		}
-		if mig.SourceTokenExpiresAt != expiresAt {
-			t.Fatalf("SourceTokenExpiresAt = %v, want %v", mig.SourceTokenExpiresAt, expiresAt)
-		}
-		if mig.TargetPasswordEncrypted != "target-pass" {
-			t.Fatalf("TargetPasswordEncrypted changed unexpectedly: %q", mig.TargetPasswordEncrypted)
-		}
-	})
-
-	t.Run("updates target fields and preserves source", func(t *testing.T) {
-		mig := &db.Migration{
-			SourcePasswordEncrypted:     "source-pass",
-			SourceRefreshTokenEncrypted: sql.NullString{String: "source-ref", Valid: true},
-			TargetPasswordEncrypted:     "old-tgt-pass",
-			TargetRefreshTokenEncrypted: sql.NullString{String: "old-tgt-ref", Valid: true},
-		}
-		applyOAuthTokensToMigration(mig, "target", "new-tgt-pass", refreshEnc, expiresAt)
-
-		if mig.TargetPasswordEncrypted != "new-tgt-pass" {
-			t.Fatalf("TargetPasswordEncrypted = %q, want new-tgt-pass", mig.TargetPasswordEncrypted)
-		}
-		if mig.TargetRefreshTokenEncrypted != refreshEnc {
-			t.Fatalf("TargetRefreshTokenEncrypted = %v, want %v", mig.TargetRefreshTokenEncrypted, refreshEnc)
-		}
-		if mig.TargetTokenExpiresAt != expiresAt {
-			t.Fatalf("TargetTokenExpiresAt = %v, want %v", mig.TargetTokenExpiresAt, expiresAt)
-		}
-		if mig.SourcePasswordEncrypted != "source-pass" {
-			t.Fatalf("SourcePasswordEncrypted changed unexpectedly: %q", mig.SourcePasswordEncrypted)
-		}
-	})
-}
-
-func TestApplyOAuthTokensToSyncJob(t *testing.T) {
-	expTime := time.Date(2026, 9, 23, 14, 0, 0, 0, time.UTC)
-	expiresAt := sql.NullTime{Time: expTime, Valid: true}
-	refreshEnc := sql.NullString{String: "enc-refresh", Valid: true}
-
-	t.Run("updates source fields", func(t *testing.T) {
-		job := &db.SyncJob{SourcePasswordEncrypted: "old"}
-		applyOAuthTokensToSyncJob(job, "source", "new", refreshEnc, expiresAt)
-		if job.SourcePasswordEncrypted != "new" || job.SourceRefreshTokenEncrypted != refreshEnc || job.SourceTokenExpiresAt != expiresAt {
-			t.Fatalf("job source tokens mismatch: %v", job)
-		}
-	})
-
-	t.Run("updates target fields", func(t *testing.T) {
-		job := &db.SyncJob{TargetPasswordEncrypted: "old"}
-		applyOAuthTokensToSyncJob(job, "target", "new", refreshEnc, expiresAt)
-		if job.TargetPasswordEncrypted != "new" || job.TargetRefreshTokenEncrypted != refreshEnc || job.TargetTokenExpiresAt != expiresAt {
-			t.Fatalf("job target tokens mismatch: %v", job)
-		}
-	})
-}
-
 var _ atomicRenameChecker = (storage.StorageProvider)(nil)
 var _ fileDeleter = (storage.StorageProvider)(nil)
 var _ overwritePromoter = (storage.StorageProvider)(nil)
-var _ fileHasher = (storage.StorageProvider)(nil)
+var _ storage.FileHasher = (storage.StorageProvider)(nil)
 var _ inspectingTransferSource = (storage.StorageProvider)(nil)
 var _ migrationTarget = (storage.StorageProvider)(nil)
 var _ syncDirCreator = (storage.StorageProvider)(nil)

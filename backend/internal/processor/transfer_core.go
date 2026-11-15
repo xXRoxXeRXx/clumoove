@@ -13,10 +13,6 @@ import (
 	"backend/internal/throttle"
 )
 
-type fileExister interface {
-	FileExists(ctx context.Context, resourceType, path string) (bool, int64, error)
-}
-
 type transferSource interface {
 	StreamDownload(ctx context.Context, resourceType, path string) (io.ReadCloser, error)
 }
@@ -28,7 +24,7 @@ type uploadTarget interface {
 
 type transferTarget interface {
 	uploadTarget
-	fileExister
+	storage.FileExister
 }
 
 // transferRequest contains the provider-facing part of a file transfer. It is
@@ -188,7 +184,7 @@ func runTransferCore(req transferRequest) (transferResult, error) {
 		if targetResourceID == "" {
 			targetResourceID = req.TargetResourceID
 		}
-		exists, size, err := verifyTargetSizeByResourceID(req.Context, req.Target, req.ResourceType, verificationPath, targetResourceID)
+		exists, size, err := storage.VerifyTargetSizeByResourceID(req.Context, req.Target, req.ResourceType, verificationPath, targetResourceID)
 		if err != nil {
 			return transferResult{}, fmt.Errorf("failed to verify target size: %w", err)
 		}

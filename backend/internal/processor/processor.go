@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"backend/internal/db"
-	"backend/internal/indexer"
 	"backend/internal/oauth"
 	"backend/internal/queue"
 	"backend/internal/sanitize"
@@ -41,21 +40,14 @@ type activeTaskInfo struct {
 }
 
 type Processor struct {
-	db                         *sql.DB
-	queue                      *queue.Queue
-	oauthRefreshLock           oauthRefreshLocker
-	oauthRefresh               func(context.Context, string, string) (*oauth.TokenResponse, error)
-	indexer                    *indexer.Indexer
-	workerID                   string
-	secretKey                  string
-	maxThreads                 int
-	transferWorkers            int
-	verificationWorkers        int
-	migrationVerificationQueue chan verificationWork
-	syncVerificationQueue      chan verificationWork
-	verificationWG             sync.WaitGroup
-	recoveredIndexers          sync.WaitGroup
-	providerSlots              chan struct{}
+	db             *sql.DB
+	queue          *queue.Queue
+	oauthRefresher *oauth.JobTokenRefresher
+	workerID       string
+	secretKey      string
+	maxThreads     int
+	transferWorkers int
+	providerSlots  chan struct{}
 	// notifyDSN is the raw PostgreSQL DSN used to open a dedicated LISTEN
 	// connection for pg_notify-based wake-up (see ListenForTasks in queue).
 	// Supplied via Config.NotifyDSN. If empty, the worker falls back to periodic
@@ -64,31 +56,16 @@ type Processor struct {
 	// listenForTasks opens the LISTEN watcher; tests replace it.
 	listenForTasks func(ctx context.Context, dsn string) (<-chan struct{}, error)
 	activeTasks    sync.Map
-	refreshLocks   keyedMutexes
 	throttlers     sync.Map
 	// connLossCounts tracks consecutive connection-loss events per migration so
 	// a single flaky task does not immediately pause the whole migration (P1-4).
 	connLossCounts sync.Map
-	// recoveryAttempts tracks, per paused migration, how many times connection
-	// recovery has been attempted and when, so P1-12 can apply increasing backoff
-	// instead of probing a server that is still down on every 60s tick. Keyed by
-	// migration id.
-	recoveryAttempts sync.Map
-	// recoveryCursorMu guards the round-robin cursors used to spread bounded
-	// connection-recovery probes across paused migrations and sync jobs.
-	recoveryCursorMu        sync.Mutex
-	migrationRecoveryCursor string
-	syncRecoveryCursor      string
 	// connLossTaskAttempts tracks, per task, how many consecutive connection-loss
 	// failures it has seen. This lets the per-task connection-loss cap
 	// (maxConnLossTaskAttempts) count only network errors, not unrelated failures,
 	// so a task that failed twice for non-network reasons is not wrongly escalated
 	// to a full migration pause on its next (first) network loss (P1-4).
 	connLossTaskAttempts sync.Map
-	// verifyingEntities tracks currently running checksum verification passes
-	// (keyed by "mig:<id>" or "sync:<id>") to prevent concurrent ticks from
-	// spawning duplicate verification passes for the same entity.
-	verifyingEntities sync.Map
 	// targetFileLocks synchronizes parallel worker threads processing tasks that
 	// resolve to the same target file path. Entries are reference counted and
 	// released automatically, so a long-lived worker holds a mutex only for the
@@ -113,11 +90,6 @@ func (p *Processor) newWorkerPool() *providerPool {
 		pool.factory = p.providerFactory
 	}
 	return pool
-}
-
-type verificationWork struct {
-	key string
-	run func(context.Context)
 }
 
 type refMutex struct {
@@ -231,10 +203,10 @@ func ResolveTargetPath(resourceType, filePath string, metadata []byte, targetDir
 	return path.Clean(relativePath)
 }
 
-// effectiveTargetPath returns the destination selected for this task. Once a
+// EffectiveTargetPath returns the destination selected for this task. Once a
 // transfer has resolved its destination, that value must be reused instead of
 // deriving a new path from the immutable source file_path.
-func effectiveTargetPath(task *db.Task, targetDir, sourceProvider, targetProvider string) string {
+func EffectiveTargetPath(task *db.Task, targetDir, sourceProvider, targetProvider string) string {
 	if task.ResolvedTargetPath != "" {
 		return task.ResolvedTargetPath
 	}
@@ -356,8 +328,10 @@ type Config struct {
 	// for pg_notify-based wake-up of idle worker threads. If empty, the worker
 	// falls back to periodic polling.
 	NotifyDSN string
-	// IndexingTimeout bounds one indexing run. It must be positive.
-	IndexingTimeout time.Duration
+	// ProviderSlots optionally supplies a shared concurrency semaphore across
+	// transfer workers and runtime verification dispatchers. When nil, the
+	// processor allocates a semaphore sized to MaxThreads.
+	ProviderSlots chan struct{}
 }
 
 // NewProcessor builds a Processor from validated configuration.
@@ -365,26 +339,37 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 	if cfg.MaxThreads < 1 {
 		return nil, errors.New("processor MaxThreads must be at least 1")
 	}
-	idx, err := indexer.NewIndexer(database, cfg.SecretKey, q, cfg.IndexingTimeout)
-	if err != nil {
-		return nil, err
+	slots := cfg.ProviderSlots
+	if slots == nil {
+		slots = make(chan struct{}, cfg.MaxThreads)
 	}
-	transferWorkers, verificationWorkers := workerCapacity(cfg.MaxThreads)
+	var locker oauth.TokenLocker
+	if q != nil {
+		locker = q
+	}
 	return &Processor{
-		db:                         database,
-		queue:                      q,
-		indexer:                    idx,
-		workerID:                   cfg.WorkerID,
-		secretKey:                  cfg.SecretKey,
-		maxThreads:                 cfg.MaxThreads,
-		transferWorkers:            transferWorkers,
-		verificationWorkers:        verificationWorkers,
-		migrationVerificationQueue: make(chan verificationWork, cfg.MaxThreads*2),
-		syncVerificationQueue:      make(chan verificationWork, cfg.MaxThreads*2),
-		providerSlots:              make(chan struct{}, cfg.MaxThreads),
-		notifyDSN:                  cfg.NotifyDSN,
-		listenForTasks:             queue.ListenForTasks,
+		db:              database,
+		queue:           q,
+		oauthRefresher:  oauth.NewJobTokenRefresher(database, cfg.SecretKey, locker),
+		workerID:        cfg.WorkerID,
+		secretKey:       cfg.SecretKey,
+		maxThreads:      cfg.MaxThreads,
+		transferWorkers: cfg.MaxThreads,
+		providerSlots:   slots,
+		notifyDSN:       cfg.NotifyDSN,
+		listenForTasks:  queue.ListenForTasks,
 	}, nil
+}
+
+func (p *Processor) tokenRefresher() *oauth.JobTokenRefresher {
+	if p.oauthRefresher != nil {
+		return p.oauthRefresher
+	}
+	var locker oauth.TokenLocker
+	if p.queue != nil {
+		locker = p.queue
+	}
+	return oauth.NewJobTokenRefresher(p.db, p.secretKey, locker)
 }
 
 func (p *Processor) acquireProviderSlot(ctx context.Context) bool {
@@ -416,68 +401,6 @@ func (p *Processor) pruneProviderPool(ctx context.Context, pool *providerPool) {
 			return false
 		}
 	})
-}
-
-// workerCapacity starts enough dequeue loops to use every configured provider
-// slot. Verification workers share those slots, so idle verification capacity
-// never reduces transfer throughput.
-func workerCapacity(maxThreads int) (transferWorkers, verificationWorkers int) {
-	if maxThreads < 1 {
-		maxThreads = 1
-	}
-	return maxThreads, min(4, maxThreads)
-}
-
-// dequeueVerificationWork alternates preference when both entity queues have
-// work. Separate queues prevent a long migration backlog from starving sync
-// passes whose coordinator is waiting in VERIFYING.
-func (p *Processor) dequeueVerificationWork(ctx context.Context, preferSync bool) (verificationWork, bool) {
-	preferred, alternate := p.migrationVerificationQueue, p.syncVerificationQueue
-	if preferSync {
-		preferred, alternate = alternate, preferred
-	}
-	select {
-	case work := <-preferred:
-		return work, true
-	default:
-	}
-	select {
-	case work := <-alternate:
-		return work, true
-	default:
-	}
-	select {
-	case <-ctx.Done():
-		return verificationWork{}, false
-	case work := <-preferred:
-		return work, true
-	case work := <-alternate:
-		return work, true
-	}
-}
-
-func (p *Processor) startVerificationDispatcher(ctx context.Context) {
-	for i := 0; i < p.verificationWorkers; i++ {
-		p.verificationWG.Add(1)
-		go func() {
-			defer p.verificationWG.Done()
-			preferSync := false
-			for {
-				work, ok := p.dequeueVerificationWork(ctx, preferSync)
-				if !ok {
-					return
-				}
-				preferSync = !preferSync
-				if !p.acquireProviderSlot(ctx) {
-					p.verifyingEntities.Delete(work.key)
-					return
-				}
-				work.run(ctx)
-				p.releaseProviderSlot()
-				p.verifyingEntities.Delete(work.key)
-			}
-		}()
-	}
 }
 
 // connLossEscalationThreshold is the number of consecutive connection-loss
@@ -580,46 +503,8 @@ func (p *Processor) clearConnLossTask(taskID string) {
 	p.connLossTaskAttempts.Delete(taskID)
 }
 
-// BackgroundLoop is a named long-running loop owned by the Processor but run
-// and supervised by the worker runtime, so every worker-owned goroutine shares
-// one cancellation lifecycle and is awaited before the process exits. A loop
-// must return only when its context is cancelled.
-type BackgroundLoop struct {
-	Name string
-	Run  func(ctx context.Context) error
-}
-
-// BackgroundLoops returns the schedulers, notifiers, and control-channel
-// subscribers that run alongside the transfer workers started by Start.
-func (p *Processor) BackgroundLoops() []BackgroundLoop {
-	loop := func(name string, run func(ctx context.Context)) BackgroundLoop {
-		return BackgroundLoop{Name: name, Run: func(ctx context.Context) error {
-			run(ctx)
-			return nil
-		}}
-	}
-	return []BackgroundLoop{
-		loop("worker_liveness", p.RunWorkerLiveness),
-		loop("abandoned_worker_cleanup", p.RunAbandonedWorkerCleanup),
-		loop("retry_scheduler", p.RunRetryScheduler),
-		loop("connection_recovery", p.awaitRecoveredIndexers(p.RunConnectionRecoveryScheduler)),
-		loop("orphaned_task_recovery", p.RunOrphanedRunningTasksRecovery),
-		loop("notifier", p.RunNotifier),
-		loop("progress_reconciler", p.RunProgressReconciler),
-		loop("checksum_verifier", p.RunChecksumVerifier),
-		loop("migration_cancel_events", func(ctx context.Context) {
-			p.queue.SubscribeToCancelEvents(ctx, p.handleMigrationCancelEvent)
-		}),
-		loop("sync_cancel_events", func(ctx context.Context) {
-			p.queue.SubscribeToSyncCancelEvents(ctx, p.handleSyncCancelEvent)
-		}),
-		loop("bandwidth_events", func(ctx context.Context) {
-			p.queue.SubscribeToBandwidthChanges(ctx, p.handleBandwidthEvent)
-		}),
-	}
-}
-
-func (p *Processor) handleMigrationCancelEvent(migrationID string) {
+// CancelMigration cancels active transfer streams belonging to migrationID.
+func (p *Processor) CancelMigration(migrationID string) {
 	processorLogf("[Worker %s] Received Cancel Event for Migration: %s\n", p.workerID, migrationID)
 	p.cancelActiveTasks("stream", func(info activeTaskInfo) bool { return info.migrationID == migrationID })
 }
@@ -636,53 +521,33 @@ func (p *Processor) cancelActiveTasks(kind string, match func(activeTaskInfo) bo
 	})
 }
 
-// Sync transfers have their own control channel because their lifecycle is
-// coordinated by the sync engine rather than the migration processor.
-func (p *Processor) handleSyncCancelEvent(event queue.SyncCancelEvent) {
-	processorLogf("[Worker %s] Received Cancel Event for Sync Job: %s generation %d\n", p.workerID, event.SyncJobID, event.PassGeneration)
+// CancelSyncJob cancels active sync transfer streams for syncJobID matching
+// either allGenerations or the specified passGeneration.
+func (p *Processor) CancelSyncJob(syncJobID string, passGeneration int, allGenerations bool) {
+	processorLogf("[Worker %s] Received Cancel Event for Sync Job: %s generation %d\n", p.workerID, syncJobID, passGeneration)
 	p.cancelActiveTasks("sync stream", func(info activeTaskInfo) bool {
-		return info.syncJobID == event.SyncJobID && (event.AllGenerations || info.syncGeneration == event.PassGeneration)
+		return info.syncJobID == syncJobID && (allGenerations || info.syncGeneration == passGeneration)
 	})
 }
 
-func (p *Processor) handleBandwidthEvent(event queue.BandwidthEvent) {
-	jobID := event.MigrationID
-	jobType := "migration"
-	if event.SyncJobID != "" {
-		jobID = event.SyncJobID
-		jobType = "sync job"
-	}
-	processorLogf("[Worker %s] Bandwidth change for %s %s: %d Mbps",
-		p.workerID, jobType, jobID, event.BandwidthLimitMbps)
+// SetBandwidthLimit updates the active throttler rate limit for jobID, if any.
+func (p *Processor) SetBandwidthLimit(jobID string, mbps int) {
 	if throttler, ok := p.throttlers.Load(jobID); ok {
-		throttler.(*throttle.MigrationThrottler).SetLimit(event.BandwidthLimitMbps)
-	}
-}
-
-// awaitRecoveredIndexers wraps the connection-recovery scheduler so indexers it
-// restarted share its lifetime: the loop returns only after they have stopped.
-func (p *Processor) awaitRecoveredIndexers(run func(ctx context.Context)) func(ctx context.Context) {
-	return func(ctx context.Context) {
-		run(ctx)
-		p.recoveredIndexers.Wait()
-	}
-}
-
-// RecoverStartupTasks requeues tasks this worker left behind before a restart.
-// The worker runtime calls it before starting any loop.
-func (p *Processor) RecoverStartupTasks(ctx context.Context) {
-	if err := p.queue.RecoverAbandonedTasks(ctx, p.db, p.workerID); err != nil {
-		processorLogf("[Worker %s] Error recovering abandoned tasks: %v\n", p.workerID, err)
+		throttler.(*throttle.MigrationThrottler).SetLimit(mbps)
 	}
 }
 
 // Start runs the worker dequeue loop and blocks until ctx is cancelled and all
-// in-flight tasks have finished. Background schedulers are not started here;
-// the worker runtime runs them from BackgroundLoops.
+// in-flight tasks have finished.
 func (p *Processor) Start(ctx context.Context) {
 	processorLogf("[Worker %s] Started and waiting for tasks with max %d threads...\n", p.workerID, p.maxThreads)
 
-	p.startVerificationDispatcher(ctx)
+	var throttleWG sync.WaitGroup
+	throttleWG.Add(1)
+	go func() {
+		defer throttleWG.Done()
+		p.runThrottlerCleanup(ctx)
+	}()
 
 	// Start a PostgreSQL LISTEN watcher so idle threads can be woken up
 	// immediately when new tasks are inserted (pg_notify 'task_available').
@@ -699,12 +564,79 @@ func (p *Processor) Start(ctx context.Context) {
 	}
 
 	p.runTransferWorkers(ctx, notifyTasksCh)
+	throttleWG.Wait()
 	// ctx is cancelled here; wait for the LISTEN goroutine to release its
 	// connection so no worker-owned goroutine outlives the drain.
 	if notifyTasksCh != nil {
 		for range notifyTasksCh {
 		}
 	}
+}
+
+func (p *Processor) runThrottlerCleanup(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if p.db != nil {
+				p.cleanupThrottlers()
+			}
+		}
+	}
+}
+
+func isTerminalStatus(status string) bool {
+	switch status {
+	case "COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED", "CANCELLED":
+		return true
+	}
+	return false
+}
+
+// shouldEvictThrottler decides whether a throttler entry may be dropped. The
+// throttlers map is shared by migrations and sync jobs, so a migration miss must
+// fall back to a sync-job lookup before the entry is considered orphaned. A
+// transient lookup error must never evict live throttler state.
+func shouldEvictThrottler(migStatus string, migErr error, lookupJob func() (string, error)) bool {
+	if migErr == nil {
+		return isTerminalStatus(migStatus)
+	}
+	if !errors.Is(migErr, sql.ErrNoRows) {
+		return false
+	}
+	jobStatus, jobErr := lookupJob()
+	if jobErr == nil {
+		return isTerminalStatus(jobStatus)
+	}
+	// Neither a migration nor a sync job: the owning entity was deleted.
+	return errors.Is(jobErr, sql.ErrNoRows)
+}
+
+func migStatusOrEmpty(mig *db.Migration, err error) string {
+	if err != nil || mig == nil {
+		return ""
+	}
+	return mig.Status
+}
+
+func (p *Processor) cleanupThrottlers() {
+	p.throttlers.Range(func(key, value interface{}) bool {
+		id := key.(string)
+		mig, err := db.GetMigration(p.db, id)
+		if shouldEvictThrottler(migStatusOrEmpty(mig, err), err, func() (string, error) {
+			job, jerr := db.GetSyncJob(p.db, id)
+			if jerr != nil {
+				return "", jerr
+			}
+			return job.Status, nil
+		}) {
+			p.throttlers.Delete(id)
+		}
+		return true
+	})
 }
 
 type atomicRenameChecker interface {
@@ -720,7 +652,7 @@ type fileRenamer interface {
 }
 
 type overwritePromoter interface {
-	fileExister
+	storage.FileExister
 	fileDeleter
 	fileRenamer
 }
@@ -833,12 +765,6 @@ func oauthAuthFailureRoleForProviders(sourceProvider, targetProvider, errText st
 	}
 }
 
-// oauthSyncAuthFailureRole remains as a small compatibility wrapper for the
-// focused role-selection tests; both lifecycle paths use the shared resolver.
-func oauthSyncAuthFailureRole(job *db.SyncJob, errText string) string {
-	return oauthAuthFailureRoleForProviders(job.SourceProvider, job.TargetProvider, errText)
-}
-
 // ProgressReader wraps io.Reader to notify bytes read
 type ProgressReader struct {
 	Reader       io.Reader
@@ -918,95 +844,6 @@ func shouldInvalidateProviderPool(err error) bool {
 	return strings.Contains(errText, "autherror") ||
 		strings.Contains(errText, "invalid credentials") ||
 		strings.Contains(errText, "invalid authentication credentials")
-}
-
-// ensureFreshOAuthToken checks whether a migration's OAuth access token is expired
-// (or within 2 minutes of expiry) and, if so, performs an inline token refresh before
-// the storage provider is constructed. The freshly decrypted access token is returned.
-// For non-OAuth providers (no refresh token stored) the original accessToken is returned
-// unchanged, making this a safe no-op for Nextcloud/WebDAV.
-func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration, role string, accessToken string) (string, error) {
-	return p.refreshOAuthTokenIfNeeded(ctx, mig, role, accessToken, false)
-}
-
-// refreshOAuthToken forces a refresh after an OAuth provider has returned 401,
-// even if the stored expiry timestamp still lies in the future.
-func (p *Processor) refreshOAuthToken(ctx context.Context, mig *db.Migration, role string) (string, error) {
-	return p.refreshOAuthTokenIfNeeded(ctx, mig, role, "", true)
-}
-
-func applyOAuthTokensToMigration(mig *db.Migration, role string, accessEnc string, refreshEnc sql.NullString, expiresAt sql.NullTime) {
-	if role == "source" {
-		mig.SourcePasswordEncrypted = accessEnc
-		mig.SourceRefreshTokenEncrypted = refreshEnc
-		mig.SourceTokenExpiresAt = expiresAt
-	} else {
-		mig.TargetPasswordEncrypted = accessEnc
-		mig.TargetRefreshTokenEncrypted = refreshEnc
-		mig.TargetTokenExpiresAt = expiresAt
-	}
-}
-
-func applyOAuthTokensToSyncJob(job *db.SyncJob, role string, accessEnc string, refreshEnc sql.NullString, expiresAt sql.NullTime) {
-	if role == "source" {
-		job.SourcePasswordEncrypted = accessEnc
-		job.SourceRefreshTokenEncrypted = refreshEnc
-		job.SourceTokenExpiresAt = expiresAt
-	} else {
-		job.TargetPasswordEncrypted = accessEnc
-		job.TargetRefreshTokenEncrypted = refreshEnc
-		job.TargetTokenExpiresAt = expiresAt
-	}
-}
-
-// RunCompletionNotifier and email reporting functions are located in notifier.go.
-
-// verifyTargetSize queries the target for existence and size, retrying on
-// transient errors (Nextcloud 502/503/423/timeout). A transient failure to
-// *query* verification must not be mistaken for a corrupt transfer, so we retry
-// before giving up. Returns the last result after the attempts.
-func verifyTargetSize(ctx context.Context, client fileExister, resourceType, path string) (exists bool, size int64, err error) {
-	return verifyTargetSizeByResourceID(ctx, client, resourceType, path, "")
-}
-
-func verifyTargetSizeByResourceID(ctx context.Context, client fileExister, resourceType, path, resourceID string) (exists bool, size int64, err error) {
-	verifier, hasResourceVerifier := client.(storage.TargetResourceVerifier)
-	for attempt := 0; attempt < 3; attempt++ {
-		if resourceID != "" && hasResourceVerifier {
-			exists, size, err = verifier.FileExistsByResourceID(ctx, resourceType, resourceID)
-		} else {
-			exists, size, err = client.FileExists(ctx, resourceType, path)
-		}
-		if err == nil {
-			return exists, size, nil
-		}
-		if attempt < 2 {
-			select {
-			case <-ctx.Done():
-				return exists, size, ctx.Err()
-			case <-time.After(2 * time.Second):
-			}
-		}
-	}
-	return exists, size, err
-}
-
-// isNonRetryableHashError reports whether a GetFileHash error (or nil error) indicates
-// that file hashes are permanently unsupported or unavailable for the file/provider,
-// meaning retries will not yield a hash and should be skipped immediately.
-func isNonRetryableHashError(err error) bool {
-	if err == nil {
-		return true
-	}
-	if errors.Is(err, storage.ErrHashNotSupported) || errors.Is(err, storage.ErrChecksumNotAvailable) {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "checksum not available") ||
-		strings.Contains(msg, "not supported") ||
-		strings.Contains(msg, "not implemented") ||
-		strings.Contains(msg, "is a directory") ||
-		strings.Contains(msg, "is a folder")
 }
 
 // isWebDAVSystemConflict returns true if err represents a WebDAV/SabreDAV server

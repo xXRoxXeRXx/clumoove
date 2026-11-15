@@ -298,3 +298,23 @@ func TestDisplayTaskName(t *testing.T) {
 		})
 	}
 }
+
+func TestTaskIsDirectory(t *testing.T) {
+	tests := []struct {
+		name string
+		task Task
+		want bool
+	}{
+		{name: "trailing slash", task: Task{FilePath: "/docs/"}, want: true},
+		{name: "mkdir action", task: Task{FilePath: "/docs", Metadata: json.RawMessage(`{"action":"mkdir"}`)}, want: true},
+		{name: "regular file", task: Task{FilePath: "/docs/file.txt", Metadata: json.RawMessage(`{"action":"upload"}`)}, want: false},
+		{name: "nil task", task: Task{}, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.task.IsDirectory(); got != tc.want {
+				t.Fatalf("IsDirectory() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

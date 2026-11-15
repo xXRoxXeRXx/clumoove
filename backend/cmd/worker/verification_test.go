@@ -1,4 +1,4 @@
-package processor
+package main
 
 import (
 	"bytes"
@@ -17,16 +17,7 @@ import (
 	"backend/internal/storage"
 )
 
-func TestFormatWorkerHashValueUsesQuickXorBase64(t *testing.T) {
-	h := storage.NewQuickXorHasher()
-	_, _ = h.Write([]byte("quickxor"))
-	if got, want := formatWorkerHashValue("QUICKXOR", h), base64.StdEncoding.EncodeToString(h.Sum(nil)); got != want {
-		t.Fatalf("formatWorkerHashValue() = %q, want %q", got, want)
-	}
-}
-
 type verifierProvider struct {
-	fakeProvider
 	hash             string
 	hashErr          error
 	exists           bool
@@ -75,7 +66,7 @@ func TestVerificationPassConnectsConstructedTargetProvider(t *testing.T) {
 		verificationMode: storage.VerificationSizeOnly,
 	}, connected: true}
 	verified := 0
-	(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+	(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 		EntityType: "Migration",
 		EntityID:   "connect-target",
 		Threads:    1,
@@ -98,93 +89,7 @@ func TestVerificationPassConnectsConstructedTargetProvider(t *testing.T) {
 		t.Fatalf("target Connect calls = %d, want 1", provider.connects)
 	}
 	if verified != 2 {
-		t.Fatalf("verified tasks = %d, want 2", verified)
-	}
-}
-
-func TestBestSourceHash(t *testing.T) {
-	cases := []struct {
-		name       string
-		workerHash sql.NullString
-		sourceHash sql.NullString
-		want       string
-	}{
-		{
-			name:       "prefer cryptographic source hash over worker hash",
-			workerHash: sql.NullString{String: "SHA1:abc123456789", Valid: true},
-			sourceHash: sql.NullString{String: "SHA1:def987654321", Valid: true},
-			want:       "SHA1:def987654321",
-		},
-		{
-			name:       "prefer cryptographic source hash if worker hash is etag",
-			workerHash: sql.NullString{String: "ETAG:\"etag123\"", Valid: true},
-			sourceHash: sql.NullString{String: "SHA256:fedcba9876543210", Valid: true},
-			want:       "SHA256:fedcba9876543210",
-		},
-		{
-			name:       "fallback to cryptographic source hash if worker hash is empty",
-			workerHash: sql.NullString{String: "", Valid: false},
-			sourceHash: sql.NullString{String: "MD5:0123456789abcdef", Valid: true},
-			want:       "MD5:0123456789abcdef",
-		},
-		{
-			name:       "prefer source etag if both are etags",
-			workerHash: sql.NullString{String: "ETAG:\"worker-etag\"", Valid: true},
-			sourceHash: sql.NullString{String: "ETAG:\"source-etag\"", Valid: true},
-			want:       "ETAG:\"source-etag\"",
-		},
-		{
-			name:       "fallback to source etag if worker hash is invalid",
-			workerHash: sql.NullString{String: "", Valid: false},
-			sourceHash: sql.NullString{String: "ETAG:\"source-etag\"", Valid: true},
-			want:       "ETAG:\"source-etag\"",
-		},
-		{
-			name:       "both empty",
-			workerHash: sql.NullString{String: "", Valid: false},
-			sourceHash: sql.NullString{String: "", Valid: false},
-			want:       "",
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			task := &db.Task{
-				WorkerHash: c.workerHash,
-				SourceHash: c.sourceHash,
-			}
-			got := bestSourceHash(task)
-			if got != c.want {
-				t.Errorf("bestSourceHash() = %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-
-func TestIsComparableHash(t *testing.T) {
-	tests := []struct {
-		algo string
-		want bool
-	}{
-		{"SHA1", true},
-		{"sha1", true},
-		{"SHA256", true},
-		{"MD5", true},
-		{"SHA512", true},
-		{"DROPBOX", true},
-		{"QUICKXOR", true},
-		{"ETAG", false},
-		{"ETAG_MATCH", false},
-		{"UNKNOWN", false},
-		{"", false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.algo, func(t *testing.T) {
-			if got := isComparableHash(tc.algo); got != tc.want {
-				t.Errorf("isComparableHash(%q) = %v, want %v", tc.algo, got, tc.want)
-			}
-		})
+		t.Fatalf("verified count = %d, want 2", verified)
 	}
 }
 
@@ -216,21 +121,18 @@ func TestIsNonRetryableHashError(t *testing.T) {
 	}
 }
 
-func TestWorkerCapacity(t *testing.T) {
+func TestVerificationWorkerCount(t *testing.T) {
 	for _, tc := range []struct {
-		maxThreads, transfers, verifiers int
+		maxThreads, want int
 	}{
-		{1, 1, 1},
-		{2, 2, 2},
-		{4, 4, 4},
-		{16, 16, 4},
+		{0, 1},
+		{1, 1},
+		{2, 2},
+		{4, 4},
+		{16, 4},
 	} {
-		transfers, verifiers := workerCapacity(tc.maxThreads)
-		if transfers != tc.transfers || verifiers != tc.verifiers {
-			t.Errorf("workerCapacity(%d) = (%d, %d), want (%d, %d)", tc.maxThreads, transfers, verifiers, tc.transfers, tc.verifiers)
-		}
-		if transfers != tc.maxThreads {
-			t.Errorf("workerCapacity(%d) must retain all transfer workers", tc.maxThreads)
+		if got := verificationWorkerCount(tc.maxThreads); got != tc.want {
+			t.Errorf("verificationWorkerCount(%d) = %d, want %d", tc.maxThreads, got, tc.want)
 		}
 	}
 }
@@ -238,8 +140,9 @@ func TestWorkerCapacity(t *testing.T) {
 func TestVerificationDispatcherDeduplicatesQueuedEntity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	p := &Processor{verificationWorkers: 1, migrationVerificationQueue: make(chan verificationWork, 2), syncVerificationQueue: make(chan verificationWork, 2), providerSlots: make(chan struct{}, 1)}
-	p.startVerificationDispatcher(ctx)
+	v := newChecksumVerifier(nil, "", 1, make(chan struct{}, 1), nil)
+	v.startDispatcher(ctx)
+
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var runs atomic.Int32
@@ -248,8 +151,8 @@ func TestVerificationDispatcherDeduplicatesQueuedEntity(t *testing.T) {
 		close(started)
 		<-release
 	}
-	p.scheduleVerification(ctx, "migration", "same", run)
-	p.scheduleVerification(ctx, "migration", "same", run)
+	v.schedule(ctx, "migration", "same", run)
+	v.schedule(ctx, "migration", "same", run)
 	select {
 	case <-started:
 	case <-time.After(time.Second):
@@ -257,7 +160,7 @@ func TestVerificationDispatcherDeduplicatesQueuedEntity(t *testing.T) {
 	}
 	close(release)
 	cancel()
-	p.verificationWG.Wait()
+	v.verificationWG.Wait()
 	if got := runs.Load(); got != 1 {
 		t.Fatalf("verification runs = %d, want 1", got)
 	}
@@ -266,12 +169,12 @@ func TestVerificationDispatcherDeduplicatesQueuedEntity(t *testing.T) {
 func TestVerificationDispatcherServesSyncWhileMigrationsAreQueued(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	p := &Processor{verificationWorkers: 1, migrationVerificationQueue: make(chan verificationWork, 2), syncVerificationQueue: make(chan verificationWork, 2), providerSlots: make(chan struct{}, 1)}
-	p.startVerificationDispatcher(ctx)
+	v := newChecksumVerifier(nil, "", 1, make(chan struct{}, 1), nil)
+	v.startDispatcher(ctx)
 
 	started := make(chan string, 3)
 	releaseFirstMigration := make(chan struct{})
-	p.scheduleVerification(ctx, "migration", "first", func(context.Context) {
+	v.schedule(ctx, "migration", "first", func(context.Context) {
 		started <- "migration:first"
 		<-releaseFirstMigration
 	})
@@ -280,8 +183,8 @@ func TestVerificationDispatcherServesSyncWhileMigrationsAreQueued(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("first migration verification did not start")
 	}
-	p.scheduleVerification(ctx, "migration", "second", func(context.Context) { started <- "migration:second" })
-	p.scheduleVerification(ctx, "sync", "waiting", func(context.Context) { started <- "sync:waiting" })
+	v.schedule(ctx, "migration", "second", func(context.Context) { started <- "migration:second" })
+	v.schedule(ctx, "sync", "waiting", func(context.Context) { started <- "sync:waiting" })
 	close(releaseFirstMigration)
 
 	select {
@@ -293,7 +196,59 @@ func TestVerificationDispatcherServesSyncWhileMigrationsAreQueued(t *testing.T) 
 		t.Fatal("sync verification was starved by queued migrations")
 	}
 	cancel()
-	p.verificationWG.Wait()
+	v.verificationWG.Wait()
+}
+
+func TestVerificationDispatcherAcquiresSharedProviderSlotAndDrainsOnCancel(t *testing.T) {
+	slots := make(chan struct{}, 1)
+	slots <- struct{}{} // hold the only shared provider slot
+
+	v := newChecksumVerifier(nil, "", 1, slots, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- v.Run(ctx)
+	}()
+
+	passStarted := make(chan struct{})
+	passRelease := make(chan struct{})
+	v.schedule(ctx, "migration", "slot-test", func(context.Context) {
+		close(passStarted)
+		<-passRelease
+	})
+
+	// While the shared slot is held externally, the verification pass cannot start.
+	select {
+	case <-passStarted:
+		t.Fatal("verification pass started before acquiring shared provider slot")
+	case <-time.After(40 * time.Millisecond):
+	}
+
+	// Releasing the external slot allows the verification pass to enter.
+	<-slots
+	select {
+	case <-passStarted:
+	case <-time.After(time.Second):
+		t.Fatal("verification pass did not start after shared provider slot was released")
+	}
+
+	// Cancelling the verifier ctx must wait until the in-flight pass returns.
+	cancel()
+	select {
+	case err := <-done:
+		t.Fatalf("Run returned before in-flight verification pass finished: %v", err)
+	case <-time.After(40 * time.Millisecond):
+	}
+
+	close(passRelease)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not drain after pass finished")
+	}
 }
 
 func TestVerificationPassMarksDirectoryAsVerified(t *testing.T) {
@@ -305,8 +260,7 @@ func TestVerificationPassMarksDirectoryAsVerified(t *testing.T) {
 	task := &db.Task{ID: "dir-task", ResourceType: "files", FilePath: "/bbb", FileSize: 0}
 	verified := false
 	mismatched := false
-	p := &Processor{}
-	p.runVerificationPass(context.Background(), verificationPassConfig{
+	(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 		EntityType:        "Migration",
 		EntityID:          "dir-test",
 		Threads:           1,
@@ -317,7 +271,7 @@ func TestVerificationPassMarksDirectoryAsVerified(t *testing.T) {
 			verified = true
 			return true, nil
 		},
-		MarkMismatch: func(_ context.Context, got *db.Task) (bool, error) {
+		MarkMismatch: func(_ context.Context, _ *db.Task) (bool, error) {
 			mismatched = true
 			return true, nil
 		},
@@ -354,8 +308,7 @@ func TestVerificationFallbackRejectsMissingOrTruncatedTarget(t *testing.T) {
 			task := &db.Task{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 10, SourceHash: tc.sourceHash}
 			verified := false
 			mismatched := false
-			p := &Processor{}
-			p.runVerificationPass(context.Background(), verificationPassConfig{
+			(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 				EntityType:        "Migration",
 				EntityID:          tc.name,
 				Threads:           1,
@@ -390,8 +343,7 @@ func TestVerificationSizeOnlySkipsHashQueryAndRejectsSizeMismatch(t *testing.T) 
 	}
 	task := &db.Task{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 10}
 	verified, mismatched := false, false
-	p := &Processor{}
-	p.runVerificationPass(context.Background(), verificationPassConfig{
+	(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 		EntityType: "Migration", EntityID: "size-only", Threads: 1, TargetClient: provider,
 		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
 		ReconcileProgress: func() error { return nil },
@@ -413,7 +365,7 @@ func TestVerificationNoneSkipsAllChecksAndLeavesTaskUnverified(t *testing.T) {
 	provider := &verifierProvider{verificationMode: storage.VerificationNone}
 	task := &db.Task{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 5}
 	verified, mismatched := false, false
-	(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+	(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 		EntityType: "Migration", EntityID: "none", Threads: 1, TargetClient: provider,
 		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
 		ReconcileProgress: func() error { return nil },
@@ -438,8 +390,7 @@ func TestVerificationDifferentAlgorithmsRequiresSizeAndPersistsTargetHash(t *tes
 		SourceHash:   sql.NullString{String: "SHA1:source-sha1", Valid: true},
 	}
 	var persistedTargetHash string
-	p := &Processor{}
-	p.runVerificationPass(context.Background(), verificationPassConfig{
+	(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 		EntityType:        "Migration",
 		EntityID:          "different-algorithms",
 		Threads:           1,
@@ -471,8 +422,7 @@ func TestVerificationFallbackLeavesTaskUnverifiedWhenSizeQueryFails(t *testing.T
 	task := &db.Task{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 10}
 	verified := false
 	mismatched := false
-	p := &Processor{}
-	p.runVerificationPass(context.Background(), verificationPassConfig{
+	(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 		EntityType:        "Migration",
 		EntityID:          "size-query-failure",
 		Threads:           1,
@@ -506,7 +456,7 @@ func TestVerificationRetriesNonImmichNotFoundHash(t *testing.T) {
 	}
 	task := &db.Task{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 10}
 	verified := false
-	(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+	(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 		EntityType: "Migration", EntityID: "retry-not-found", TargetProvider: "nextcloud", Threads: 1, TargetClient: provider,
 		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
 		ReconcileProgress: func() error { return nil },
@@ -527,7 +477,6 @@ func TestVerificationPassImmichTargetPathResolution(t *testing.T) {
 		exists: true,
 		size:   2000,
 	}
-	// Custom provider mock to track the exact path checked during verification
 	trackProvider := &pathTrackingVerifierProvider{
 		verifierProvider: provider,
 		onHash: func(p string) {
@@ -545,8 +494,7 @@ func TestVerificationPassImmichTargetPathResolution(t *testing.T) {
 	}
 
 	verified := false
-	p := &Processor{}
-	p.runVerificationPass(context.Background(), verificationPassConfig{
+	(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 		EntityType:        "Migration",
 		EntityID:          "immich-verification-test",
 		Threads:           1,
@@ -649,7 +597,7 @@ func TestVerificationPassImmichUsesPersistedTargetAssetID(t *testing.T) {
 				WorkerHash:   tc.workerHash,
 			}
 			verified, failed := false, false
-			(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+			(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 				EntityType: "Migration", EntityID: tc.name, TargetProvider: "immich", Threads: 1, TargetClient: provider,
 				GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
 				ReconcileProgress: func() error { return nil },
@@ -670,7 +618,7 @@ func TestVerificationPassImmichWithoutTargetAssetIDLeavesTaskUnverified(t *testi
 	provider := &verifierProvider{hash: "SHA1:target", exists: true, size: 10}
 	task := &db.Task{ID: "immich-task", ResourceType: "files", FilePath: "/photo.jpg", FileSize: 10, Metadata: []byte(`{"custom_props":{}}`)}
 	verified, failed := false, false
-	(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+	(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 		EntityType: "Migration", EntityID: "immich-missing-id", TargetProvider: "immich", Threads: 1, TargetClient: provider,
 		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
 		ReconcileProgress: func() error { return nil },
@@ -747,7 +695,7 @@ func TestVerificationPassAcceptsMinimalTargetAdapters(t *testing.T) {
 			mode: storage.VerificationCryptographicHash,
 		}
 		verified := false
-		(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+		(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 			EntityType: "Migration", EntityID: "mig-1", TargetProvider: "nextcloud", Threads: 1, TargetClient: target,
 			GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
 			ReconcileProgress: func() error { return nil },
@@ -768,7 +716,7 @@ func TestVerificationPassAcceptsMinimalTargetAdapters(t *testing.T) {
 			},
 		}
 		verified := false
-		(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+		(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 			EntityType: "Migration", EntityID: "mig-2", TargetProvider: "nextcloud", Threads: 1,
 			NewTargetProvider: func(context.Context, string, string, string, string) (connectableVerificationTarget, error) {
 				return target, nil
@@ -780,33 +728,6 @@ func TestVerificationPassAcceptsMinimalTargetAdapters(t *testing.T) {
 		})
 		if !verified || !target.connected || !target.closed {
 			t.Fatalf("verified=%v connected=%v closed=%v, want all true", verified, target.connected, target.closed)
-		}
-	})
-
-	t.Run("Processor.SetProviderFactory supplies verification target when NewTargetProvider is nil", func(t *testing.T) {
-		target := &minimalConnectableVerificationTarget{
-			minimalVerificationTarget: minimalVerificationTarget{
-				hash: "SHA1:deadbeef",
-				size: 12,
-				mode: storage.VerificationCryptographicHash,
-			},
-		}
-		factoryCalled := false
-		verified := false
-		p := &Processor{}
-		p.SetProviderFactory(func(context.Context, string, string, string, string, ...storage.ProviderOption) (PooledProvider, error) {
-			factoryCalled = true
-			return target, nil
-		})
-		p.runVerificationPass(context.Background(), verificationPassConfig{
-			EntityType: "Migration", EntityID: "mig-factory", TargetProvider: "nextcloud", Threads: 1,
-			GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
-			ReconcileProgress: func() error { return nil },
-			MarkVerified:      func(context.Context, *db.Task, string) (bool, error) { verified = true; return true, nil },
-			MarkMismatch:      func(context.Context, *db.Task) (bool, error) { t.Fatal("unexpected mismatch"); return true, nil },
-		})
-		if !factoryCalled || !verified || !target.connected || !target.closed {
-			t.Fatalf("factoryCalled=%v verified=%v connected=%v closed=%v, want all true", factoryCalled, verified, target.connected, target.closed)
 		}
 	})
 
@@ -827,7 +748,7 @@ func TestVerificationPassAcceptsMinimalTargetAdapters(t *testing.T) {
 			SourceHash:   sql.NullString{String: "SHA1:deadbeef", Valid: true},
 		}
 		verified := false
-		(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+		(&checksumVerifier{}).runPass(context.Background(), verificationPassConfig{
 			EntityType: "Migration", EntityID: "mig-resource-id", TargetProvider: "immich", Threads: 1, TargetClient: target,
 			GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
 			ReconcileProgress: func() error { return nil },

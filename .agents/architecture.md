@@ -7,20 +7,20 @@ Clumoove is a decoupled monorepo with separate entrypoints for the HTTP API gate
 - **API Gateway (`backend/cmd/api`)**: HTTP routing, JWT auth, connection testing, file browsing, manual/scheduled indexing triggers, SSE streams, OAuth callbacks & token rotation daemon, scheduler daemon, sync-pass coordination, backup/restore APIs, connection profiles, admin endpoints.
 - **Worker Engine (`backend/cmd/worker`)**: Task dequeuing via PostgreSQL (`SELECT … FOR UPDATE SKIP LOCKED`), streaming transfers, integrity verification, conflict resolution, retry/backoff, backup run execution, restore execution, repository maintenance checks.
 
-## Worker Background Schedulers
-Run by the worker runtime (`runWorker`) from `Processor.BackgroundLoops()`:
+## Worker Runtime Loops
+Run by the worker runtime (`cmd/worker/runtime.go`, `runWorker`) alongside `Processor.Start(ctx)`:
 
-| Scheduler | Interval | Responsibility |
+| Loop / Module | Interval | Responsibility |
 |-----------|----------|----------------|
-| `RunWorkerLiveness` | 10 s | Sends heartbeat, detects dead workers, and reclaims their orphaned tasks. |
-| `RunRetryScheduler` | 10 s | Re-enqueues failed tasks whose `next_retry_at <= NOW()`. |
-| `RunConnectionRecoveryScheduler` | 60 s | Probes up to 10 round-robin `PAUSED_CONNECTION_LOSS` migrations and 10 sync jobs (with failure backoff). Re-activates migrations; transitions sync jobs to `IDLE` making active schedule due (API scheduler exclusively starts sync passes). |
-| `RunOrphanedRunningTasksRecovery` | 10 min | Resets tasks stuck in `RUNNING` status for > 10 minutes. |
-| `RunNotifier` | Event / Loop | Drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord) and cleans expired account tokens. |
-| `RunProgressReconciler` | Periodic | Reconciles migration and sync task progress against database totals. |
-| `RunChecksumVerifier` | 10 s | Runs automated post-transfer verification for `VERIFYING` jobs; PostgreSQL lease/generation fencing ensures a single-writer verification pass. |
-| `RunAbandonedWorkerCleanup` | 60 s | Reclaims tasks of workers whose liveness lease expired. |
-| Redis subscribers | Event | Migration cancel, sync cancel and bandwidth-change control channels (`migration_cancel_events`, `sync_cancel_events`, `bandwidth_events`). |
+| `worker_liveness` (`cmd/worker/maintenance.go`) | 10 s | Sends heartbeat so other workers can detect dead instances. |
+| `retry_scheduler` (`cmd/worker/maintenance.go`) | 10 s | Re-enqueues failed tasks whose `next_retry_at <= NOW()`. |
+| `connection_recovery` (`cmd/worker/maintenance.go`) | 60 s | Probes up to 10 round-robin `PAUSED_CONNECTION_LOSS` migrations and 10 sync jobs (with failure backoff). Re-activates migrations; transitions sync jobs to `IDLE` making active schedule due (API scheduler exclusively starts sync passes). |
+| `orphaned_task_recovery` (`cmd/worker/maintenance.go`) | 5 min | Resets tasks stuck in `RUNNING` status for > 10 minutes. |
+| `notifier` (`cmd/worker/notifications.go`) | 10 s / 1 h | Drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord) and cleans expired account tokens. |
+| `progress_reconciler` (`cmd/worker/maintenance.go`) | 60 s / 5 min | Reconciles migration and sync task progress against database totals and repairs missing completion notifications. |
+| `checksum_verifier` (`cmd/worker/verification.go`) | 10 s | Schedules and runs post-transfer verification for `VERIFYING` jobs on shared `ProviderSlots`; PostgreSQL lease/generation fencing ensures a single-writer verification pass. |
+| `abandoned_worker_cleanup` (`cmd/worker/maintenance.go`) | 60 s | Claims expired dead-worker recovery locks and reclaims orphaned tasks. |
+| Control subscribers (`cmd/worker/control.go`) | Event | Migration cancel, sync cancel and bandwidth-change control channels (`migration_cancel_events`, `sync_cancel_events`, `bandwidth_events`). |
 
 ## Backup & Restore Engines
 - **Backup Coordinator (`backup.Coordinator` / `backuprepo.Repository`)**:
@@ -33,7 +33,7 @@ Run by the worker runtime (`runWorker`) from `Processor.BackgroundLoops()`:
   - Two-phase restore workflow:
     1. **Preview (`POST /api/backup/{id}/snapshots/{snapshotID}/restore/previews`)**: Mandatory read-only preview with conflict counters, fingerprinting, and sample conflict items.
     2. **Execution (`POST /api/restore/previews/{previewID}/consume`)**: Streams blocks (via Range reads or `MAX_RESTORE_PACK_READERS` bounded pack buffers) to destination with case-insensitive path reservations.
-- **Runtime lifecycle (`cmd/worker/runtime.go`, `runWorker`)**: One module owns every long-running worker loop: the backup and restore coordinators plus the processor schedulers, notifier, verifier and Redis control subscribers (`Processor.BackgroundLoops()`). `main.go` only loads config, builds dependencies, wires signals and calls `runWorker`, which recovers this worker's abandoned tasks, starts the loops and the processor, and releases the lease at the end. All loops share the worker context and run under `loopSupervisor`: a loop stops cleanly only by returning `context.Canceled` (or nil) after that context is cancelled; any other return, before or during shutdown, is a terminal failure. Backup and restore retry transient poll errors with backoff, so only cancellation normally ends them. On failure the supervisor logs `coordinator_stopped` (`error_kind=coordinator_failure`) and cancels the worker context (in-flight tasks drain, the liveness heartbeat stops). After the processor drain and every loop have stopped, the worker deletes its `worker:active:<id>` lease (safe: no task is running and the heartbeat cannot re-register it) so other workers can reclaim leftovers immediately, then exits 1 on failure (platform restarts it) or 0 on graceful shutdown.
+- **Runtime lifecycle (`cmd/worker/runtime.go`, `runWorker`)**: One module owns every long-running worker loop: the backup and restore coordinators plus the runtime-owned maintenance schedulers (`cmd/worker/maintenance.go`), notifier (`cmd/worker/notifications.go`), verifier (`cmd/worker/verification.go`), and Redis control subscribers (`cmd/worker/control.go`). `main.go` loads config, builds dependencies (including shared `ProviderSlots` and `Processor` which only exposes `Start(ctx)` to `runtime.go` plus transfer control methods for `control.go`), wires signals and calls `runWorker`, which runs startup abandoned-task recovery, starts all loops and the processor, and releases the lease at the end. All loops share the worker context and run under `loopSupervisor`: a loop stops cleanly only by returning `context.Canceled` (or nil) after that context is cancelled; any other return, before or during shutdown, is a terminal failure. Backup and restore retry transient poll errors with backoff, so only cancellation normally ends them. On failure the supervisor logs `coordinator_stopped` (`error_kind=coordinator_failure`) and cancels the worker context (in-flight tasks drain, the liveness heartbeat stops). After the processor drain and every loop have stopped, the worker deletes its `worker:active:<id>` lease (safe: no task is running and the heartbeat cannot re-register it) so other workers can reclaim leftovers immediately, then exits 1 on failure (platform restarts it) or 0 on graceful shutdown.
 - **Repository Checks (`backup_maintenance`, `backup_verify_targets`)**:
   - Supports `METADATA`, `BUDGETED` (64 MiB–1 TiB), or `FULL` checks with pack pins and live SSE progress.
 

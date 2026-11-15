@@ -98,7 +98,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 	if task.ResourceType == "files" && targetPathPersisted {
 		targetPath = task.ResolvedTargetPath
 	} else if task.ResourceType == "files" {
-		targetPath = effectiveTargetPath(task, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
+		targetPath = EffectiveTargetPath(task, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
 	}
 
 	// Synchronize parallel worker threads operating on the exact same target path
@@ -341,7 +341,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
 		task.TargetHash = sql.NullString{String: workerHash, Valid: true}
 
-		if isDirectoryTask(task) {
+		if task.IsDirectory() {
 			task.ChecksumVerified = true
 		} else if targetClient.VerificationMode() == storage.VerificationSizeOnly {
 			// Existence and size were already verified by runTransferCore immediately after upload.

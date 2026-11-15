@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"backend/internal/observability"
-	"backend/internal/processor"
 )
 
 // This file is the worker's single runtime module. It owns the cancellation
@@ -91,9 +90,12 @@ func (s *loopSupervisor) Err() error {
 	return s.failure
 }
 
-// backgroundLoop is a named background loop that must run until shutdown. It is
-// the same type the processor exposes, so no adapter is needed.
-type backgroundLoop = processor.BackgroundLoop
+// backgroundLoop is a named background loop that must run until shutdown. A
+// loop must return only when its context is cancelled.
+type backgroundLoop struct {
+	Name string
+	Run  func(ctx context.Context) error
+}
 
 // superviseLoops runs the background loops under supervision while serve (the
 // processor) blocks until ctx is cancelled and in-flight tasks finish. Once
@@ -129,15 +131,11 @@ const coordinatorPollInterval = time.Second
 // delay process exit.
 const leaseReleaseTimeout = 3 * time.Second
 
-// processorRuntime is the processor surface the runtime drives.
+// processorRuntime is the transfer execution surface the runtime drives.
 type processorRuntime interface {
-	// RecoverStartupTasks requeues tasks this worker left behind before a restart.
-	RecoverStartupTasks(ctx context.Context)
 	// Start runs the transfer workers and blocks until ctx is cancelled and
 	// in-flight tasks have finished.
 	Start(ctx context.Context)
-	// BackgroundLoops returns the schedulers and subscribers to supervise.
-	BackgroundLoops() []backgroundLoop
 }
 
 // coordinatorRunner is a backup or restore coordinator poll loop.
@@ -154,23 +152,27 @@ type leaseReleaser interface {
 // ordering: startup recovery, then every loop and the processor under one
 // context, then the lease release once all of them have stopped.
 type workerRuntime struct {
-	WorkerID  string
-	Processor processorRuntime
-	Backup    coordinatorRunner
-	Restore   coordinatorRunner
-	Leases    leaseReleaser
+	WorkerID       string
+	RecoverStartup func(ctx context.Context)
+	Processor      processorRuntime
+	Backup         coordinatorRunner
+	Restore        coordinatorRunner
+	Loops          []backgroundLoop
+	Leases         leaseReleaser
 }
 
 // runWorker runs the worker until ctx is cancelled or a loop fails, and
 // returns the process exit code (see superviseLoops).
 func runWorker(ctx context.Context, cancel context.CancelFunc, rt workerRuntime) int {
-	rt.Processor.RecoverStartupTasks(ctx)
+	if rt.RecoverStartup != nil {
+		rt.RecoverStartup(ctx)
+	}
 
 	loops := []backgroundLoop{
 		{Name: "backup", Run: func(ctx context.Context) error { return rt.Backup.Run(ctx, coordinatorPollInterval) }},
 		{Name: "restore", Run: func(ctx context.Context) error { return rt.Restore.Run(ctx, coordinatorPollInterval) }},
 	}
-	loops = append(loops, rt.Processor.BackgroundLoops()...)
+	loops = append(loops, rt.Loops...)
 
 	return superviseLoops(ctx, cancel, rt.Processor.Start, func() {
 		releaseCtx, cancelRelease := context.WithTimeout(context.Background(), leaseReleaseTimeout)

@@ -158,22 +158,23 @@ Cloud services frequently suffer connection fluctuations, so the backend is buil
 
 - **PostgreSQL-native queue (at-least-once):** Dequeue is done directly in PostgreSQL with
   `SELECT … FOR UPDATE SKIP LOCKED`. A task is atomically moved into `RUNNING`. If a worker crashes,
-  `RunWorkerLiveness` resets its orphaned `RUNNING` tasks back to `PENDING` on restart.
+  startup abandoned-task recovery (`cmd/worker/maintenance.go`) resets its orphaned `RUNNING` tasks back to `PENDING` on restart.
 - **LISTEN/NOTIFY wake-up with polling fallback:** Inserting `PENDING` tasks emits PostgreSQL
   `NOTIFY task_available`, which wakes idle workers through a dedicated `LISTEN` connection. This reduces
   normal enqueue latency without changing the SQL queue semantics; workers still poll every five seconds
   as a fallback (every two seconds when `LISTEN` is unavailable).
-- **Worker liveness & distributed recovery:** Each worker periodically reports its heartbeat via Redis.
-  A scheduler (`RunWorkerLiveness`) detects dead workers and atomically claims their recovery lock via
+- **Worker liveness & distributed recovery:** Each worker periodically reports its heartbeat via Redis
+  (`worker_liveness` in `cmd/worker/maintenance.go`). The abandoned-worker cleanup loop detects dead workers
+  and atomically claims their recovery lock via
   Redis `SET NX`, preventing duplicate recovery across instances.
 - **Exponential backoff:** On transfer failure the worker re-schedules the task with increasing wait
   ($10 \times 3^{\text{attempt}}$ seconds → 10 s, 30 s, 90 s, max 3 attempts). Permanent errors (e.g.
   invalid OAuth token) skip retry immediately.
 - **Connection-loss auto-pause (`PAUSED_CONNECTION_LOSS`):** If a service stays offline, the migration
-  self-pauses (`RunConnectionRecoveryScheduler`). The worker scheduler periodically checks whether servers are
+  self-pauses. The connection-recovery loop (`cmd/worker/maintenance.go`) periodically checks whether servers are
   back, then resumes migration queues from where they stopped. For sync jobs it atomically returns the job to
   `IDLE` and sets the active schedule's `next_run_at` to `NOW()`; only the API scheduler starts the fresh pass.
-- **Orphaned-task recovery:** `RunOrphanedRunningTasksRecovery` detects tasks stuck in `RUNNING` for too
+- **Orphaned-task recovery:** The orphaned-task recovery loop (`cmd/worker/maintenance.go`) detects tasks stuck in `RUNNING` for too
   long (> 10 min) and resets them to `PENDING`.
 - **Retry-failed & reindex:** `POST /api/migration/{id}/retry-failed` re-enqueues failed tasks;
   `POST /api/migration/{id}/reindex` re-runs the indexing phase for a `FAILED` migration (e.g. after a
@@ -281,7 +282,7 @@ clumoove/
 │       ├── email/           # SMTP sending
 │       ├── indexer/         # BFS indexing
 │       ├── oauth/           # OAuth2 token refresh
-│       ├── processor/       # worker liveness, retry, recovery, transfer loop
+│       ├── processor/       # transfer loop, conflict resolution, inline verification, controls
 │       ├── queue/           # PostgreSQL queue, Redis locks/PubSub
 │       ├── restore/         # Two-phase restore preview and run executor
 │       ├── sanitize/        # filename sanitization, collision resolution

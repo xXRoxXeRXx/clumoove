@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"sort"
 	"testing"
 	"time"
 
@@ -111,8 +112,48 @@ func TestWorkerConfigProcessorConfigCarriesExplicitSettings(t *testing.T) {
 		t.Fatalf("loadWorkerConfig() error = %v", err)
 	}
 	got := config.processorConfig("worker-1")
-	if got.WorkerID != "worker-1" || got.SecretKey != "encryption-secret" || got.MaxThreads != 7 || got.NotifyDSN != "postgres://db.example/clumoove?sslmode=require" || got.IndexingTimeout != 9*time.Minute {
+	if got.WorkerID != "worker-1" || got.SecretKey != "encryption-secret" || got.MaxThreads != 7 || got.NotifyDSN != "postgres://db.example/clumoove?sslmode=require" {
 		t.Fatalf("processorConfig() = %#v", got)
+	}
+}
+
+func TestWorkerBackgroundLoopsIncludeEveryRuntimeLoop(t *testing.T) {
+	loops := workerBackgroundLoops(
+		"worker-1",
+		&stubControlSubscriber{},
+		&stubTransferControl{},
+		newWorkerMaintenance(nil, nil, nil, "worker-1", "encryption-secret"),
+		newNotifier(nil, "encryption-secret"),
+		newChecksumVerifier(nil, "encryption-secret", 2, make(chan struct{}, 2), nil),
+	)
+	var names []string
+	for _, loop := range loops {
+		if loop.Run == nil {
+			t.Fatalf("loop %q has nil Run", loop.Name)
+		}
+		names = append(names, loop.Name)
+	}
+	sort.Strings(names)
+	want := []string{
+		"abandoned_worker_cleanup",
+		"bandwidth_events",
+		"checksum_verifier",
+		"connection_recovery",
+		"migration_cancel_events",
+		"notifier",
+		"orphaned_task_recovery",
+		"progress_reconciler",
+		"retry_scheduler",
+		"sync_cancel_events",
+		"worker_liveness",
+	}
+	if len(names) != len(want) {
+		t.Fatalf("loop names = %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("loop names = %v, want %v", names, want)
+		}
 	}
 }
 

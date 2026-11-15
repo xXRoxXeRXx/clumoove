@@ -255,17 +255,14 @@ func (l *eventLog) snapshot() []string {
 type fakeProcessor struct {
 	log     *eventLog
 	started chan struct{}
-	loops   []backgroundLoop
 }
 
-func (f *fakeProcessor) RecoverStartupTasks(context.Context) { f.log.record("recovered") }
 func (f *fakeProcessor) Start(ctx context.Context) {
 	f.log.record("processor-started")
 	close(f.started)
 	<-ctx.Done()
 	f.log.record("processor-stopped")
 }
-func (f *fakeProcessor) BackgroundLoops() []backgroundLoop { return f.loops }
 
 type fakeCoordinator struct {
 	name    string
@@ -304,11 +301,13 @@ func newFakeRuntime(log *eventLog, leaseErr error) (workerRuntime, []chan struct
 		return ctx.Err()
 	}}
 	return workerRuntime{
-		WorkerID:  "worker-1",
-		Processor: &fakeProcessor{log: log, started: processorStarted, loops: []backgroundLoop{scheduler}},
-		Backup:    &fakeCoordinator{name: "backup", log: log, started: backupStarted},
-		Restore:   &fakeCoordinator{name: "restore", log: log, started: restoreStarted},
-		Leases:    &fakeLeases{log: log, err: leaseErr},
+		WorkerID:       "worker-1",
+		RecoverStartup: func(context.Context) { log.record("recovered") },
+		Processor:      &fakeProcessor{log: log, started: processorStarted},
+		Backup:         &fakeCoordinator{name: "backup", log: log, started: backupStarted},
+		Restore:        &fakeCoordinator{name: "restore", log: log, started: restoreStarted},
+		Loops:          []backgroundLoop{scheduler},
+		Leases:         &fakeLeases{log: log, err: leaseErr},
 	}, []chan struct{}{processorStarted, backupStarted, restoreStarted, schedulerStarted}
 }
 

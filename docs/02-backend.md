@@ -43,11 +43,11 @@ Key server struct fields: `db`, `queue`, `indexer`, `encryptionKey`, `jwtSecret`
 Responsibilities:
 
 - Initializes the same DB and Redis connections.
-- Builds a `processor.Processor` and the backup and restore coordinators, then hands them to the
-  runtime module (`cmd/worker/runtime.go`, `runWorker`).
-- The runtime runs `proc.Start(ctx)` (transfer workers and verification dispatcher) together with every
-  background loop: the coordinators and `Processor.BackgroundLoops()` (schedulers, notifier, verifier,
-  control-channel subscribers) under one shared context.
+- Builds a `processor.Processor`, backup and restore coordinators, and the runtime-owned maintenance,
+  notification, verification, and control modules, then hands them to the runtime module (`cmd/worker/runtime.go`, `runWorker`).
+- The runtime runs `proc.Start(ctx)` (transfer workers and periodic throttler pruning) together with every
+  background loop (coordinators, maintenance schedulers, notifier, checksum verifier, and control-channel
+  subscribers) under one shared context.
 - On `SIGINT`/`SIGTERM`, cancels the shared context. `runWorker` waits for the processor drain and every
   loop to stop, then releases the worker lease; a loop that stops early is a terminal failure (exit 1).
 - Worker ID format: `worker-<hostname>-<pid>`.
@@ -72,7 +72,7 @@ Responsibilities:
 | `internal/notify` | Validation and delivery for email, Gotify, ntfy, Telegram, and Discord notification channels. |
 | `internal/oauth` | OAuth2 token refresh for Dropbox/Google/OneDrive/HiDrive; `Configure`/`NewDBLoader` installs a DB-backed credential loader with a 30s ciphertext cache; secrets are decrypted only at token-request time. |
 | `internal/observability` | Structured JSON logging, request IDs, and privacy-preserving redaction. |
-| `internal/processor` | The worker loop, transfer logic, conflict resolution, hash verification, retry/backoff, liveness & recovery schedulers, completion notifier. |
+| `internal/processor` | Transfer execution loop, conflict resolution, inline hash verification, throttling, and cancellation/bandwidth controls. |
 | `internal/queue` | PostgreSQL dequeue (`DequeueSQL`), Redis locks, Pub/Sub for cancel/bandwidth, liveness tracking. |
 | `internal/restore` | Two-phase restore coordinator (read-only conflict preview + execute restore runs). |
 | `internal/sanitize` | Filename sanitization + case-collision detection/resolution for target providers. |
@@ -182,15 +182,12 @@ Redis is used for:
 
 ---
 
-## 5. Processor (`internal/processor`)
+## 5. Processor (`internal/processor`) & Worker Runtime Loops (`cmd/worker`)
 
-Before any loop starts, the worker runtime calls `Processor.RecoverStartupTasks(ctx)` to requeue tasks this
+Before any loop starts, the worker runtime runs `workerMaintenance.RecoverStartupTasks(ctx)` (`cmd/worker/maintenance.go`) to requeue tasks this
 worker left behind before a restart.
 
-`Processor.BackgroundLoops()` returns the loops the worker runtime (`cmd/worker/runtime.go`) runs and
-supervises alongside the processor: `RunWorkerLiveness`, `RunAbandonedWorkerCleanup`, `RunRetryScheduler`,
-`RunConnectionRecoveryScheduler`, `RunOrphanedRunningTasksRecovery`, `RunNotifier`, `RunProgressReconciler`,
-`RunChecksumVerifier`, and the cancel/sync-cancel/bandwidth Redis subscribers.
+`Processor` owns transfer execution (`Start(ctx)`), stream cancellation (`CancelMigration`, `CancelSyncJob`), and live bandwidth limiting (`SetBandwidthLimit`) plus throttler cleanup. The surrounding background loops live in `cmd/worker/` and are supervised by `cmd/worker/runtime.go` alongside the processor: `worker_liveness`, `abandoned_worker_cleanup`, `retry_scheduler`, `connection_recovery`, `orphaned_task_recovery`, `progress_reconciler` (`cmd/worker/maintenance.go`), `notifier` (`cmd/worker/notifications.go`), `checksum_verifier` (`cmd/worker/verification.go`), and the cancel/sync-cancel/bandwidth Redis subscribers (`cmd/worker/control.go`).
 
 1. Schedulers:
    On recovered sync connectivity, the worker atomically moves the job from
@@ -202,11 +199,11 @@ supervises alongside the processor: `RunWorkerLiveness`, `RunAbandonedWorkerClea
 2. Subscribers handle cancel & bandwidth events (cancel invokes `activeTaskInfo.cancel()`; bandwidth updates
    the per-migration or per-sync-job throttler).
 
-`Processor.Start(ctx)` blocks until ctx is cancelled and in-flight tasks finish:
+`Processor.Start(ctx)` blocks until `ctx` is cancelled and in-flight tasks finish:
 
-1. Starts the verification dispatcher and the `LISTEN task_available` watcher (awaited on exit).
+1. Starts the throttler cleanup loop and the `LISTEN task_available` watcher (both awaited on exit).
 2. Spawns `maxThreads` worker goroutines (default 16, range 1–256, set by `MAX_THREADS` and validated at startup) that loop over
-   `DequeueSQL` and call `processTask`.
+   `DequeueSQL` and execute claimed migration/sync tasks.
 
 ### Transfer loop (`processTask`)
 
@@ -235,10 +232,8 @@ For each task:
   target's server-side hash.
   The target hash is queried after upload (retried 3× against transient
   Nextcloud errors).
-- When hashes can't be compared (algorithm mismatch, WebDAV, dynamic sizes), the system falls back to
-  **size comparison**; a failed *size query* is treated as success because the chunked-upload commit
-  already verified size. A source-hash mismatch with a verified target size is also accepted (some
-  providers report unreliable legacy checksums). This avoids false "corrupted" verdicts.
+- When hashes can't be compared (algorithm mismatch, WebDAV, missing target hash), the verifier falls back to
+  **size comparison** (`storage.VerifyTargetSizeByResourceID`); transient size-query failures leave the task unverified for retry, while a missing target or size mismatch marks the task `FAILED` for re-copy.
 - The worker verifies `VERIFYING` sync passes and refreshes an expiring OAuth target token before
   constructing its target provider. The sync engine is the sole owner of final run statistics,
   `sync_state`, and the transition back to `IDLE`; after its two-minute verification deadline it
@@ -260,7 +255,7 @@ For each task:
 - **Permanent errors** (Google export limits, not-found, etc.) → `FAILED` immediately (no retry).
 - **Transient** → exponential backoff `10, 30, 90`s, max 3 attempts; `FAILED` after exhaustion.
 
-`RunNotifier` drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord), retries each channel independently, and cleans expired reset/email-change tokens and throttlers. When an instance mailer exists, completion email is enabled by default unless a user has explicitly saved an email preference (including an opt-out). Email deliveries do not snapshot SMTP credentials: the worker loads the current instance mailer immediately before sending. The legacy `email_sent` column remains for compatibility; it no longer drives delivery. It selects the recipient's persisted `users.language` value for every channel.
+The worker notifier (`cmd/worker/notifications.go`) drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord), retries each channel independently, and cleans expired reset/email-change tokens (while `Processor` prunes terminal throttlers on its own loop). When an instance mailer exists, completion email is enabled by default unless a user has explicitly saved an email preference (including an opt-out). Email deliveries do not snapshot SMTP credentials: the worker loads the current instance mailer immediately before sending. The legacy `email_sent` column remains for compatibility; it no longer drives delivery. It selects the recipient's persisted `users.language` value for every channel.
 
 ### Restore and repository verification
 

@@ -39,6 +39,26 @@ type Task struct {
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
+// IsDirectory reports whether the task represents a directory entry rather than
+// a file transfer.
+func (t *Task) IsDirectory() bool {
+	if t == nil {
+		return false
+	}
+	if strings.HasSuffix(t.FilePath, "/") {
+		return true
+	}
+	if len(t.Metadata) > 0 {
+		var meta struct {
+			Action string `json:"action"`
+		}
+		if err := json.Unmarshal(t.Metadata, &meta); err == nil {
+			return meta.Action == "mkdir"
+		}
+	}
+	return false
+}
+
 type TaskInput struct {
 	ResourceType string
 	FilePath     string

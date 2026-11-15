@@ -35,7 +35,7 @@ type syncTransferTarget interface {
 	CreateParentDirectories(ctx context.Context, resourceType, path string) error
 	overwritePromoter
 	transferTarget
-	fileHasher
+	storage.FileHasher
 	atomicRenameChecker
 	VerificationMode() storage.VerificationMode
 }
@@ -106,12 +106,12 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		return fmt.Errorf("failed to decrypt target password: %w", err)
 	}
 
-	sourceProviderPass, err := p.ensureFreshSyncOAuthToken(ctx, job, "source", sourcePass)
+	sourceProviderPass, err := p.tokenRefresher().EnsureFreshSyncToken(ctx, job, "source", sourcePass)
 	if err != nil {
 		return fmt.Errorf("failed to refresh source OAuth token: %w", err)
 	}
 
-	targetProviderPass, err := p.ensureFreshSyncOAuthToken(ctx, job, "target", targetPass)
+	targetProviderPass, err := p.tokenRefresher().EnsureFreshSyncToken(ctx, job, "target", targetPass)
 	if err != nil {
 		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
 	}
@@ -534,7 +534,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	}
 
 	if task.ResourceType == "files" {
-		exists, targetSize, err := verifyTargetSize(ctx, tgtClient, task.ResourceType, tgtPath)
+		exists, targetSize, err := storage.VerifyTargetSizeByResourceID(ctx, tgtClient, task.ResourceType, tgtPath, "")
 		if err != nil {
 			return fmt.Errorf("failed to verify target size: %w", err)
 		}
@@ -560,7 +560,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	task.Status = "COMPLETED"
 	task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
 	task.TargetHash = sql.NullString{String: workerHash, Valid: true}
-	if task.ResourceType != "files" || isDirectoryTask(task) {
+	if task.ResourceType != "files" || task.IsDirectory() {
 		task.ChecksumVerified = true
 	} else if tgtClient.VerificationMode() == storage.VerificationSizeOnly {
 		// Size was already verified by verifyTargetSize above.
@@ -622,7 +622,6 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		_ = db.UpdateSyncJobStatusForGeneration(p.db, payload.SyncJobID, task.PassGeneration, "PAUSED_CONNECTION_LOSS", nil)
 		p.clearConnLoss(payload.SyncJobID)
 		p.clearConnLossTask(task.ID)
-		p.recoveryAttempts.Delete(recoveryAttemptKey(true, payload.SyncJobID))
 
 		task.Status = "PENDING"
 		if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
@@ -640,7 +639,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 
 	if isAuthError {
 		if role := oauthAuthFailureRoleForProviders(job.SourceProvider, job.TargetProvider, errStr); role != "" && task.Attempts <= 3 {
-			if _, refreshErr := p.refreshSyncOAuthToken(ctx, job, role); refreshErr == nil {
+			if _, refreshErr := p.tokenRefresher().ForceRefreshSyncToken(ctx, job, role); refreshErr == nil {
 				backoff := retryBackoff(task.Attempts)
 				task.Status = "FAILED"
 				task.ErrorMessage = sql.NullString{String: "OAuth access token rejected; refreshed token scheduled for retry", Valid: true}
@@ -660,7 +659,6 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		_ = db.UpdateSyncJobStatusForGeneration(p.db, payload.SyncJobID, task.PassGeneration, "FAILED", &authErrMsg)
 		p.clearConnLoss(payload.SyncJobID)
 		p.clearConnLossTask(payload.TaskID)
-		p.recoveryAttempts.Delete(recoveryAttemptKey(true, payload.SyncJobID))
 
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
@@ -697,116 +695,5 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 			return
 		}
 		p.clearConnLossTask(task.ID)
-	}
-}
-
-const maxSyncRecoveryProbesPerTick = 10
-
-type syncRecoveryCandidate struct {
-	id, userID, sourceURL, sourceUsername, sourcePassword, targetURL, targetUsername, targetPassword, sourceProvider, targetProvider string
-}
-
-// recoverPausedSyncJobs checks connection-loss paused sync jobs and restores connection.
-func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
-	query := `
-		SELECT id, user_id, source_url, source_username, source_password_encrypted,
-		       target_url, target_username, target_password_encrypted,
-		       source_provider, target_provider
-		FROM sync_jobs
-		WHERE status = 'PAUSED_CONNECTION_LOSS'
-		ORDER BY (id::text <= $1), id
-		LIMIT $2
-	`
-	rows, err := p.db.QueryContext(ctx, query, p.recoveryCursor(true), recoveryScanWindow)
-	if err != nil {
-		return
-	}
-	var candidates []syncRecoveryCandidate
-	for rows.Next() {
-		var candidate syncRecoveryCandidate
-		if err := rows.Scan(&candidate.id, &candidate.userID, &candidate.sourceURL, &candidate.sourceUsername, &candidate.sourcePassword, &candidate.targetURL, &candidate.targetUsername, &candidate.targetPassword, &candidate.sourceProvider, &candidate.targetProvider); err != nil {
-			continue
-		}
-		candidates = append(candidates, candidate)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		processorLogf("[RecoveryScheduler] sync rows error: %v\n", err)
-		return
-	}
-	if err := rows.Close(); err != nil {
-		processorLogf("[RecoveryScheduler] close sync rows: %v\n", err)
-		return
-	}
-
-	probes := 0
-	lastExamined := ""
-	for _, candidate := range candidates {
-		if !examineRecoveryCandidate(&lastExamined, probes, maxSyncRecoveryProbesPerTick, candidate.id) {
-			break
-		}
-
-		id, userID, sURL, sUser, sPassEnc := candidate.id, candidate.userID, candidate.sourceURL, candidate.sourceUsername, candidate.sourcePassword
-		tURL, tUser, tPassEnc, sProv, tProv := candidate.targetURL, candidate.targetUsername, candidate.targetPassword, candidate.sourceProvider, candidate.targetProvider
-
-		var ra recoveryState
-		if v, ok := p.recoveryAttempts.Load(recoveryAttemptKey(true, id)); ok {
-			ra = v.(recoveryState)
-		}
-		if !shouldProbeRecovery(ra, time.Now()) {
-			continue
-		}
-		probes++
-
-		sPass, err := crypto.DecryptWithDomain(sPassEnc, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(sProv)))
-		if err != nil {
-			p.recordRecoveryFailure(true, id, ra.attempts)
-			continue
-		}
-		tPass, err := crypto.DecryptWithDomain(tPassEnc, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(tProv)))
-		if err != nil {
-			p.recordRecoveryFailure(true, id, ra.attempts)
-			continue
-		}
-
-		userCtx := storage.WithLocalUserScope(ctx, userID)
-		sClient, err := storage.NewProvider(userCtx, sProv, sURL, sUser, sPass)
-		if err != nil {
-			p.recordRecoveryFailure(true, id, ra.attempts)
-			continue
-		}
-		tClient, err := storage.NewProvider(userCtx, tProv, tURL, tUser, tPass)
-		if err != nil {
-			sClient.Close()
-			p.recordRecoveryFailure(true, id, ra.attempts)
-			continue
-		}
-
-		connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second)
-		sOK, _ := sClient.Connect(connCtx)
-		tOK, _ := tClient.Connect(connCtx)
-		connCancel()
-		sClient.Close()
-		tClient.Close()
-
-		if sOK && tOK {
-			// Workers only release the job. The API scheduler is the sole owner of
-			// sync-pass coordinators, avoiding one engine per worker and duplicate
-			// recovery passes across workers/API replicas.
-			recovered, recoverErr := db.RecoverConnectionLostSyncJob(p.db, ctx, id)
-			if recoverErr != nil {
-				processorLogf("[RecoveryScheduler] Error recovering sync job %s: %v\n", id, recoverErr)
-				continue
-			}
-			if recovered {
-				processorLogf("[RecoveryScheduler] Connection restored for sync job %s; scheduled API retry\n", id)
-			}
-			p.recoveryAttempts.Delete(recoveryAttemptKey(true, id))
-		} else {
-			p.recordRecoveryFailure(true, id, ra.attempts)
-		}
-	}
-	if lastExamined != "" {
-		p.setRecoveryCursor(true, lastExamined)
 	}
 }

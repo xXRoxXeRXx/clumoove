@@ -113,7 +113,6 @@ func (p *Processor) handleMigrationConnectionLoss(ctx context.Context, payload *
 	}
 	p.clearConnLoss(payload.MigrationID)
 	p.clearConnLossTask(task.ID)
-	p.recoveryAttempts.Delete(recoveryAttemptKey(false, payload.MigrationID))
 	task.Status = "PENDING"
 	if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
 		processorLogf("[Worker %s] Failed to requeue task %s after pausing migration: %v", p.workerID, task.ID, err)
@@ -123,7 +122,7 @@ func (p *Processor) handleMigrationConnectionLoss(ctx context.Context, payload *
 
 func (p *Processor) handleMigrationAuthenticationFailure(ctx context.Context, payload *queue.Payload, task *db.Task, mig *db.Migration, errStr string) {
 	if role := oauthAuthFailureRole(mig, errStr); role != "" && task.Attempts <= 3 {
-		_, refreshErr := p.refreshOAuthToken(ctx, mig, role)
+		_, refreshErr := p.tokenRefresher().ForceRefreshMigrationToken(ctx, mig, role)
 		if refreshErr == nil {
 			backoff := retryBackoff(task.Attempts)
 			task.Status = "FAILED"
@@ -141,7 +140,6 @@ func (p *Processor) handleMigrationAuthenticationFailure(ctx context.Context, pa
 	finalized, finalizeErr := db.FailMigrationForAuthentication(p.db, ctx, task, "Authentication failed — please check your credentials and start a new migration")
 	p.clearConnLoss(payload.MigrationID)
 	p.clearConnLossTask(payload.TaskID)
-	p.recoveryAttempts.Delete(recoveryAttemptKey(false, payload.MigrationID))
 	if finalizeErr != nil || !finalized {
 		if finalizeErr != nil {
 			processorLogf("[Worker %s] atomically finalizing auth failure for migration %s: %v\n", p.workerID, payload.MigrationID, finalizeErr)

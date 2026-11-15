@@ -133,35 +133,6 @@ func TestTransferHashersHandleKoofrMixedAlgorithms(t *testing.T) {
 	}
 }
 
-func TestRecoveryBackoffAndProbeEligibility(t *testing.T) {
-	now := time.Now()
-	cases := []struct {
-		attempts int
-		age      time.Duration
-		want     bool
-	}{
-		{0, 0, true}, {1, 59 * time.Second, false}, {1, time.Minute, true},
-		{2, 4*time.Minute + 59*time.Second, false}, {2, 5 * time.Minute, true},
-	}
-	for _, tc := range cases {
-		if got := shouldProbeRecovery(recoveryState{attempts: tc.attempts, lastAttempt: now.Add(-tc.age)}, now); got != tc.want {
-			t.Errorf("shouldProbeRecovery(attempts=%d, age=%s) = %v, want %v", tc.attempts, tc.age, got, tc.want)
-		}
-	}
-}
-
-func TestRecoveryCursorKeepsMigrationAndSyncQueuesIndependent(t *testing.T) {
-	p := &Processor{}
-	p.setRecoveryCursor(false, "migration-1")
-	p.setRecoveryCursor(true, "sync-1")
-	if got := p.recoveryCursor(false); got != "migration-1" {
-		t.Fatalf("migration recovery cursor = %q", got)
-	}
-	if got := p.recoveryCursor(true); got != "sync-1" {
-		t.Fatalf("sync recovery cursor = %q", got)
-	}
-}
-
 var _ transferSource = (*memoryTransferProvider)(nil)
 var _ transferTarget = (*memoryTransferProvider)(nil)
 var _ transferSource = (storage.StorageProvider)(nil)

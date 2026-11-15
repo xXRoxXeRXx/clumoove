@@ -15,6 +15,7 @@ import (
 	"backend/internal/config"
 	"backend/internal/coordcfg"
 	"backend/internal/db"
+	"backend/internal/indexer"
 	"backend/internal/oauth"
 	"backend/internal/observability"
 	"backend/internal/processor"
@@ -93,12 +94,21 @@ func intSetting(getenv func(string) string, name string, def, min, max int) (int
 // processor; the database DSN doubles as the pg_notify LISTEN connection.
 func (c workerConfig) processorConfig(workerID string) processor.Config {
 	return processor.Config{
-		WorkerID:        workerID,
-		SecretKey:       c.encryptionKey,
-		MaxThreads:      c.maxThreads,
-		NotifyDSN:       c.databaseURL,
-		IndexingTimeout: c.indexingTimeout,
+		WorkerID:   workerID,
+		SecretKey:  c.encryptionKey,
+		MaxThreads: c.maxThreads,
+		NotifyDSN:  c.databaseURL,
 	}
+}
+
+func workerBackgroundLoops(workerID string, sub controlSubscriber, ctrl transferControl, maint *workerMaintenance, notif *notifier, verifier *checksumVerifier) []backgroundLoop {
+	loops := maint.Loops()
+	loops = append(loops, controlLoops(workerID, sub, ctrl)...)
+	loops = append(loops,
+		backgroundLoop{Name: "notifier", Run: notif.Run},
+		backgroundLoop{Name: "checksum_verifier", Run: verifier.Run},
+	)
+	return loops
 }
 
 func watchShutdownSignals(sigChan <-chan os.Signal, cancel context.CancelFunc, exit func(int)) {
@@ -171,11 +181,22 @@ func main() {
 
 	// The worker only processes queued tasks. Sync-pass coordinators are owned
 	// by API instances and started exclusively by the API scheduler.
-	proc, err := processor.NewProcessor(database, q, config.processorConfig(workerID))
+	providerSlots := make(chan struct{}, config.maxThreads)
+	procCfg := config.processorConfig(workerID)
+	procCfg.ProviderSlots = providerSlots
+	proc, err := processor.NewProcessor(database, q, procCfg)
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "processor"), observability.Error(err), slog.String("error_kind", "configuration"))
 		os.Exit(1)
 	}
+	idx, err := indexer.NewIndexer(database, config.encryptionKey, q, config.indexingTimeout)
+	if err != nil {
+		slog.Error("startup_failed", slog.String("component", "indexer"), observability.Error(err), slog.String("error_kind", "configuration"))
+		os.Exit(1)
+	}
+	maint := newWorkerMaintenance(database, q, idx, workerID, config.encryptionKey)
+	notif := newNotifier(database, config.encryptionKey)
+	verifier := newChecksumVerifier(database, config.encryptionKey, config.maxThreads, providerSlots, oauth.NewJobTokenRefresher(database, config.encryptionKey, q))
 	packReaders, err := restore.NewPackReaderLimiter(config.maxRestorePackReaders)
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "restore"), observability.Error(err), slog.String("error_kind", "configuration"))
@@ -215,10 +236,12 @@ func main() {
 	// (exit non-zero for a platform restart). Blocks until the context is
 	// cancelled AND all in-flight tasks and background loops have finished.
 	exitCode = runWorker(ctx, cancel, workerRuntime{
-		WorkerID:  workerID,
-		Processor: proc,
-		Backup:    backupCoordinator,
-		Restore:   restoreCoordinator,
-		Leases:    q,
+		WorkerID:       workerID,
+		RecoverStartup: maint.RecoverStartupTasks,
+		Processor:      proc,
+		Backup:         backupCoordinator,
+		Restore:        restoreCoordinator,
+		Loops:          workerBackgroundLoops(workerID, q, proc, maint, notif, verifier),
+		Leases:         q,
 	})
 }

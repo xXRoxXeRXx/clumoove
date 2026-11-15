@@ -36,7 +36,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	migrationThrottler := claim.throttler
 	logPath := task.FilePath
 	if task.ResourceType == "files" {
-		logPath = effectiveTargetPath(task, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
+		logPath = EffectiveTargetPath(task, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
 	}
 
 	processorLogf("[Worker %s] Thread %d -> Request: [%s] %s (%d bytes) [%s -> %s]\n",
@@ -57,12 +57,12 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// refresh it now so this task does not hit a 401. The daemon already handles
 	// proactive rotation every 5 min, but tasks could be dequeued right as a token
 	// expires, so we have this last-resort inline refresh.
-	sourceProviderPass, err := p.ensureFreshOAuthToken(ctx, mig, "source", sourcePass)
+	sourceProviderPass, err := p.tokenRefresher().EnsureFreshMigrationToken(ctx, mig, "source", sourcePass)
 	if err != nil {
 		return fmt.Errorf("failed to refresh source OAuth token: %w", err)
 	}
 
-	targetProviderPass, err := p.ensureFreshOAuthToken(ctx, mig, "target", targetPass)
+	targetProviderPass, err := p.tokenRefresher().EnsureFreshMigrationToken(ctx, mig, "target", targetPass)
 	if err != nil {
 		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
 	}

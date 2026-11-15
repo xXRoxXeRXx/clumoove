@@ -65,7 +65,6 @@ func (p *Processor) runTransferWorkers(ctx context.Context, notifyTasksCh <-chan
 	<-ctx.Done()
 	processorLogf("[Worker %s] Shutdown signal received. Waiting for active tasks to finish...\n", p.workerID)
 	wg.Wait()
-	p.verificationWG.Wait()
 	processorLogf("[Worker %s] Worker loop stopped.\n", p.workerID)
 }
 
