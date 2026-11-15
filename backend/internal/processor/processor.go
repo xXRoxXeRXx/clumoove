@@ -622,10 +622,15 @@ func (p *Processor) BackgroundLoops() []BackgroundLoop {
 
 func (p *Processor) handleMigrationCancelEvent(migrationID string) {
 	processorLogf("[Worker %s] Received Cancel Event for Migration: %s\n", p.workerID, migrationID)
+	p.cancelActiveTasks("stream", func(info activeTaskInfo) bool { return info.migrationID == migrationID })
+}
+
+// cancelActiveTasks cancels the stream of every active task matching the filter.
+func (p *Processor) cancelActiveTasks(kind string, match func(activeTaskInfo) bool) {
 	p.activeTasks.Range(func(key, value interface{}) bool {
 		info, ok := value.(activeTaskInfo)
-		if ok && info.migrationID == migrationID {
-			processorLogf("[Worker %s] Cancelling active stream for task: %s\n", p.workerID, key)
+		if ok && match(info) {
+			processorLogf("[Worker %s] Cancelling active %s for task: %s\n", p.workerID, kind, key)
 			info.cancel()
 		}
 		return true
@@ -636,13 +641,8 @@ func (p *Processor) handleMigrationCancelEvent(migrationID string) {
 // coordinated by the sync engine rather than the migration processor.
 func (p *Processor) handleSyncCancelEvent(event queue.SyncCancelEvent) {
 	processorLogf("[Worker %s] Received Cancel Event for Sync Job: %s generation %d\n", p.workerID, event.SyncJobID, event.PassGeneration)
-	p.activeTasks.Range(func(key, value interface{}) bool {
-		info, ok := value.(activeTaskInfo)
-		if ok && info.syncJobID == event.SyncJobID && (event.AllGenerations || info.syncGeneration == event.PassGeneration) {
-			processorLogf("[Worker %s] Cancelling active sync stream for task: %s\n", p.workerID, key)
-			info.cancel()
-		}
-		return true
+	p.cancelActiveTasks("sync stream", func(info activeTaskInfo) bool {
+		return info.syncJobID == event.SyncJobID && (event.AllGenerations || info.syncGeneration == event.PassGeneration)
 	})
 }
 

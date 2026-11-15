@@ -94,20 +94,20 @@ func (s *loopSupervisor) Err() error {
 // the same type the processor exposes, so no adapter is needed.
 type backgroundLoop = processor.BackgroundLoop
 
-// runWorker runs the background loops under supervision while drain (the
+// runWorker runs the background loops under supervision while serve (the
 // processor) blocks until ctx is cancelled and in-flight tasks finish. Once
-// the drain and every loop have stopped, release is called to drop the
+// the processor and every loop have stopped, release is called to drop the
 // worker's liveness lease: no task is running at that point, so other workers
 // can safely reclaim anything left behind instead of waiting for the lease to
 // expire. It returns the process exit code: 1 when a background loop failed, so
 // the platform restarts the worker, otherwise 0.
-func runWorker(ctx context.Context, cancel context.CancelFunc, drain func(context.Context), release func(), loops ...backgroundLoop) int {
+func runWorker(ctx context.Context, cancel context.CancelFunc, serve func(context.Context), release func(), loops ...backgroundLoop) int {
 	supervisor := newLoopSupervisor(cancel)
 	for _, loop := range loops {
 		supervisor.Go(ctx, loop.Name, loop.Run)
 	}
-	drain(ctx)
-	// The drain finishing means the worker is done; stop every loop so the
+	serve(ctx)
+	// The processor returning means the worker is done; stop every loop so the
 	// final wait below cannot block on a loop that outlives the processor.
 	cancel()
 	supervisor.Wait()
