@@ -329,9 +329,8 @@ type Config struct {
 	// for pg_notify-based wake-up of idle worker threads. If empty, the worker
 	// falls back to periodic polling.
 	NotifyDSN string
-	// ProviderSlots optionally supplies a shared concurrency semaphore across
-	// transfer workers and runtime verification dispatchers. When nil, the
-	// processor allocates a semaphore sized to MaxThreads.
+	// ProviderSlots supplies the shared concurrency semaphore across transfer
+	// workers and runtime verification dispatchers. Its capacity must be at least 1.
 	ProviderSlots chan struct{}
 	// TokenRefresher optionally supplies a shared OAuth job token refresher so
 	// concurrent transfer and verification refreshes for the same job and role
@@ -351,10 +350,10 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 	if cfg.MaxThreads < 1 {
 		return nil, errors.New("processor MaxThreads must be at least 1")
 	}
-	slots := cfg.ProviderSlots
-	if slots == nil {
-		slots = make(chan struct{}, cfg.MaxThreads)
+	if cap(cfg.ProviderSlots) < 1 {
+		return nil, errors.New("processor ProviderSlots must have capacity of at least 1")
 	}
+	slots := cfg.ProviderSlots
 	refresher := cfg.TokenRefresher
 	if refresher == nil {
 		refresher = oauth.NewJobTokenRefresher(database, cfg.SecretKey, queueTokenLocker(q))
@@ -531,12 +530,11 @@ func (p *Processor) cancelActiveTasks(kind string, match func(activeTaskInfo) bo
 	})
 }
 
-// CancelSyncJob cancels active sync transfer streams for syncJobID matching
-// either allGenerations or the specified passGeneration.
-func (p *Processor) CancelSyncJob(syncJobID string, passGeneration int, allGenerations bool) {
-	processorLogf("[Worker %s] Received Cancel Event for Sync Job: %s generation %d\n", p.workerID, syncJobID, passGeneration)
+// CancelSyncJob cancels active sync transfer streams matching event.
+func (p *Processor) CancelSyncJob(event queue.SyncCancelEvent) {
+	processorLogf("[Worker %s] Received Cancel Event for Sync Job: %s generation %d\n", p.workerID, event.SyncJobID, event.PassGeneration)
 	p.cancelActiveTasks("sync stream", func(info activeTaskInfo) bool {
-		return info.syncJobID == syncJobID && (allGenerations || info.syncGeneration == passGeneration)
+		return info.syncJobID == event.SyncJobID && (event.AllGenerations || info.syncGeneration == event.PassGeneration)
 	})
 }
 

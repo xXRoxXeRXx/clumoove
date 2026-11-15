@@ -155,6 +155,88 @@ func TestJobTokenStateRoleIsolation(t *testing.T) {
 	}
 }
 
+func TestApplyOAuthTokensToMigration(t *testing.T) {
+	expTime := time.Date(2026, 9, 23, 14, 0, 0, 0, time.UTC)
+	expiresAt := sql.NullTime{Time: expTime, Valid: true}
+	refreshEnc := sql.NullString{String: "enc-refresh", Valid: true}
+
+	t.Run("updates source fields and preserves target", func(t *testing.T) {
+		mig := &db.Migration{
+			SourcePasswordEncrypted:     "old-src-pass",
+			SourceRefreshTokenEncrypted: sql.NullString{String: "old-src-ref", Valid: true},
+			TargetPasswordEncrypted:     "target-pass",
+			TargetRefreshTokenEncrypted: sql.NullString{String: "target-ref", Valid: true},
+		}
+		(&migrationJobTokenState{migration: mig}).ApplyOAuthTokens("source", "new-src-pass", refreshEnc, expiresAt)
+
+		if mig.SourcePasswordEncrypted != "new-src-pass" {
+			t.Fatalf("SourcePasswordEncrypted = %q, want new-src-pass", mig.SourcePasswordEncrypted)
+		}
+		if mig.SourceRefreshTokenEncrypted != refreshEnc {
+			t.Fatalf("SourceRefreshTokenEncrypted = %v, want %v", mig.SourceRefreshTokenEncrypted, refreshEnc)
+		}
+		if !mig.SourceTokenExpiresAt.Valid || !mig.SourceTokenExpiresAt.Time.Equal(expTime) {
+			t.Fatalf("SourceTokenExpiresAt = %v, want %v", mig.SourceTokenExpiresAt, expiresAt)
+		}
+		if mig.TargetPasswordEncrypted != "target-pass" || mig.TargetRefreshTokenEncrypted.String != "target-ref" {
+			t.Fatalf("target credentials changed unexpectedly: %+v", mig)
+		}
+	})
+
+	t.Run("updates target fields and preserves source", func(t *testing.T) {
+		mig := &db.Migration{
+			SourcePasswordEncrypted:     "source-pass",
+			SourceRefreshTokenEncrypted: sql.NullString{String: "source-ref", Valid: true},
+			TargetPasswordEncrypted:     "old-tgt-pass",
+			TargetRefreshTokenEncrypted: sql.NullString{String: "old-tgt-ref", Valid: true},
+		}
+		(&migrationJobTokenState{migration: mig}).ApplyOAuthTokens("target", "new-tgt-pass", refreshEnc, expiresAt)
+
+		if mig.TargetPasswordEncrypted != "new-tgt-pass" {
+			t.Fatalf("TargetPasswordEncrypted = %q, want new-tgt-pass", mig.TargetPasswordEncrypted)
+		}
+		if mig.TargetRefreshTokenEncrypted != refreshEnc {
+			t.Fatalf("TargetRefreshTokenEncrypted = %v, want %v", mig.TargetRefreshTokenEncrypted, refreshEnc)
+		}
+		if !mig.TargetTokenExpiresAt.Valid || !mig.TargetTokenExpiresAt.Time.Equal(expTime) {
+			t.Fatalf("TargetTokenExpiresAt = %v, want %v", mig.TargetTokenExpiresAt, expiresAt)
+		}
+		if mig.SourcePasswordEncrypted != "source-pass" || mig.SourceRefreshTokenEncrypted.String != "source-ref" {
+			t.Fatalf("source credentials changed unexpectedly: %+v", mig)
+		}
+	})
+}
+
+func TestApplyOAuthTokensToSyncJob(t *testing.T) {
+	expTime := time.Date(2026, 9, 23, 14, 0, 0, 0, time.UTC)
+	expiresAt := sql.NullTime{Time: expTime, Valid: true}
+	refreshEnc := sql.NullString{String: "enc-refresh", Valid: true}
+
+	t.Run("updates source fields and preserves target", func(t *testing.T) {
+		job := &db.SyncJob{SourcePasswordEncrypted: "old", TargetPasswordEncrypted: "target-pass"}
+		(&syncJobTokenState{job: job}).ApplyOAuthTokens("source", "new", refreshEnc, expiresAt)
+		if job.SourcePasswordEncrypted != "new" || job.SourceRefreshTokenEncrypted != refreshEnc ||
+			!job.SourceTokenExpiresAt.Valid || !job.SourceTokenExpiresAt.Time.Equal(expTime) {
+			t.Fatalf("job source tokens mismatch: %+v", job)
+		}
+		if job.TargetPasswordEncrypted != "target-pass" {
+			t.Fatalf("TargetPasswordEncrypted changed unexpectedly: %q", job.TargetPasswordEncrypted)
+		}
+	})
+
+	t.Run("updates target fields and preserves source", func(t *testing.T) {
+		job := &db.SyncJob{SourcePasswordEncrypted: "source-pass", TargetPasswordEncrypted: "old"}
+		(&syncJobTokenState{job: job}).ApplyOAuthTokens("target", "new", refreshEnc, expiresAt)
+		if job.TargetPasswordEncrypted != "new" || job.TargetRefreshTokenEncrypted != refreshEnc ||
+			!job.TargetTokenExpiresAt.Valid || !job.TargetTokenExpiresAt.Time.Equal(expTime) {
+			t.Fatalf("job target tokens mismatch: %+v", job)
+		}
+		if job.SourcePasswordEncrypted != "source-pass" {
+			t.Fatalf("SourcePasswordEncrypted changed unexpectedly: %q", job.SourcePasswordEncrypted)
+		}
+	})
+}
+
 type testJobTokenState struct {
 	kind, id string
 	snapshot jobOAuthTokenSnapshot

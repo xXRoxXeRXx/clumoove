@@ -8,6 +8,8 @@ import (
 
 	configpkg "backend/internal/config"
 	"backend/internal/oauth"
+	"backend/internal/processor"
+	"backend/internal/queue"
 )
 
 func TestLoadWorkerConfigUsesConfiguredValues(t *testing.T) {
@@ -124,9 +126,8 @@ func TestWorkerConfigProcessorConfigCarriesExplicitSettings(t *testing.T) {
 
 func TestWorkerBackgroundLoopsIncludeEveryRuntimeLoop(t *testing.T) {
 	loops := workerBackgroundLoops(
-		"worker-1",
-		&stubControlSubscriber{},
-		&stubTransferControl{},
+		&queue.Queue{},
+		&processor.Processor{},
 		newWorkerMaintenance(nil, nil, nil, "worker-1", "encryption-secret"),
 		newNotifier(nil, "encryption-secret"),
 		newChecksumVerifier(nil, "encryption-secret", 2, make(chan struct{}, 2), nil),

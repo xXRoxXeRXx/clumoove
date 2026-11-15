@@ -103,9 +103,9 @@ func (c workerConfig) processorConfig(workerID string, providerSlots chan struct
 	}
 }
 
-func workerBackgroundLoops(workerID string, sub controlSubscriber, ctrl transferControl, maint *workerMaintenance, notif *notifier, verifier *checksumVerifier) []backgroundLoop {
+func workerBackgroundLoops(q *queue.Queue, proc *processor.Processor, maint *workerMaintenance, notif *notifier, verifier *checksumVerifier) []backgroundLoop {
 	loops := maint.Loops()
-	loops = append(loops, controlLoops(workerID, sub, ctrl)...)
+	loops = append(loops, controlLoops(q, proc)...)
 	loops = append(loops,
 		backgroundLoop{Name: "notifier", Run: notif.Run},
 		backgroundLoop{Name: "checksum_verifier", Run: verifier.Run},
@@ -242,7 +242,7 @@ func main() {
 		Processor:      proc,
 		Backup:         backupCoordinator,
 		Restore:        restoreCoordinator,
-		Loops:          workerBackgroundLoops(workerID, q, proc, maint, notif, verifier),
+		Loops:          workerBackgroundLoops(q, proc, maint, notif, verifier),
 		Leases:         q,
 	})
 }

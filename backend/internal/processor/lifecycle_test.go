@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/queue"
 	"backend/internal/throttle"
 )
 
@@ -86,7 +87,7 @@ func TestProcessorCancelSyncJobRespectsGenerationAndAllGenerations(t *testing.T)
 	p.activeTasks.Store("t2", activeTaskInfo{syncJobID: "sync-1", syncGeneration: 2, cancel: cancelGen2})
 	p.activeTasks.Store("t3", activeTaskInfo{syncJobID: "sync-2", syncGeneration: 1, cancel: cancelOther})
 
-	p.CancelSyncJob("sync-1", 1, false)
+	p.CancelSyncJob(queue.SyncCancelEvent{SyncJobID: "sync-1", PassGeneration: 1, AllGenerations: false})
 	if ctxGen1.Err() == nil {
 		t.Fatal("expected sync-1 gen 1 to be cancelled")
 	}
@@ -97,7 +98,7 @@ func TestProcessorCancelSyncJobRespectsGenerationAndAllGenerations(t *testing.T)
 		t.Fatal("did not expect sync-2 to be cancelled")
 	}
 
-	p.CancelSyncJob("sync-1", 0, true)
+	p.CancelSyncJob(queue.SyncCancelEvent{SyncJobID: "sync-1", PassGeneration: 0, AllGenerations: true})
 	if ctxGen2.Err() == nil {
 		t.Fatal("expected sync-1 gen 2 to be cancelled when allGenerations=true")
 	}

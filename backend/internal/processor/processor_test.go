@@ -967,11 +967,16 @@ func TestMigrationHelpersAcceptFocusedAdapters(t *testing.T) {
 }
 
 func TestProcessorSharesConfiguredTokenRefresherAndReusesDefaultInstance(t *testing.T) {
+	if _, err := NewProcessor(nil, nil, Config{WorkerID: "worker-1", SecretKey: "secret", MaxThreads: 1}); err == nil {
+		t.Fatal("expected NewProcessor() to require non-nil ProviderSlots with positive capacity")
+	}
+
 	shared := oauth.NewJobTokenRefresher(nil, "secret", nil)
 	proc, err := NewProcessor(nil, nil, Config{
 		WorkerID:       "worker-1",
 		SecretKey:      "secret",
 		MaxThreads:     1,
+		ProviderSlots:  make(chan struct{}, 1),
 		TokenRefresher: shared,
 	})
 	if err != nil {
