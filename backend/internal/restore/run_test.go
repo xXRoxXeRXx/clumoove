@@ -7,6 +7,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"backend/internal/db"
 )
 
 type failingConnector struct{}
@@ -17,7 +19,8 @@ func (failingConnector) Connect(context.Context) (driver.Conn, error) {
 func (failingConnector) Driver() driver.Driver { return nil }
 
 func TestRunRetriesTransientPollErrorsUntilCancelled(t *testing.T) {
-	coordinator := &Coordinator{db: sql.OpenDB(failingConnector{}), workerID: "restore-test"}
+	failingDB := sql.OpenDB(failingConnector{})
+	coordinator := &Coordinator{db: failingDB, store: db.NewRestoreStore(failingDB), workerID: "restore-test"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)

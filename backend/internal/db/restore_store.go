@@ -44,6 +44,7 @@ type RestoreStore interface {
 	SkipRestoreItemContext(ctx context.Context, itemID, runID, errorCode string, claimEpoch ...int64) error
 
 	// Target credential snapshot owned by the restore run.
+	GetRestoreRunTargetConnectionContext(ctx context.Context, runID string) (*RestoreRunTargetConnection, error)
 	GetRestoreRunCredentialSnapshotContext(ctx context.Context, runID string) (accessEncrypted string, refreshEncrypted sql.NullString, expiresAt sql.NullTime, err error)
 	UpdateRestoreRunOAuthTokens(ctx context.Context, runID, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error
 	UpdateRestoreRunMegaSessionContext(ctx context.Context, runID, sessionIDEncrypted, masterKeyEncrypted string) error
@@ -173,6 +174,10 @@ func (s postgresRestoreStore) FailRestoreItemContext(ctx context.Context, itemID
 
 func (s postgresRestoreStore) SkipRestoreItemContext(ctx context.Context, itemID, runID, errorCode string, claimEpoch ...int64) error {
 	return SkipRestoreItemContext(ctx, s.db, itemID, runID, errorCode, claimEpoch...)
+}
+
+func (s postgresRestoreStore) GetRestoreRunTargetConnectionContext(ctx context.Context, runID string) (*RestoreRunTargetConnection, error) {
+	return GetRestoreRunTargetConnectionContext(ctx, s.db, runID)
 }
 
 func (s postgresRestoreStore) GetRestoreRunCredentialSnapshotContext(ctx context.Context, runID string) (accessEncrypted string, refreshEncrypted sql.NullString, expiresAt sql.NullTime, err error) {

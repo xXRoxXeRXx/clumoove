@@ -84,6 +84,7 @@ type RestoreTargetFactoryFunc func(ctx context.Context, provider, endpoint, user
 
 type Coordinator struct {
 	db                      *sql.DB
+	store                   db.RestoreStore
 	encryptionKey           string
 	packReaders             *PackReaderLimiter
 	workerID                string
@@ -127,24 +128,24 @@ func NewCoordinator(database *sql.DB, cfg Config) (*Coordinator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("restore coordinator: %w", err)
 	}
-	return &Coordinator{db: database, encryptionKey: cfg.EncryptionKey, packReaders: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
+	return &Coordinator{db: database, store: db.NewRestoreStore(database), encryptionKey: cfg.EncryptionKey, packReaders: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
 }
 
 // PollOnce claims a single preview. The durable status transition is the
 // worker fence; a crash leaves RUNNING work for the upcoming lease recovery.
 func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
-	if recovered, err := db.RecoverStaleRestoreItemsContext(ctx, c.db); err != nil {
+	if recovered, err := c.store.RecoverStaleRestoreItemsContext(ctx); err != nil {
 		return false, fmt.Errorf("recover stale restore items: %w", err)
 	} else if recovered > 0 {
 		return true, nil
 	}
-	if err := db.ExpireRestorePreviewsContext(ctx, c.db); err != nil {
+	if err := c.store.ExpireRestorePreviewsContext(ctx); err != nil {
 		return false, fmt.Errorf("expire restore previews: %w", err)
 	}
-	if err := db.RecoverStaleRestorePlanningContext(ctx, c.db); err != nil {
+	if err := c.store.RecoverStaleRestorePlanningContext(ctx); err != nil {
 		return false, fmt.Errorf("recover stale restore planning: %w", err)
 	}
-	preview, err := db.ClaimNextRestorePreviewForWorkerContext(ctx, c.db, c.workerID)
+	preview, err := c.store.ClaimNextRestorePreviewForWorkerContext(ctx, c.workerID)
 	if err != nil {
 		return false, err
 	}
@@ -156,47 +157,47 @@ func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
 		cancelPreview()
 		<-heartbeatDone
 		if err != nil {
-			if failErr := db.FailRestorePreviewFencedContext(context.Background(), c.db, preview.ID, preview.CoordinatorGeneration, c.workerID, "RESTORE_PREVIEW_FAILED"); failErr != nil {
+			if failErr := c.store.FailRestorePreviewFencedContext(context.Background(), preview.ID, preview.CoordinatorGeneration, c.workerID, "RESTORE_PREVIEW_FAILED"); failErr != nil {
 				return true, fmt.Errorf("count restore preview: %w; persist failure: %v", err, failErr)
 			}
 			db.WriteAuditLog(c.db, db.AuditEntry{UserID: sql.NullString{String: preview.UserID, Valid: true}, Action: db.AuditRestorePreviewFailed, Target: preview.ID})
 			return true, nil
 		}
-		if _, err := db.CompleteRestorePreviewWithStatsFencedContext(ctx, c.db, preview.ID, preview.CoordinatorGeneration, c.workerID, stats); err != nil {
+		if _, err := c.store.CompleteRestorePreviewWithStatsFencedContext(ctx, preview.ID, preview.CoordinatorGeneration, c.workerID, stats); err != nil {
 			return true, fmt.Errorf("complete restore preview: %w", err)
 		}
 		db.WriteAuditLog(c.db, db.AuditEntry{UserID: sql.NullString{String: preview.UserID, Valid: true}, Action: db.AuditRestorePreviewReady, Target: preview.ID})
 		return true, nil
 	}
 
-	job, run, err := db.ClaimNextQueuedRestoreRunForWorkerContext(ctx, c.db, c.workerID)
+	job, run, err := c.store.ClaimNextQueuedRestoreRunForWorkerContext(ctx, c.workerID)
 	if err != nil {
 		return false, err
 	}
 	if run != nil {
-		if _, err := db.PlanRestoreRunContext(ctx, c.db, job, run); err != nil {
-			if _, failErr := db.FailRestoreRunPlanningContext(context.Background(), c.db, job.ID, run.ID, run.Generation, "RESTORE_PLANNING_FAILED"); failErr != nil {
+		if _, err := c.store.PlanRestoreRunContext(ctx, job, run); err != nil {
+			if _, failErr := c.store.FailRestoreRunPlanningContext(context.Background(), job.ID, run.ID, run.Generation, "RESTORE_PLANNING_FAILED"); failErr != nil {
 				return true, fmt.Errorf("plan restore run: %w; persist failure: %v", err, failErr)
 			}
 			return true, nil
 		}
 		return true, nil
 	}
-	if skipped, err := db.SkipBlockedRestoreItemsContext(ctx, c.db); err != nil {
+	if skipped, err := c.store.SkipBlockedRestoreItemsContext(ctx); err != nil {
 		return false, err
 	} else if skipped > 0 {
 		return true, nil
 	}
-	item, err := db.ClaimNextRestoreItemForWorkerContext(ctx, c.db, c.workerID)
+	item, err := c.store.ClaimNextRestoreItemForWorkerContext(ctx, c.workerID)
 	if err != nil {
 		return false, err
 	}
 	if item == nil {
-		finalized, err := db.FinalizeCompletedRestoreRunsContext(ctx, c.db)
+		finalized, err := c.store.FinalizeCompletedRestoreRunsContext(ctx)
 		if err != nil {
 			return false, err
 		}
-		cancelled, err := db.FinalizeCancellingRestoreRunsContext(ctx, c.db)
+		cancelled, err := c.store.FinalizeCancellingRestoreRunsContext(ctx)
 		return finalized > 0 || cancelled > 0, err
 	}
 	if err := c.restoreItem(ctx, item); err != nil {
@@ -207,9 +208,9 @@ func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
 			errorCode = "RESTORE_TYPE_CONFLICT"
 		}
 		if isPermanentRestoreError(err) {
-			_ = db.FailRestoreItemContext(failureCtx, c.db, item.ID, item.RestoreRunID, errorCode, item.ClaimEpoch)
+			_ = c.store.FailRestoreItemContext(failureCtx, item.ID, item.RestoreRunID, errorCode, item.ClaimEpoch)
 		} else {
-			_, _ = db.RetryRestoreItemContext(failureCtx, c.db, item.ID, item.RestoreRunID, errorCode, item.ClaimEpoch)
+			_, _ = c.store.RetryRestoreItemContext(failureCtx, item.ID, item.RestoreRunID, errorCode, item.ClaimEpoch)
 		}
 	}
 	return true, nil
@@ -219,7 +220,7 @@ func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
 // target tree without mutating it. The output remains bounded: only aggregate
 // counters plus the first 100 deterministic conflict examples are stored.
 func (c *Coordinator) previewTarget(ctx context.Context, preview *db.RestorePreview) (db.RestorePreviewStats, error) {
-	items, err := db.ListRestorePreviewItemsContext(ctx, c.db, preview)
+	items, err := c.store.ListRestorePreviewItemsContext(ctx, preview)
 	if err != nil {
 		return db.RestorePreviewStats{}, err
 	}
@@ -400,7 +401,7 @@ func (c *Coordinator) heartbeatPreview(ctx context.Context, preview *db.RestoreP
 			return
 		case <-ticker.C:
 			heartbeatCtx, heartbeatCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			owned, err := db.RenewRestorePreviewLeaseContext(heartbeatCtx, c.db, preview.ID, preview.CoordinatorGeneration, c.workerID)
+			owned, err := c.store.RenewRestorePreviewLeaseContext(heartbeatCtx, preview.ID, preview.CoordinatorGeneration, c.workerID)
 			heartbeatCancel()
 			if err != nil || !owned {
 				cancel()
@@ -459,7 +460,7 @@ func (c *Coordinator) ensureFreshRestoreTargetOAuthToken(ctx context.Context, us
 			return token, nil
 		},
 		OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
-			latestAccess, latestRefreshEnc, latestExpires, loadErr := db.GetRestoreRunCredentialSnapshotContext(lockCtx, c.db, runID)
+			latestAccess, latestRefreshEnc, latestExpires, loadErr := c.store.GetRestoreRunCredentialSnapshotContext(lockCtx, runID)
 			if loadErr != nil {
 				return "", false, "", nil
 			}
@@ -492,11 +493,11 @@ func (c *Coordinator) ensureFreshRestoreTargetOAuthToken(ctx context.Context, us
 			if expiresIn <= 0 {
 				expiresIn = 3600
 			}
-			if err := db.UpdateRestoreRunOAuthTokens(persistCtx, c.db, runID, access, rotatedRefresh, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc); err != nil {
+			if err := c.store.UpdateRestoreRunOAuthTokens(persistCtx, runID, access, rotatedRefresh, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc); err != nil {
 				if !errors.Is(err, db.ErrOAuthTokenConflict) {
 					return "", false, fmt.Errorf("persist restore OAuth token: %w", err)
 				}
-				latestAccess, _, latestExpires, latestErr := db.GetRestoreRunCredentialSnapshotContext(persistCtx, c.db, runID)
+				latestAccess, _, latestExpires, latestErr := c.store.GetRestoreRunCredentialSnapshotContext(persistCtx, runID)
 				if latestErr != nil || latestAccess == "" || !latestExpires.Valid {
 					return "", false, fmt.Errorf("adopt concurrent restore OAuth token: %w", latestErr)
 				}
@@ -553,7 +554,7 @@ func (c *Coordinator) ensureFreshRepositoryOAuthToken(ctx context.Context, conne
 			return token, nil
 		},
 		OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
-			latest, loadErr := db.GetBackupRepositoryConnectionContext(lockCtx, c.db, connection.BackupJobID)
+			latest, loadErr := c.store.GetBackupRepositoryConnectionContext(lockCtx, connection.BackupJobID)
 			if loadErr != nil {
 				return "", false, "", nil
 			}
@@ -586,11 +587,11 @@ func (c *Coordinator) ensureFreshRepositoryOAuthToken(ctx context.Context, conne
 			if expiresIn <= 0 {
 				expiresIn = 3600
 			}
-			if err := db.UpdateBackupRepositoryOAuthTokens(persistCtx, c.db, connection.BackupJobID, accessEncrypted, refreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc); err != nil {
+			if err := c.store.UpdateBackupRepositoryOAuthTokens(persistCtx, connection.BackupJobID, accessEncrypted, refreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc); err != nil {
 				if !errors.Is(err, db.ErrOAuthTokenConflict) {
 					return "", false, err
 				}
-				latest, loadErr := db.GetBackupRepositoryConnectionContext(persistCtx, c.db, connection.BackupJobID)
+				latest, loadErr := c.store.GetBackupRepositoryConnectionContext(persistCtx, connection.BackupJobID)
 				if loadErr != nil || latest.PasswordEncrypted == "" {
 					return "", false, fmt.Errorf("adopt concurrent backup repository OAuth token: %w", loadErr)
 				}
@@ -618,21 +619,12 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 		<-heartbeatDone
 	}()
 
-	var backupJobID, targetProviderType, targetURL, targetUsername, conflictStrategy, targetPasswordEncrypted string
-	var bandwidthMbps int
-	var targetRefreshEncrypted, targetMegaSessionEncrypted, targetMegaMasterKeyEncrypted sql.NullString
-	var targetTokenExpiresAt sql.NullTime
-	err := c.db.QueryRowContext(ctx, `
-		SELECT j.backup_job_id, j.target_provider, j.target_url, j.target_username, j.conflict_strategy,
-			r.bandwidth_mbps, COALESCE(r.target_password_encrypted, ''), r.target_refresh_token_encrypted,
-			r.target_token_expires_at, r.target_mega_session_id_encrypted, r.target_mega_master_key_encrypted
-		FROM restore_runs r JOIN restore_jobs j ON j.id = r.restore_job_id WHERE r.id = $1`, item.RestoreRunID).Scan(
-		&backupJobID, &targetProviderType, &targetURL, &targetUsername, &conflictStrategy, &bandwidthMbps,
-		&targetPasswordEncrypted, &targetRefreshEncrypted, &targetTokenExpiresAt, &targetMegaSessionEncrypted, &targetMegaMasterKeyEncrypted)
+	runTarget, err := c.store.GetRestoreRunTargetConnectionContext(ctx, item.RestoreRunID)
 	if err != nil {
 		return fmt.Errorf("load restore connections: %w", err)
 	}
-	repository, err := db.GetBackupRepositoryConnectionContext(ctx, c.db, backupJobID)
+	targetPasswordEncrypted := runTarget.TargetPasswordEncrypted
+	repository, err := c.store.GetBackupRepositoryConnectionContext(ctx, runTarget.BackupJobID)
 	if err != nil {
 		return err
 	}
@@ -640,10 +632,10 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 	if err != nil {
 		return err
 	}
-	if targetPasswordEncrypted == "" && targetProviderType != "local" {
+	if targetPasswordEncrypted == "" && runTarget.TargetProvider != "local" {
 		return errors.New("restore target credential snapshot is unavailable")
 	}
-	targetPasswordEncrypted, err = c.ensureFreshRestoreTargetOAuthToken(ctx, repository.UserID, item.RestoreRunID, targetProviderType, targetPasswordEncrypted, targetRefreshEncrypted, targetTokenExpiresAt)
+	targetPasswordEncrypted, err = c.ensureFreshRestoreTargetOAuthToken(ctx, repository.UserID, item.RestoreRunID, runTarget.TargetProvider, targetPasswordEncrypted, runTarget.TargetRefreshEncrypted, runTarget.TargetTokenExpiresAt)
 	if err != nil {
 		return err
 	}
@@ -657,9 +649,9 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 		return err
 	}
 	defer repositoryProvider.Close()
-	targetProvider, err := c.newRestoreTarget(ctx, targetProviderType, targetURL, targetUsername, targetPasswordEncrypted, encryptedMegaSession{
-		id:        targetMegaSessionEncrypted.String,
-		masterKey: targetMegaMasterKeyEncrypted.String,
+	targetProvider, err := c.newRestoreTarget(ctx, runTarget.TargetProvider, runTarget.TargetURL, runTarget.TargetUsername, targetPasswordEncrypted, encryptedMegaSession{
+		id:        runTarget.TargetMegaSessionEncrypted.String,
+		masterKey: runTarget.TargetMegaMasterKeyEncrypted.String,
 		errLabel:  "load restore target mega session",
 	})
 	if err != nil {
@@ -684,7 +676,7 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 			if encryptErr != nil {
 				return fmt.Errorf("encrypt backup repository mega session: %w", encryptErr)
 			}
-			if err := db.UpdateBackupRepositoryMegaSessionContext(ctx, c.db, repository.BackupJobID, sessionIDEncrypted, masterKeyEncrypted); err != nil {
+			if err := c.store.UpdateBackupRepositoryMegaSessionContext(ctx, repository.BackupJobID, sessionIDEncrypted, masterKeyEncrypted); err != nil {
 				return fmt.Errorf("persist backup repository mega session: %w", err)
 			}
 		}
@@ -707,19 +699,19 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 			if encryptErr != nil {
 				return fmt.Errorf("encrypt restore mega session: %w", encryptErr)
 			}
-			if err := db.UpdateRestoreRunMegaSessionContext(ctx, c.db, item.RestoreRunID, sessionIDEncrypted, masterKeyEncrypted); err != nil {
+			if err := c.store.UpdateRestoreRunMegaSessionContext(ctx, item.RestoreRunID, sessionIDEncrypted, masterKeyEncrypted); err != nil {
 				return fmt.Errorf("persist restore mega session: %w", err)
 			}
 		}
 	}
-	throttler := throttle.NewMigrationThrottler(bandwidthMbps)
-	if sanitized := sanitize.SanitizeFilename(path.Base(item.TargetPath), targetProviderType); sanitized.Changed {
+	throttler := throttle.NewMigrationThrottler(runTarget.BandwidthMbps)
+	if sanitized := sanitize.SanitizeFilename(path.Base(item.TargetPath), runTarget.TargetProvider); sanitized.Changed {
 		resolvedPath := path.Join(path.Dir(item.TargetPath), sanitized.SanitizedName)
 		if item.IsDir {
-			if err := db.SetRestoreDirectoryTargetPathContext(ctx, c.db, item.ID, item.RestoreRunID, item.SnapshotRelativePath, resolvedPath, item.ClaimEpoch); err != nil {
+			if err := c.store.SetRestoreDirectoryTargetPathContext(ctx, item.ID, item.RestoreRunID, item.SnapshotRelativePath, resolvedPath, item.ClaimEpoch); err != nil {
 				return err
 			}
-		} else if err := db.SetRestoreItemTargetPathContext(ctx, c.db, item.ID, item.RestoreRunID, resolvedPath, item.ClaimEpoch); err != nil {
+		} else if err := c.store.SetRestoreItemTargetPathContext(ctx, item.ID, item.RestoreRunID, resolvedPath, item.ClaimEpoch); err != nil {
 			return err
 		}
 		item.TargetPath = resolvedPath
@@ -728,7 +720,7 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 		return err
 	}
 	if item.IsDir {
-		return c.restoreDirectory(ctx, targetProvider, item, conflictStrategy)
+		return c.restoreDirectory(ctx, targetProvider, item, runTarget.ConflictStrategy)
 	}
 	exists, _, err := targetProvider.FileExists(ctx, "files", item.TargetPath)
 	if err != nil {
@@ -743,13 +735,13 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 		if resource.IsDir {
 			// A restore must never recursively delete target-only directory
 			// content. RENAME/SKIP are handled below; OVERWRITE is a hard error.
-			if conflictStrategy == "OVERWRITE" {
+			if runTarget.ConflictStrategy == "OVERWRITE" {
 				return ErrRestoreTypeConflict
 			}
 		}
-		switch conflictStrategy {
+		switch runTarget.ConflictStrategy {
 		case "SKIP":
-			return db.SkipRestoreItemContext(ctx, c.db, item.ID, item.RestoreRunID, "RESTORE_TARGET_EXISTS", item.ClaimEpoch)
+			return c.store.SkipRestoreItemContext(ctx, item.ID, item.RestoreRunID, "RESTORE_TARGET_EXISTS", item.ClaimEpoch)
 		case "OVERWRITE":
 			overwriteExisting = true
 		case "RENAME":
@@ -781,7 +773,7 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 	if err := targetProvider.CreateParentDirectories(ctx, "files", item.TargetPath); err != nil {
 		return err
 	}
-	blocks, err := db.ListRestoreItemBlocksContext(ctx, c.db, item.ID, item.RestoreRunID)
+	blocks, err := c.store.ListRestoreItemBlocksContext(ctx, item.ID, item.RestoreRunID)
 	if err != nil {
 		return err
 	}
@@ -871,7 +863,7 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 			}
 		}
 	}
-	if _, err = db.CompleteRestoreItemContext(ctx, c.db, item.ID, item.RestoreRunID, item.SizeBytes, verificationKind, item.ClaimEpoch); err != nil {
+	if _, err = c.store.CompleteRestoreItemContext(ctx, item.ID, item.RestoreRunID, item.SizeBytes, verificationKind, item.ClaimEpoch); err != nil {
 		return err
 	}
 	return c.applyItemMetadata(ctx, targetProvider, item)
@@ -884,7 +876,7 @@ func (c *Coordinator) applyItemMetadata(ctx context.Context, target any, item *d
 	metadata := storage.FileMetadata{}
 	if len(item.SourceMetadata) > 0 && string(item.SourceMetadata) != "null" {
 		if err := json.Unmarshal(item.SourceMetadata, &metadata); err != nil {
-			return db.WarnRestoreItemContext(ctx, c.db, item.ID, item.RestoreRunID, "RESTORE_METADATA_INVALID", item.ClaimEpoch)
+			return c.store.WarnRestoreItemContext(ctx, item.ID, item.RestoreRunID, "RESTORE_METADATA_INVALID", item.ClaimEpoch)
 		}
 	}
 	if item.SourceMTime.Valid {
@@ -892,10 +884,10 @@ func (c *Coordinator) applyItemMetadata(ctx context.Context, target any, item *d
 	}
 	applier, ok := target.(storage.MetadataApplier)
 	if !ok {
-		return db.WarnRestoreItemContext(ctx, c.db, item.ID, item.RestoreRunID, "RESTORE_METADATA_UNSUPPORTED", item.ClaimEpoch)
+		return c.store.WarnRestoreItemContext(ctx, item.ID, item.RestoreRunID, "RESTORE_METADATA_UNSUPPORTED", item.ClaimEpoch)
 	}
 	if err := applier.ApplyMetadata(ctx, "files", item.TargetPath, metadata); err != nil {
-		return db.WarnRestoreItemContext(ctx, c.db, item.ID, item.RestoreRunID, "RESTORE_METADATA_FAILED", item.ClaimEpoch)
+		return c.store.WarnRestoreItemContext(ctx, item.ID, item.RestoreRunID, "RESTORE_METADATA_FAILED", item.ClaimEpoch)
 	}
 	return nil
 }
@@ -910,7 +902,7 @@ func (c *Coordinator) heartbeatItem(ctx context.Context, item *db.RestoreItem, d
 			return
 		case <-ticker.C:
 			heartbeatCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = db.HeartbeatRestoreItemContext(heartbeatCtx, c.db, item.ID, item.RestoreRunID, c.workerID, item.ClaimEpoch)
+			_ = c.store.HeartbeatRestoreItemContext(heartbeatCtx, item.ID, item.RestoreRunID, c.workerID, item.ClaimEpoch)
 			cancel()
 		}
 	}
@@ -926,16 +918,16 @@ func shortRestoreID(value string) string {
 func (c *Coordinator) reserveRestoreTargetPath(ctx context.Context, item *db.RestoreItem, isDir bool) error {
 	candidate := item.TargetPath
 	for suffix := 0; suffix <= 100; suffix++ {
-		reserved, err := db.ReserveRestoreTargetPathContext(ctx, c.db, item.RestoreRunID, item.ID, candidate)
+		reserved, err := c.store.ReserveRestoreTargetPathContext(ctx, item.RestoreRunID, item.ID, candidate)
 		if err != nil {
 			return err
 		}
 		if reserved {
 			if candidate != item.TargetPath {
 				if isDir {
-					err = db.SetRestoreDirectoryTargetPathContext(ctx, c.db, item.ID, item.RestoreRunID, item.SnapshotRelativePath, candidate, item.ClaimEpoch)
+					err = c.store.SetRestoreDirectoryTargetPathContext(ctx, item.ID, item.RestoreRunID, item.SnapshotRelativePath, candidate, item.ClaimEpoch)
 				} else {
-					err = db.SetRestoreItemTargetPathContext(ctx, c.db, item.ID, item.RestoreRunID, candidate, item.ClaimEpoch)
+					err = c.store.SetRestoreItemTargetPathContext(ctx, item.ID, item.RestoreRunID, candidate, item.ClaimEpoch)
 				}
 				if err != nil {
 					return err
@@ -954,14 +946,14 @@ func (c *Coordinator) reserveRestoreTargetPath(ctx context.Context, item *db.Res
 }
 
 func (c *Coordinator) moveRestoreTargetReservation(ctx context.Context, item *db.RestoreItem, candidate string, isDir bool) (bool, error) {
-	reserved, err := db.MoveRestoreTargetReservationContext(ctx, c.db, item.RestoreRunID, item.ID, candidate)
+	reserved, err := c.store.MoveRestoreTargetReservationContext(ctx, item.RestoreRunID, item.ID, candidate)
 	if err != nil || !reserved {
 		return reserved, err
 	}
 	if isDir {
-		err = db.SetRestoreDirectoryTargetPathContext(ctx, c.db, item.ID, item.RestoreRunID, item.SnapshotRelativePath, candidate, item.ClaimEpoch)
+		err = c.store.SetRestoreDirectoryTargetPathContext(ctx, item.ID, item.RestoreRunID, item.SnapshotRelativePath, candidate, item.ClaimEpoch)
 	} else {
-		err = db.SetRestoreItemTargetPathContext(ctx, c.db, item.ID, item.RestoreRunID, candidate, item.ClaimEpoch)
+		err = c.store.SetRestoreItemTargetPathContext(ctx, item.ID, item.RestoreRunID, candidate, item.ClaimEpoch)
 	}
 	if err != nil {
 		return false, err
@@ -1014,11 +1006,11 @@ func (c *Coordinator) restoreDirectory(ctx context.Context, target directoryRest
 			return err
 		}
 		if resource.IsDir {
-			return db.CompleteRestoreDirectoryContext(ctx, c.db, item.ID, item.RestoreRunID, item.ClaimEpoch)
+			return c.store.CompleteRestoreDirectoryContext(ctx, item.ID, item.RestoreRunID, item.ClaimEpoch)
 		}
 		switch conflictStrategy {
 		case "SKIP":
-			return db.SkipRestoreItemContext(ctx, c.db, item.ID, item.RestoreRunID, "RESTORE_TARGET_FILE_CONFLICT", item.ClaimEpoch)
+			return c.store.SkipRestoreItemContext(ctx, item.ID, item.RestoreRunID, "RESTORE_TARGET_FILE_CONFLICT", item.ClaimEpoch)
 		case "OVERWRITE":
 			if err := target.DeleteFile(ctx, "files", item.TargetPath); err != nil {
 				return err
@@ -1055,7 +1047,7 @@ func (c *Coordinator) restoreDirectory(ctx context.Context, target directoryRest
 	if err := target.CreateDirectory(ctx, "files", item.TargetPath); err != nil {
 		return err
 	}
-	return db.CompleteRestoreDirectoryContext(ctx, c.db, item.ID, item.RestoreRunID, item.ClaimEpoch)
+	return c.store.CompleteRestoreDirectoryContext(ctx, item.ID, item.RestoreRunID, item.ClaimEpoch)
 }
 
 type limitedReadCloser struct {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // Recording driver: a stand-in for PostgreSQL that captures statements so the
@@ -18,7 +19,12 @@ type recordedStatement struct {
 	args  []driver.Value
 }
 
-type recordingDriver struct{ statements []recordedStatement }
+type recordingDriver struct {
+	statements []recordedStatement
+	// queryColumns/queryRow override the default single-column row returned by queries.
+	queryColumns []string
+	queryRow     []driver.Value
+}
 
 type recordingConn struct{ owner *recordingDriver }
 
@@ -27,7 +33,11 @@ type recordingStmt struct {
 	query string
 }
 
-type singleIDRows struct{ done bool }
+type recordedRows struct {
+	done    bool
+	columns []string
+	row     []driver.Value
+}
 
 var recordingDriverSeq atomic.Int64
 
@@ -50,16 +60,28 @@ func (s *recordingStmt) Exec(args []driver.Value) (driver.Result, error) {
 }
 func (s *recordingStmt) Query(args []driver.Value) (driver.Rows, error) {
 	s.record(args)
-	return &singleIDRows{}, nil
+	if d := s.conn.owner; d.queryColumns != nil {
+		return &recordedRows{columns: d.queryColumns, row: d.queryRow}, nil
+	}
+	return &recordedRows{}, nil
 }
 
-func (r *singleIDRows) Columns() []string { return []string{"id"} }
-func (r *singleIDRows) Close() error      { return nil }
-func (r *singleIDRows) Next(dest []driver.Value) error {
+func (r *recordedRows) Columns() []string {
+	if r.columns != nil {
+		return r.columns
+	}
+	return []string{"id"}
+}
+func (r *recordedRows) Close() error { return nil }
+func (r *recordedRows) Next(dest []driver.Value) error {
 	if r.done {
 		return io.EOF
 	}
 	r.done = true
+	if r.row != nil {
+		copy(dest, r.row)
+		return nil
+	}
 	dest[0] = "row-id"
 	return nil
 }
@@ -176,5 +198,31 @@ func TestDomainStoreConstructorsRejectNilDatabase(t *testing.T) {
 			}()
 			construct()
 		})
+	}
+}
+
+func TestRestoreStoreLoadsRestoreRunTargetConnection(t *testing.T) {
+	database, rec := openRecordingDB(t)
+	rec.queryColumns = []string{"backup_job_id", "target_provider", "target_url", "target_username", "conflict_strategy", "bandwidth_mbps", "target_password", "refresh", "expires", "mega_session", "mega_master"}
+	expires := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	rec.queryRow = []driver.Value{"backup-1", "nextcloud", "https://cloud.example", "alice", "RENAME", int64(25), "enc-pass", "enc-refresh", expires, nil, "enc-master"}
+	var store RestoreStore = NewRestoreStore(database)
+
+	got, err := store.GetRestoreRunTargetConnectionContext(context.Background(), "run-1")
+	if err != nil {
+		t.Fatalf("GetRestoreRunTargetConnectionContext() error: %v", err)
+	}
+
+	requireSingleStatement(t, rec, "FROM restore_runs r JOIN restore_jobs j ON j.id = r.restore_job_id WHERE r.id = $1", "run-1")
+	want := &RestoreRunTargetConnection{
+		BackupJobID: "backup-1", TargetProvider: "nextcloud", TargetURL: "https://cloud.example", TargetUsername: "alice",
+		ConflictStrategy: "RENAME", BandwidthMbps: 25, TargetPasswordEncrypted: "enc-pass",
+		TargetRefreshEncrypted:       sql.NullString{String: "enc-refresh", Valid: true},
+		TargetTokenExpiresAt:         sql.NullTime{Time: expires, Valid: true},
+		TargetMegaSessionEncrypted:   sql.NullString{},
+		TargetMegaMasterKeyEncrypted: sql.NullString{String: "enc-master", Valid: true},
+	}
+	if *got != *want {
+		t.Errorf("connection = %+v, want %+v", *got, *want)
 	}
 }

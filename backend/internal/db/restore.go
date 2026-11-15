@@ -543,6 +543,40 @@ func GetRestoreRunCredentialSnapshotContext(ctx context.Context, database *sql.D
 	return
 }
 
+// RestoreRunTargetConnection is the worker-only view of a run's restore target:
+// the durable job settings joined with the run's credential snapshot and the
+// backup job whose repository is read. Secrets stay encrypted.
+type RestoreRunTargetConnection struct {
+	BackupJobID                  string
+	TargetProvider               string
+	TargetURL                    string
+	TargetUsername               string
+	ConflictStrategy             string
+	BandwidthMbps                int
+	TargetPasswordEncrypted      string
+	TargetRefreshEncrypted       sql.NullString
+	TargetTokenExpiresAt         sql.NullTime
+	TargetMegaSessionEncrypted   sql.NullString
+	TargetMegaMasterKeyEncrypted sql.NullString
+}
+
+// GetRestoreRunTargetConnectionContext loads the target connection of one run.
+// A missing run returns sql.ErrNoRows.
+func GetRestoreRunTargetConnectionContext(ctx context.Context, database *sql.DB, runID string) (*RestoreRunTargetConnection, error) {
+	c := &RestoreRunTargetConnection{}
+	err := database.QueryRowContext(ctx, `
+		SELECT j.backup_job_id, j.target_provider, j.target_url, j.target_username, j.conflict_strategy,
+			r.bandwidth_mbps, COALESCE(r.target_password_encrypted, ''), r.target_refresh_token_encrypted,
+			r.target_token_expires_at, r.target_mega_session_id_encrypted, r.target_mega_master_key_encrypted
+		FROM restore_runs r JOIN restore_jobs j ON j.id = r.restore_job_id WHERE r.id = $1`, runID).Scan(
+		&c.BackupJobID, &c.TargetProvider, &c.TargetURL, &c.TargetUsername, &c.ConflictStrategy, &c.BandwidthMbps,
+		&c.TargetPasswordEncrypted, &c.TargetRefreshEncrypted, &c.TargetTokenExpiresAt, &c.TargetMegaSessionEncrypted, &c.TargetMegaMasterKeyEncrypted)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
 // UpdateRestoreRunMegaSessionContext stores a newly issued MEGA session only
 // while the same run remains active. It deliberately never writes sessions to
 // the durable restore job, because a later retry must be previewed again.
