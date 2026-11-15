@@ -184,6 +184,9 @@ Redis is used for:
 
 ## 5. Processor (`internal/processor`)
 
+Before any loop starts, the worker runtime calls `Processor.RecoverStartupTasks(ctx)` to requeue tasks this
+worker left behind before a restart.
+
 `Processor.BackgroundLoops()` returns the loops the worker runtime (`cmd/worker/runtime.go`) runs and
 supervises alongside the processor: `RunWorkerLiveness`, `RunAbandonedWorkerCleanup`, `RunRetryScheduler`,
 `RunConnectionRecoveryScheduler`, `RunOrphanedRunningTasksRecovery`, `RunNotifier`, `RunProgressReconciler`,
@@ -201,9 +204,8 @@ supervises alongside the processor: `RunWorkerLiveness`, `RunAbandonedWorkerClea
 
 `Processor.Start(ctx)` blocks until ctx is cancelled and in-flight tasks finish:
 
-1. Recovers any abandoned tasks on startup.
-2. Starts the verification dispatcher and the `LISTEN task_available` watcher (awaited on exit).
-3. Spawns `maxThreads` worker goroutines (default 16, range 1–256, set by `MAX_THREADS` and validated at startup) that loop over
+1. Starts the verification dispatcher and the `LISTEN task_available` watcher (awaited on exit).
+2. Spawns `maxThreads` worker goroutines (default 16, range 1–256, set by `MAX_THREADS` and validated at startup) that loop over
    `DequeueSQL` and call `processTask`.
 
 ### Transfer loop (`processTask`)

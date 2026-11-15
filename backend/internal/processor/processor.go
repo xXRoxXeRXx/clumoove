@@ -60,10 +60,12 @@ type Processor struct {
 	// connection for pg_notify-based wake-up (see ListenForTasks in queue).
 	// Supplied via Config.NotifyDSN. If empty, the worker falls back to periodic
 	// polling.
-	notifyDSN    string
-	activeTasks  sync.Map
-	refreshLocks keyedMutexes
-	throttlers   sync.Map
+	notifyDSN string
+	// listenForTasks opens the LISTEN watcher; tests replace it.
+	listenForTasks func(ctx context.Context, dsn string) (<-chan struct{}, error)
+	activeTasks    sync.Map
+	refreshLocks   keyedMutexes
+	throttlers     sync.Map
 	// connLossCounts tracks consecutive connection-loss events per migration so
 	// a single flaky task does not immediately pause the whole migration (P1-4).
 	connLossCounts sync.Map
@@ -381,6 +383,7 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 		syncVerificationQueue:      make(chan verificationWork, cfg.MaxThreads*2),
 		providerSlots:              make(chan struct{}, cfg.MaxThreads),
 		notifyDSN:                  cfg.NotifyDSN,
+		listenForTasks:             queue.ListenForTasks,
 	}, nil
 }
 
@@ -599,11 +602,7 @@ func (p *Processor) BackgroundLoops() []BackgroundLoop {
 		loop("worker_liveness", p.RunWorkerLiveness),
 		loop("abandoned_worker_cleanup", p.RunAbandonedWorkerCleanup),
 		loop("retry_scheduler", p.RunRetryScheduler),
-		loop("connection_recovery", func(ctx context.Context) {
-			p.RunConnectionRecoveryScheduler(ctx)
-			// Indexers the scheduler restarted share its lifetime.
-			p.recoveredIndexers.Wait()
-		}),
+		loop("connection_recovery", p.awaitRecoveredIndexers(p.RunConnectionRecoveryScheduler)),
 		loop("orphaned_task_recovery", p.RunOrphanedRunningTasksRecovery),
 		loop("notifier", p.RunNotifier),
 		loop("progress_reconciler", p.RunProgressReconciler),
@@ -660,16 +659,28 @@ func (p *Processor) handleBandwidthEvent(event queue.BandwidthEvent) {
 	}
 }
 
+// awaitRecoveredIndexers wraps the connection-recovery scheduler so indexers it
+// restarted share its lifetime: the loop returns only after they have stopped.
+func (p *Processor) awaitRecoveredIndexers(run func(ctx context.Context)) func(ctx context.Context) {
+	return func(ctx context.Context) {
+		run(ctx)
+		p.recoveredIndexers.Wait()
+	}
+}
+
+// RecoverStartupTasks requeues tasks this worker left behind before a restart.
+// The worker runtime calls it before starting any loop.
+func (p *Processor) RecoverStartupTasks(ctx context.Context) {
+	if err := p.queue.RecoverAbandonedTasks(ctx, p.db, p.workerID); err != nil {
+		processorLogf("[Worker %s] Error recovering abandoned tasks: %v\n", p.workerID, err)
+	}
+}
+
 // Start runs the worker dequeue loop and blocks until ctx is cancelled and all
 // in-flight tasks have finished. Background schedulers are not started here;
 // the worker runtime runs them from BackgroundLoops.
 func (p *Processor) Start(ctx context.Context) {
 	processorLogf("[Worker %s] Started and waiting for tasks with max %d threads...\n", p.workerID, p.maxThreads)
-
-	// Recover any abandoned tasks on startup
-	if err := p.queue.RecoverAbandonedTasks(ctx, p.db, p.workerID); err != nil {
-		processorLogf("[Worker %s] Error recovering abandoned tasks: %v\n", p.workerID, err)
-	}
 
 	p.startVerificationDispatcher(ctx)
 
@@ -678,7 +689,7 @@ func (p *Processor) Start(ctx context.Context) {
 	// Falls back to periodic polling if the listener cannot be established.
 	var notifyTasksCh <-chan struct{}
 	if p.notifyDSN != "" {
-		ch, err := queue.ListenForTasks(ctx, p.notifyDSN)
+		ch, err := p.listenForTasks(ctx, p.notifyDSN)
 		if err != nil {
 			processorLogf("[Worker %s] LISTEN task_available unavailable (falling back to polling): %v\n", p.workerID, err)
 		} else {

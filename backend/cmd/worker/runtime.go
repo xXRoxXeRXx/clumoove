@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"backend/internal/observability"
 	"backend/internal/processor"
@@ -94,14 +95,14 @@ func (s *loopSupervisor) Err() error {
 // the same type the processor exposes, so no adapter is needed.
 type backgroundLoop = processor.BackgroundLoop
 
-// runWorker runs the background loops under supervision while serve (the
+// superviseLoops runs the background loops under supervision while serve (the
 // processor) blocks until ctx is cancelled and in-flight tasks finish. Once
 // the processor and every loop have stopped, release is called to drop the
 // worker's liveness lease: no task is running at that point, so other workers
 // can safely reclaim anything left behind instead of waiting for the lease to
 // expire. It returns the process exit code: 1 when a background loop failed, so
 // the platform restarts the worker, otherwise 0.
-func runWorker(ctx context.Context, cancel context.CancelFunc, serve func(context.Context), release func(), loops ...backgroundLoop) int {
+func superviseLoops(ctx context.Context, cancel context.CancelFunc, serve func(context.Context), release func(), loops ...backgroundLoop) int {
 	supervisor := newLoopSupervisor(cancel)
 	for _, loop := range loops {
 		supervisor.Go(ctx, loop.Name, loop.Run)
@@ -118,4 +119,64 @@ func runWorker(ctx context.Context, cancel context.CancelFunc, serve func(contex
 		return 1
 	}
 	return 0
+}
+
+// coordinatorPollInterval is how often the backup and restore coordinators
+// poll for claimable work.
+const coordinatorPollInterval = time.Second
+
+// leaseReleaseTimeout bounds the final lease release so a slow Redis cannot
+// delay process exit.
+const leaseReleaseTimeout = 3 * time.Second
+
+// processorRuntime is the processor surface the runtime drives.
+type processorRuntime interface {
+	// RecoverStartupTasks requeues tasks this worker left behind before a restart.
+	RecoverStartupTasks(ctx context.Context)
+	// Start runs the transfer workers and blocks until ctx is cancelled and
+	// in-flight tasks have finished.
+	Start(ctx context.Context)
+	// BackgroundLoops returns the schedulers and subscribers to supervise.
+	BackgroundLoops() []backgroundLoop
+}
+
+// coordinatorRunner is a backup or restore coordinator poll loop.
+type coordinatorRunner interface {
+	Run(ctx context.Context, interval time.Duration) error
+}
+
+// leaseReleaser drops a worker's liveness lease.
+type leaseReleaser interface {
+	DeregisterActiveWorker(ctx context.Context, workerID string) error
+}
+
+// workerRuntime is everything the worker process runs. runWorker owns its
+// ordering: startup recovery, then every loop and the processor under one
+// context, then the lease release once all of them have stopped.
+type workerRuntime struct {
+	WorkerID  string
+	Processor processorRuntime
+	Backup    coordinatorRunner
+	Restore   coordinatorRunner
+	Leases    leaseReleaser
+}
+
+// runWorker runs the worker until ctx is cancelled or a loop fails, and
+// returns the process exit code (see superviseLoops).
+func runWorker(ctx context.Context, cancel context.CancelFunc, rt workerRuntime) int {
+	rt.Processor.RecoverStartupTasks(ctx)
+
+	loops := []backgroundLoop{
+		{Name: "backup", Run: func(ctx context.Context) error { return rt.Backup.Run(ctx, coordinatorPollInterval) }},
+		{Name: "restore", Run: func(ctx context.Context) error { return rt.Restore.Run(ctx, coordinatorPollInterval) }},
+	}
+	loops = append(loops, rt.Processor.BackgroundLoops()...)
+
+	return superviseLoops(ctx, cancel, rt.Processor.Start, func() {
+		releaseCtx, cancelRelease := context.WithTimeout(context.Background(), leaseReleaseTimeout)
+		defer cancelRelease()
+		if err := rt.Leases.DeregisterActiveWorker(releaseCtx, rt.WorkerID); err != nil {
+			slog.Warn("worker_lease_release_failed", slog.String("component", "worker"), observability.Error(err))
+		}
+	}, loops...)
 }

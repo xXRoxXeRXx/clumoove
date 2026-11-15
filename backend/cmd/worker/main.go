@@ -210,21 +210,15 @@ func main() {
 	// A second signal lets an operator abort a potentially long task drain.
 	go watchShutdownSignals(sigChan, cancel, os.Exit)
 
-	// The runtime owns every long-running loop: processor schedulers and
-	// subscribers plus the backup and restore coordinators. A loop that stops
-	// before shutdown is a terminal failure (exit non-zero for a platform
-	// restart). Blocks until the context is cancelled AND all in-flight tasks and
-	// background loops have finished.
-	loops := []backgroundLoop{
-		{Name: "backup", Run: func(ctx context.Context) error { return backupCoordinator.Run(ctx, time.Second) }},
-		{Name: "restore", Run: func(ctx context.Context) error { return restoreCoordinator.Run(ctx, time.Second) }},
-	}
-	loops = append(loops, proc.BackgroundLoops()...)
-	exitCode = runWorker(ctx, cancel, proc.Start, func() {
-		releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancelRelease()
-		if err := q.DeregisterActiveWorker(releaseCtx, workerID); err != nil {
-			slog.Warn("worker_lease_release_failed", slog.String("component", "worker"), observability.Error(err))
-		}
-	}, loops...)
+	// The runtime owns startup recovery, every long-running loop, and the final
+	// lease release. A loop that stops before shutdown is a terminal failure
+	// (exit non-zero for a platform restart). Blocks until the context is
+	// cancelled AND all in-flight tasks and background loops have finished.
+	exitCode = runWorker(ctx, cancel, workerRuntime{
+		WorkerID:  workerID,
+		Processor: proc,
+		Backup:    backupCoordinator,
+		Restore:   restoreCoordinator,
+		Leases:    q,
+	})
 }

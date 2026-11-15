@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -142,7 +143,7 @@ func TestRunWorkerExitsNonZeroAfterDrainAndReleasesLeaseWhenLoopFails(t *testing
 	}
 	release := func() { events = append(events, "released") }
 
-	code := runWorker(ctx, cancel, drain, release,
+	code := superviseLoops(ctx, cancel, drain, release,
 		backgroundLoop{Name: "backup", Run: blockUntilCancelled},
 		backgroundLoop{Name: "restore", Run: func(context.Context) error { return errors.New("poll exploded") }},
 	)
@@ -164,7 +165,7 @@ func TestRunWorkerExitsZeroOnGracefulCancellation(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
 	}()
-	code := runWorker(ctx, cancel, drain, func() { released = true },
+	code := superviseLoops(ctx, cancel, drain, func() { released = true },
 		backgroundLoop{Name: "backup", Run: blockUntilCancelled},
 		backgroundLoop{Name: "restore", Run: blockUntilCancelled},
 	)
@@ -198,7 +199,7 @@ func TestRunWorkerWaitsForSlowLoopBeforeReleasingLease(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		cancel()
 	}()
-	code := runWorker(ctx, cancel, drain, func() { record("released") },
+	code := superviseLoops(ctx, cancel, drain, func() { record("released") },
 		backgroundLoop{Name: "scheduler", Run: slow},
 		backgroundLoop{Name: "notifier", Run: blockUntilCancelled},
 	)
@@ -218,7 +219,7 @@ func TestRunWorkerStopsLoopsWhenDrainReturnsWithoutCancellation(t *testing.T) {
 	defer cancel()
 	loopStopped := false
 
-	code := runWorker(ctx, cancel, func(context.Context) {}, func() {},
+	code := superviseLoops(ctx, cancel, func(context.Context) {}, func() {},
 		backgroundLoop{Name: "scheduler", Run: func(ctx context.Context) error {
 			<-ctx.Done()
 			loopStopped = true
@@ -232,4 +233,138 @@ func TestRunWorkerStopsLoopsWhenDrainReturnsWithoutCancellation(t *testing.T) {
 	if !loopStopped {
 		t.Fatal("loop was not stopped and awaited after the drain returned")
 	}
+}
+
+type eventLog struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (l *eventLog) record(event string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = append(l.events, event)
+}
+
+func (l *eventLog) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.events...)
+}
+
+type fakeProcessor struct {
+	log     *eventLog
+	started chan struct{}
+	loops   []backgroundLoop
+}
+
+func (f *fakeProcessor) RecoverStartupTasks(context.Context) { f.log.record("recovered") }
+func (f *fakeProcessor) Start(ctx context.Context) {
+	f.log.record("processor-started")
+	close(f.started)
+	<-ctx.Done()
+	f.log.record("processor-stopped")
+}
+func (f *fakeProcessor) BackgroundLoops() []backgroundLoop { return f.loops }
+
+type fakeCoordinator struct {
+	name    string
+	log     *eventLog
+	started chan struct{}
+}
+
+func (f *fakeCoordinator) Run(ctx context.Context, _ time.Duration) error {
+	f.log.record(f.name + "-started")
+	close(f.started)
+	<-ctx.Done()
+	f.log.record(f.name + "-stopped")
+	return ctx.Err()
+}
+
+type fakeLeases struct {
+	log *eventLog
+	err error
+}
+
+func (f *fakeLeases) DeregisterActiveWorker(_ context.Context, workerID string) error {
+	f.log.record("released:" + workerID)
+	return f.err
+}
+
+func newFakeRuntime(log *eventLog, leaseErr error) (workerRuntime, []chan struct{}) {
+	processorStarted := make(chan struct{})
+	backupStarted := make(chan struct{})
+	restoreStarted := make(chan struct{})
+	schedulerStarted := make(chan struct{})
+	scheduler := backgroundLoop{Name: "scheduler", Run: func(ctx context.Context) error {
+		log.record("scheduler-started")
+		close(schedulerStarted)
+		<-ctx.Done()
+		log.record("scheduler-stopped")
+		return ctx.Err()
+	}}
+	return workerRuntime{
+		WorkerID:  "worker-1",
+		Processor: &fakeProcessor{log: log, started: processorStarted, loops: []backgroundLoop{scheduler}},
+		Backup:    &fakeCoordinator{name: "backup", log: log, started: backupStarted},
+		Restore:   &fakeCoordinator{name: "restore", log: log, started: restoreStarted},
+		Leases:    &fakeLeases{log: log, err: leaseErr},
+	}, []chan struct{}{processorStarted, backupStarted, restoreStarted, schedulerStarted}
+}
+
+func runFakeRuntimeUntilAllStarted(t *testing.T, rt workerRuntime, started []chan struct{}) int {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for _, ch := range started {
+			<-ch
+		}
+		cancel()
+	}()
+	return runWorker(ctx, cancel, rt)
+}
+
+func TestRunWorkerRecoversThenRunsEveryLoopAndReleasesLeaseLast(t *testing.T) {
+	log := &eventLog{}
+	rt, started := newFakeRuntime(log, nil)
+
+	code := runFakeRuntimeUntilAllStarted(t, rt, started)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	events := log.snapshot()
+	if len(events) != 10 {
+		t.Fatalf("events = %v, want recovery, 4 starts, 4 stops and the lease release", events)
+	}
+	if events[0] != "recovered" {
+		t.Fatalf("events = %v, want startup recovery before any loop starts", events)
+	}
+	if events[len(events)-1] != "released:worker-1" {
+		t.Fatalf("events = %v, want lease released after every loop stopped", events)
+	}
+	for _, name := range []string{"processor", "backup", "restore", "scheduler"} {
+		if !contains(events, name+"-started") || !contains(events, name+"-stopped") {
+			t.Fatalf("events = %v, want %s started and stopped", events, name)
+		}
+	}
+}
+
+func TestRunWorkerIgnoresLeaseReleaseFailure(t *testing.T) {
+	log := &eventLog{}
+	rt, started := newFakeRuntime(log, fmt.Errorf("redis unavailable"))
+
+	if code := runFakeRuntimeUntilAllStarted(t, rt, started); code != 0 {
+		t.Fatalf("exit code = %d, want 0: a failed lease release must not fail a clean shutdown", code)
+	}
+}
+
+func contains(events []string, want string) bool {
+	for _, event := range events {
+		if event == want {
+			return true
+		}
+	}
+	return false
 }
