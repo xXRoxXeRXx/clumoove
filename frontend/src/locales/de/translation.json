@@ -677,6 +677,7 @@
     "cancelTransfer": "Übertragung abbrechen",
     "destinationBreadcrumb": "Zielordner",
     "destinationSelected": "Ausgewähltes Ziel: {{name}}",
+    "noValidDestination": "Dieser Ordner kann nicht als Ziel verwendet werden.",
     "conflictTitle": "Eintrag existiert bereits",
     "conflictDescription": "Lege fest, wie der vorhandene Eintrag behandelt wird.",
     "partialWarning": "Einige Einträge konnten nicht abgeschlossen werden. Der Ordner wurde aktualisiert.",

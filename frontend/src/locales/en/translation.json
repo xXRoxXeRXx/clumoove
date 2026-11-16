@@ -677,6 +677,7 @@
     "cancelTransfer": "Cancel transfer",
     "destinationBreadcrumb": "Destination folder",
     "destinationSelected": "Selected destination: {{name}}",
+    "noValidDestination": "This folder cannot be used as a destination.",
     "conflictTitle": "Item already exists",
     "conflictDescription": "Choose how to handle the existing item.",
     "partialWarning": "Some items could not be completed. The folder has been refreshed.",
