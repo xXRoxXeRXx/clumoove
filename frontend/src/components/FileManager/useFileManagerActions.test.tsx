@@ -904,6 +904,60 @@ describe('useFileManagerActions', () => {
     expect(latest.transfers.map((t) => t.id)).toEqual(['bg-transfer-1']);
   });
 
+  it('keeps an in-flight same-profile transfer running and settles it after the profile changes', async () => {
+    const copyDeferred = deferred<Awaited<ReturnType<typeof copyFileEntry>>>();
+    let copySignal: AbortSignal | undefined;
+    vi.mocked(copyFileEntry).mockImplementationOnce((...args) => {
+      copySignal = args[6] as AbortSignal | undefined;
+      return copyDeferred.promise;
+    });
+
+    await renderActions();
+    act(() => latest.destinationPicker.openSingle(fileEntry, 'copy'));
+    await flushMicrotasks();
+    await act(async () => {
+      await latest.destinationPicker.submit();
+    });
+    expect(latest.transfers[0].status).toBe('running');
+
+    await renderActions({ profileId: 'profile-2' });
+    expect(copySignal?.aborted).toBe(false);
+    expect(latest.transfers[0].status).toBe('running');
+
+    await act(async () => {
+      copyDeferred.resolve({ ok: true, status: 200, data: { success: true, status: 'copied', name: 'notes.txt', native: true } });
+      await Promise.resolve();
+    });
+    expect(latest.transfers[0].status).toBe('completed');
+    expect(refreshListing).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the server-reported status of cross-profile transfers', async () => {
+    vi.mocked(listCrossProfileFileTransfers).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        transfers: [
+          {
+            id: 'bg-transfer-paused',
+            operation: 'copy',
+            status: 'PAUSED_CONNECTION_LOSS',
+            source_profile_name: 'Google Drive',
+            target_profile_name: 'Dropbox',
+            total_files: 4,
+            processed_files: 1,
+            failed_files: 0,
+            skipped_files: 0,
+          },
+        ],
+      },
+    });
+
+    await renderActions();
+
+    expect(latest.transfers[0]).toMatchObject({ id: 'bg-transfer-paused', serverStatus: 'PAUSED_CONNECTION_LOSS' });
+  });
+
   it('aborts in-flight folder creation and single deletion on unmount without updating stale state', async () => {
     const mkdirDeferred = deferred<Awaited<ReturnType<typeof createDirectory>>>();
     const deleteDeferred = deferred<Awaited<ReturnType<typeof deleteFileEntry>>>();

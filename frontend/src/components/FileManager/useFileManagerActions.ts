@@ -28,6 +28,8 @@ export type FileManagerBreadcrumb = {
   name: string;
 };
 
+export type FileTransferOperation = 'copy' | 'move';
+
 export type FileActionTransferOrigin = 'same-profile' | 'cross-profile';
 
 export type FileActionTransferStatus =
@@ -40,7 +42,7 @@ export type FileActionTransferStatus =
 export type FileActionTransfer = {
   id: string;
   origin: FileActionTransferOrigin;
-  operation: 'copy' | 'move';
+  operation: FileTransferOperation;
   status: FileActionTransferStatus;
   sourceLabel: string;
   destinationLabel: string;
@@ -49,6 +51,8 @@ export type FileActionTransfer = {
   failedCount: number;
   skippedCount: number;
   error?: string;
+  /** Status exactly as reported by the server; set for cross-profile transfers only. */
+  serverStatus?: string;
 };
 
 export type FileActionPermissions = {
@@ -120,7 +124,7 @@ export type FileManagerActions = {
   destinationPicker: {
     open: boolean;
     mode: 'single' | 'batch' | null;
-    operation: 'copy' | 'move' | null;
+    operation: FileTransferOperation | null;
     entry: FileEntry | null;
     itemCount: number;
     profileId: string;
@@ -130,8 +134,8 @@ export type FileManagerActions = {
     loading: boolean;
     busy: boolean;
     error: string;
-    openSingle: (entry: FileEntry, operation: 'copy' | 'move') => void;
-    openBatch: (operation: 'copy' | 'move') => void;
+    openSingle: (entry: FileEntry, operation: FileTransferOperation) => void;
+    openBatch: (operation: FileTransferOperation) => void;
     selectProfile: (targetProfileId: string) => void;
     openFolder: (entry: FileEntry) => void;
     goToBreadcrumb: (index: number) => void;
@@ -195,8 +199,13 @@ function toCrossProfileActionTransfer(transfer: FileTransferSummary): FileAction
     processedCount: transfer.processed_files,
     failedCount: transfer.failed_files,
     skippedCount: transfer.skipped_files,
+    serverStatus: transfer.status,
   };
 }
+
+type DestinationPickerTarget =
+  | { kind: 'single'; entry: FileEntry; operation: FileTransferOperation }
+  | { kind: 'batch'; operation: FileTransferOperation };
 
 /**
  * Encapsulates file-manager permissions, single and batch mutations, destination
@@ -222,7 +231,6 @@ export function useFileManagerActions({
 
   const [error, setError] = useState('');
   const [batchBusy, setBatchBusy] = useState(false);
-  const [batchOperation, setBatchOperation] = useState<'copy' | 'move' | null>(null);
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [batchResults, setBatchResults] = useState<BatchItemResult[]>([]);
@@ -236,8 +244,7 @@ export function useFileManagerActions({
   const [deleteError, setDeleteError] = useState('');
   const [renameTarget, setRenameTarget] = useState<FileEntry | null>(null);
   const [renameName, setRenameName] = useState('');
-  const [mutationEntry, setMutationEntry] = useState<FileEntry | null>(null);
-  const [mutationOperation, setMutationOperation] = useState<'copy' | 'move' | null>(null);
+  const [pickerTarget, setPickerTarget] = useState<DestinationPickerTarget | null>(null);
   const [pickerBreadcrumbs, setPickerBreadcrumbs] = useState<FileManagerBreadcrumb[]>([]);
   const [pickerProfileId, setPickerProfileId] = useState(profileId);
   const [pickerEntries, setPickerEntries] = useState<FileEntry[]>([]);
@@ -247,7 +254,6 @@ export function useFileManagerActions({
   const [conflictStrategies, setConflictStrategies] = useState<FileMutationConflictStrategy[] | null>(null);
   const [sameProfileTransfers, setSameProfileTransfers] = useState<FileActionTransfer[]>([]);
   const [crossProfileTransfers, setCrossProfileTransfers] = useState<FileTransferSummary[]>([]);
-  const [dismissedCrossProfileIds, setDismissedCrossProfileIds] = useState<Set<string>>(() => new Set());
 
   const activeGenerationRef = useRef(0);
   const downloadingEntryRef = useRef<string | null>(null);
@@ -261,7 +267,6 @@ export function useFileManagerActions({
   const sameProfileIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
-    const transferControllers = transferControllersRef.current;
     return () => {
       activeGenerationRef.current += 1;
       createDirRequestRef.current?.abort();
@@ -270,11 +275,18 @@ export function useFileManagerActions({
       mutationRequestRef.current?.abort();
       pickerRequestRef.current?.abort();
       transfersRequestRef.current?.abort();
-      transferControllers.forEach((controller) => controller.abort());
-      transferControllers.clear();
       downloadingEntryRef.current = null;
     };
   }, [profileId]);
+
+  // Same-profile transfers keep running when the profile changes; only unmount cancels them.
+  useEffect(() => {
+    const transferControllers = transferControllersRef.current;
+    return () => {
+      transferControllers.forEach((controller) => controller.abort());
+      transferControllers.clear();
+    };
+  }, []);
 
   const loadTransfers = useCallback(async () => {
     if (!profileId) return;
@@ -348,10 +360,10 @@ export function useFileManagerActions({
   );
 
   const selectedCan = useCallback(
-    (action: 'download' | 'delete' | 'copy' | 'move') =>
+    (action: 'archive' | 'delete' | 'copy' | 'move') =>
       selectedEntries.length > 0 &&
       selectedEntries.every((entry) =>
-        action === 'download'
+        action === 'archive'
           ? capabilities.archive === true
           : entry.allowed_actions.includes(action),
       ),
@@ -367,7 +379,7 @@ export function useFileManagerActions({
       canMoveEntry,
       canDeleteEntry,
       hasEntryActions,
-      canBatchDownload: selectedCan('download'),
+      canBatchDownload: selectedCan('archive'),
       canBatchCopy: selectedCan('copy'),
       canBatchMove: selectedCan('move'),
       canBatchDelete: selectedCan('delete'),
@@ -445,7 +457,7 @@ export function useFileManagerActions({
   );
 
   const downloadArchive = useCallback(async () => {
-    if (!selectedCan('download') || batchBusy) return;
+    if (!selectedCan('archive') || batchBusy) return;
     const generation = activeGenerationRef.current;
     setBatchBusy(true);
     setError('');
@@ -596,9 +608,7 @@ export function useFileManagerActions({
     mutationRequestRef.current?.abort();
     pickerRequestRef.current?.abort();
     setRenameTarget(null);
-    setMutationEntry(null);
-    setMutationOperation(null);
-    setBatchOperation(null);
+    setPickerTarget(null);
     setMutationError('');
     setConflictStrategies(null);
   }, [batchBusy, mutationBusy]);
@@ -629,21 +639,17 @@ export function useFileManagerActions({
   }, [loadPickerEntries, profileId, profileName, t]);
 
   const openSingleDestinationPicker = useCallback(
-    (entry: FileEntry, operation: 'copy' | 'move') => {
-      setBatchOperation(null);
-      setMutationEntry(entry);
-      setMutationOperation(operation);
+    (entry: FileEntry, operation: FileTransferOperation) => {
+      setPickerTarget({ kind: 'single', entry, operation });
       initDestinationPicker();
     },
     [initDestinationPicker],
   );
 
   const openBatchDestinationPicker = useCallback(
-    (operation: 'copy' | 'move') => {
+    (operation: FileTransferOperation) => {
       if (!selectedCan(operation) || batchBusy) return;
-      setMutationEntry(null);
-      setMutationOperation(null);
-      setBatchOperation(operation);
+      setPickerTarget({ kind: 'batch', operation });
       setBatchResults([]);
       initDestinationPicker();
     },
@@ -690,6 +696,11 @@ export function useFileManagerActions({
     [],
   );
 
+  const pickerDestination = useMemo(() => {
+    const current = pickerBreadcrumbs[pickerBreadcrumbs.length - 1];
+    return { ref: current?.ref ?? null, name: current?.name ?? t('files.title') };
+  }, [pickerBreadcrumbs, t]);
+
   const translateMutationError = useCallback(
     (errorCode?: string | null) =>
       errorCode === 'FILES_PARTIAL_OPERATION' ? t('files.partialWarning') : translateApiError(errorCode),
@@ -697,16 +708,14 @@ export function useFileManagerActions({
   );
 
   const clearDestinationDialog = useCallback(() => {
-    setMutationEntry(null);
-    setMutationOperation(null);
-    setBatchOperation(null);
+    setPickerTarget(null);
     setConflictStrategies(null);
     setMutationError('');
   }, []);
 
   const enqueueSameProfileTransfer = useCallback(
     (params: {
-      operation: 'copy' | 'move';
+      operation: FileTransferOperation;
       sourceLabel: string;
       destinationLabel: string;
       itemCount: number;
@@ -782,7 +791,7 @@ export function useFileManagerActions({
   const submitCrossProfileTransfer = useCallback(
     async (params: {
       refs: string[];
-      operation: 'copy' | 'move';
+      operation: FileTransferOperation;
       destinationRef: string | null;
       strategy?: FileMutationConflictStrategy;
       signal?: AbortSignal;
@@ -790,28 +799,19 @@ export function useFileManagerActions({
       onSuccess: () => void;
     }) => {
       const generation = activeGenerationRef.current;
-      const result = params.signal
-        ? await startCrossProfileFileTransfer(
-            apiUrl,
-            token,
-            profileId,
-            params.refs,
-            pickerProfileId,
-            params.destinationRef,
-            params.operation,
-            params.strategy,
-            params.signal,
-          )
-        : await startCrossProfileFileTransfer(
-            apiUrl,
-            token,
-            profileId,
-            params.refs,
-            pickerProfileId,
-            params.destinationRef,
-            params.operation,
-            params.strategy,
-          );
+      // Only pass a signal when there is one, so the request arity stays unchanged for batch transfers.
+      const signalArgs: [AbortSignal?] = params.signal ? [params.signal] : [];
+      const result = await startCrossProfileFileTransfer(
+        apiUrl,
+        token,
+        profileId,
+        params.refs,
+        pickerProfileId,
+        params.destinationRef,
+        params.operation,
+        params.strategy,
+        ...signalArgs,
+      );
       if (params.signal?.aborted || activeGenerationRef.current !== generation) return;
       params.onSettledBusy();
       if (result.ok === false) {
@@ -884,11 +884,9 @@ export function useFileManagerActions({
 
   const submitSingleDestinationMutation = useCallback(
     async (strategy?: FileMutationConflictStrategy) => {
-      if (!mutationEntry || !mutationOperation || mutationBusy) return;
-      const entry = mutationEntry;
-      const operation = mutationOperation;
-      const destinationRef = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null;
-      const destinationName = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.name ?? t('files.title');
+      if (pickerTarget?.kind !== 'single' || mutationBusy) return;
+      const { entry, operation } = pickerTarget;
+      const { ref: destinationRef, name: destinationName } = pickerDestination;
 
       mutationRequestRef.current?.abort();
       const controller = new AbortController();
@@ -909,6 +907,8 @@ export function useFileManagerActions({
         return;
       }
 
+      // The transfer outlives the dialog request, so it gets its own controller.
+      const transferController = new AbortController();
       clearDestinationDialog();
       setMutationBusy(false);
 
@@ -917,12 +917,12 @@ export function useFileManagerActions({
         sourceLabel: entry.name,
         destinationLabel: destinationName,
         itemCount: 1,
-        controller,
+        controller: transferController,
         run: async () => {
           const result =
             operation === 'copy'
-              ? await copyFileEntry(apiUrl, token, profileId, entry.ref, destinationRef, strategy, controller.signal)
-              : await moveFileEntry(apiUrl, token, profileId, entry.ref, destinationRef, strategy, controller.signal);
+              ? await copyFileEntry(apiUrl, token, profileId, entry.ref, destinationRef, strategy, transferController.signal)
+              : await moveFileEntry(apiUrl, token, profileId, entry.ref, destinationRef, strategy, transferController.signal);
           if (result.ok === false) {
             return {
               ok: false,
@@ -947,14 +947,12 @@ export function useFileManagerActions({
       clearPreview,
       enqueueSameProfileTransfer,
       mutationBusy,
-      mutationEntry,
-      mutationOperation,
-      pickerBreadcrumbs,
+      pickerDestination,
       pickerProfileId,
+      pickerTarget,
       previewEntryRef,
       profileId,
       submitCrossProfileTransfer,
-      t,
       token,
       translateMutationError,
     ],
@@ -962,13 +960,12 @@ export function useFileManagerActions({
 
   const submitBatchDestinationMutation = useCallback(
     async (strategy?: FileMutationConflictStrategy) => {
-      if (!batchOperation || batchBusy) return;
+      if (pickerTarget?.kind !== 'batch' || batchBusy) return;
       const refs = selectedEntries.map((entry) => entry.ref);
       if (refs.length === 0) return;
 
-      const operation = batchOperation;
-      const destinationRef = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null;
-      const destinationName = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.name ?? t('files.title');
+      const { operation } = pickerTarget;
+      const { ref: destinationRef, name: destinationName } = pickerDestination;
       setMutationError('');
 
       if (pickerProfileId !== profileId) {
@@ -1036,12 +1033,12 @@ export function useFileManagerActions({
     [
       apiUrl,
       batchBusy,
-      batchOperation,
       clearDestinationDialog,
       clearSelection,
       enqueueSameProfileTransfer,
-      pickerBreadcrumbs,
+      pickerDestination,
       pickerProfileId,
+      pickerTarget,
       profileId,
       refreshListing,
       selectedEntries,
@@ -1079,28 +1076,21 @@ export function useFileManagerActions({
   const dismissTransfer = useCallback((transferId: string) => {
     sameProfileIdsRef.current.delete(transferId);
     setSameProfileTransfers((prev) => prev.filter((item) => item.id !== transferId));
-    setDismissedCrossProfileIds((prev) => {
-      if (prev.has(transferId)) return prev;
-      const next = new Set(prev);
-      next.add(transferId);
-      return next;
-    });
     setCrossProfileTransfers((prev) => prev.filter((item) => item.id !== transferId));
   }, []);
 
   const transfers = useMemo<FileActionTransfer[]>(
     () => [
       ...sameProfileTransfers,
-      ...crossProfileTransfers
-        .filter((transfer) => !dismissedCrossProfileIds.has(transfer.id))
-        .map(toCrossProfileActionTransfer),
+      ...crossProfileTransfers.map(toCrossProfileActionTransfer),
     ],
-    [crossProfileTransfers, dismissedCrossProfileIds, sameProfileTransfers],
+    [crossProfileTransfers, sameProfileTransfers],
   );
 
   const targetPickerEntries = useMemo(
-    () => (batchOperation !== null ? selectedEntries : mutationEntry ? [mutationEntry] : []),
-    [batchOperation, mutationEntry, selectedEntries],
+    () =>
+      pickerTarget?.kind === 'batch' ? selectedEntries : pickerTarget?.kind === 'single' ? [pickerTarget.entry] : [],
+    [pickerTarget, selectedEntries],
   );
 
   const availablePickerEntries = useMemo(
@@ -1156,10 +1146,10 @@ export function useFileManagerActions({
       close: closeDeleteDialog,
     },
     destinationPicker: {
-      open: ((mutationEntry !== null && mutationOperation !== null) || batchOperation !== null) && conflictStrategies === null,
-      mode: batchOperation !== null ? 'batch' : mutationEntry !== null ? 'single' : null,
-      operation: mutationOperation ?? batchOperation,
-      entry: mutationEntry,
+      open: pickerTarget !== null && conflictStrategies === null,
+      mode: pickerTarget?.kind ?? null,
+      operation: pickerTarget?.operation ?? null,
+      entry: pickerTarget?.kind === 'single' ? pickerTarget.entry : null,
       itemCount: selectedEntries.length,
       profileId: pickerProfileId,
       breadcrumbs: pickerBreadcrumbs,
@@ -1173,7 +1163,7 @@ export function useFileManagerActions({
       selectProfile: selectPickerProfile,
       openFolder: openPickerFolder,
       goToBreadcrumb: goToPickerBreadcrumb,
-      submit: () => (batchOperation ? submitBatchDestinationMutation() : submitSingleDestinationMutation()),
+      submit: () => (pickerTarget?.kind === 'batch' ? submitBatchDestinationMutation() : submitSingleDestinationMutation()),
       close: closeMutationDialogs,
     },
     conflict: {

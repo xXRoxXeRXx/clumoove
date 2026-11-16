@@ -33,14 +33,9 @@ import { useFormat } from '../../utils/format';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
-import { useFileManagerActions, type FileActionTransfer } from './useFileManagerActions';
+import { useFileManagerActions, type FileActionTransfer, type FileManagerBreadcrumb } from './useFileManagerActions';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
-
-type Breadcrumb = {
-  ref: string | null;
-  name: string;
-};
 
 export type SortField = 'name' | 'size' | 'modified';
 export type SortDirection = 'asc' | 'desc';
@@ -112,7 +107,7 @@ function toBackgroundTransfer(transfer: FileActionTransfer): FileTransferSummary
   return {
     id: transfer.id,
     operation: transfer.operation,
-    status: BACKGROUND_STATUS_BY_ACTION_STATUS[transfer.status],
+    status: transfer.serverStatus ?? BACKGROUND_STATUS_BY_ACTION_STATUS[transfer.status],
     source_profile_name: transfer.sourceLabel,
     target_profile_name: transfer.destinationLabel,
     total_files: transfer.itemCount,
@@ -132,7 +127,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [capabilities, setCapabilities] = useState<FileCapabilities>(unavailableCapabilities);
-  const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([]);
+  const [breadcrumbs, setBreadcrumbs] = useState<FileManagerBreadcrumb[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [selectedRefs, setSelectedRefs] = useState<Set<string>>(() => new Set());
@@ -526,6 +521,12 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     clearPreview,
   });
 
+  const clearActionError = actions.clearError;
+  useEffect(() => {
+    // A new listing request clears stale action errors, as it does for listing errors.
+    if (entriesLoading) clearActionError();
+  }, [clearActionError, entriesLoading]);
+
   useFocusTrap(createDirDialogRef, createDirCancelRef, actions.createFolder.close, actions.createFolder.open);
   useFocusTrap(deleteDialogRef, deleteCancelRef, actions.deleteEntry.close, actions.deleteEntry.open);
   useFocusTrap(batchDeleteDialogRef, batchDeleteCancelRef, actions.batch.closeDeleteDialog, actions.batch.deleteDialogOpen);
@@ -796,10 +797,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
         </div>
       </div>
 
-      {error && <p className="ui-alert ui-alert-error px-3 py-2 text-sm" role="alert">{error}</p>}
-      {actions.error && actions.error !== error && (
-        <p className="ui-alert ui-alert-error px-3 py-2 text-sm" role="alert">{actions.error}</p>
-      )}
+      {(error || actions.error) && <p className="ui-alert ui-alert-error px-3 py-2 text-sm" role="alert">{error || actions.error}</p>}
       {initialPathFallback && <p className="ui-alert px-3 py-2 text-sm" role="status">{t('files.pathFallback')}</p>}
 
       <div className="grid gap-5 lg:grid-cols-[15rem_minmax(0,1fr)] items-start">

@@ -20,7 +20,7 @@
 - **Frontend Consumption**:
   - Components retrieve the translation function via `useApiError()` in `src/utils/apiError.ts`:
     ```typescript
-    const { translateApiError } = useApiError();
+    const translateApiError = useApiError();
     // ...
     const body = await res.json().catch(() => ({}));
     const message = translateApiError(body.error_code);
