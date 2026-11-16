@@ -51,7 +51,7 @@ describe('BrowseToolbar', () => {
     await view.render(<BrowseToolbar {...props} />);
     const nav = view.container.querySelector('nav[aria-label="Current folder"]')!;
     const buttons = nav.querySelectorAll('button');
-    expect([...buttons].map((b) => b.disabled)).toEqual([false, false, true]);
+    expect(Array.from(buttons).map((b) => b.disabled)).toEqual([false, false, true]);
     await view.click(buttons[1]);
     expect(props.onNavigate).toHaveBeenCalledWith(1);
   });
@@ -65,7 +65,7 @@ describe('BrowseToolbar', () => {
 
     await view.click(more);
     expect(more.getAttribute('aria-expanded')).toBe('true');
-    expect([...view.container.querySelectorAll('[role="menuitem"]')].map((i) => i.textContent)).toEqual(['Dir1', 'Dir2', 'Dir3']);
+    expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((i) => i.textContent)).toEqual(['Dir1', 'Dir2', 'Dir3']);
 
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));

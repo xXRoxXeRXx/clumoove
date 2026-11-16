@@ -1,26 +1,16 @@
-import { useCallback, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowUpTrayIcon, FileIcon } from '../icons';
 import { useTranslation } from 'react-i18next';
 import { type FileCapabilities, type UploadConflictStrategy } from '../../api/files';
 import { useFormat } from '../../utils/format';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { TransferPanel } from './TransferPanel';
-import { useTransferCenter } from './useTransferCenter';
-import type { FileActionTransfer } from './useFileManagerActions';
 
 type FileUploadControlProps = {
-  apiUrl: string;
-  token: string;
-  profileId: string;
-  parentRef: string | null;
   capabilities: FileCapabilities;
   disabled?: boolean;
-  onCompleted: (profileId: string) => void;
-  /** Same-profile and cross-profile transfers to present next to the uploads started here. */
-  transfers?: FileActionTransfer[];
-  onCancelTransfer?: (transferId: string) => void | Promise<void>;
-  onDismissTransfer?: (transferId: string) => void;
+  /** The user confirmed these files and the conflict strategy; the caller owns the upload itself. */
+  onUpload: (files: File[], strategy: UploadConflictStrategy) => void;
 };
 
 function availableStrategies(capabilities: FileCapabilities): UploadConflictStrategy[] {
@@ -30,22 +20,8 @@ function availableStrategies(capabilities: FileCapabilities): UploadConflictStra
   return strategies;
 }
 
-const NO_TRANSFERS: FileActionTransfer[] = [];
-const noop = () => undefined;
-
-/** Upload picker with conflict handling, plus the unified transfer panel for uploads and transfers. */
-export function FileUploadControl({
-  apiUrl,
-  token,
-  profileId,
-  parentRef,
-  capabilities,
-  disabled = false,
-  onCompleted,
-  transfers = NO_TRANSFERS,
-  onCancelTransfer = noop,
-  onDismissTransfer = noop,
-}: FileUploadControlProps) {
+/** Upload picker: file chooser, drop target and conflict-strategy dialog. Uploading is the caller's concern. */
+export function FileUploadControl({ capabilities, disabled = false, onUpload }: FileUploadControlProps) {
   const { t } = useTranslation();
   const { formatBytes } = useFormat();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -55,15 +31,6 @@ export function FileUploadControl({
   const cancelRef = useRef<HTMLButtonElement>(null);
   const strategies = availableStrategies(capabilities);
   useFocusTrap(dialogRef, cancelRef, () => setPending([]), pending.length > 0);
-
-  const center = useTransferCenter({
-    apiUrl,
-    token,
-    transfers,
-    onCancelTransfer,
-    onDismissTransfer,
-    onUploadCompleted: onCompleted,
-  });
 
   const isUploadDisabled = disabled || !capabilities.upload;
 
@@ -76,10 +43,10 @@ export function FileUploadControl({
     }
   };
 
-  const enqueue = useCallback(() => {
-    center.enqueueUploads(pending, { profileId, parentRef, strategy });
+  const confirm = () => {
+    onUpload(pending, strategy);
     setPending([]);
-  }, [center, parentRef, pending, profileId, strategy]);
+  };
 
   return (
     <>
@@ -97,8 +64,6 @@ export function FileUploadControl({
           <span className="hidden sm:inline">{t('files.upload')}</span>
         </button>
       </div>
-
-      <TransferPanel items={center.items} onCancel={center.cancel} onDismiss={center.dismiss} onRetry={center.retry} />
 
       {pending.length > 0 &&
         createPortal(
@@ -130,7 +95,7 @@ export function FileUploadControl({
                 <button ref={cancelRef} type="button" onClick={() => setPending([])} className="ui-button-secondary px-3 py-2 text-sm">
                   {t('common.cancel')}
                 </button>
-                <button type="button" onClick={enqueue} className="ui-button-primary px-3 py-2 text-sm">
+                <button type="button" onClick={confirm} className="ui-button-primary px-3 py-2 text-sm">
                   {t('files.startUpload')}
                 </button>
               </div>

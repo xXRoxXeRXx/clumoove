@@ -6,7 +6,7 @@ type ProfileSidebarProps = {
   profiles: Array<{ id: string; name: string; provider: string }>;
   activeId: string;
   loading: boolean;
-  onSelect: (profileId: string) => void;
+  onSelect: (id: string) => void;
   onOpenManager?: () => void;
 };
 

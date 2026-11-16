@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { EntryActionMenu, type EntryMenuPosition } from './EntryActionMenu';
-import { entryMenuActions } from './entryMenu';
+import { entryMenuActions, nextMenuState } from './entryMenu';
 import { useRenderHarness } from './renderHarness';
 import type { FileEntry } from '../../../api/files';
 
@@ -22,7 +22,7 @@ describe('EntryActionMenu', () => {
     await renderMenu();
     expect(menu()?.getAttribute('aria-label')).toBe('Actions for a.txt');
     expect(view.container.querySelector('[role="menu"]')).toBeNull();
-    expect([...document.body.querySelectorAll('[role="menuitem"]')].map((i) => i.textContent)).toEqual([
+    expect(Array.from(document.body.querySelectorAll('[role="menuitem"]')).map((i) => i.textContent)).toEqual([
       'Rename', 'Copy', 'Move', 'Download', 'Delete',
     ]);
   });
@@ -78,5 +78,22 @@ describe('entryMenuActions', () => {
 
   it('lists only the actions the permissions allow, in menu order', () => {
     expect(entryMenuActions(entry, permissions)).toEqual(['rename', 'move', 'delete']);
+  });
+});
+
+describe('nextMenuState', () => {
+  it('opens at a button, right-aligned just below it', () => {
+    expect(nextMenuState(null, 'a', { type: 'button', right: 300, bottom: 50 })).toEqual({ ref: 'a', position: { x: 300, y: 54, align: 'right' } });
+  });
+
+  it('opens at the pointer, left-aligned', () => {
+    expect(nextMenuState(null, 'a', { type: 'point', x: 7, y: 9 })).toEqual({ ref: 'a', position: { x: 7, y: 9, align: 'left' } });
+  });
+
+  it('closes when the same entry button is pressed again, but a context menu always reopens', () => {
+    const open = nextMenuState(null, 'a', { type: 'button', right: 1, bottom: 1 });
+    expect(nextMenuState(open, 'a', { type: 'button', right: 1, bottom: 1 })).toBeNull();
+    expect(nextMenuState(open, 'a', { type: 'point', x: 3, y: 4 })).toEqual({ ref: 'a', position: { x: 3, y: 4, align: 'left' } });
+    expect(nextMenuState(open, 'b', { type: 'button', right: 1, bottom: 1 })?.ref).toBe('b');
   });
 });

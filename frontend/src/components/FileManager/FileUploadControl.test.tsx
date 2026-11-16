@@ -1,34 +1,10 @@
 import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import i18n from '../../i18n';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FileCapabilities } from '../../api/files';
 import { FileUploadControl } from './FileUploadControl';
-import { uploadFile, type FileCapabilities } from '../../api/files';
-import type { FileActionTransfer } from './useFileManagerActions';
+import { useRenderHarness } from './views/renderHarness';
 
-globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-
-vi.mock('../../api/files', () => ({
-  uploadFile: vi.fn(),
-}));
-
-type Deferred<T> = {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-  reject: (err: unknown) => void;
-};
-
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  let reject!: (err: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-const mockFullCapabilities: FileCapabilities = {
+const fullCapabilities: FileCapabilities = {
   browse: true,
   native_pagination: false,
   download: true,
@@ -48,523 +24,112 @@ const mockFullCapabilities: FileCapabilities = {
   thumbnails: false,
 };
 
-function makeFile(name: string, size = 1024): File {
-  const blob = new Blob(['x'.repeat(size)], { type: 'text/plain' });
-  return new File([blob], name, { type: 'text/plain', lastModified: Date.now() });
-}
+const makeFile = (name: string) => new File(['x'], name, { type: 'text/plain' });
 
-describe('FileUploadControl component', () => {
-  let container: HTMLDivElement;
-  let root: Root;
-  const onCompleted = vi.fn();
+describe('FileUploadControl picker', () => {
+  const view = useRenderHarness();
+  const onUpload = vi.fn();
 
-  beforeEach(async () => {
-    await i18n.changeLanguage('en');
-    onCompleted.mockReset();
-    vi.mocked(uploadFile).mockReset();
-    container = document.createElement('div');
-    document.body.append(container);
-    root = createRoot(container);
+  const renderControl = (props: Partial<{ capabilities: FileCapabilities; disabled: boolean }> = {}) =>
+    view.render(<FileUploadControl capabilities={props.capabilities ?? fullCapabilities} disabled={props.disabled} onUpload={onUpload} />);
+
+  const fileInput = () => view.container.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const dialog = () => document.querySelector('[role="dialog"]');
+
+  async function choose(files: File[]) {
+    await act(async () => {
+      Object.defineProperty(fileInput(), 'files', { value: files, configurable: true });
+      fileInput().dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  const button = (label: string) =>
+    Array.from(dialog()!.querySelectorAll('button')).find((b) => b.textContent?.includes(label)) ?? null;
+
+  beforeEach(() => onUpload.mockReset());
+
+  it('asks for a conflict strategy and hands the chosen files and strategy to the caller', async () => {
+    await renderControl();
+    const file = makeFile('test.txt');
+    await choose([file]);
+    expect(dialog()?.textContent).toContain('Upload conflict handling');
+
+    const select = dialog()!.querySelector('select')!;
+    await act(async () => {
+      select.value = 'RENAME';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await view.click(button('Start upload'));
+
+    expect(onUpload).toHaveBeenCalledWith([file], 'RENAME');
+    expect(dialog()).toBeNull();
   });
 
-  afterEach(() => {
-    act(() => root?.unmount());
-    container?.remove();
-    // Clean up portals attached to document.body
-    document.querySelectorAll('[role="dialog"]').forEach((el) => el.parentElement?.remove());
-    vi.restoreAllMocks();
+  it('defaults to SKIP and offers only the strategies the connection supports', async () => {
+    await renderControl({ capabilities: { ...fullCapabilities, conflict_overwrite: false } });
+    await choose([makeFile('a.txt')]);
+    expect(Array.from(dialog()!.querySelectorAll('option')).map((o) => o.value)).toEqual(['SKIP', 'RENAME']);
+    await view.click(button('Start upload'));
+    expect(onUpload).toHaveBeenCalledWith(expect.any(Array), 'SKIP');
   });
 
-  it('selects files, configures conflict strategy, and enqueues uploads', async () => {
-    vi.mocked(uploadFile).mockResolvedValue({
-      ok: true,
-      status: 201,
-      data: { status: 'uploaded', name: 'test.txt' },
-    });
-
+  it('warns when the connection cannot overwrite atomically', async () => {
+    await renderControl();
+    await choose([makeFile('a.txt')]);
+    const select = dialog()!.querySelector('select')!;
     await act(async () => {
-      root.render(
-        <FileUploadControl
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
-          parentRef="ref-root"
-          capabilities={mockFullCapabilities}
-          onCompleted={onCompleted}
-        />
-      );
-      await Promise.resolve();
+      select.value = 'OVERWRITE';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
     });
-
-    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
-    expect(fileInput).not.toBeNull();
-
-    // Trigger file selection
-    const testFile = makeFile('test.txt');
-    await act(async () => {
-      Object.defineProperty(fileInput, 'files', {
-        value: [testFile],
-        writable: true,
-      });
-      fileInput?.dispatchEvent(new Event('change', { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    // Conflict strategy dialog opens in portal
-    const dialog = document.querySelector('[role="dialog"]');
-    expect(dialog).not.toBeNull();
-    expect(dialog?.textContent).toContain('Upload conflict handling');
-
-    // Change conflict strategy to RENAME
-    const select = dialog?.querySelector('select');
-    expect(select).toBeDefined();
-    await act(async () => {
-      select?.focus();
-      if (select) {
-        select.value = 'RENAME';
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      await Promise.resolve();
-    });
-
-    // Click "Start upload" button
-    const startBtn = Array.from(dialog!.querySelectorAll('button')).find((b) => b.textContent?.includes('Start upload') || b.textContent?.includes('Upload starten'));
-    expect(startBtn).toBeDefined();
-
-    await act(async () => {
-      startBtn?.click();
-      await Promise.resolve();
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    expect(uploadFile).toHaveBeenCalledWith(
-      'https://api.example.test',
-      'jwt-token',
-      'profile-1',
-      testFile,
-      'ref-root',
-      'RENAME',
-      expect.any(Function),
-      expect.any(AbortSignal)
-    );
-    expect(onCompleted).toHaveBeenCalledWith('profile-1');
+    expect(dialog()!.textContent).toContain('cannot overwrite files atomically');
   });
 
-  it('limits concurrent uploads to 4 slots simultaneously', async () => {
-    const deferredList: Deferred<{ ok: true; status: number; data: { status: 'uploaded'; name: string } }>[] = [];
-    for (let i = 0; i < 6; i++) {
-      deferredList.push(deferred());
-    }
+  it('cancels the pending selection with the Cancel button and with Escape', async () => {
+    await renderControl();
+    await choose([makeFile('a.txt')]);
+    await view.click(button('Cancel'));
+    expect(dialog()).toBeNull();
 
-    let callCount = 0;
-    vi.mocked(uploadFile).mockImplementation(() => {
-      const idx = callCount++;
-      return deferredList[idx].promise;
+    await choose([makeFile('b.txt')]);
+    expect(dialog()).not.toBeNull();
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
-
-    await act(async () => {
-      root.render(
-        <FileUploadControl
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
-          parentRef="ref-root"
-          capabilities={mockFullCapabilities}
-          onCompleted={onCompleted}
-        />
-      );
-      await Promise.resolve();
-    });
-
-    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
-    const files = [
-      makeFile('file1.txt'),
-      makeFile('file2.txt'),
-      makeFile('file3.txt'),
-      makeFile('file4.txt'),
-      makeFile('file5.txt'),
-      makeFile('file6.txt'),
-    ];
-
-    await act(async () => {
-      Object.defineProperty(fileInput, 'files', { value: files, writable: true });
-      fileInput?.dispatchEvent(new Event('change', { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    // Start uploads
-    const dialog = document.querySelector('[role="dialog"]');
-    const startBtn = Array.from(dialog!.querySelectorAll('button')).find((b) => b.textContent?.includes('Start upload') || b.textContent?.includes('Upload starten'));
-    await act(async () => {
-      startBtn?.click();
-      await Promise.resolve();
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    // Exactly 4 uploads should have started
-    expect(uploadFile).toHaveBeenCalledTimes(4);
-
-    // Resolve file 1 -> slot 5 should start
-    await act(async () => {
-      deferredList[0].resolve({ ok: true, status: 201, data: { status: 'uploaded', name: 'file1.txt' } });
-      await Promise.resolve();
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    expect(uploadFile).toHaveBeenCalledTimes(5);
-
-    // Resolve file 2 -> slot 6 should start
-    await act(async () => {
-      deferredList[1].resolve({ ok: true, status: 201, data: { status: 'uploaded', name: 'file2.txt' } });
-      await Promise.resolve();
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    expect(uploadFile).toHaveBeenCalledTimes(6);
-
-    // Resolve remaining files
-    await act(async () => {
-      deferredList[2].resolve({ ok: true, status: 201, data: { status: 'uploaded', name: 'file3.txt' } });
-      deferredList[3].resolve({ ok: true, status: 201, data: { status: 'uploaded', name: 'file4.txt' } });
-      deferredList[4].resolve({ ok: true, status: 201, data: { status: 'uploaded', name: 'file5.txt' } });
-      deferredList[5].resolve({ ok: true, status: 201, data: { status: 'uploaded', name: 'file6.txt' } });
-      await Promise.resolve();
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    expect(onCompleted).toHaveBeenCalledTimes(6);
+    expect(dialog()).toBeNull();
+    expect(onUpload).not.toHaveBeenCalled();
   });
 
-  it('handles cancellation and retry of uploads', async () => {
-    let capturedSignal: AbortSignal | undefined;
-
-    vi.mocked(uploadFile).mockImplementation((_url, _token, _prof, _file, _parent, _strat, _prog, signal) => {
-      capturedSignal = signal;
-      return new Promise((resolve) => {
-        signal?.addEventListener('abort', () => {
-          resolve({ ok: false as const, status: 0, errorCode: 'ABORTED', networkError: true });
-        });
-      });
-    });
-
+  it('exposes a modal dialog and moves focus into it', async () => {
+    await renderControl();
+    await choose([makeFile('a.txt')]);
+    expect(dialog()!.getAttribute('aria-modal')).toBe('true');
     await act(async () => {
-      root.render(
-        <FileUploadControl
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
-          parentRef="ref-root"
-          capabilities={mockFullCapabilities}
-          onCompleted={onCompleted}
-        />
-      );
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 5));
     });
-
-    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
-    const testFile = makeFile('cancel-test.txt');
-
-    await act(async () => {
-      Object.defineProperty(fileInput, 'files', { value: [testFile], writable: true });
-      fileInput?.dispatchEvent(new Event('change', { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    const dialog = document.querySelector('[role="dialog"]');
-    const startBtn = Array.from(dialog!.querySelectorAll('button')).find((b) => b.textContent?.includes('Start upload') || b.textContent?.includes('Upload starten'));
-    await act(async () => {
-      startBtn?.click();
-      await Promise.resolve();
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    expect(capturedSignal?.aborted).toBe(false);
-
-    // Expand queue overlay to access item controls
-    const expandBtn = container.querySelector<HTMLButtonElement>('button[aria-expanded="false"]');
-    if (expandBtn) {
-      await act(async () => {
-        expandBtn.click();
-        await Promise.resolve();
-      });
-    }
-
-    // Cancel the uploading item
-    const cancelBtn = container.querySelector('button[aria-label*="cancel-test.txt"]');
-    expect(cancelBtn).toBeDefined();
-
-    await act(async () => {
-      (cancelBtn as HTMLButtonElement)?.click();
-      await Promise.resolve();
-    });
-
-    expect(capturedSignal?.aborted).toBe(true);
-    expect(container.textContent).toContain('Cancelled');
-
-    // Retry the cancelled item
-    vi.mocked(uploadFile).mockResolvedValueOnce({
-      ok: true,
-      status: 201,
-      data: { status: 'uploaded', name: 'cancel-test.txt' },
-    });
-
-    const retryBtn = container.querySelector('button[aria-label="Retry"], button[aria-label="Wiederholen"]');
-    expect(retryBtn).toBeDefined();
-
-    await act(async () => {
-      (retryBtn as HTMLButtonElement)?.click();
-      await Promise.resolve();
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    expect(container.textContent).toContain('Uploaded');
-    expect(onCompleted).toHaveBeenCalledWith('profile-1');
+    expect(dialog()!.contains(document.activeElement)).toBe(true);
   });
 
-  it('toggles between compact pill and expanded detail overlay and clears queue', async () => {
-    vi.mocked(uploadFile).mockResolvedValue({
-      ok: true,
-      status: 201,
-      data: { status: 'uploaded', name: 'doc.pdf' },
-    });
-
+  it('accepts dropped files', async () => {
+    await renderControl();
+    const file = makeFile('dropped.txt');
+    const drop = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, 'dataTransfer', { value: { files: [file] } });
     await act(async () => {
-      root.render(
-        <FileUploadControl
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
-          parentRef="ref-root"
-          capabilities={mockFullCapabilities}
-          onCompleted={onCompleted}
-        />
-      );
-      await Promise.resolve();
+      fileInput().parentElement!.dispatchEvent(drop);
     });
-
-    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
-    const testFile = makeFile('doc.pdf');
-
-    await act(async () => {
-      Object.defineProperty(fileInput, 'files', { value: [testFile], writable: true });
-      fileInput?.dispatchEvent(new Event('change', { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    const dialog = document.querySelector('[role="dialog"]');
-    const startBtn = Array.from(dialog!.querySelectorAll('button')).find((b) => b.textContent?.includes('Start upload') || b.textContent?.includes('Upload starten'));
-    await act(async () => {
-      startBtn?.click();
-      await Promise.resolve();
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    // Compact pill is visible with summary
-    const expandBtn = container.querySelector<HTMLButtonElement>('button[aria-expanded="false"]');
-    expect(expandBtn).not.toBeNull();
-    expect(container.textContent).toContain('1/1');
-
-    // Click to expand
-    await act(async () => {
-      expandBtn?.click();
-      await Promise.resolve();
-    });
-
-    // Expanded overlay shows filename and minimize button
-    expect(container.textContent).toContain('doc.pdf');
-    const minimizeBtn = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Minimize transfers"], button[aria-label="Minimize queue"], button[aria-label="Übertragungen minimieren"], button[aria-label="Warteschlange minimieren"]'
-    );
-    expect(minimizeBtn).not.toBeNull();
-
-    // Minimize back to pill
-    await act(async () => {
-      minimizeBtn?.click();
-      await Promise.resolve();
-    });
-
-    // Compact pill is visible again
-    expect(container.querySelector('button[aria-expanded="false"]')).not.toBeNull();
-
-    // Clear queue when all done
-    const clearBtn = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Clear transfers"], button[aria-label="Clear queue"], button[aria-label="Übertragungen leeren"], button[aria-label="Warteschlange leeren"]'
-    );
-    expect(clearBtn).not.toBeNull();
-    await act(async () => {
-      clearBtn?.click();
-      await Promise.resolve();
-    });
-
-    // Queue is now empty and dismissed
-    expect(container.querySelector('aside')).toBeNull();
+    expect(dialog()?.textContent).toContain('dropped.txt');
   });
 
-  it('auto-dismisses completed uploads after 4 seconds', async () => {
-    vi.useFakeTimers();
-    vi.mocked(uploadFile).mockResolvedValue({
-      ok: true,
-      status: 201,
-      data: { status: 'uploaded', name: 'autodismiss.pdf' },
-    });
+  it('ignores selection and drops when uploads are unavailable or disabled', async () => {
+    await renderControl({ capabilities: { ...fullCapabilities, upload: false } });
+    expect(fileInput().disabled).toBe(true);
+    expect(view.container.querySelector<HTMLButtonElement>('button')!.disabled).toBe(true);
+    await choose([makeFile('a.txt')]);
+    expect(dialog()).toBeNull();
 
-    await act(async () => {
-      root.render(
-        <FileUploadControl
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
-          parentRef="ref-root"
-          capabilities={mockFullCapabilities}
-          onCompleted={onCompleted}
-        />
-      );
-      await Promise.resolve();
-    });
-
-    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
-    await act(async () => {
-      Object.defineProperty(fileInput, 'files', { value: [makeFile('autodismiss.pdf')], writable: true });
-      fileInput?.dispatchEvent(new Event('change', { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    const dialog = document.querySelector('[role="dialog"]');
-    const startBtn = Array.from(dialog!.querySelectorAll('button')).find((b) => b.textContent?.includes('Start upload') || b.textContent?.includes('Upload starten'));
-    await act(async () => {
-      startBtn?.click();
-      await Promise.resolve();
-    });
-
-    // Upload completes
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(container.querySelector('aside')).not.toBeNull();
-
-    // Advance timers by 4000ms
-    await act(async () => {
-      vi.advanceTimersByTime(4000);
-      await Promise.resolve();
-    });
-
-    // Queue is now empty and dismissed
-    expect(container.querySelector('aside')).toBeNull();
-    vi.useRealTimers();
-  });
-
-  it.each([
-    ['same-profile', { sourceLabel: 'file1.txt', destinationLabel: 'Documents' }],
-    ['cross-profile', { sourceLabel: 'Drive A', destinationLabel: 'Drive B', itemCount: 3, processedCount: 1, serverStatus: 'RUNNING' }],
-  ] as const)('renders %s transfers next to uploads and routes cancel and dismiss to the transfer callbacks', async (origin, extra) => {
-    const onCancelTransfer = vi.fn();
-    const onDismissTransfer = vi.fn();
-    const transfer: FileActionTransfer = {
-      id: 'tr-1',
-      origin,
-      operation: 'copy',
-      status: 'running',
-      sourceLabel: '',
-      destinationLabel: '',
-      itemCount: 1,
-      processedCount: 0,
-      failedCount: 0,
-      skippedCount: 0,
-      ...extra,
-    };
-    const renderControl = async (transfers: FileActionTransfer[]) => {
-      await act(async () => {
-        root.render(
-          <FileUploadControl
-            apiUrl="https://api.example.test"
-            token="jwt-token"
-            profileId="profile-1"
-            parentRef="ref-root"
-            capabilities={mockFullCapabilities}
-            onCompleted={onCompleted}
-            transfers={transfers}
-            onCancelTransfer={onCancelTransfer}
-            onDismissTransfer={onDismissTransfer}
-          />
-        );
-        await Promise.resolve();
-      });
-    };
-    await renderControl([transfer]);
-
-    expect(container.querySelector('aside')).not.toBeNull();
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click();
-      await Promise.resolve();
-    });
-    expect(container.textContent).toContain(transfer.sourceLabel);
-    expect(container.textContent).toContain(transfer.destinationLabel);
-
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="Cancel transfer"]')?.click();
-      await Promise.resolve();
-    });
-    expect(onCancelTransfer).toHaveBeenCalledWith('tr-1');
-
-    await renderControl([{ ...transfer, status: 'completed', processedCount: transfer.itemCount }]);
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss item from list"]')?.click();
-      await Promise.resolve();
-    });
-    expect(onDismissTransfer).toHaveBeenCalledWith('tr-1');
-    expect(container.querySelector('aside')).toBeNull();
-  });
-
-  it('aborts active upload controllers on unmount', async () => {
-    let capturedSignal: AbortSignal | undefined;
-    const uploadDeferred = deferred<{ ok: true; status: number; data: { status: 'uploaded'; name: string } }>();
-
-    vi.mocked(uploadFile).mockImplementation((_url, _token, _prof, _file, _parent, _strat, _prog, signal) => {
-      capturedSignal = signal;
-      return uploadDeferred.promise;
-    });
-
-    await act(async () => {
-      root.render(
-        <FileUploadControl
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
-          parentRef="ref-root"
-          capabilities={mockFullCapabilities}
-          onCompleted={onCompleted}
-        />
-      );
-      await Promise.resolve();
-    });
-
-    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
-    const testFile = makeFile('unmount-test.txt');
-
-    await act(async () => {
-      Object.defineProperty(fileInput, 'files', { value: [testFile], writable: true });
-      fileInput?.dispatchEvent(new Event('change', { bubbles: true }));
-      await Promise.resolve();
-    });
-
-    const dialog = document.querySelector('[role="dialog"]');
-    const startBtn = Array.from(dialog!.querySelectorAll('button')).find((b) => b.textContent?.includes('Start upload') || b.textContent?.includes('Upload starten'));
-    await act(async () => {
-      startBtn?.click();
-      await Promise.resolve();
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    expect(capturedSignal?.aborted).toBe(false);
-
-    // Unmount component
-    await act(async () => {
-      root.unmount();
-      await Promise.resolve();
-    });
-
-    // The signal must now be aborted
-    expect(capturedSignal?.aborted).toBe(true);
+    await renderControl({ disabled: true });
+    await choose([makeFile('a.txt')]);
+    expect(dialog()).toBeNull();
   });
 });

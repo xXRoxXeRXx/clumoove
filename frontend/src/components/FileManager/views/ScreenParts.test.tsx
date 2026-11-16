@@ -31,7 +31,7 @@ describe('ProfileSidebar', () => {
     expect(view.container.textContent).not.toContain('Manage connections');
     const onOpenManager = vi.fn();
     await view.render(<ProfileSidebar profiles={profiles} activeId="p1" loading={false} onSelect={vi.fn()} onOpenManager={onOpenManager} />);
-    await view.click([...view.container.querySelectorAll('button')].find((b) => b.textContent === 'Manage connections') ?? null);
+    await view.click(Array.from(view.container.querySelectorAll('button')).find((b) => b.textContent === 'Manage connections') ?? null);
     expect(onOpenManager).toHaveBeenCalled();
   });
 });

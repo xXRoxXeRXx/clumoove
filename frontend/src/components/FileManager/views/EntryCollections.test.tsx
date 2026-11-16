@@ -111,7 +111,7 @@ describe('EntryList', () => {
   it('marks the sorted column and sorts through the header buttons', async () => {
     await renderList([row()]);
     const headers = view.container.querySelectorAll('th[aria-sort]');
-    expect([...headers].map((h) => h.getAttribute('aria-sort'))).toEqual(['ascending', 'none', 'none']);
+    expect(Array.from(headers).map((h) => h.getAttribute('aria-sort'))).toEqual(['ascending', 'none', 'none']);
     await view.click(view.container.querySelector('th[aria-sort="none"] button'));
     expect(sort.onSort).toHaveBeenCalledWith('size');
   });
@@ -141,7 +141,7 @@ describe('EntryGrid', () => {
   it('activates by click and by Enter or Space, and only focuses clickable cards', async () => {
     const i = intents();
     await renderGrid([row(), row({ ref: 'r2', clickable: false })], i);
-    const [first, second] = view.container.querySelectorAll('[role="gridcell"]');
+    const [first, second] = Array.from(view.container.querySelectorAll('[role="gridcell"]'));
     expect(first.getAttribute('tabindex')).toBe('0');
     expect(second.hasAttribute('tabindex')).toBe(false);
     await view.click(first);
