@@ -130,6 +130,19 @@ describe('EntryGrid', () => {
   const renderGrid = (rows: EntryRowModel[], i = intents(), selectionActive = false) =>
     view.render(<EntryGrid rows={rows} selectionActive={selectionActive} {...i} />);
 
+  it('structures the grid as grid > row > gridcell so the ARIA roles are valid', async () => {
+    await renderGrid([row(), row({ ref: 'r2', name: 'docs' })]);
+    const grid = view.container.querySelector('[role="grid"]')!;
+    const rowElements = Array.from(grid.children);
+    expect(rowElements).toHaveLength(2);
+    for (const rowElement of rowElements) {
+      expect(rowElement.getAttribute('role')).toBe('row');
+      expect(rowElement.children).toHaveLength(1);
+      expect(rowElement.children[0].getAttribute('role')).toBe('gridcell');
+    }
+    expect(grid.querySelectorAll('[role="gridcell"]')).toHaveLength(2);
+  });
+
   it('renders a labelled grid with a gridcell per entry', async () => {
     await renderGrid([row(), row({ ref: 'r2', name: 'docs', isDirectory: true, sizeLabel: null })]);
     expect(view.container.querySelector('[role="grid"]')!.getAttribute('aria-label')).toBe('File Manager');
