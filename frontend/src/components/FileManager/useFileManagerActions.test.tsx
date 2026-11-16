@@ -114,6 +114,15 @@ const archiveEntry: FileEntry = {
   allowed_actions: ['copy'],
 };
 
+const subDirEntry: FileEntry = {
+  ref: 'ref-sub-dir',
+  name: 'Sub',
+  display_path: '/Documents/Sub',
+  kind: 'directory',
+  size: 0,
+  allowed_actions: [],
+};
+
 type Deferred<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -141,6 +150,71 @@ async function flushMicrotasks(): Promise<void> {
   });
 }
 
+/** The module renders its own dialogs; tests find them the way a user would: by title and button text. */
+function dialogByTitle(titleId: string): HTMLElement | null {
+  return document.getElementById(titleId)?.closest<HTMLElement>('[role="dialog"]') ?? null;
+}
+
+const createDialog = () => dialogByTitle('create-dir-title');
+const deleteDialog = () => dialogByTitle('delete-entry-title');
+const batchDeleteDialog = () => dialogByTitle('batch-delete-title');
+const renameDialog = () => dialogByTitle('rename-entry-title');
+const conflictDialog = () => dialogByTitle('mutation-conflict-title');
+const pickerDialog = () => dialogByTitle('destination-picker-title');
+
+function findButton(scope: ParentNode, text: string): HTMLButtonElement {
+  const button = Array.from(scope.querySelectorAll('button')).find((candidate) => candidate.textContent?.trim() === text);
+  if (!button) throw new Error(`No button "${text}" in ${(scope as HTMLElement).textContent}`);
+  return button;
+}
+
+async function press(scope: ParentNode, text: string): Promise<void> {
+  await act(async () => {
+    findButton(scope, text).click();
+    await Promise.resolve();
+  });
+}
+
+function typeInto(input: HTMLInputElement, value: string) {
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+/** Submits through the form so validation inside the module is exercised even when the button is disabled. */
+async function submitForm(scope: HTMLElement): Promise<void> {
+  await act(async () => {
+    scope.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+  });
+}
+
+function alertText(scope: HTMLElement | null): string {
+  return scope?.querySelector('[role="alert"]')?.textContent ?? '';
+}
+
+function pickerFolders(): string[] {
+  const list = pickerDialog()?.querySelector('[data-testid="destination-entries"]');
+  return Array.from(list?.querySelectorAll('button') ?? []).map((button) => button.textContent?.trim() ?? '');
+}
+
+function pickerBreadcrumbs(): string[] {
+  const nav = pickerDialog()?.querySelector('nav');
+  return Array.from(nav?.querySelectorAll('button') ?? []).map((button) =>
+    (button.textContent ?? '').replace(/\s*\/$/, '').trim(),
+  );
+}
+
+async function selectDestinationProfile(profileId: string): Promise<void> {
+  const select = pickerDialog()!.querySelector<HTMLSelectElement>('#destination-profile')!;
+  act(() => {
+    select.value = profileId;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await flushMicrotasks();
+}
+
 describe('useFileManagerActions', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -152,14 +226,13 @@ describe('useFileManagerActions', () => {
 
   function Probe(props: UseFileManagerActionsOptions) {
     latest = useFileManagerActions(props);
-    return null;
+    return <>{latest.dialogs}</>;
   }
 
-  async function renderActions(overrides?: Partial<UseFileManagerActionsOptions>) {
+  async function renderActions(overrides?: Partial<UseFileManagerActionsOptions> & { profileId?: string }) {
+    const { profileId, ...rest } = overrides ?? {};
     const props: UseFileManagerActionsOptions = {
-      apiUrl: 'https://api.example.test',
-      token: 'jwt-token',
-      profileId: 'profile-1',
+      request: { apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: profileId ?? 'profile-1' },
       profileName: 'Google Drive',
       profiles: defaultProfiles,
       currentRef: 'ref-parent',
@@ -170,7 +243,7 @@ describe('useFileManagerActions', () => {
       clearSelection,
       clearPreview,
       navigateToDownload,
-      ...overrides,
+      ...rest,
     };
     await act(async () => {
       root.render(<Probe {...props} />);
@@ -256,6 +329,67 @@ describe('useFileManagerActions', () => {
     vi.restoreAllMocks();
   });
 
+  it('exposes intents and results instead of dialog state', async () => {
+    await renderActions();
+
+    expect(Object.keys(latest).sort()).toEqual([
+      'batchBusy',
+      'batchSummary',
+      'cancelTransfer',
+      'clearError',
+      'copy',
+      'createFolder',
+      'delete',
+      'dialogs',
+      'dismissBatchSummary',
+      'dismissTransfer',
+      'download',
+      'downloadArchive',
+      'error',
+      'move',
+      'permissions',
+      'rename',
+      'transfers',
+    ]);
+  });
+
+  it('closes an open dialog on Escape', async () => {
+    await renderActions();
+
+    act(() => latest.createFolder());
+    expect(createDialog()).not.toBeNull();
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    expect(createDialog()).toBeNull();
+  });
+
+  it('reports a batch cross-profile transfer as busy until the server answers', async () => {
+    const transfer = deferred<Awaited<ReturnType<typeof startCrossProfileFileTransfer>>>();
+    vi.mocked(startCrossProfileFileTransfer).mockReturnValueOnce(transfer.promise);
+
+    await renderActions({ selectedEntries: [fileEntry] });
+    act(() => latest.copy());
+    await flushMicrotasks();
+    await selectDestinationProfile('profile-2');
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = press(pickerDialog()!, 'Copy');
+    });
+    expect(latest.batchBusy).toBe(true);
+    expect(findButton(pickerDialog()!, 'Working...').disabled).toBe(true);
+
+    await act(async () => {
+      transfer.resolve({ ok: true, status: 202, data: { transfer_id: 'xfer' } });
+      await pending;
+    });
+    expect(latest.batchBusy).toBe(false);
+    expect(pickerDialog()).toBeNull();
+  });
+
   it('computes single-entry and batch permissions from capabilities and allowed_actions', async () => {
     await renderActions({
       capabilities: { ...fullCapabilities, mkdir: false, archive: false, move: false },
@@ -286,29 +420,24 @@ describe('useFileManagerActions', () => {
 
     await renderActions();
 
-    act(() => latest.createFolder.openDialog());
-    expect(latest.createFolder.open).toBe(true);
+    act(() => latest.createFolder());
+    expect(createDialog()).not.toBeNull();
+    const input = () => createDialog()!.querySelector<HTMLInputElement>('#new-folder-name-input')!;
 
     // Whitespace-only names do not invoke the API
-    act(() => latest.createFolder.setName('   '));
-    await act(async () => {
-      await latest.createFolder.submit();
-    });
+    typeInto(input(), '   ');
+    await submitForm(createDialog()!);
     expect(createDirectory).not.toHaveBeenCalled();
 
     // API failure keeps dialog open with translated error
-    act(() => latest.createFolder.setName('Projects'));
-    await act(async () => {
-      await latest.createFolder.submit();
-    });
-    expect(latest.createFolder.open).toBe(true);
-    expect(latest.createFolder.error).toBe('Access forbidden.');
+    typeInto(input(), 'Projects');
+    await submitForm(createDialog()!);
+    expect(createDialog()).not.toBeNull();
+    expect(alertText(createDialog())).toBe('Access forbidden.');
     expect(refreshListing).not.toHaveBeenCalled();
 
     // Retry succeeds, closes dialog, and refreshes browsing session
-    await act(async () => {
-      await latest.createFolder.submit();
-    });
+    await submitForm(createDialog()!);
     expect(createDirectory).toHaveBeenLastCalledWith(
       'https://api.example.test',
       'jwt-token',
@@ -317,10 +446,13 @@ describe('useFileManagerActions', () => {
       'ref-parent',
       expect.any(AbortSignal)
     );
-    expect(latest.createFolder.open).toBe(false);
-    expect(latest.createFolder.name).toBe('');
-    expect(latest.createFolder.error).toBe('');
+    expect(createDialog()).toBeNull();
     expect(refreshListing).toHaveBeenCalledTimes(1);
+
+    // A reopened dialog starts clean
+    act(() => latest.createFolder());
+    expect(input().value).toBe('');
+    expect(alertText(createDialog())).toBe('');
   });
 
   it('downloads a single file, prevents concurrent downloads, and surfaces translated errors', async () => {
@@ -373,7 +505,7 @@ describe('useFileManagerActions', () => {
     await renderActions({ selectedEntries: [dirEntry, fileEntry] });
 
     await act(async () => {
-      await latest.batch.downloadArchive();
+      await latest.downloadArchive();
     });
     expect(createArchiveTicket).toHaveBeenCalledWith(
       'https://api.example.test',
@@ -382,9 +514,10 @@ describe('useFileManagerActions', () => {
       ['ref-dir-docs', 'ref-file-notes']
     );
     expect(navigateToDownload).toHaveBeenCalledWith('https://api.example.test/api/files/archive/ticket-zip');
+    expect(latest.batchBusy).toBe(false);
 
     await act(async () => {
-      await latest.batch.downloadArchive();
+      await latest.downloadArchive();
     });
     expect(latest.error).toBe('An internal server error occurred. Please try again later.');
   });
@@ -398,20 +531,15 @@ describe('useFileManagerActions', () => {
     await renderActions({ previewEntryRef: fileEntry.ref });
 
     // Directory deletion starts non-recursive when empty dir deletion is supported, then falls back on FILES_DIRECTORY_NOT_EMPTY
-    act(() => latest.deleteEntry.openDialog(dirEntry));
-    expect(latest.deleteEntry.open).toBe(true);
-    expect(latest.deleteEntry.recursive).toBe(false);
+    act(() => latest.delete(dirEntry));
+    expect(deleteDialog()?.textContent).toContain('Delete the empty folder Documents?');
 
-    await act(async () => {
-      await latest.deleteEntry.confirm();
-    });
-    expect(latest.deleteEntry.open).toBe(true);
-    expect(latest.deleteEntry.recursive).toBe(true);
-    expect(latest.deleteEntry.error).toBe('This folder is not empty. Confirm recursive deletion to remove it and its contents.');
+    await press(deleteDialog()!, 'Delete');
+    expect(deleteDialog()).not.toBeNull();
+    expect(alertText(deleteDialog())).toBe('This folder is not empty. Confirm recursive deletion to remove it and its contents.');
+    expect(deleteDialog()?.textContent).toContain('Delete Documents and all of its contents?');
 
-    await act(async () => {
-      await latest.deleteEntry.confirm();
-    });
+    await press(deleteDialog()!, 'Delete recursively');
     expect(deleteFileEntry).toHaveBeenLastCalledWith(
       'https://api.example.test',
       'jwt-token',
@@ -420,15 +548,13 @@ describe('useFileManagerActions', () => {
       true,
       expect.any(AbortSignal)
     );
-    expect(latest.deleteEntry.open).toBe(false);
+    expect(deleteDialog()).toBeNull();
     expect(clearPreview).not.toHaveBeenCalled();
     expect(refreshListing).toHaveBeenCalledTimes(1);
 
     // Deleting the currently previewed file clears preview
-    act(() => latest.deleteEntry.openDialog(fileEntry));
-    await act(async () => {
-      await latest.deleteEntry.confirm();
-    });
+    act(() => latest.delete(fileEntry));
+    await press(deleteDialog()!, 'Delete');
     expect(clearPreview).toHaveBeenCalledTimes(1);
     expect(refreshListing).toHaveBeenCalledTimes(2);
   });
@@ -438,8 +564,18 @@ describe('useFileManagerActions', () => {
       capabilities: { ...fullCapabilities, delete_empty_directory: false, delete_recursive_directory: true },
     });
 
-    act(() => latest.deleteEntry.openDialog(dirEntry));
-    expect(latest.deleteEntry.recursive).toBe(true);
+    act(() => latest.delete(dirEntry));
+    expect(deleteDialog()?.textContent).toContain('This connection supports deleting folders only recursively.');
+    expect(findButton(deleteDialog()!, 'Delete recursively').disabled).toBe(false);
+  });
+
+  it('refuses to delete a directory non-recursively when the connection cannot delete empty directories', async () => {
+    await renderActions({
+      capabilities: { ...fullCapabilities, delete_empty_directory: false, delete_recursive_directory: false },
+    });
+
+    act(() => latest.delete(dirEntry));
+    expect(findButton(deleteDialog()!, 'Delete').disabled).toBe(true);
   });
 
   it('executes batch deletion with per-kind recursive flags, reports partial results, and auto-dismisses', async () => {
@@ -464,14 +600,12 @@ describe('useFileManagerActions', () => {
     vi.useFakeTimers();
     await renderActions({ selectedEntries: [dirEntry, fileEntry] });
 
-    act(() => latest.batch.openDeleteDialog());
-    expect(latest.batch.deleteDialogOpen).toBe(true);
-    expect(latest.batch.itemCount).toBe(2);
-    expect(latest.batch.hasDirectories).toBe(true);
+    // Deleting without an entry targets the current selection
+    act(() => latest.delete());
+    expect(batchDeleteDialog()?.textContent).toContain('Delete 2 selected items?');
+    expect(batchDeleteDialog()?.textContent).toContain('Selected folders and their contents will be deleted recursively.');
 
-    await act(async () => {
-      await latest.batch.confirmDelete();
-    });
+    await press(batchDeleteDialog()!, 'Delete recursively');
     expect(batchDeleteFileEntries).toHaveBeenCalledWith(
       'https://api.example.test',
       'jwt-token',
@@ -481,22 +615,22 @@ describe('useFileManagerActions', () => {
         { ref: fileEntry.ref, recursive: false },
       ]
     );
-    expect(latest.batch.deleteDialogOpen).toBe(false);
-    expect(latest.batch.results).toHaveLength(2);
+    expect(batchDeleteDialog()).toBeNull();
+    expect(latest.batchSummary).toEqual({ success: 1, failed: 1 });
     expect(clearSelection).toHaveBeenCalledTimes(1);
     expect(refreshListing).toHaveBeenCalledTimes(1);
 
-    // Auto-clears batch results after 4000ms
+    // Auto-clears the batch summary after 4000ms
     act(() => {
       vi.advanceTimersByTime(4000);
     });
-    expect(latest.batch.results).toEqual([]);
+    expect(latest.batchSummary).toBeNull();
 
     // Batch failure sets translated top-level error
-    await act(async () => {
-      await latest.batch.confirmDelete();
-    });
+    act(() => latest.delete());
+    await press(batchDeleteDialog()!, 'Delete recursively');
     expect(latest.error).toBe('Access forbidden.');
+    expect(batchDeleteDialog()).toBeNull();
   });
 
   it('renames an entry with validation, conflict resolution, and partial-operation refresh', async () => {
@@ -530,37 +664,34 @@ describe('useFileManagerActions', () => {
 
     await renderActions();
 
-    act(() => latest.rename.openDialog(fileEntry));
-    expect(latest.rename.open).toBe(true);
-    expect(latest.rename.name).toBe('notes.txt');
+    act(() => latest.rename(fileEntry));
+    const input = () => renameDialog()!.querySelector<HTMLInputElement>('#rename-entry-name')!;
+    expect(input().value).toBe('notes.txt');
 
     // Empty name validation
-    act(() => latest.rename.setName('   '));
-    await act(async () => {
-      await latest.rename.submit();
-    });
-    expect(latest.rename.error).toBe('Enter a name.');
+    typeInto(input(), '   ');
+    await submitForm(renameDialog()!);
+    expect(alertText(renameDialog())).toBe('Enter a name.');
     expect(renameFileEntry).not.toHaveBeenCalled();
 
     // First attempt returns FILES_CONFLICT
-    act(() => latest.rename.setName('existing.txt'));
-    await act(async () => {
-      await latest.rename.submit();
-    });
-    expect(latest.conflict.open).toBe(true);
-    expect(latest.conflict.strategies).toEqual(['SKIP', 'OVERWRITE', 'RENAME']);
+    typeInto(input(), 'existing.txt');
+    await submitForm(renameDialog()!);
+    expect(conflictDialog()).not.toBeNull();
+    expect(Array.from(conflictDialog()!.querySelectorAll('button')).map((b) => b.textContent)).toEqual([
+      'Cancel',
+      'Skip existing file',
+      'Overwrite existing file',
+      'Keep both files',
+    ]);
 
     // Resolving with OVERWRITE fails with FILES_PARTIAL_OPERATION -> refreshes and shows partial warning
-    await act(async () => {
-      await latest.conflict.resolve('OVERWRITE');
-    });
-    expect(latest.rename.error).toBe('Some items could not be completed. The folder has been refreshed.');
+    await press(conflictDialog()!, 'Overwrite existing file');
+    expect(alertText(renameDialog())).toBe('Some items could not be completed. The folder has been refreshed.');
     expect(refreshListing).toHaveBeenCalledTimes(1);
 
     // Resolving with RENAME succeeds and closes
-    await act(async () => {
-      await latest.conflict.resolve('RENAME');
-    });
+    await press(conflictDialog()!, 'Keep both files');
     expect(renameFileEntry).toHaveBeenLastCalledWith(
       'https://api.example.test',
       'jwt-token',
@@ -570,8 +701,8 @@ describe('useFileManagerActions', () => {
       'RENAME',
       expect.any(AbortSignal)
     );
-    expect(latest.rename.open).toBe(false);
-    expect(latest.conflict.open).toBe(false);
+    expect(renameDialog()).toBeNull();
+    expect(conflictDialog()).toBeNull();
     expect(refreshListing).toHaveBeenCalledTimes(2);
   });
 
@@ -584,12 +715,12 @@ describe('useFileManagerActions', () => {
     });
 
     await renderActions();
-    act(() => latest.rename.openDialog(fileEntry));
-    act(() => latest.rename.setName('moved.txt'));
+    act(() => latest.rename(fileEntry));
+    typeInto(renameDialog()!.querySelector<HTMLInputElement>('#rename-entry-name')!, 'moved.txt');
 
     let submitPromise!: Promise<void>;
     act(() => {
-      submitPromise = latest.rename.submit();
+      submitPromise = submitForm(renameDialog()!);
     });
     expect(capturedSignal?.aborted).toBe(false);
 
@@ -608,42 +739,50 @@ describe('useFileManagerActions', () => {
 
   it('navigates destination picker folders, excludes selected entries, and flags invalid destinations', async () => {
     vi.mocked(listFileEntries)
-      .mockResolvedValueOnce({ ok: true, status: 200, data: { entries: [dirEntry, fileEntry], next_cursor: null } })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        data: {
-          entries: [
-            { ref: 'ref-sub-dir', name: 'Sub', display_path: '/Documents/Sub', kind: 'directory', size: 0, allowed_actions: [] },
-          ],
-          next_cursor: null,
-        },
-      })
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { entries: [dirEntry, fileEntry, subDirEntry], next_cursor: null } })
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { entries: [subDirEntry], next_cursor: null } })
       .mockResolvedValueOnce({ ok: true, status: 200, data: { entries: [dirEntry, fileEntry], next_cursor: null } });
 
     await renderActions({ selectedEntries: [dirEntry, fileEntry] });
 
-    act(() => latest.destinationPicker.openBatch('copy'));
+    act(() => latest.copy());
     await flushMicrotasks();
 
-    expect(latest.destinationPicker.open).toBe(true);
-    expect(latest.destinationPicker.mode).toBe('batch');
-    expect(latest.destinationPicker.operation).toBe('copy');
+    expect(pickerDialog()?.textContent).toContain('Copy item');
+    expect(pickerDialog()?.textContent).toContain('Choose one destination folder for 2 selected items.');
     // Files and selected directories are excluded
-    expect(latest.destinationPicker.availableEntries).toEqual([]);
-    expect(latest.destinationPicker.hasInvalidDestination).toBe(false);
+    expect(pickerFolders()).toEqual(['Sub']);
+    expect(pickerDialog()?.textContent).not.toContain('This folder cannot be used as a destination.');
 
-    // Navigating into a selected directory flags invalid destination
-    act(() => latest.destinationPicker.openFolder(dirEntry));
+    // Navigating into a folder lists its content
+    await press(pickerDialog()!.querySelector('[data-testid="destination-entries"]')!, 'Sub');
     await flushMicrotasks();
-    expect(latest.destinationPicker.hasInvalidDestination).toBe(true);
-    expect(latest.destinationPicker.breadcrumbs.map((b) => b.name)).toEqual(['Google Drive', 'Documents']);
+    expect(pickerBreadcrumbs()).toEqual(['Google Drive', 'Sub']);
+    expect(pickerFolders()).toEqual(['Sub']);
 
-    // Going back to root breadcrumb clears invalid flag
-    act(() => latest.destinationPicker.goToBreadcrumb(0));
+    // Going back to the root breadcrumb restores the root listing
+    await press(pickerDialog()!.querySelector('nav')!, 'Google Drive /');
     await flushMicrotasks();
-    expect(latest.destinationPicker.hasInvalidDestination).toBe(false);
-    expect(latest.destinationPicker.breadcrumbs.map((b) => b.name)).toEqual(['Google Drive']);
+    expect(pickerBreadcrumbs()).toEqual(['Google Drive']);
+    expect(pickerDialog()?.textContent).toContain('Selected destination: Google Drive');
+  });
+
+  it('flags a destination inside a selected directory as invalid', async () => {
+    vi.mocked(listFileEntries)
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { entries: [dirEntry], next_cursor: null } })
+      .mockResolvedValueOnce({ ok: true, status: 200, data: { entries: [subDirEntry], next_cursor: null } });
+
+    await renderActions({ selectedEntries: [fileEntry] });
+    act(() => latest.move());
+    await flushMicrotasks();
+    await press(pickerDialog()!.querySelector('[data-testid="destination-entries"]')!, 'Documents');
+    await flushMicrotasks();
+    expect(pickerFolders()).toEqual(['Sub']);
+
+    // The selection changes to include the folder being browsed
+    await renderActions({ selectedEntries: [dirEntry] });
+    expect(pickerFolders()).toEqual([]);
+    expect(pickerDialog()?.textContent).toContain('This folder cannot be used as a destination.');
   });
 
   it('dispatches same-profile single move as unified transfer, refreshes listing, and clears matching preview', async () => {
@@ -652,18 +791,25 @@ describe('useFileManagerActions', () => {
 
     await renderActions({ previewEntryRef: fileEntry.ref });
 
-    act(() => latest.destinationPicker.openSingle(fileEntry, 'move'));
+    act(() => latest.move(fileEntry));
     await flushMicrotasks();
 
-    act(() => latest.destinationPicker.openFolder(dirEntry));
+    await press(pickerDialog()!.querySelector('[data-testid="destination-entries"]')!, 'Documents');
     await flushMicrotasks();
 
-    await act(async () => {
-      await latest.destinationPicker.submit();
-    });
+    await press(pickerDialog()!, 'Move');
 
     // Picker closes immediately while transfer runs in background
-    expect(latest.destinationPicker.open).toBe(false);
+    expect(pickerDialog()).toBeNull();
+    expect(moveFileEntry).toHaveBeenCalledWith(
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      fileEntry.ref,
+      dirEntry.ref,
+      undefined,
+      expect.any(AbortSignal)
+    );
     expect(latest.transfers).toHaveLength(1);
     expect(latest.transfers[0]).toMatchObject({
       origin: 'same-profile',
@@ -694,12 +840,10 @@ describe('useFileManagerActions', () => {
     vi.mocked(copyFileEntry).mockReturnValueOnce(copyDeferred.promise);
 
     await renderActions();
-    act(() => latest.destinationPicker.openSingle(fileEntry, 'copy'));
+    act(() => latest.copy(fileEntry));
     await flushMicrotasks();
 
-    await act(async () => {
-      await latest.destinationPicker.submit();
-    });
+    await press(pickerDialog()!, 'Copy');
 
     const transferId = latest.transfers[0].id;
     await act(async () => {
@@ -728,18 +872,15 @@ describe('useFileManagerActions', () => {
     });
 
     await renderActions();
-    act(() => latest.destinationPicker.openSingle(fileEntry, 'copy'));
+    act(() => latest.copy(fileEntry));
     await flushMicrotasks();
 
-    await act(async () => {
-      await latest.destinationPicker.submit();
-    });
+    await press(pickerDialog()!, 'Copy');
     await flushMicrotasks();
 
     expect(latest.transfers[0]).toMatchObject({
       origin: 'same-profile',
       status: 'failed',
-      failedCount: 1,
       error: 'Some items could not be completed. The folder has been refreshed.',
     });
     expect(refreshListing).toHaveBeenCalledTimes(1);
@@ -758,12 +899,10 @@ describe('useFileManagerActions', () => {
     });
 
     await renderActions({ selectedEntries: [dirEntry, fileEntry] });
-    act(() => latest.destinationPicker.openBatch('copy'));
+    act(() => latest.copy());
     await flushMicrotasks();
 
-    await act(async () => {
-      await latest.destinationPicker.submit();
-    });
+    await press(pickerDialog()!, 'Copy');
     await flushMicrotasks();
 
     expect(clearSelection).toHaveBeenCalledTimes(1);
@@ -774,7 +913,6 @@ describe('useFileManagerActions', () => {
       status: 'failed',
       itemCount: 2,
       processedCount: 1,
-      failedCount: 1,
       error: '1 items completed; 1 failed.',
     });
   });
@@ -790,15 +928,20 @@ describe('useFileManagerActions', () => {
     });
 
     // Single cross-profile copy
-    act(() => latest.destinationPicker.openSingle(fileEntry, 'copy'));
+    act(() => latest.copy(fileEntry));
     await flushMicrotasks();
-    act(() => latest.destinationPicker.selectProfile('profile-2'));
-    await flushMicrotasks();
-    expect(latest.destinationPicker.profileId).toBe('profile-2');
+    await selectDestinationProfile('profile-2');
+    expect(pickerBreadcrumbs()).toEqual(['Dropbox']);
+    expect(listFileEntries).toHaveBeenLastCalledWith(
+      'https://api.example.test',
+      'jwt-token',
+      'profile-2',
+      null,
+      undefined,
+      expect.any(AbortSignal)
+    );
 
-    await act(async () => {
-      await latest.destinationPicker.submit();
-    });
+    await press(pickerDialog()!, 'Copy');
     expect(startCrossProfileFileTransfer).toHaveBeenNthCalledWith(
       1,
       'https://api.example.test',
@@ -811,26 +954,24 @@ describe('useFileManagerActions', () => {
       undefined,
       expect.any(AbortSignal)
     );
-    expect(latest.destinationPicker.open).toBe(false);
+    expect(pickerDialog()).toBeNull();
 
     // Batch cross-profile move failure keeps picker open with translated error
-    act(() => latest.destinationPicker.openBatch('move'));
+    act(() => latest.move());
     await flushMicrotasks();
-    act(() => latest.destinationPicker.selectProfile('profile-2'));
-    await flushMicrotasks();
+    await selectDestinationProfile('profile-2');
 
-    await act(async () => {
-      await latest.destinationPicker.submit();
-    });
-    expect(latest.destinationPicker.open).toBe(true);
-    expect(latest.destinationPicker.error).toBe('Access forbidden.');
+    await press(pickerDialog()!, 'Move');
+    expect(pickerDialog()).not.toBeNull();
+    expect(alertText(pickerDialog())).toBe('Access forbidden.');
     expect(clearSelection).not.toHaveBeenCalled();
+    // Batch transfers keep the exact call arity: no signal argument
+    expect(vi.mocked(startCrossProfileFileTransfer).mock.calls[1]).toHaveLength(8);
+    expect(latest.batchBusy).toBe(false);
 
     // Retry succeeds
-    await act(async () => {
-      await latest.destinationPicker.submit();
-    });
-    expect(latest.destinationPicker.open).toBe(false);
+    await press(pickerDialog()!, 'Move');
+    expect(pickerDialog()).toBeNull();
     expect(clearSelection).toHaveBeenCalledTimes(1);
     expect(refreshListing).toHaveBeenCalledTimes(1);
   });
@@ -913,11 +1054,9 @@ describe('useFileManagerActions', () => {
     });
 
     await renderActions();
-    act(() => latest.destinationPicker.openSingle(fileEntry, 'copy'));
+    act(() => latest.copy(fileEntry));
     await flushMicrotasks();
-    await act(async () => {
-      await latest.destinationPicker.submit();
-    });
+    await press(pickerDialog()!, 'Copy');
     expect(latest.transfers[0].status).toBe('running');
 
     await renderActions({ profileId: 'profile-2' });
@@ -975,18 +1114,18 @@ describe('useFileManagerActions', () => {
 
     await renderActions();
 
-    act(() => latest.createFolder.openDialog());
-    act(() => latest.createFolder.setName('AsyncFolder'));
+    act(() => latest.createFolder());
+    typeInto(createDialog()!.querySelector<HTMLInputElement>('#new-folder-name-input')!, 'AsyncFolder');
     let mkdirPromise!: Promise<void>;
     act(() => {
-      mkdirPromise = latest.createFolder.submit();
+      mkdirPromise = submitForm(createDialog()!);
     });
     expect(mkdirSignal?.aborted).toBe(false);
 
-    act(() => latest.deleteEntry.openDialog(fileEntry));
+    act(() => latest.delete(fileEntry));
     let deletePromise!: Promise<void>;
     act(() => {
-      deletePromise = latest.deleteEntry.confirm();
+      deletePromise = press(deleteDialog()!, 'Delete');
     });
     expect(deleteSignal?.aborted).toBe(false);
 
@@ -1026,28 +1165,22 @@ describe('useFileManagerActions', () => {
 
     await renderActions();
 
-    act(() => latest.rename.openDialog(fileEntry));
-    act(() => latest.rename.setName('existing.txt'));
-    await act(async () => {
-      await latest.rename.submit();
-    });
-    expect(latest.conflict.open).toBe(true);
+    act(() => latest.rename(fileEntry));
+    typeInto(renameDialog()!.querySelector<HTMLInputElement>('#rename-entry-name')!, 'existing.txt');
+    await submitForm(renameDialog()!);
+    expect(conflictDialog()).not.toBeNull();
 
-    act(() => latest.conflict.cancel());
-    expect(latest.conflict.open).toBe(false);
-    expect(latest.rename.open).toBe(false);
+    await press(conflictDialog()!, 'Cancel');
+    expect(conflictDialog()).toBeNull();
+    expect(renameDialog()).toBeNull();
     expect(renameFileEntry).toHaveBeenCalledTimes(1);
     expect(refreshListing).not.toHaveBeenCalled();
 
-    // Single-entry destination picker excludes mutationEntry directory and flags invalid destination
-    act(() => latest.destinationPicker.openSingle(dirEntry, 'copy'));
+    // Single-entry destination picker excludes the mutation target directory
+    act(() => latest.copy(dirEntry));
     await flushMicrotasks();
-    expect(latest.destinationPicker.availableEntries).toEqual([]);
-    expect(latest.destinationPicker.hasInvalidDestination).toBe(false);
-
-    act(() => latest.destinationPicker.openFolder(dirEntry));
-    await flushMicrotasks();
-    expect(latest.destinationPicker.hasInvalidDestination).toBe(true);
+    expect(pickerDialog()?.textContent).toContain('Choose a destination folder for Documents.');
+    expect(pickerFolders()).toEqual([]);
   });
 
   it('completes same-profile single copy without calling cross-profile cancel on settled transfer', async () => {
@@ -1058,12 +1191,10 @@ describe('useFileManagerActions', () => {
     });
 
     await renderActions();
-    act(() => latest.destinationPicker.openSingle(fileEntry, 'copy'));
+    act(() => latest.copy(fileEntry));
     await flushMicrotasks();
 
-    await act(async () => {
-      await latest.destinationPicker.submit();
-    });
+    await press(pickerDialog()!, 'Copy');
     await flushMicrotasks();
 
     expect(latest.transfers[0]).toMatchObject({
@@ -1093,12 +1224,10 @@ describe('useFileManagerActions', () => {
     await renderActions({
       selectedEntries: [dirEntry, fileEntry],
     });
-    act(() => latest.destinationPicker.openBatch('move'));
+    act(() => latest.move());
     await flushMicrotasks();
 
-    await act(async () => {
-      await latest.destinationPicker.submit();
-    });
+    await press(pickerDialog()!, 'Move');
     expect(latest.transfers[0]).toMatchObject({
       origin: 'same-profile',
       operation: 'move',

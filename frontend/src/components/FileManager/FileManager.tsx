@@ -28,7 +28,6 @@ import { useTranslation } from 'react-i18next';
 import type { FileBreadcrumb, FileEntry } from '../../api/files';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useFormat } from '../../utils/format';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
 import { useFileManagerActions } from './useFileManagerActions';
@@ -119,19 +118,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     );
   };
 
-  const createDirDialogRef = useRef<HTMLDivElement>(null);
-  const createDirCancelRef = useRef<HTMLButtonElement>(null);
-  const deleteDialogRef = useRef<HTMLDivElement>(null);
-  const deleteCancelRef = useRef<HTMLButtonElement>(null);
-  const batchDeleteDialogRef = useRef<HTMLDivElement>(null);
-  const batchDeleteCancelRef = useRef<HTMLButtonElement>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
-  const renameDialogRef = useRef<HTMLDivElement>(null);
-  const renameCancelRef = useRef<HTMLButtonElement>(null);
-  const pickerDialogRef = useRef<HTMLDivElement>(null);
-  const pickerCancelRef = useRef<HTMLButtonElement>(null);
-  const conflictDialogRef = useRef<HTMLDivElement>(null);
-  const conflictCancelRef = useRef<HTMLButtonElement>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -184,9 +171,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   }, [browsing.selection.partiallySelected]);
 
   const actions = useFileManagerActions({
-    apiUrl,
-    token,
-    profileId,
+    request: { apiUrl, token, profileId },
     profileName: browsing.selectedProfile?.name ?? '',
     profiles: browsing.profiles,
     currentRef: browsing.currentRef,
@@ -203,13 +188,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     // A new listing request clears stale action errors, as it does for listing errors.
     if (browsing.loading) clearActionError();
   }, [browsing.loading, clearActionError]);
-
-  useFocusTrap(createDirDialogRef, createDirCancelRef, actions.createFolder.close, actions.createFolder.open);
-  useFocusTrap(deleteDialogRef, deleteCancelRef, actions.deleteEntry.close, actions.deleteEntry.open);
-  useFocusTrap(batchDeleteDialogRef, batchDeleteCancelRef, actions.batch.closeDeleteDialog, actions.batch.deleteDialogOpen);
-  useFocusTrap(renameDialogRef, renameCancelRef, actions.rename.close, actions.rename.open);
-  useFocusTrap(pickerDialogRef, pickerCancelRef, actions.destinationPicker.close, actions.destinationPicker.open);
-  useFocusTrap(conflictDialogRef, conflictCancelRef, actions.conflict.cancel, actions.conflict.open);
 
   const loadMoreEntries = browsing.loadMore;
   useEffect(() => {
@@ -311,7 +289,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-hover)] transition-colors"
             onClick={() => {
               setMenuState(null);
-              actions.rename.openDialog(entry);
+              actions.rename(entry);
             }}
           >
             <PencilIcon className="h-4 w-4 text-[var(--color-text-secondary)] shrink-0" aria-hidden="true" />
@@ -325,7 +303,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-hover)] transition-colors"
             onClick={() => {
               setMenuState(null);
-              actions.destinationPicker.openSingle(entry, 'copy');
+              actions.copy(entry);
             }}
           >
             <ClipboardDocumentIcon className="h-4 w-4 text-[var(--color-text-secondary)] shrink-0" aria-hidden="true" />
@@ -339,7 +317,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-hover)] transition-colors"
             onClick={() => {
               setMenuState(null);
-              actions.destinationPicker.openSingle(entry, 'move');
+              actions.move(entry);
             }}
           >
             <ArrowRightIcon className="h-4 w-4 text-[var(--color-text-secondary)] shrink-0" aria-hidden="true" />
@@ -367,7 +345,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[var(--color-danger)] hover:bg-[var(--color-hover)] transition-colors"
             onClick={() => {
               setMenuState(null);
-              actions.deleteEntry.openDialog(entry);
+              actions.delete(entry);
             }}
           >
             <TrashIcon className="h-4 w-4 text-[var(--color-danger)] shrink-0" aria-hidden="true" />
@@ -487,8 +465,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     <button
                       type="button"
                       className="ui-button-secondary inline-flex items-center justify-center gap-1.5 p-2 md:px-3 md:py-1.5 text-xs font-medium disabled:opacity-50 shrink-0"
-                      disabled={!actions.permissions.canBatchDownload || actions.batch.busy}
-                      onClick={() => void actions.batch.downloadArchive()}
+                      disabled={!actions.permissions.canBatchDownload || actions.batchBusy}
+                      onClick={() => void actions.downloadArchive()}
                       title={t('files.downloadArchive')}
                       aria-label={t('files.downloadArchive')}
                     >
@@ -498,8 +476,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     <button
                       type="button"
                       className="ui-button-secondary inline-flex items-center justify-center gap-1.5 p-2 md:px-3 md:py-1.5 text-xs font-medium disabled:opacity-50 shrink-0"
-                      disabled={!actions.permissions.canBatchCopy || actions.batch.busy}
-                      onClick={() => actions.destinationPicker.openBatch('copy')}
+                      disabled={!actions.permissions.canBatchCopy || actions.batchBusy}
+                      onClick={() => actions.copy()}
                       title={t('files.copy')}
                       aria-label={t('files.copy')}
                     >
@@ -509,8 +487,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     <button
                       type="button"
                       className="ui-button-secondary inline-flex items-center justify-center gap-1.5 p-2 md:px-3 md:py-1.5 text-xs font-medium disabled:opacity-50 shrink-0"
-                      disabled={!actions.permissions.canBatchMove || actions.batch.busy}
-                      onClick={() => actions.destinationPicker.openBatch('move')}
+                      disabled={!actions.permissions.canBatchMove || actions.batchBusy}
+                      onClick={() => actions.move()}
                       title={t('files.move')}
                       aria-label={t('files.move')}
                     >
@@ -520,8 +498,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     <button
                       type="button"
                       className="ui-button-danger inline-flex items-center justify-center gap-1.5 p-2 md:px-3 md:py-1.5 text-xs font-medium disabled:opacity-50 shrink-0"
-                      disabled={!actions.permissions.canBatchDelete || actions.batch.busy}
-                      onClick={actions.batch.openDeleteDialog}
+                      disabled={!actions.permissions.canBatchDelete || actions.batchBusy}
+                      onClick={() => actions.delete()}
                       title={t('files.deleteAction')}
                       aria-label={t('files.deleteAction')}
                     >
@@ -660,7 +638,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     />
                     <button
                       type="button"
-                      onClick={actions.createFolder.openDialog}
+                      onClick={() => actions.createFolder()}
                       disabled={browsing.loading || !actions.permissions.canCreateFolder}
                       className="ui-button-secondary inline-flex items-center gap-2 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
                       title={!actions.permissions.canCreateFolder ? t('files.mkdirUnavailable') : t('files.newFolder')}
@@ -712,17 +690,14 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   </div>
                 </div>
               )}
-              {actions.batch.results.length > 0 && (
+              {actions.batchSummary && (
                 <div className="mx-3 mt-3 flex items-center justify-between gap-2 ui-alert px-3 py-2 text-sm" role="status">
                   <span>
-                    {t('files.batchResultSummary', {
-                      success: actions.batch.results.filter((item) => ['deleted', 'copied', 'moved'].includes(item.status)).length,
-                      failed: actions.batch.results.filter((item) => item.status === 'failed').length,
-                    })}
+                    {t('files.batchResultSummary', actions.batchSummary)}
                   </span>
                   <button
                     type="button"
-                    onClick={actions.batch.dismissResults}
+                    onClick={actions.dismissBatchSummary}
                     className="ui-icon-button p-0.5 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] shrink-0"
                     aria-label={t('common.cancel')}
                     title={t('common.cancel')}
@@ -940,136 +915,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
           )}
         </div>
       </div>
-      {actions.createFolder.open &&
-        createPortal(
-          <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-            <div
-              ref={createDirDialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="create-dir-title"
-              tabIndex={-1}
-              className="ui-card w-full max-w-md p-5"
-            >
-              <h2 id="create-dir-title" className="text-lg font-semibold text-[var(--color-text-primary)]">
-                {t('files.newFolder')}
-              </h2>
-              {actions.createFolder.error && (
-                <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">
-                  {actions.createFolder.error}
-                </p>
-              )}
-              <form onSubmit={(event) => { event.preventDefault(); void actions.createFolder.submit(); }} className="mt-4 space-y-4">
-                <div>
-                  <label htmlFor="new-folder-name-input" className="block text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">
-                    {t('files.folderName')}
-                  </label>
-                  <input
-                    id="new-folder-name-input"
-                    type="text"
-                    value={actions.createFolder.name}
-                    onChange={(e) => actions.createFolder.setName(e.target.value)}
-                    placeholder={t('files.folderNamePlaceholder')}
-                    disabled={actions.createFolder.busy}
-                    className="ui-input w-full py-2 px-3 text-sm"
-                    autoFocus
-                  />
-                </div>
-                <div className="flex justify-end gap-2 pt-2">
-                  <button
-                    ref={createDirCancelRef}
-                    type="button"
-                    onClick={actions.createFolder.close}
-                    disabled={actions.createFolder.busy}
-                    className="ui-button-secondary px-3 py-2 text-sm"
-                  >
-                    {t('common.cancel')}
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={!actions.createFolder.name.trim() || actions.createFolder.busy}
-                    className="ui-button-primary inline-flex items-center gap-2 px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {actions.createFolder.busy ? (
-                      <>
-                        <LoadingIndicator label={t('common.loading')} size="sm" />
-                        <span>{t('common.loading')}</span>
-                      </>
-                    ) : (
-                      <span>{t('common.create')}</span>
-                    )}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>,
-          document.body
-        )}
-      {actions.deleteEntry.entry && createPortal(
-        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-          <div ref={deleteDialogRef} role="dialog" aria-modal="true" aria-labelledby="delete-entry-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
-            <h2 id="delete-entry-title" className="text-lg font-semibold text-[var(--color-text-primary)]">{t('files.deleteTitle')}</h2>
-            <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
-              {actions.deleteEntry.entry.kind === 'file' ? t('files.deleteFileWarning', { name: actions.deleteEntry.entry.name }) : actions.deleteEntry.recursive ? t('files.deleteRecursiveWarning', { name: actions.deleteEntry.entry.name }) : t('files.deleteDirectoryWarning', { name: actions.deleteEntry.entry.name })}
-            </p>
-            {actions.deleteEntry.error && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{actions.deleteEntry.error}</p>}
-            {actions.deleteEntry.entry.kind === 'directory' && actions.deleteEntry.recursive && !browsing.capabilities.delete_empty_directory && browsing.capabilities.delete_recursive_directory && <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.deleteOnlyRecursiveSupported')}</p>}
-            <div className="mt-5 flex justify-end gap-2">
-              <button ref={deleteCancelRef} type="button" onClick={actions.deleteEntry.close} disabled={actions.deleteEntry.busy} className="ui-button-secondary px-3 py-2 text-sm">{t('common.cancel')}</button>
-              <button type="button" onClick={() => void actions.deleteEntry.confirm()} disabled={actions.deleteEntry.busy || (actions.deleteEntry.entry.kind === 'directory' && !actions.deleteEntry.recursive && !browsing.capabilities.delete_empty_directory)} className="ui-button-danger px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
-                {actions.deleteEntry.busy ? t('common.loading') : actions.deleteEntry.recursive ? t('files.deleteRecursively') : t('files.deleteConfirm')}
-              </button>
-            </div>
-          </div>
-        </div>, document.body)}
-      {actions.batch.deleteDialogOpen && createPortal(
-        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-          <div ref={batchDeleteDialogRef} role="dialog" aria-modal="true" aria-labelledby="batch-delete-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
-            <h2 id="batch-delete-title" className="text-lg font-semibold">{t('files.batchDeleteTitle')}</h2>
-            <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.batchDeleteWarning', { count: actions.batch.itemCount })}</p>
-            {actions.batch.hasDirectories && <p className="mt-2 text-sm text-[var(--color-text-secondary)]">{t('files.batchDeleteRecursive')}</p>}
-            <div className="mt-5 flex justify-end gap-2"><button ref={batchDeleteCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={actions.batch.deleting} onClick={actions.batch.closeDeleteDialog}>{t('common.cancel')}</button><button type="button" className="ui-button-danger px-3 py-2 text-sm" disabled={actions.batch.deleting} onClick={() => void actions.batch.confirmDelete()}>{actions.batch.deleting ? t('common.loading') : t('files.deleteRecursively')}</button></div>
-          </div>
-        </div>, document.body)}
-      {actions.rename.open && createPortal(
-        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-          <div ref={renameDialogRef} role="dialog" aria-modal="true" aria-labelledby="rename-entry-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
-            <h2 id="rename-entry-title" className="text-lg font-semibold">{t('files.renameTitle')}</h2>
-            {actions.rename.error && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{actions.rename.error}</p>}
-            <form className="mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void actions.rename.submit(); }}>
-              <label className="block text-sm font-medium" htmlFor="rename-entry-name">{t('files.name')}</label>
-              <input id="rename-entry-name" className="ui-input w-full px-3 py-2" value={actions.rename.name} disabled={actions.rename.busy} onChange={(event) => actions.rename.setName(event.target.value)} autoFocus />
-              <div className="flex justify-end gap-2"><button ref={renameCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={actions.rename.busy} onClick={actions.rename.close}>{t('common.cancel')}</button><button type="submit" className="ui-button-primary px-3 py-2 text-sm" disabled={!actions.rename.name.trim() || actions.rename.busy}>{actions.rename.busy ? t('files.mutating') : t('files.rename')}</button></div>
-            </form>
-          </div>
-        </div>, document.body)}
-      {actions.destinationPicker.open && createPortal(
-        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-          <div ref={pickerDialogRef} role="dialog" aria-modal="true" aria-labelledby="destination-picker-title" tabIndex={-1} className="ui-card flex max-h-[85vh] w-full max-w-lg flex-col p-5">
-            <h2 id="destination-picker-title" className="text-lg font-semibold">{actions.destinationPicker.operation === 'copy' ? t('files.copyTitle') : t('files.moveTitle')}</h2>
-            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{actions.destinationPicker.entry ? t('files.destinationPickerDescription', { name: actions.destinationPicker.entry.name }) : t('files.batchDestinationPickerDescription', { count: actions.destinationPicker.itemCount })}</p>
-            {actions.destinationPicker.error && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{actions.destinationPicker.error}</p>}
-            <label className="mt-3 block text-sm font-medium" htmlFor="destination-profile">{t('files.destinationProfile')}</label>
-            <select id="destination-profile" className="ui-input mt-1 w-full px-3 py-2" value={actions.destinationPicker.profileId} disabled={actions.destinationPicker.loading || actions.destinationPicker.busy} onChange={(event) => actions.destinationPicker.selectProfile(event.target.value)}>
-              {browsing.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-            </select>
-            <nav className="mt-3 flex flex-wrap gap-1 text-sm" aria-label={t('files.destinationBreadcrumb')}>
-              {actions.destinationPicker.breadcrumbs.map((breadcrumb, index) => <button key={breadcrumb.ref ?? 'root'} type="button" className="rounded px-1 py-0.5 hover:bg-[var(--color-hover)]" disabled={actions.destinationPicker.loading || index === actions.destinationPicker.breadcrumbs.length - 1} onClick={() => actions.destinationPicker.goToBreadcrumb(index)}>{breadcrumb.name}{index < actions.destinationPicker.breadcrumbs.length - 1 ? ' /' : ''}</button>)}
-            </nav>
-            <div className="mt-3 min-h-36 overflow-y-auto rounded border border-[var(--color-border)]">
-               {actions.destinationPicker.loading ? <div className="p-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div> : actions.destinationPicker.hasInvalidDestination ? <p className="p-3 text-sm text-[var(--color-text-secondary)]">{t('files.noValidDestination')}</p> : actions.destinationPicker.availableEntries.map((entry) => <button key={entry.ref} type="button" className="flex w-full items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => actions.destinationPicker.openFolder(entry)}><FolderIcon className="h-4 w-4 ui-file-folder" aria-hidden="true" />{entry.name}</button>)}
-            </div>
-            <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.destinationSelected', { name: actions.destinationPicker.breadcrumbs[actions.destinationPicker.breadcrumbs.length - 1]?.name })}</p>
-            <div className="mt-5 flex justify-end gap-2"><button ref={pickerCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={actions.destinationPicker.busy} onClick={actions.destinationPicker.close}>{t('common.cancel')}</button><button type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={actions.destinationPicker.busy} onClick={() => void actions.destinationPicker.submit()}>{actions.destinationPicker.busy ? t('files.mutating') : actions.destinationPicker.operation === 'copy' ? t('files.copy') : t('files.move')}</button></div>
-          </div>
-        </div>, document.body)}
-      {actions.conflict.open && actions.conflict.strategies && createPortal(
-        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-          <div ref={conflictDialogRef} role="dialog" aria-modal="true" aria-labelledby="mutation-conflict-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
-            <h2 id="mutation-conflict-title" className="text-lg font-semibold">{t('files.conflictTitle')}</h2><p className="mt-2 text-sm text-[var(--color-text-secondary)]">{t('files.conflictDescription')}</p>
-            <div className="mt-4 flex flex-wrap justify-end gap-2"><button ref={conflictCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={actions.conflict.busy} onClick={actions.conflict.cancel}>{t('common.cancel')}</button>{actions.conflict.strategies.map((strategy) => <button key={strategy} type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={actions.conflict.busy} onClick={() => void actions.conflict.resolve(strategy)}>{t(`files.conflict${strategy[0]}${strategy.slice(1).toLowerCase()}`)}</button>)}</div>
-          </div>
-        </div>, document.body)}
+      {actions.dialogs}
       {browsing.preview.entry && (
         <Suspense fallback={null}>
           <FilePreviewDialog
