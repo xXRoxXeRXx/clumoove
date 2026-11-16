@@ -121,6 +121,15 @@ describe('actionTransferToItem', () => {
     expect(actionTransferToItem(actionTransfer({ status }))).toMatchObject({ state, statusKey });
   });
 
+  it.each([
+    ['same-profile', 'failed'],
+    ['same-profile', 'cancelled'],
+    ['cross-profile', 'failed'],
+    ['cross-profile', 'cancelled'],
+  ] as const)('never offers retry for a %s transfer that %s', (origin, status) => {
+    expect(actionTransferToItem(actionTransfer({ origin, status })).retryable).toBe(false);
+  });
+
   it('carries the error of a failed same-profile transfer', () => {
     expect(actionTransferToItem(actionTransfer({ status: 'failed', error: 'denied' })).error).toBe('denied');
   });

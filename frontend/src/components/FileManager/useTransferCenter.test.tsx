@@ -172,6 +172,29 @@ describe('useTransferCenter', () => {
     expect(onUploadCompleted).toHaveBeenCalledWith('profile-1');
   });
 
+  it.each(['same-profile', 'cross-profile'] as const)('does not retry a failed %s transfer', async (origin) => {
+    transfers = [transfer({ id: 'bad', origin, status: 'failed', error: 'denied' })];
+    await render();
+    expect(center.items[0]).toMatchObject({ origin, state: 'failed', retryable: false });
+
+    act(() => center.retry('bad'));
+    await flush();
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(cancelTransfer).not.toHaveBeenCalled();
+    expect(center.items.map((item) => item.id)).toEqual(['bad']);
+  });
+
+  it('keeps a transfer in the list when cancelling it did not succeed', async () => {
+    cancelTransfer.mockResolvedValueOnce(undefined);
+    transfers = [transfer({ id: 'cross', origin: 'cross-profile', status: 'running' })];
+    await render();
+    act(() => center.cancel('cross'));
+    await flush();
+    expect(cancelTransfer).toHaveBeenCalledWith('cross');
+    expect(center.items[0]).toMatchObject({ id: 'cross', state: 'active' });
+    expect(dismissTransfer).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['upload', undefined],
     ['same-profile', 'same-profile'],

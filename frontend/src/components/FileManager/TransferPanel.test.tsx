@@ -144,6 +144,19 @@ describe('TransferPanel', () => {
     expect(onRetry).toHaveBeenCalledWith('bad');
   });
 
+  it.each([
+    ['same-profile', same],
+    ['cross-profile', cross],
+  ] as const)('shows no retry button for failed or cancelled %s transfers', async (_origin, make) => {
+    await render([
+      make({ id: 'bad', state: 'failed', statusKey: 'failed', error: 'Denied' }),
+      make({ id: 'stopped', state: 'cancelled', statusKey: 'cancelled' }),
+    ]);
+    await expand();
+    expect(container.querySelectorAll('button[aria-label="Dismiss item from list"]')).toHaveLength(2);
+    expect(byLabel('Retry')).toBeNull();
+  });
+
   it('clears every finished transfer once nothing is in progress', async () => {
     await render([
       upload({ id: 'a', state: 'completed', statusKey: 'uploaded' }),

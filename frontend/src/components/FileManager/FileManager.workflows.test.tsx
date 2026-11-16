@@ -1224,6 +1224,9 @@ describe('FileManager screen workflows', () => {
       await flushAsync(2);
 
       expect(container.querySelector('[role="alert"]')?.textContent).toContain('Access forbidden.');
+      // The failed cancel leaves the transfer visible and cancellable in the panel.
+      expect(container.textContent).toContain('Copy: Google Drive → Dropbox');
+      expect(container.querySelector('button[aria-label="Cancel transfer"]')).not.toBeNull();
 
       await act(async () => {
         cancelBtn?.click();
