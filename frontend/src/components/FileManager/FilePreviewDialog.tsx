@@ -9,16 +9,12 @@ import {
   MagnifyingGlassPlusIcon,
   XMarkIcon,
 } from '../icons';
-import DOMPurify from 'dompurify';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { useTranslation } from 'react-i18next';
-import { createDownloadTicket, getFileThumbnailResult, type FileEntry } from '../../api/files';
+import type { FileEntry } from '../../api/files';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
-import { canPreview, getPreviewThumbnailDimensions, previewKindFor, previewLimit } from './filePreview';
-import DocxWorker from './docxPreview.worker.ts?worker';
-import XlsxWorker from './xlsxPreview.worker.ts?worker';
+import { useFilePreview } from './useFilePreview';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -27,50 +23,6 @@ import 'react-pdf/dist/Page/TextLayer.css';
 if (typeof window !== 'undefined') {
   pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 }
-
-type Sheet = { name: string; rows: string[][] };
-
-function parseWorker<T>(worker: Worker, buffer: ArrayBuffer, signal: AbortSignal): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      window.clearTimeout(timeout);
-      signal.removeEventListener('abort', abort);
-      worker.terminate();
-    };
-    const fail = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    const timeout = window.setTimeout(() => fail(new Error('preview timeout')), 15_000);
-    const abort = () => fail(new DOMException('Aborted', 'AbortError'));
-    signal.addEventListener('abort', abort, { once: true });
-    worker.onmessage = (event: MessageEvent<T & { ok: boolean }>) => {
-      if (!event.data.ok) fail(new Error('preview parser failed'));
-      else {
-        cleanup();
-        resolve(event.data);
-      }
-    };
-    worker.onerror = (err) => {
-      fail(err instanceof Error ? err : new Error('preview parser failed'));
-    };
-    worker.postMessage({ type: 'parse', buffer }, [buffer]);
-  });
-}
-
-function sanitizeDocx(html: string): string {
-  const clean = DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'b', 'i', 'u', 's', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'blockquote', 'code', 'pre', 'img'],
-    ALLOWED_ATTR: ['src', 'alt', 'colspan', 'rowspan'],
-    ALLOW_DATA_ATTR: false,
-  });
-  const document = new DOMParser().parseFromString(clean, 'text/html');
-  document.querySelectorAll('img').forEach((image) => {
-    if (!image.getAttribute('src')?.startsWith('data:image/')) image.remove();
-  });
-  return document.body.innerHTML;
-}
-
 
 type FilePreviewContentProps = {
   apiUrl: string;
@@ -84,19 +36,21 @@ type FilePreviewContentProps = {
 function FilePreviewContent({ apiUrl, token, profileId, entry, supportsThumbnails, onDownload }: FilePreviewContentProps) {
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
-  const translateApiError = useApiError();
-  const kind = previewKindFor(entry);
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
-  const [text, setText] = useState('');
-  const [docxHtml, setDocxHtml] = useState('');
-  const [sheets, setSheets] = useState<Sheet[]>([]);
+  const {
+    kind,
+    status,
+    error,
+    blobUrl,
+    pdfData,
+    text,
+    docxHtml,
+    sheets,
+    fallback,
+  } = useFilePreview({ apiUrl, token, profileId, entry, supportsThumbnails });
   const [sheetIndex, setSheetIndex] = useState(0);
   const [pages, setPages] = useState(0);
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(1);
-  const [state, setState] = useState<'loading' | 'ready' | 'fallback'>(() => (!kind || !canPreview(entry) ? 'fallback' : 'loading'));
-  const [error, setError] = useState('');
 
   const pdfFile = useMemo(() => {
     if (pdfData) return { data: pdfData };
@@ -104,94 +58,11 @@ function FilePreviewContent({ apiUrl, token, profileId, entry, supportsThumbnail
     return null;
   }, [pdfData, blobUrl]);
 
-  useEffect(() => {
-    if (!kind || !canPreview(entry)) return;
-
-    const controller = new AbortController();
-    let objectUrl: string | null = null;
-    let worker: Worker | null = null;
-    const load = async () => {
-      if (kind === 'image' && supportsThumbnails) {
-        const { width, height } = getPreviewThumbnailDimensions();
-        try {
-          const thumbResult = await getFileThumbnailResult(
-            apiUrl,
-            token,
-            profileId,
-            entry.ref,
-            width,
-            height,
-            controller.signal
-          );
-          if (controller.signal.aborted) return;
-          if (thumbResult.blob && thumbResult.status === 200) {
-            objectUrl = URL.createObjectURL(thumbResult.blob);
-            setBlobUrl(objectUrl);
-            setState('ready');
-            return;
-          }
-        } catch (thumbErr) {
-          if (controller.signal.aborted || (thumbErr instanceof DOMException && thumbErr.name === 'AbortError')) return;
-        }
-      }
-
-      const ticket = await createDownloadTicket(apiUrl, token, profileId, entry.ref, controller.signal);
-      if (controller.signal.aborted) return;
-      if (ticket.ok === false) {
-        setError(translateApiError(ticket.errorCode));
-        setState('fallback');
-        return;
-      }
-      try {
-        const response = await fetch(new URL(ticket.data.download_url, apiUrl), { cache: 'no-store', credentials: 'omit', signal: controller.signal });
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({})) as { error_code?: string };
-          setError(translateApiError(body.error_code));
-          setState('fallback');
-          return;
-        }
-        const contentLength = Number(response.headers.get('Content-Length') || 0);
-        if (contentLength > previewLimit(kind)) {
-          setState('fallback');
-          return;
-        }
-        const blob = await response.blob();
-        if (controller.signal.aborted || blob.size > previewLimit(kind)) return setState('fallback');
-        objectUrl = URL.createObjectURL(blob);
-        setBlobUrl(objectUrl);
-        if (kind === 'text') setText(await blob.text());
-        if (kind === 'pdf') {
-          const buffer = await blob.arrayBuffer();
-          setPdfData(new Uint8Array(buffer));
-        }
-        if (kind === 'docx') {
-          worker = new DocxWorker();
-          const parsed = await parseWorker<{ html?: string; ok: boolean }>(worker, await blob.arrayBuffer(), controller.signal);
-          setDocxHtml(sanitizeDocx(parsed.html ?? ''));
-        } else if (kind === 'xlsx') {
-          worker = new XlsxWorker();
-          const parsed = await parseWorker<{ sheets?: Sheet[]; ok: boolean }>(worker, await blob.arrayBuffer(), controller.signal);
-          setSheets(parsed.sheets ?? []);
-        }
-        if (!controller.signal.aborted) setState('ready');
-      } catch (loadError) {
-        if (controller.signal.aborted || (loadError instanceof DOMException && loadError.name === 'AbortError')) return;
-        setState('fallback');
-      }
-    };
-    void load();
-    return () => {
-      controller.abort();
-      worker?.terminate();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [apiUrl, entry, kind, profileId, supportsThumbnails, token, translateApiError]);
-
-  if (state === 'loading') {
+  if (status === 'loading') {
     return <p className="ui-empty py-12 text-center">{t('files.previewLoading')}</p>;
   }
 
-  if (state === 'fallback') {
+  if (status === 'fallback') {
     return (
       <div className="mx-auto flex flex-col items-center justify-center p-6 text-center max-w-lg z-10">
         <div className="relative mb-5 flex h-24 w-24 items-center justify-center rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-xs">
@@ -234,13 +105,13 @@ function FilePreviewContent({ apiUrl, token, profileId, entry, supportsThumbnail
   return (
     <>
       {kind === 'image' && blobUrl && (
-        <img src={blobUrl} alt={entry.name} className="max-h-full max-w-full object-contain" onError={() => setState('fallback')} />
+        <img src={blobUrl} alt={entry.name} className="max-h-full max-w-full object-contain" onError={fallback} />
       )}
       {kind === 'audio' && blobUrl && (
-        <audio controls autoPlay src={blobUrl} className="w-full max-w-2xl" onError={() => setState('fallback')} />
+        <audio controls autoPlay src={blobUrl} className="w-full max-w-2xl" onError={fallback} />
       )}
       {kind === 'video' && blobUrl && (
-        <video controls autoPlay playsInline src={blobUrl} className="max-h-full max-w-full" onError={() => setState('fallback')} />
+        <video controls autoPlay playsInline src={blobUrl} className="max-h-full max-w-full" onError={fallback} />
       )}
       {kind === 'text' && (
         <div className="w-full h-full overflow-auto">
@@ -321,7 +192,7 @@ function FilePreviewContent({ apiUrl, token, profileId, entry, supportsThumbnail
             </button>
           </div>
           <div className="overflow-auto max-h-full">
-            <Document file={pdfFile} onLoadSuccess={({ numPages }) => { setPages(numPages); setPage(1); }} onLoadError={() => setState('fallback')}>
+            <Document file={pdfFile} onLoadSuccess={({ numPages }) => { setPages(numPages); setPage(1); }} onLoadError={fallback}>
               <Page pageNumber={page} scale={zoom} className="mx-auto w-fit max-w-full" />
             </Document>
           </div>

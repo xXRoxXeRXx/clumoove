@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
+import { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowDownTrayIcon,
@@ -25,20 +25,18 @@ import {
   XMarkIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
-import { getFileCapabilities, listFileEntries, type FileBreadcrumb, type FileCapabilities, type FileEntry, type FileTransferSummary } from '../../api/files';
-import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/profiles';
+import type { FileBreadcrumb, FileEntry, FileTransferSummary } from '../../api/files';
 import { LoadingIndicator } from '../LoadingIndicator';
-import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
-import { useFileManagerActions, type FileActionTransfer, type FileManagerBreadcrumb } from './useFileManagerActions';
+import { useFileManagerActions, type FileActionTransfer } from './useFileManagerActions';
+import { useFileManagerBrowsing, type SortDirection, type SortField } from './useFileManagerBrowsing';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
 
-export type SortField = 'name' | 'size' | 'modified';
-export type SortDirection = 'asc' | 'desc';
+export type { SortField, SortDirection };
 
 type FileManagerProps = {
   apiUrl: string;
@@ -49,28 +47,6 @@ type FileManagerProps = {
   onProfileChange: (profileId: string) => void;
   onOpenManager?: () => void;
   onBack?: () => void;
-};
-
-const unavailableCapabilities: FileCapabilities = {
-  browse: false,
-  native_pagination: false,
-  download: false,
-  archive: false,
-  upload: false,
-  mkdir: false,
-  rename: false,
-  move: false,
-  copy: false,
-  delete_file: false,
-  delete_empty_directory: false,
-  delete_recursive_directory: false,
-  conflict_skip: false,
-  conflict_overwrite: false,
-  conflict_overwrite_atomic: false,
-  conflict_rename: false,
-  native_copy: false,
-  range_download: false,
-  thumbnails: false,
 };
 
 function toInternalTransfer(transfer: FileActionTransfer): InternalTransfer {
@@ -120,18 +96,13 @@ function toBackgroundTransfer(transfer: FileActionTransfer): FileTransferSummary
 export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, initialPathFallback = false, onProfileChange, onOpenManager, onBack }: FileManagerProps) {
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
-  const translateApiError = useApiError();
-  const [profiles, setProfiles] = useState<ConnectionProfilePublic[]>([]);
-  const [profilesLoading, setProfilesLoading] = useState(true);
-  const [entries, setEntries] = useState<FileEntry[]>([]);
-  const [entriesLoading, setEntriesLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [capabilities, setCapabilities] = useState<FileCapabilities>(unavailableCapabilities);
-  const [breadcrumbs, setBreadcrumbs] = useState<FileManagerBreadcrumb[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [error, setError] = useState('');
-  const [selectedRefs, setSelectedRefs] = useState<Set<string>>(() => new Set());
-  const [previewEntry, setPreviewEntry] = useState<FileEntry | null>(null);
+  const browsing = useFileManagerBrowsing({
+    apiUrl,
+    token,
+    profileId,
+    initialBreadcrumbs,
+    onProfileChange,
+  });
   const [menuState, setMenuState] = useState<{
     entry: FileEntry;
     x: number;
@@ -159,62 +130,22 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     }
   };
 
-  const [sortField, setSortField] = useState<SortField>(() => {
-    try {
-      const stored = localStorage.getItem('clumoove_file_manager_sort_field');
-      if (stored === 'name' || stored === 'size' || stored === 'modified') return stored;
-    } catch {
-      // ignore storage errors
-    }
-    return 'name';
-  });
-
-  const [sortDirection, setSortDirection] = useState<SortDirection>(() => {
-    try {
-      const stored = localStorage.getItem('clumoove_file_manager_sort_dir');
-      if (stored === 'asc' || stored === 'desc') return stored;
-    } catch {
-      // ignore storage errors
-    }
-    return 'asc';
-  });
-
-  const handleSort = (field: SortField) => {
-    let nextField = field;
-    let nextDir: SortDirection;
-    if (sortField === field) {
-      nextDir = sortDirection === 'asc' ? 'desc' : 'asc';
-    } else {
-      nextField = field;
-      // Start size/modified columns descending (largest/newest first)
-      nextDir = field === 'name' ? 'asc' : 'desc';
-    }
-    setSortField(nextField);
-    setSortDirection(nextDir);
-    try {
-      localStorage.setItem('clumoove_file_manager_sort_field', nextField);
-      localStorage.setItem('clumoove_file_manager_sort_dir', nextDir);
-    } catch {
-      // ignore storage errors
-    }
-  };
-
   const renderSortHeader = (field: SortField, label: string, sortLabel: string) => {
-    const isActive = sortField === field;
+    const isActive = browsing.sortField === field;
     return (
       <button
         type="button"
-        onClick={() => handleSort(field)}
+        onClick={() => browsing.sortBy(field)}
         className="group -mx-1 -my-1 px-1 py-1 inline-flex items-center gap-1.5 font-medium hover:text-[var(--color-text-primary)] transition-colors select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)] rounded text-left"
-        title={isActive ? (sortDirection === 'asc' ? t('files.sortDescending') : t('files.sortAscending')) : sortLabel}
-        aria-label={`${label}: ${isActive ? (sortDirection === 'asc' ? t('files.sortAscending') : t('files.sortDescending')) : sortLabel}`}
+        title={isActive ? (browsing.sortDirection === 'asc' ? t('files.sortDescending') : t('files.sortAscending')) : sortLabel}
+        aria-label={`${label}: ${isActive ? (browsing.sortDirection === 'asc' ? t('files.sortAscending') : t('files.sortDescending')) : sortLabel}`}
       >
         <span className={isActive ? 'text-[var(--color-text-primary)] font-semibold' : 'text-[var(--color-text-secondary)] group-hover:text-[var(--color-text-primary)] transition-colors'}>
           {label}
         </span>
         {isActive ? (
           <span className="text-[var(--color-text-primary)] flex items-center shrink-0">
-            {sortDirection === 'asc' ? (
+            {browsing.sortDirection === 'asc' ? (
               <ChevronUpIcon className="h-3.5 w-3.5 stroke-[2.5]" aria-hidden="true" />
             ) : (
               <ChevronDownIcon className="h-3.5 w-3.5 stroke-[2.5]" aria-hidden="true" />
@@ -236,25 +167,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const batchDeleteDialogRef = useRef<HTMLDivElement>(null);
   const batchDeleteCancelRef = useRef<HTMLButtonElement>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
-  const profileRequestRef = useRef<AbortController | null>(null);
-  const entriesRequestRef = useRef<AbortController | null>(null);
   const renameDialogRef = useRef<HTMLDivElement>(null);
   const renameCancelRef = useRef<HTMLButtonElement>(null);
   const pickerDialogRef = useRef<HTMLDivElement>(null);
   const pickerCancelRef = useRef<HTMLButtonElement>(null);
   const conflictDialogRef = useRef<HTMLDivElement>(null);
   const conflictCancelRef = useRef<HTMLButtonElement>(null);
-  const latestEntriesRequestRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const uploadRefreshTimeoutRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (uploadRefreshTimeoutRef.current !== null) {
-        window.clearTimeout(uploadRefreshTimeoutRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     if (!menuState) return;
@@ -301,231 +220,30 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     };
   }, [isBreadcrumbMenuOpen]);
 
-  const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
-  const currentBreadcrumb = breadcrumbs[breadcrumbs.length - 1];
-  const currentRef = currentBreadcrumb?.ref ?? null;
-  const selectedEntries = entries.filter((entry) => selectedRefs.has(entry.ref));
-  const allLoadedSelected = entries.length > 0 && entries.every((entry) => selectedRefs.has(entry.ref));
-  const someLoadedSelected = entries.some((entry) => selectedRefs.has(entry.ref));
-  const isSelectionMode = selectedRefs.size > 0;
-
-  const sortedEntries = useMemo(() => {
-    return [...entries].sort((a, b) => {
-      // Directories always appear first
-      if (a.kind !== b.kind) {
-        return a.kind === 'directory' ? -1 : 1;
-      }
-
-      if (sortField === 'name') {
-        const cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-        return sortDirection === 'asc' ? cmp : -cmp;
-      }
-
-      if (sortField === 'size') {
-        if (a.kind === 'directory') {
-          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-        }
-        const sizeA = a.size ?? 0;
-        const sizeB = b.size ?? 0;
-        if (sizeA !== sizeB) {
-          return sortDirection === 'asc' ? sizeA - sizeB : sizeB - sizeA;
-        }
-        return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-      }
-
-      if (sortField === 'modified') {
-        const hasA = Boolean(a.modified_at);
-        const hasB = Boolean(b.modified_at);
-        if (!hasA && !hasB) {
-          const cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-          return sortDirection === 'asc' ? cmp : -cmp;
-        }
-        if (!hasA) return 1;
-        if (!hasB) return -1;
-
-        const timeA = new Date(a.modified_at!).getTime();
-        const timeB = new Date(b.modified_at!).getTime();
-        if (timeA !== timeB) {
-          return sortDirection === 'asc' ? timeA - timeB : timeB - timeA;
-        }
-        return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-      }
-
-      return 0;
-    });
-  }, [entries, sortField, sortDirection]);
-
   useEffect(() => {
-    if (selectAllRef.current) selectAllRef.current.indeterminate = someLoadedSelected && !allLoadedSelected;
-  }, [allLoadedSelected, someLoadedSelected]);
-
-  const loadEntries = useCallback(async (parentRef: string | null) => {
-    if (!profileId || !capabilities.browse) return;
-    entriesRequestRef.current?.abort();
-    const controller = new AbortController();
-    entriesRequestRef.current = controller;
-    const request = ++latestEntriesRequestRef.current;
-    setEntriesLoading(true);
-    setError('');
-    const result = await listFileEntries(apiUrl, token, profileId, parentRef, undefined, controller.signal);
-    if (controller.signal.aborted || latestEntriesRequestRef.current !== request) return;
-    if (result.ok === false) {
-      setEntries([]);
-      setNextCursor(null);
-      setError(translateApiError(result.errorCode));
-    } else {
-      setEntries(result.data.entries ?? []);
-      setNextCursor(result.data.next_cursor ?? null);
-    }
-    setEntriesLoading(false);
-  }, [apiUrl, capabilities.browse, profileId, token, translateApiError]);
-
-  const loadMore = useCallback(async () => {
-    if (!profileId || !capabilities.browse || !nextCursor || entriesLoading || loadingMore) return;
-    setLoadingMore(true);
-    const controller = new AbortController();
-    const result = await listFileEntries(apiUrl, token, profileId, currentRef, nextCursor, controller.signal);
-    if (result.ok === false) {
-      setError(translateApiError(result.errorCode));
-    } else {
-      setEntries((current) => [...current, ...(result.data.entries ?? [])]);
-      setNextCursor(result.data.next_cursor ?? null);
-    }
-    setLoadingMore(false);
-  }, [apiUrl, capabilities.browse, currentRef, entriesLoading, loadingMore, nextCursor, profileId, token, translateApiError]);
-
-  const loadProfiles = useCallback(async () => {
-    profileRequestRef.current?.abort();
-    const controller = new AbortController();
-    profileRequestRef.current = controller;
-    setProfilesLoading(true);
-    const result = await listConnectionProfiles(apiUrl, token, controller.signal);
-    if (controller.signal.aborted) return;
-    if (result.ok === true) {
-      setProfiles(result.data.profiles ?? []);
-    } else {
-      setProfiles([]);
-      setError(translateApiError(result.errorCode));
-    }
-    setProfilesLoading(false);
-  }, [apiUrl, token, translateApiError]);
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => void loadProfiles(), 0);
-    return () => {
-      window.clearTimeout(timeoutId);
-      profileRequestRef.current?.abort();
-      entriesRequestRef.current?.abort();
-    };
-  }, [loadProfiles]);
-
-  useEffect(() => {
-    let controller: AbortController | null = null;
-    const timeoutId = window.setTimeout(() => {
-      if (!selectedProfile) {
-        setCapabilities(unavailableCapabilities);
-        setBreadcrumbs([]);
-        setEntries([]);
-        setNextCursor(null);
-        setEntriesLoading(false);
-        return;
-      }
-
-      controller = new AbortController();
-      entriesRequestRef.current?.abort();
-      entriesRequestRef.current = controller;
-      const request = ++latestEntriesRequestRef.current;
-
-      const resolvedBreadcrumbs = initialBreadcrumbs?.length
-        ? initialBreadcrumbs.map((breadcrumb) => ({ ref: breadcrumb.ref || null, name: breadcrumb.name }))
-        : [{ ref: null, name: selectedProfile.name }];
-      setBreadcrumbs(resolvedBreadcrumbs);
-      setSelectedRefs(new Set());
-      setEntries([]);
-      setNextCursor(null);
-      setError('');
-      setEntriesLoading(true);
-
-      const targetRef = resolvedBreadcrumbs[resolvedBreadcrumbs.length - 1]?.ref ?? null;
-
-      async function initProfile() {
-        const capResult = await getFileCapabilities(apiUrl, token, selectedProfile!.id, controller!.signal);
-        if (controller!.signal.aborted || latestEntriesRequestRef.current !== request) return;
-
-        if (capResult.ok === false) {
-          setCapabilities(unavailableCapabilities);
-          setEntries([]);
-          setNextCursor(null);
-          setError(translateApiError(capResult.errorCode));
-          setEntriesLoading(false);
-          return;
-        }
-
-        setCapabilities(capResult.data.capabilities);
-
-        if (!capResult.data.capabilities.browse) {
-          setEntries([]);
-          setNextCursor(null);
-          setEntriesLoading(false);
-          return;
-        }
-
-        const listResult = await listFileEntries(apiUrl, token, selectedProfile!.id, targetRef, undefined, controller!.signal);
-        if (controller!.signal.aborted || latestEntriesRequestRef.current !== request) return;
-
-        if (listResult.ok === false) {
-          setEntries([]);
-          setNextCursor(null);
-          setError(translateApiError(listResult.errorCode));
-        } else {
-          setEntries(listResult.data.entries ?? []);
-          setNextCursor(listResult.data.next_cursor ?? null);
-        }
-        setEntriesLoading(false);
-      }
-
-      void initProfile();
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-      controller?.abort();
-    };
-  }, [apiUrl, initialBreadcrumbs, selectedProfile, token, translateApiError]);
-
-  const refresh = useCallback(() => {
-    if (!capabilities.browse) return;
-    void loadEntries(currentRef);
-  }, [capabilities.browse, currentRef, loadEntries]);
-
-  const clearSelection = useCallback(() => {
-    setSelectedRefs(new Set());
-  }, []);
-
-  const clearPreview = useCallback(() => {
-    setPreviewEntry(null);
-  }, []);
+    if (selectAllRef.current) selectAllRef.current.indeterminate = browsing.selection.partiallySelected;
+  }, [browsing.selection.partiallySelected]);
 
   const actions = useFileManagerActions({
     apiUrl,
     token,
     profileId,
-    profileName: selectedProfile?.name ?? '',
-    profiles,
-    currentRef,
-    capabilities,
-    selectedEntries,
-    previewEntryRef: previewEntry?.ref ?? null,
-    refreshListing: refresh,
-    clearSelection,
-    clearPreview,
+    profileName: browsing.selectedProfile?.name ?? '',
+    profiles: browsing.profiles,
+    currentRef: browsing.currentRef,
+    capabilities: browsing.capabilities,
+    selectedEntries: browsing.selection.entries,
+    previewEntryRef: browsing.preview.entry?.ref ?? null,
+    refreshListing: browsing.refresh,
+    clearSelection: browsing.selection.clear,
+    clearPreview: browsing.preview.close,
   });
 
   const clearActionError = actions.clearError;
   useEffect(() => {
     // A new listing request clears stale action errors, as it does for listing errors.
-    if (entriesLoading) clearActionError();
-  }, [clearActionError, entriesLoading]);
+    if (browsing.loading) clearActionError();
+  }, [browsing.loading, clearActionError]);
 
   useFocusTrap(createDirDialogRef, createDirCancelRef, actions.createFolder.close, actions.createFolder.open);
   useFocusTrap(deleteDialogRef, deleteCancelRef, actions.deleteEntry.close, actions.deleteEntry.open);
@@ -543,15 +261,16 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     [actions.transfers],
   );
 
+  const loadMoreEntries = browsing.loadMore;
   useEffect(() => {
-    if (!nextCursor || entriesLoading || loadingMore || !capabilities.browse) return;
+    if (!browsing.hasMore || browsing.loading || browsing.loadingMore || !browsing.capabilities.browse) return;
     const target = sentinelRef.current;
     if (!target || typeof IntersectionObserver === 'undefined') return;
 
     const observer = new IntersectionObserver(
       (observedEntries) => {
         if (observedEntries[0]?.isIntersecting) {
-          void loadMore();
+          void loadMoreEntries();
         }
       },
       { rootMargin: '250px' }
@@ -559,88 +278,26 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
 
     observer.observe(target);
     return () => observer.disconnect();
-  }, [capabilities.browse, entriesLoading, loadMore, loadingMore, nextCursor]);
+  }, [browsing.capabilities.browse, browsing.hasMore, browsing.loading, browsing.loadingMore, loadMoreEntries]);
 
   const selectProfile = (id: string) => {
-    if (id === profileId) return;
     setIsBreadcrumbMenuOpen(false);
-    onProfileChange(id);
-  };
-
-  const openDirectory = (entry: FileEntry) => {
-    if (entry.kind !== 'directory' || !capabilities.browse) return;
-    setIsBreadcrumbMenuOpen(false);
-    setBreadcrumbs((current) => [...current, { ref: entry.ref, name: entry.name }]);
-    setSelectedRefs(new Set());
-    void loadEntries(entry.ref);
-  };
-
-  const openEntry = (entry: FileEntry) => {
-    if (entry.kind === 'directory') {
-      openDirectory(entry);
-      return;
-    }
-    setPreviewEntry(entry);
+    browsing.selectProfile(id);
   };
 
   const goUp = () => {
-    if (breadcrumbs.length <= 1) return;
     setIsBreadcrumbMenuOpen(false);
-    const parentBreadcrumbs = breadcrumbs.slice(0, -1);
-    const parentRef = parentBreadcrumbs[parentBreadcrumbs.length - 1]?.ref ?? null;
-    setBreadcrumbs(parentBreadcrumbs);
-    setSelectedRefs(new Set());
-    void loadEntries(parentRef);
+    browsing.goUp();
   };
 
   const goToBreadcrumb = (index: number) => {
-    if (index === breadcrumbs.length - 1) return;
     setIsBreadcrumbMenuOpen(false);
-    const targetBreadcrumbs = breadcrumbs.slice(0, index + 1);
-    const targetRef = targetBreadcrumbs[targetBreadcrumbs.length - 1]?.ref ?? null;
-    setBreadcrumbs(targetBreadcrumbs);
-    setSelectedRefs(new Set());
-    void loadEntries(targetRef);
-  };
-
-  const toggleSelection = (ref: string) => {
-    setSelectedRefs((current) => {
-      const next = new Set(current);
-      if (next.has(ref)) next.delete(ref); else next.add(ref);
-      return next;
-    });
+    browsing.goToBreadcrumb(index);
   };
 
   const handleEntryClick = (entry: FileEntry, event?: React.MouseEvent | React.KeyboardEvent) => {
-    if (isSelectionMode || event?.ctrlKey || event?.metaKey) {
-      toggleSelection(entry.ref);
-      return;
-    }
-    const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
-    if (isInteractive) {
-      openEntry(entry);
-    }
+    browsing.activateEntry(entry, { toggleSelection: Boolean(event?.ctrlKey || event?.metaKey) });
   };
-
-  const toggleSelectAll = () => {
-    setSelectedRefs((current) => {
-      const next = new Set(current);
-      if (allLoadedSelected) entries.forEach((entry) => next.delete(entry.ref));
-      else entries.forEach((entry) => next.add(entry.ref));
-      return next;
-    });
-  };
-
-  const uploadCompleted = useCallback((completedProfileID: string) => {
-    if (completedProfileID !== profileId) return;
-    if (uploadRefreshTimeoutRef.current !== null) {
-      window.clearTimeout(uploadRefreshTimeoutRef.current);
-    }
-    uploadRefreshTimeoutRef.current = window.setTimeout(() => {
-      uploadRefreshTimeoutRef.current = null;
-      void loadEntries(currentRef);
-    }, 500);
-  }, [currentRef, loadEntries, profileId]);
 
   const toggleMenu = (event: React.MouseEvent, entry: FileEntry) => {
     event.stopPropagation();
@@ -771,11 +428,11 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     );
   };
 
-  const shouldCollapseBreadcrumbs = breadcrumbs.length > 3;
-  const rootBreadcrumb = breadcrumbs[0];
-  const collapsedBreadcrumbs = shouldCollapseBreadcrumbs ? breadcrumbs.slice(1, -2) : [];
-  const parentBreadcrumb = shouldCollapseBreadcrumbs ? breadcrumbs[breadcrumbs.length - 2] : null;
-  const currentBreadcrumbItem = shouldCollapseBreadcrumbs ? breadcrumbs[breadcrumbs.length - 1] : null;
+  const shouldCollapseBreadcrumbs = browsing.breadcrumbs.length > 3;
+  const rootBreadcrumb = browsing.breadcrumbs[0];
+  const collapsedBreadcrumbs = shouldCollapseBreadcrumbs ? browsing.breadcrumbs.slice(1, -2) : [];
+  const parentBreadcrumb = shouldCollapseBreadcrumbs ? browsing.breadcrumbs[browsing.breadcrumbs.length - 2] : null;
+  const currentBreadcrumbItem = shouldCollapseBreadcrumbs ? browsing.breadcrumbs[browsing.breadcrumbs.length - 1] : null;
 
   return (
     <section className="w-full space-y-5" aria-labelledby="file-manager-title">
@@ -797,7 +454,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
         </div>
       </div>
 
-      {(error || actions.error) && <p className="ui-alert ui-alert-error px-3 py-2 text-sm" role="alert">{error || actions.error}</p>}
+      {(browsing.error || actions.error) && <p className="ui-alert ui-alert-error px-3 py-2 text-sm" role="alert">{browsing.error || actions.error}</p>}
       {initialPathFallback && <p className="ui-alert px-3 py-2 text-sm" role="status">{t('files.pathFallback')}</p>}
 
       <div className="grid gap-5 lg:grid-cols-[15rem_minmax(0,1fr)] items-start">
@@ -806,13 +463,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <div className="mb-2 px-2">
               <h2 className="text-sm font-semibold">{t('files.profiles')}</h2>
             </div>
-            {profilesLoading ? (
+            {browsing.profilesLoading ? (
               <div className="px-2 py-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div>
-            ) : profiles.length === 0 ? (
+            ) : browsing.profiles.length === 0 ? (
               <p className="ui-empty px-2 py-4 text-sm">{t('files.noProfiles')}</p>
             ) : (
               <ul className="space-y-1" aria-label={t('files.profiles')}>
-                {profiles.map((profile) => (
+                {browsing.profiles.map((profile) => (
                   <li key={profile.id}>
                     <button
                       type="button"
@@ -844,11 +501,11 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
         </aside>
 
         <div className="ui-card min-w-0 min-h-[560px] flex flex-col">
-          {!selectedProfile ? (
+          {!browsing.selectedProfile ? (
             <div className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.selectProfile')}</div>
           ) : (
             <>
-              {selectedEntries.length > 0 ? (
+              {browsing.selection.active ? (
                 <div
                   className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-2 sm:gap-3 border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-t-[var(--radius-lg)] -mt-[1px] -mx-[1px] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:mb-[1px] before:left-0 before:right-0 before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none"
                   role="toolbar"
@@ -858,19 +515,19 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 relative z-10">
                     <button
                       type="button"
-                      onClick={() => setSelectedRefs(new Set())}
+                      onClick={browsing.selection.clear}
                       className="ui-icon-button p-1.5 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] shrink-0"
                       title={t('files.clearSelection')}
                       aria-label={t('files.clearSelection')}
                     >
                       <XMarkIcon className="h-5 w-5" aria-hidden="true" />
                     </button>
-                    <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate" title={t('files.selectedCount', { count: selectedEntries.length })}>
+                    <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate" title={t('files.selectedCount', { count: browsing.selection.entries.length })}>
                       <span className="hidden sm:inline">
-                        {t('files.selectedCount', { count: selectedEntries.length })}
+                        {t('files.selectedCount', { count: browsing.selection.entries.length })}
                       </span>
                       <span className="sm:hidden">
-                        {t('files.selectedCountShort', { count: selectedEntries.length })}
+                        {t('files.selectedCountShort', { count: browsing.selection.entries.length })}
                       </span>
                     </span>
                   </div>
@@ -928,7 +585,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     <button
                       type="button"
                       onClick={goUp}
-                      disabled={!capabilities.browse || breadcrumbs.length <= 1 || entriesLoading}
+                      disabled={!browsing.capabilities.browse || browsing.breadcrumbs.length <= 1 || browsing.loading}
                       className="ui-icon-button p-2 hover:bg-[var(--color-hover)] shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
                       aria-label={t('files.up')}
                       title={t('files.up')}
@@ -996,7 +653,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                             <span className="inline-flex min-w-0 items-center gap-1 shrink-0">
                               <button
                                 type="button"
-                                onClick={() => goToBreadcrumb(breadcrumbs.length - 2)}
+                                onClick={() => goToBreadcrumb(browsing.breadcrumbs.length - 2)}
                                 className="max-w-28 sm:max-w-36 md:max-w-44 truncate rounded px-1 py-0.5 hover:bg-[var(--color-hover)]"
                                 title={parentBreadcrumb.name}
                               >
@@ -1019,13 +676,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                           )}
                         </>
                       ) : (
-                        breadcrumbs.map((breadcrumb, index) => (
+                        browsing.breadcrumbs.map((breadcrumb, index) => (
                           <span key={breadcrumb.ref ?? 'root'} className="inline-flex min-w-0 items-center gap-1 shrink-0">
                             {index > 0 && <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />}
                             <button
                               type="button"
                               onClick={() => goToBreadcrumb(index)}
-                              disabled={index === breadcrumbs.length - 1}
+                              disabled={index === browsing.breadcrumbs.length - 1}
                               className="max-w-28 sm:max-w-36 md:max-w-44 truncate rounded px-1 py-0.5 disabled:text-[var(--color-text-primary)] disabled:font-semibold hover:bg-[var(--color-hover)]"
                               title={breadcrumb.name}
                             >
@@ -1042,10 +699,10 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                       apiUrl={apiUrl}
                       token={token}
                       profileId={profileId}
-                      parentRef={currentRef}
-                      capabilities={capabilities}
-                      disabled={entriesLoading}
-                      onCompleted={uploadCompleted}
+                      parentRef={browsing.currentRef}
+                      capabilities={browsing.capabilities}
+                      disabled={browsing.loading}
+                      onCompleted={browsing.notifyUploadCompleted}
                       backgroundTransfers={backgroundTransfers}
                       onCancelBackgroundTransfer={(transferId) => void actions.cancelTransfer(transferId)}
                       onDismissBackgroundTransfer={actions.dismissTransfer}
@@ -1056,7 +713,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     <button
                       type="button"
                       onClick={actions.createFolder.openDialog}
-                      disabled={entriesLoading || !actions.permissions.canCreateFolder}
+                      disabled={browsing.loading || !actions.permissions.canCreateFolder}
                       className="ui-button-secondary inline-flex items-center gap-2 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
                       title={!actions.permissions.canCreateFolder ? t('files.mkdirUnavailable') : t('files.newFolder')}
                       aria-label={t('files.newFolder')}
@@ -1096,8 +753,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     </div>
                     <button
                       type="button"
-                      onClick={refresh}
-                      disabled={!capabilities.browse}
+                      onClick={browsing.refresh}
+                      disabled={!browsing.capabilities.browse}
                       className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
                       aria-label={t('files.refresh')}
                       title={t('files.refresh')}
@@ -1127,35 +784,35 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 </div>
               )}
 
-              {!capabilities.browse && !entriesLoading ? (
+              {!browsing.capabilities.browse && !browsing.loading ? (
                 <p className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.listUnavailable')}</p>
-              ) : entriesLoading ? (
+              ) : browsing.loading ? (
                 <div className="p-8 flex-1 flex items-center justify-center"><LoadingIndicator label={t('common.loading')} /></div>
-              ) : entries.length === 0 ? (
+              ) : browsing.entries.length === 0 ? (
                 <p className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.emptyDirectory')}</p>
               ) : viewMode === 'list' ? (
                 <div className="overflow-x-auto flex-1">
                   <table className="ui-table w-full table-fixed text-sm">
                     <thead className="bg-[var(--color-bg-tertiary)] text-left text-xs text-[var(--color-text-secondary)]">
                       <tr>
-                        <th scope="col" className="w-10 px-3 py-2 font-medium"><input ref={selectAllRef} type="checkbox" checked={allLoadedSelected} onChange={toggleSelectAll} aria-label={t('files.selectAll')} /></th>
+                        <th scope="col" className="w-10 px-3 py-2 font-medium"><input ref={selectAllRef} type="checkbox" checked={browsing.selection.allSelected} onChange={browsing.selection.toggleAll} aria-label={t('files.selectAll')} /></th>
                         <th
                           scope="col"
-                          aria-sort={sortField === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          aria-sort={browsing.sortField === 'name' ? (browsing.sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
                           className="px-3 py-2 font-medium"
                         >
                           {renderSortHeader('name', t('files.name'), t('files.sortByName'))}
                         </th>
                         <th
                           scope="col"
-                          aria-sort={sortField === 'size' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          aria-sort={browsing.sortField === 'size' ? (browsing.sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
                           className="hidden sm:table-cell w-28 sm:w-32 px-3 py-2 font-medium whitespace-nowrap shrink-0"
                         >
                           {renderSortHeader('size', t('files.size'), t('files.sortBySize'))}
                         </th>
                         <th
                           scope="col"
-                          aria-sort={sortField === 'modified' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          aria-sort={browsing.sortField === 'modified' ? (browsing.sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
                           className="hidden sm:table-cell w-36 sm:w-44 px-3 py-2 font-medium whitespace-nowrap shrink-0"
                         >
                           {renderSortHeader('modified', t('files.modified'), t('files.sortByModified'))}
@@ -1164,22 +821,22 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                       </tr>
                     </thead>
                     <tbody>
-                      {sortedEntries.map((entry) => {
-                        const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
-                        const isSelected = selectedRefs.has(entry.ref);
+                      {browsing.entries.map((entry) => {
+                        const isInteractive = (entry.kind === 'directory' && browsing.capabilities.browse && !browsing.loading) || entry.kind === 'file';
+                        const isSelected = browsing.selection.isSelected(entry.ref);
                         return (
                           <tr
                             key={entry.ref}
-                            aria-selected={isSelectionMode ? isSelected : undefined}
+                            aria-selected={browsing.selection.active ? isSelected : undefined}
                             onClick={(event) => handleEntryClick(entry, event)}
                             onContextMenu={(event) => handleContextMenu(event, entry)}
                             className={`border-t border-[var(--color-border)] transition-colors ${
                               isSelected
                                 ? 'bg-[var(--color-selection-bg)]/20 hover:bg-[var(--color-selection-bg)]/30'
                                 : 'hover:bg-[var(--color-hover)]'
-                            } ${isInteractive || isSelectionMode ? 'cursor-pointer' : ''}`}
+                            } ${isInteractive || browsing.selection.active ? 'cursor-pointer' : ''}`}
                           >
-                            <td className="w-10 px-3 py-2"><input type="checkbox" checked={isSelected} onClick={(event) => event.stopPropagation()} onChange={() => toggleSelection(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} /></td>
+                            <td className="w-10 px-3 py-2"><input type="checkbox" checked={isSelected} onClick={(event) => event.stopPropagation()} onChange={() => browsing.selection.toggle(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} /></td>
                             <td data-label={t('files.name')} className="px-3 py-2 min-w-0 max-w-0">
                               <button
                                 type="button"
@@ -1187,7 +844,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                                   e.stopPropagation();
                                   handleEntryClick(entry, e);
                                 }}
-                                disabled={!isSelectionMode && entry.kind === 'directory' && (!capabilities.browse || entriesLoading)}
+                                disabled={!browsing.selection.active && entry.kind === 'directory' && (!browsing.capabilities.browse || browsing.loading)}
                                 className="inline-flex w-full items-center gap-2.5 sm:gap-3 min-w-0 text-left ui-link disabled:cursor-not-allowed disabled:opacity-55"
                                 title={entry.name}
                               >
@@ -1197,7 +854,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                                     token={token}
                                     profileId={profileId}
                                     entry={entry}
-                                    thumbnailsEnabled={capabilities.thumbnails}
+                                    thumbnailsEnabled={browsing.capabilities.thumbnails}
                                     size="sm"
                                     className="w-full h-full flex items-center justify-center"
                                     imageClassName="w-full h-full object-cover"
@@ -1246,16 +903,16 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 </div>
               ) : (
                 <div className="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 flex-1 auto-rows-max" role="grid" aria-label={t('files.title')}>
-                  {sortedEntries.map((entry) => {
-                    const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
-                    const isSelected = selectedRefs.has(entry.ref);
+                  {browsing.entries.map((entry) => {
+                    const isInteractive = (entry.kind === 'directory' && browsing.capabilities.browse && !browsing.loading) || entry.kind === 'file';
+                    const isSelected = browsing.selection.isSelected(entry.ref);
 
                     return (
                       <div
                         key={entry.ref}
                         role="gridcell"
-                        aria-selected={isSelectionMode ? isSelected : undefined}
-                        tabIndex={isInteractive || isSelectionMode ? 0 : undefined}
+                        aria-selected={browsing.selection.active ? isSelected : undefined}
+                        tabIndex={isInteractive || browsing.selection.active ? 0 : undefined}
                         onClick={(event) => handleEntryClick(entry, event)}
                         onContextMenu={(event) => handleContextMenu(event, entry)}
                         onKeyDown={(e) => {
@@ -1269,11 +926,11 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                             ? 'border-[var(--color-text-primary)] ring-2 ring-[var(--color-text-primary)]/20 bg-[var(--color-selection-bg)]/20 shadow-xs'
                             : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-hover)] hover:border-[var(--color-border-hover,var(--color-border))] hover:shadow-xs'
                         } ${
-                          isInteractive || isSelectionMode ? 'cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]' : 'opacity-70'
+                          isInteractive || browsing.selection.active ? 'cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]' : 'opacity-70'
                         }`}
                         title={entry.name}
                       >
-                        <input type="checkbox" className="absolute left-2 top-2 z-10" checked={isSelected} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={() => toggleSelection(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} />
+                        <input type="checkbox" className="absolute left-2 top-2 z-10" checked={isSelected} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={() => browsing.selection.toggle(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} />
                         {actions.permissions.hasEntryActions(entry) && (
                           <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                             <button
@@ -1294,7 +951,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                             token={token}
                             profileId={profileId}
                             entry={entry}
-                            thumbnailsEnabled={capabilities.thumbnails}
+                            thumbnailsEnabled={browsing.capabilities.thumbnails}
                             size="lg"
                             className="w-full h-full flex items-center justify-center"
                             imageClassName="w-full h-full object-cover"
@@ -1315,14 +972,14 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 </div>
               )}
 
-              {nextCursor && (
+              {browsing.hasMore && (
                 <div ref={sentinelRef} className="flex justify-center p-4 border-t border-[var(--color-border)]">
-                  {loadingMore ? (
+                  {browsing.loadingMore ? (
                     <LoadingIndicator label={t('common.loading')} size="sm" />
                   ) : (
                     <button
                       type="button"
-                      onClick={() => void loadMore()}
+                      onClick={() => void browsing.loadMore()}
                       className="ui-button-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                     >
                       <ArrowPathIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1408,10 +1065,10 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
               {actions.deleteEntry.entry.kind === 'file' ? t('files.deleteFileWarning', { name: actions.deleteEntry.entry.name }) : actions.deleteEntry.recursive ? t('files.deleteRecursiveWarning', { name: actions.deleteEntry.entry.name }) : t('files.deleteDirectoryWarning', { name: actions.deleteEntry.entry.name })}
             </p>
             {actions.deleteEntry.error && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{actions.deleteEntry.error}</p>}
-            {actions.deleteEntry.entry.kind === 'directory' && actions.deleteEntry.recursive && !capabilities.delete_empty_directory && capabilities.delete_recursive_directory && <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.deleteOnlyRecursiveSupported')}</p>}
+            {actions.deleteEntry.entry.kind === 'directory' && actions.deleteEntry.recursive && !browsing.capabilities.delete_empty_directory && browsing.capabilities.delete_recursive_directory && <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.deleteOnlyRecursiveSupported')}</p>}
             <div className="mt-5 flex justify-end gap-2">
               <button ref={deleteCancelRef} type="button" onClick={actions.deleteEntry.close} disabled={actions.deleteEntry.busy} className="ui-button-secondary px-3 py-2 text-sm">{t('common.cancel')}</button>
-              <button type="button" onClick={() => void actions.deleteEntry.confirm()} disabled={actions.deleteEntry.busy || (actions.deleteEntry.entry.kind === 'directory' && !actions.deleteEntry.recursive && !capabilities.delete_empty_directory)} className="ui-button-danger px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
+              <button type="button" onClick={() => void actions.deleteEntry.confirm()} disabled={actions.deleteEntry.busy || (actions.deleteEntry.entry.kind === 'directory' && !actions.deleteEntry.recursive && !browsing.capabilities.delete_empty_directory)} className="ui-button-danger px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
                 {actions.deleteEntry.busy ? t('common.loading') : actions.deleteEntry.recursive ? t('files.deleteRecursively') : t('files.deleteConfirm')}
               </button>
             </div>
@@ -1446,7 +1103,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             {actions.destinationPicker.error && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{actions.destinationPicker.error}</p>}
             <label className="mt-3 block text-sm font-medium" htmlFor="destination-profile">{t('files.destinationProfile')}</label>
             <select id="destination-profile" className="ui-input mt-1 w-full px-3 py-2" value={actions.destinationPicker.profileId} disabled={actions.destinationPicker.loading || actions.destinationPicker.busy} onChange={(event) => actions.destinationPicker.selectProfile(event.target.value)}>
-              {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+              {browsing.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
             </select>
             <nav className="mt-3 flex flex-wrap gap-1 text-sm" aria-label={t('files.destinationBreadcrumb')}>
               {actions.destinationPicker.breadcrumbs.map((breadcrumb, index) => <button key={breadcrumb.ref ?? 'root'} type="button" className="rounded px-1 py-0.5 hover:bg-[var(--color-hover)]" disabled={actions.destinationPicker.loading || index === actions.destinationPicker.breadcrumbs.length - 1} onClick={() => actions.destinationPicker.goToBreadcrumb(index)}>{breadcrumb.name}{index < actions.destinationPicker.breadcrumbs.length - 1 ? ' /' : ''}</button>)}
@@ -1465,17 +1122,17 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <div className="mt-4 flex flex-wrap justify-end gap-2"><button ref={conflictCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={actions.conflict.busy} onClick={actions.conflict.cancel}>{t('common.cancel')}</button>{actions.conflict.strategies.map((strategy) => <button key={strategy} type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={actions.conflict.busy} onClick={() => void actions.conflict.resolve(strategy)}>{t(`files.conflict${strategy[0]}${strategy.slice(1).toLowerCase()}`)}</button>)}</div>
           </div>
         </div>, document.body)}
-      {previewEntry && (
+      {browsing.preview.entry && (
         <Suspense fallback={null}>
           <FilePreviewDialog
             apiUrl={apiUrl}
             token={token}
             profileId={profileId}
-            entry={previewEntry}
-            entries={sortedEntries}
-            supportsThumbnails={capabilities.thumbnails}
-            onNavigate={(entry) => setPreviewEntry(entry)}
-            onClose={() => setPreviewEntry(null)}
+            entry={browsing.preview.entry}
+            entries={browsing.entries}
+            supportsThumbnails={browsing.capabilities.thumbnails}
+            onNavigate={browsing.preview.open}
+            onClose={browsing.preview.close}
             onDownload={(entry) => void actions.download(entry)}
           />
         </Suspense>
