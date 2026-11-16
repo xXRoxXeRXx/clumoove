@@ -1,8 +1,8 @@
-import { useEffect, useRef, type MouseEvent } from 'react';
+import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDownIcon, ChevronUpDownIcon, ChevronUpIcon, EllipsisVerticalIcon } from '../../icons';
 import type { SortDirection, SortField } from '../useFileManagerBrowsing';
-import type { EntryCollectionIntents, EntryRowModel } from './entryRows';
+import { entryCollectionHandlers, type EntryCollectionIntents, type EntryRowModel } from './entryRows';
 
 type EntryListProps = EntryCollectionIntents & {
   rows: EntryRowModel[];
@@ -65,20 +65,7 @@ export function EntryList({ rows, selection, sort, onActivate, onToggleSelect, o
     return sort.direction === 'asc' ? 'ascending' : 'descending';
   };
 
-  const activate = (ref: string, event: MouseEvent) => onActivate(ref, { toggleSelection: event.ctrlKey || event.metaKey });
-
-  const openMenuFromButton = (ref: string, event: MouseEvent) => {
-    event.stopPropagation();
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    onOpenMenu(ref, { type: 'button', right: rect.right, bottom: rect.bottom });
-  };
-
-  const openContextMenu = (row: EntryRowModel, event: MouseEvent) => {
-    if (!row.hasActions) return;
-    event.preventDefault();
-    event.stopPropagation();
-    onOpenMenu(row.ref, { type: 'point', x: event.clientX, y: event.clientY });
-  };
+  const { activate, openMenuFromButton, openContextMenu } = entryCollectionHandlers({ onActivate, onOpenMenu });
 
   return (
     <div className="overflow-x-auto flex-1">
@@ -105,7 +92,9 @@ export function EntryList({ rows, selection, sort, onActivate, onToggleSelect, o
               <tr
                 key={row.ref}
                 aria-selected={selection.active ? row.selected : undefined}
-                onClick={(event) => activate(row.ref, event)}
+                onClick={(event) => {
+                  if (!(event.target as HTMLElement).closest('button, input')) activate(row.ref, event);
+                }}
                 onContextMenu={(event) => openContextMenu(row, event)}
                 className={`border-t border-[var(--color-border)] transition-colors ${
                   row.selected ? 'bg-[var(--color-selection-bg)]/20 hover:bg-[var(--color-selection-bg)]/30' : 'hover:bg-[var(--color-hover)]'
@@ -152,6 +141,7 @@ export function EntryList({ rows, selection, sort, onActivate, onToggleSelect, o
                       type="button"
                       className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
                       aria-label={t('files.actionsFor', { name: row.name })}
+                      title={t('files.actionsFor', { name: row.name })}
                       aria-haspopup="menu"
                       aria-expanded={row.menuOpen}
                       onClick={(event) => openMenuFromButton(row.ref, event)}

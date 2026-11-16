@@ -1,6 +1,7 @@
 import { act, useRef, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RenameDialog } from './EntryDialogs';
 import { ModalDialog } from './ModalDialog';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -102,5 +103,49 @@ describe('ModalDialog', () => {
     key('Escape');
     key('Escape');
     expect(onEscape).toHaveBeenCalledTimes(1);
+  });
+
+  it('yields focus trapping and Escape handling to ConflictDialog during rename conflicts', () => {
+    const close = vi.fn();
+    const cancel = vi.fn();
+    act(() => {
+      root.render(
+        <RenameDialog
+          model={{
+            name: 'taken.txt',
+            busy: false,
+            error: '',
+            setName: vi.fn(),
+            submit: vi.fn(),
+            close,
+            conflict: {
+              strategies: ['SKIP', 'RENAME'],
+              busy: false,
+              resolve: vi.fn(),
+              cancel,
+            },
+          }}
+        />,
+      );
+    });
+    act(() => {
+      vi.runAllTimers();
+    });
+
+    const conflictDlg = document.getElementById('mutation-conflict-title')?.closest<HTMLElement>('[role="dialog"]');
+    const renameOverlay = document.getElementById('rename-entry-title')?.closest<HTMLElement>('[aria-hidden="true"]');
+    expect(conflictDlg).not.toBeNull();
+    expect(renameOverlay).not.toBeNull();
+
+    const buttons = Array.from(conflictDlg!.querySelectorAll('button'));
+    expect(document.activeElement).toBe(buttons[0]);
+
+    buttons[buttons.length - 1].focus();
+    expect(key('Tab').defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(buttons[0]);
+
+    key('Escape');
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(close).not.toHaveBeenCalled();
   });
 });

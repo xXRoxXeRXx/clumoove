@@ -20,6 +20,7 @@ export type CreateFolderDialogModel = {
 export type ConflictDialogModel = {
   strategies: FileMutationConflictStrategy[];
   busy: boolean;
+  error?: string;
   resolve: (strategy: FileMutationConflictStrategy) => Promise<void>;
   cancel: () => void;
 };

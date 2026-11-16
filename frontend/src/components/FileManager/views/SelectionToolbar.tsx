@@ -1,6 +1,7 @@
 import type { ComponentType, SVGProps } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowDownTrayIcon, ArrowsRightLeftIcon, ClipboardDocumentIcon, TrashIcon, XMarkIcon } from '../../icons';
+import { STICKY_TOOLBAR_CLASS } from './toolbarStyles';
 
 type SelectionToolbarProps = {
   count: number;
@@ -50,7 +51,7 @@ export function SelectionToolbar({ count, busy, canDownloadArchive, canCopy, can
   const { t } = useTranslation();
   return (
     <div
-      className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-2 sm:gap-3 border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-t-[var(--radius-lg)] -mt-[1px] -mx-[1px] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:mb-[1px] before:left-0 before:right-0 before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none"
+      className={`${STICKY_TOOLBAR_CLASS} gap-2 sm:gap-3 px-2.5 sm:px-3 py-2 sm:py-2.5`}
       role="toolbar"
       aria-label={t('files.selectionActions')}
     >

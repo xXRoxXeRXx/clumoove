@@ -74,7 +74,7 @@ export function useRenameEntry(env: ActionEnvironment) {
         submit: () => submit(),
         close,
         conflict: conflictStrategies
-          ? { strategies: conflictStrategies, busy, resolve: (strategy) => submit(strategy), cancel: close }
+          ? { strategies: conflictStrategies, busy, error, resolve: (strategy) => submit(strategy), cancel: close }
           : null,
       }
     : null;

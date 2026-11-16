@@ -142,6 +142,7 @@ function ConflictDialog({ model }: { model: ConflictDialogModel }) {
     >
       <h2 id="mutation-conflict-title" className="text-lg font-semibold">{t('files.conflictTitle')}</h2>
       <p className="mt-2 text-sm text-[var(--color-text-secondary)]">{t('files.conflictDescription')}</p>
+      {model.error && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{model.error}</p>}
       <div className="mt-4 flex flex-wrap justify-end gap-2">
         <button ref={cancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={model.busy} onClick={model.cancel}>{t('common.cancel')}</button>
         {model.strategies.map((strategy) => (
@@ -154,7 +155,7 @@ function ConflictDialog({ model }: { model: ConflictDialogModel }) {
   );
 }
 
-/** The rename dialog, with the conflict-strategy dialog stacked on top when the new name is taken. */
+/** The rename dialog; yields focus trapping and visibility to ConflictDialog while a conflict is being resolved. */
 export function RenameDialog({ model }: { model: RenameDialogModel }) {
   const { t } = useTranslation();
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -165,6 +166,7 @@ export function RenameDialog({ model }: { model: RenameDialogModel }) {
         labelledBy="rename-entry-title"
         initialFocusRef={cancelRef}
         onEscape={model.close}
+        active={!model.conflict}
         className="ui-card w-full max-w-md p-5"
       >
         <h2 id="rename-entry-title" className="text-lg font-semibold">{t('files.renameTitle')}</h2>

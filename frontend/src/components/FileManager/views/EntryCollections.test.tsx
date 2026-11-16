@@ -42,7 +42,9 @@ describe('EntryList', () => {
     expect(rows[0].textContent).toContain('2 KB');
     expect(rows[1].textContent).toContain('Folder');
     expect(view.container.querySelector('[aria-label="Select report.txt"]')).not.toBeNull();
-    expect(view.container.querySelector('[aria-label="Actions for report.txt"]')).not.toBeNull();
+    const actionsBtn = view.container.querySelector('[aria-label="Actions for report.txt"]');
+    expect(actionsBtn).not.toBeNull();
+    expect(actionsBtn?.getAttribute('title')).toBe('Actions for report.txt');
     expect(view.container.querySelectorAll('[data-testid="thumb"]')).toHaveLength(2);
   });
 
@@ -151,14 +153,22 @@ describe('EntryGrid', () => {
     expect(cells[1].textContent).toContain('Folder');
   });
 
-  it('activates by click and by Enter or Space, and only focuses clickable cards', async () => {
+  it('activates via native card buttons and preserves direct gridcell click/key handling', async () => {
     const i = intents();
-    await renderGrid([row(), row({ ref: 'r2', clickable: false })], i);
+    await renderGrid([row(), row({ ref: 'r2', name: 'locked.txt', clickable: false })], i);
     const [first, second] = Array.from(view.container.querySelectorAll('[role="gridcell"]'));
-    expect(first.getAttribute('tabindex')).toBe('0');
+    expect(first.hasAttribute('tabindex')).toBe(false);
     expect(second.hasAttribute('tabindex')).toBe(false);
-    await view.click(first);
+
+    const cardButton = (cell: Element) =>
+      Array.from(cell.querySelectorAll<HTMLButtonElement>('button')).find((b) => !b.hasAttribute('aria-haspopup'))!;
+    expect(cardButton(first).disabled).toBe(false);
+    expect(cardButton(second).disabled).toBe(true);
+
+    await view.click(cardButton(first));
     expect(i.onActivate).toHaveBeenLastCalledWith('r1', { toggleSelection: false });
+    await view.click(first);
+    expect(i.onActivate).toHaveBeenCalledTimes(2);
     for (const key of ['Enter', ' ']) {
       const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
       await act(async () => {
@@ -166,7 +176,8 @@ describe('EntryGrid', () => {
       });
       expect(event.defaultPrevented).toBe(true);
     }
-    expect(i.onActivate).toHaveBeenCalledTimes(3);
+    expect(i.onActivate).toHaveBeenCalledTimes(4);
+    expect(first.querySelector('[aria-label="Actions for report.txt"]')?.getAttribute('title')).toBe('Actions for report.txt');
   });
 
   it('keeps checkbox clicks and keys from activating the card, and toggles selection', async () => {

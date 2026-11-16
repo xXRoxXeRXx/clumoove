@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRightIcon, EllipsisHorizontalIcon, FolderIcon } from '../../icons';
 import type { FileManagerBreadcrumb } from '../fileManagerTypes';
+import { nextMenuIndex } from './menuKeyboard';
 
 type BreadcrumbsProps = {
   breadcrumbs: FileManagerBreadcrumb[];
@@ -16,11 +17,19 @@ function Separator() {
   return <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />;
 }
 
-/** Path navigation; deep paths collapse their middle into a dismissible menu. */
+/** Path navigation; deep paths collapse their middle into a keyboard-navigable menu. */
 export function Breadcrumbs({ breadcrumbs, onNavigate, onUp }: BreadcrumbsProps) {
   const { t } = useTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const dismissToTrigger = useCallback(() => {
+    setMenuOpen(false);
+    triggerRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -28,7 +37,10 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, onUp }: BreadcrumbsProps)
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) setMenuOpen(false);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMenuOpen(false);
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        dismissToTrigger();
+      }
     };
     window.addEventListener('pointerdown', handlePointerDown);
     window.addEventListener('keydown', handleKeyDown);
@@ -36,7 +48,11 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, onUp }: BreadcrumbsProps)
       window.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [menuOpen]);
+  }, [dismissToTrigger, menuOpen]);
+
+  useEffect(() => {
+    if (menuOpen) itemRefs.current[activeIndex]?.focus();
+  }, [activeIndex, menuOpen]);
 
   const navigate = (index: number) => {
     setMenuOpen(false);
@@ -48,6 +64,19 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, onUp }: BreadcrumbsProps)
   const collapsed = collapse ? breadcrumbs.slice(1, -2) : [];
   const parent = collapse ? breadcrumbs[breadcrumbs.length - 2] : null;
   const current = collapse ? breadcrumbs[breadcrumbs.length - 1] : null;
+
+  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      dismissToTrigger();
+      return;
+    }
+    const next = nextMenuIndex(event.key, activeIndex, collapsed.length);
+    if (next !== null) {
+      event.preventDefault();
+      setActiveIndex(next);
+    }
+  };
 
   return (
     <nav className="flex min-w-0 flex-nowrap items-center gap-1 text-sm overflow-hidden" aria-label={t('files.breadcrumb')}>
@@ -63,8 +92,12 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, onUp }: BreadcrumbsProps)
           <Separator />
           <div className="relative inline-flex items-center shrink-0" ref={menuRef}>
             <button
+              ref={triggerRef}
               type="button"
-              onClick={() => setMenuOpen((open) => !open)}
+              onClick={() => {
+                setActiveIndex(0);
+                setMenuOpen((open) => !open);
+              }}
               aria-expanded={menuOpen}
               aria-haspopup="menu"
               aria-label={t('files.moreFolders')}
@@ -77,15 +110,21 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, onUp }: BreadcrumbsProps)
               <div
                 role="menu"
                 aria-label={t('files.moreFolders')}
+                onKeyDown={handleMenuKeyDown}
                 className="ui-section absolute left-0 top-full mt-1 z-[var(--layer-menu)] min-w-48 max-w-64 p-1"
               >
                 {collapsed.map((crumb, idx) => (
                   <button
                     key={crumb.ref ?? idx + 1}
+                    ref={(element) => {
+                      itemRefs.current[idx] = element;
+                    }}
                     type="button"
                     role="menuitem"
+                    tabIndex={idx === activeIndex ? 0 : -1}
+                    onFocus={() => setActiveIndex(idx)}
                     onClick={() => navigate(idx + 1)}
-                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-hover)] hover:text-[var(--color-text-primary)] transition-colors"
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-hover)] hover:text-[var(--color-text-primary)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-focus)]"
                     title={crumb.name}
                   >
                     <FolderIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />

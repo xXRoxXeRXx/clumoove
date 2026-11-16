@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { FileEntry } from '../../../api/files';
 
 /** Everything a list row or grid card needs to render one entry; no behaviour, no credentials. */
@@ -70,3 +70,24 @@ export type EntryCollectionIntents = {
   onToggleSelect: (ref: string) => void;
   onOpenMenu: (ref: string, anchor: MenuAnchor) => void;
 };
+
+/** Shared activation and menu-trigger handlers for list and grid entry collections. */
+export function entryCollectionHandlers({ onActivate, onOpenMenu }: Pick<EntryCollectionIntents, 'onActivate' | 'onOpenMenu'>) {
+  const activate = (ref: string, event: MouseEvent | KeyboardEvent) =>
+    onActivate(ref, { toggleSelection: event.ctrlKey || event.metaKey });
+
+  const openMenuFromButton = (ref: string, event: MouseEvent) => {
+    event.stopPropagation();
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    onOpenMenu(ref, { type: 'button', right: rect.right, bottom: rect.bottom });
+  };
+
+  const openContextMenu = (row: EntryRowModel, event: MouseEvent) => {
+    if (!row.hasActions) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onOpenMenu(row.ref, { type: 'point', x: event.clientX, y: event.clientY });
+  };
+
+  return { activate, openMenuFromButton, openContextMenu };
+}

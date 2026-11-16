@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent }
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { entryMenuItem, type EntryMenuAction } from './entryMenu';
+import { nextMenuIndex } from './menuKeyboard';
 
 export type EntryMenuPosition = {
   x: number;
@@ -79,19 +80,15 @@ export function EntryActionMenu({ name, position, actions, onSelect, onDismiss }
   const { left, top } = clampToViewport(position);
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const last = actions.length - 1;
-    const target: Record<string, number> = {
-      ArrowDown: activeIndex === last ? 0 : activeIndex + 1,
-      ArrowUp: activeIndex === 0 ? last : activeIndex - 1,
-      Home: 0,
-      End: last,
-    };
     if (event.key === 'Tab') {
       event.preventDefault();
       onDismiss();
-    } else if (event.key in target) {
+      return;
+    }
+    const next = nextMenuIndex(event.key, activeIndex, actions.length);
+    if (next !== null) {
       event.preventDefault();
-      setActiveIndex(target[event.key]);
+      setActiveIndex(next);
     }
   };
 
@@ -107,7 +104,7 @@ export function EntryActionMenu({ name, position, actions, onSelect, onDismiss }
     >
       {actions.map((action, index) => {
         const { labelKey, Icon, danger } = entryMenuItem(action);
-        const tone = danger ? 'text-[var(--color-danger)]' : 'text-[var(--color-text-primary)]';
+        const tone = danger ? 'text-[var(--color-error-text)]' : 'text-[var(--color-text-primary)]';
         return (
           <button
             key={action}
@@ -121,7 +118,7 @@ export function EntryActionMenu({ name, position, actions, onSelect, onDismiss }
             className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm ${tone} hover:bg-[var(--color-hover)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-focus)]`}
             onClick={() => onSelect(action)}
           >
-            <Icon className={`h-4 w-4 shrink-0 ${danger ? 'text-[var(--color-danger)]' : 'text-[var(--color-text-secondary)]'}`} aria-hidden="true" />
+            <Icon className={`h-4 w-4 shrink-0 ${danger ? 'text-[var(--color-error-text)]' : 'text-[var(--color-text-secondary)]'}`} aria-hidden="true" />
             <span>{t(labelKey)}</span>
           </button>
         );

@@ -84,6 +84,50 @@ describe('BrowseToolbar', () => {
     expect(view.container.querySelector('[role="menu"]')).toBeNull();
   });
 
+  it('supports keyboard navigation, roving tabIndex and focus restoration on the collapsed breadcrumb menu', async () => {
+    const props = { ...base(), breadcrumbs: crumbs(6) };
+    await view.render(<BrowseToolbar {...props} />);
+    const more = byLabel('More folders')!;
+    const items = () => Array.from(view.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+    const press = (key: string) =>
+      act(() => {
+        (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+      });
+
+    more.focus();
+    await view.click(more);
+    expect(document.activeElement).toBe(items()[0]);
+    expect(items().map((item) => item.tabIndex)).toEqual([0, -1, -1]);
+
+    press('ArrowDown');
+    expect(document.activeElement).toBe(items()[1]);
+    expect(items().map((item) => item.tabIndex)).toEqual([-1, 0, -1]);
+
+    press('End');
+    expect(document.activeElement).toBe(items()[2]);
+
+    press('ArrowDown');
+    expect(document.activeElement).toBe(items()[0]);
+
+    press('Home');
+    expect(document.activeElement).toBe(items()[0]);
+
+    press('ArrowUp');
+    expect(document.activeElement).toBe(items()[2]);
+
+    press('Tab');
+    expect(view.container.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(more);
+
+    await view.click(more);
+    expect(document.activeElement).toBe(items()[0]);
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+    });
+    expect(view.container.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(more);
+  });
+
   it('goes up from the parent crumb of a collapsed path', async () => {
     const props = { ...base(), breadcrumbs: crumbs(6) };
     await view.render(<BrowseToolbar {...props} />);
