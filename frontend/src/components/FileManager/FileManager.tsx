@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
+import { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowDownTrayIcon,
@@ -25,13 +25,13 @@ import {
   XMarkIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
-import type { FileBreadcrumb, FileEntry, FileTransferSummary } from '../../api/files';
+import type { FileBreadcrumb, FileEntry } from '../../api/files';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useFormat } from '../../utils/format';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
+import { FileUploadControl } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
-import { useFileManagerActions, type FileActionTransfer } from './useFileManagerActions';
+import { useFileManagerActions } from './useFileManagerActions';
 import { useFileManagerBrowsing, type SortField } from './useFileManagerBrowsing';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
@@ -46,50 +46,6 @@ type FileManagerProps = {
   onOpenManager?: () => void;
   onBack?: () => void;
 };
-
-function toInternalTransfer(transfer: FileActionTransfer): InternalTransfer {
-  const status: InternalTransfer['status'] =
-    transfer.status === 'completed'
-      ? transfer.operation === 'copy'
-        ? 'copied'
-        : 'moved'
-      : transfer.status === 'running'
-        ? transfer.operation === 'copy'
-          ? 'copying'
-          : 'moving'
-        : transfer.status;
-  return {
-    id: transfer.id,
-    operation: transfer.operation,
-    sourceName: transfer.sourceLabel,
-    destinationName: transfer.destinationLabel,
-    itemCount: transfer.itemCount,
-    status,
-    error: transfer.error,
-  };
-}
-
-const BACKGROUND_STATUS_BY_ACTION_STATUS: Record<FileActionTransfer['status'], string> = {
-  queued: 'PENDING',
-  running: 'RUNNING',
-  completed: 'COMPLETED',
-  failed: 'FAILED',
-  cancelled: 'CANCELLED',
-};
-
-function toBackgroundTransfer(transfer: FileActionTransfer): FileTransferSummary {
-  return {
-    id: transfer.id,
-    operation: transfer.operation,
-    status: transfer.serverStatus ?? BACKGROUND_STATUS_BY_ACTION_STATUS[transfer.status],
-    source_profile_name: transfer.sourceLabel,
-    target_profile_name: transfer.destinationLabel,
-    total_files: transfer.itemCount,
-    processed_files: transfer.processedCount,
-    failed_files: transfer.failedCount,
-    skipped_files: transfer.skippedCount,
-  };
-}
 
 export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, initialPathFallback = false, onProfileChange, onOpenManager, onBack }: FileManagerProps) {
   const { t } = useTranslation();
@@ -254,15 +210,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   useFocusTrap(renameDialogRef, renameCancelRef, actions.rename.close, actions.rename.open);
   useFocusTrap(pickerDialogRef, pickerCancelRef, actions.destinationPicker.close, actions.destinationPicker.open);
   useFocusTrap(conflictDialogRef, conflictCancelRef, actions.conflict.cancel, actions.conflict.open);
-
-  const internalTransfers = useMemo(
-    () => actions.transfers.filter((transfer) => transfer.origin === 'same-profile').map(toInternalTransfer),
-    [actions.transfers],
-  );
-  const backgroundTransfers = useMemo(
-    () => actions.transfers.filter((transfer) => transfer.origin === 'cross-profile').map(toBackgroundTransfer),
-    [actions.transfers],
-  );
 
   const loadMoreEntries = browsing.loadMore;
   useEffect(() => {
@@ -707,12 +654,9 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                       capabilities={browsing.capabilities}
                       disabled={browsing.loading}
                       onCompleted={browsing.notifyUploadCompleted}
-                      backgroundTransfers={backgroundTransfers}
-                      onCancelBackgroundTransfer={(transferId) => void actions.cancelTransfer(transferId)}
-                      onDismissBackgroundTransfer={actions.dismissTransfer}
-                      internalTransfers={internalTransfers}
-                      onCancelInternalTransfer={(transferId) => void actions.cancelTransfer(transferId)}
-                      onDismissInternalTransfer={actions.dismissTransfer}
+                      transfers={actions.transfers}
+                      onCancelTransfer={actions.cancelTransfer}
+                      onDismissTransfer={actions.dismissTransfer}
                     />
                     <button
                       type="button"

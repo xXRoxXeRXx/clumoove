@@ -713,6 +713,7 @@
       "copied": "Copied",
       "moved": "Moved",
       "completed": "Completed",
+      "running": "Transferring",
       "skipped": "Skipped",
       "renamed": "Uploaded with a new name",
       "failed": "Failed",

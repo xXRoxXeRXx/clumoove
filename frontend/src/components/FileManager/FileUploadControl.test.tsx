@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../../i18n';
 import { FileUploadControl } from './FileUploadControl';
 import { uploadFile, type FileCapabilities } from '../../api/files';
+import type { FileActionTransfer } from './useFileManagerActions';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -453,56 +454,66 @@ describe('FileUploadControl component', () => {
     vi.useRealTimers();
   });
 
-  it('renders and manages internal copy/move transfers', async () => {
-    const onCancelInternalTransfer = vi.fn();
-    const onDismissInternalTransfer = vi.fn();
-
-    await act(async () => {
-      root.render(
-        <FileUploadControl
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
-          parentRef="ref-root"
-          capabilities={mockFullCapabilities}
-          onCompleted={onCompleted}
-          internalTransfers={[
-            {
-              id: 'it-1',
-              operation: 'copy',
-              sourceName: 'file1.txt',
-              destinationName: 'Documents',
-              itemCount: 1,
-              status: 'copying',
-            },
-          ]}
-          onCancelInternalTransfer={onCancelInternalTransfer}
-          onDismissInternalTransfer={onDismissInternalTransfer}
-        />
-      );
-      await Promise.resolve();
-    });
+  it.each([
+    ['same-profile', { sourceLabel: 'file1.txt', destinationLabel: 'Documents' }],
+    ['cross-profile', { sourceLabel: 'Drive A', destinationLabel: 'Drive B', itemCount: 3, processedCount: 1, serverStatus: 'RUNNING' }],
+  ] as const)('renders %s transfers next to uploads and routes cancel and dismiss to the transfer callbacks', async (origin, extra) => {
+    const onCancelTransfer = vi.fn();
+    const onDismissTransfer = vi.fn();
+    const transfer: FileActionTransfer = {
+      id: 'tr-1',
+      origin,
+      operation: 'copy',
+      status: 'running',
+      sourceLabel: '',
+      destinationLabel: '',
+      itemCount: 1,
+      processedCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      ...extra,
+    };
+    const renderControl = async (transfers: FileActionTransfer[]) => {
+      await act(async () => {
+        root.render(
+          <FileUploadControl
+            apiUrl="https://api.example.test"
+            token="jwt-token"
+            profileId="profile-1"
+            parentRef="ref-root"
+            capabilities={mockFullCapabilities}
+            onCompleted={onCompleted}
+            transfers={transfers}
+            onCancelTransfer={onCancelTransfer}
+            onDismissTransfer={onDismissTransfer}
+          />
+        );
+        await Promise.resolve();
+      });
+    };
+    await renderControl([transfer]);
 
     expect(container.querySelector('aside')).not.toBeNull();
-
-    // Expand
-    const expandBtn = container.querySelector<HTMLButtonElement>('button[aria-expanded="false"]');
     await act(async () => {
-      expandBtn?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click();
       await Promise.resolve();
     });
+    expect(container.textContent).toContain(transfer.sourceLabel);
+    expect(container.textContent).toContain(transfer.destinationLabel);
 
-    expect(container.textContent).toContain('file1.txt');
-    expect(container.textContent).toContain('Documents');
-
-    // Cancel active internal transfer
-    const cancelBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Cancel transfer"], button[aria-label="Übertragung abbrechen"]');
-    expect(cancelBtn).not.toBeNull();
     await act(async () => {
-      cancelBtn?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="Cancel transfer"]')?.click();
       await Promise.resolve();
     });
-    expect(onCancelInternalTransfer).toHaveBeenCalledWith('it-1');
+    expect(onCancelTransfer).toHaveBeenCalledWith('tr-1');
+
+    await renderControl([{ ...transfer, status: 'completed', processedCount: transfer.itemCount }]);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Dismiss item from list"]')?.click();
+      await Promise.resolve();
+    });
+    expect(onDismissTransfer).toHaveBeenCalledWith('tr-1');
+    expect(container.querySelector('aside')).toBeNull();
   });
 
   it('aborts active upload controllers on unmount', async () => {
