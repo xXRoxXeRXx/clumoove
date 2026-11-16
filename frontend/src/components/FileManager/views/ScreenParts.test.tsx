@@ -87,6 +87,32 @@ describe('LoadMoreFooter', () => {
     await view.render(null);
     expect(observers[0].disconnect).toHaveBeenCalled();
   });
+
+  it('re-arms the observer after a page finished loading, so a still-visible footer keeps paging', async () => {
+    const onLoadMore = vi.fn();
+    await view.render(<LoadMoreFooter loading={false} autoLoad onLoadMore={onLoadMore} />);
+    expect(observers).toHaveLength(1);
+    // The caller switches autoLoad off while a page loads and on again afterwards.
+    await view.render(<LoadMoreFooter loading autoLoad={false} onLoadMore={onLoadMore} />);
+    expect(observers[0].disconnect).toHaveBeenCalled();
+    await view.render(<LoadMoreFooter loading={false} autoLoad onLoadMore={onLoadMore} />);
+    expect(observers).toHaveLength(2);
+    act(() => observers[1].callback([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores non-intersecting observations and calls the latest onLoadMore', async () => {
+    const first = vi.fn();
+    const latest = vi.fn();
+    await view.render(<LoadMoreFooter loading={false} autoLoad onLoadMore={first} />);
+    await view.render(<LoadMoreFooter loading={false} autoLoad onLoadMore={latest} />);
+    expect(observers).toHaveLength(1);
+    act(() => observers[0].callback([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver));
+    expect(latest).not.toHaveBeenCalled();
+    act(() => observers[0].callback([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
+    expect(first).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('useViewMode', () => {

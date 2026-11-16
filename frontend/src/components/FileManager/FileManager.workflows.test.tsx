@@ -808,6 +808,28 @@ describe('FileManager screen workflows', () => {
       expect(assignMock).not.toHaveBeenCalled();
     });
 
+    it('clears a stale action error when the listing reloads', async () => {
+      vi.mocked(createDownloadTicket).mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        errorCode: 'FORBIDDEN',
+        networkError: false,
+      });
+
+      await renderManager();
+      await openEntryAction('notes.txt', 'Download');
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain('Access forbidden.');
+
+      const refreshBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh files"]');
+      await act(async () => {
+        refreshBtn?.click();
+        await Promise.resolve();
+      });
+      await flushAsync(2);
+
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+    });
+
     it('creates ZIP archive download for selected entries', async () => {
       await renderManager();
       await selectEntriesByName('Documents', 'notes.txt');
