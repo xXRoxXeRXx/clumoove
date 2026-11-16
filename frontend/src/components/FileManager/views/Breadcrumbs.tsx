@@ -77,7 +77,7 @@ export function Breadcrumbs({ breadcrumbs, onNavigate, onUp }: BreadcrumbsProps)
               <div
                 role="menu"
                 aria-label={t('files.moreFolders')}
-                className="absolute left-0 top-full mt-1 z-30 min-w-48 max-w-64 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-1 shadow-lg backdrop-blur-xs"
+                className="ui-section absolute left-0 top-full mt-1 z-[var(--layer-menu)] min-w-48 max-w-64 p-1"
               >
                 {collapsed.map((crumb, idx) => (
                   <button

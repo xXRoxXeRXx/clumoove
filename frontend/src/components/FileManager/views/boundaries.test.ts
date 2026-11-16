@@ -39,6 +39,10 @@ describe('presentation modules', () => {
     for (const name of REQUIRED) expect(Object.keys(raw)).toContain(name);
   });
 
+  it.each(sources)('$name uses design tokens instead of heavy shadows, blur or hard-coded rings', ({ text }) => {
+    expect(text).not.toMatch(/shadow-(lg|xl|2xl)|backdrop-blur|ring-black/);
+  });
+
   it.each(sources)('$name holds no credentials, request cancellation or API access', ({ text }) => {
     expect(text).not.toMatch(/\b(apiUrl|token|profileId)\b/);
     expect(text).not.toMatch(/AbortController|AbortSignal|\bfetch\(/);

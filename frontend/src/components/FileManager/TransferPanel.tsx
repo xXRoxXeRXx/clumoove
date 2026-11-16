@@ -13,13 +13,32 @@ import {
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../../utils/format';
 import { AUTO_DISMISS_MS } from './useTransferCenter';
-import { summarizeTransfers, type TransferItem } from './transferItems';
+import { summarizeTransfers, type TransferItem, type TransferState } from './transferItems';
 
 type TransferPanelProps = {
   items: TransferItem[];
   onCancel: (itemId: string) => void;
   onDismiss: (itemId: string) => void;
   onRetry: (itemId: string) => void;
+};
+
+/** How each lifecycle state shows up in a row; the one place that knows what a state means visually. */
+type StatePresentation = {
+  /** Still running or waiting: offers cancel instead of dismiss. */
+  cancellable: boolean;
+  /** Actively transferring: shows progress and an animated icon. */
+  running: boolean;
+  completed: boolean;
+  failed: boolean;
+  statusTone: string;
+};
+
+const STATE_PRESENTATION: Record<TransferState, StatePresentation> = {
+  queued: { cancellable: true, running: false, completed: false, failed: false, statusTone: 'text-[var(--color-text-secondary)]' },
+  active: { cancellable: true, running: true, completed: false, failed: false, statusTone: 'text-[var(--color-info-text)]' },
+  completed: { cancellable: false, running: false, completed: true, failed: false, statusTone: 'text-[var(--color-success-text)] font-medium' },
+  failed: { cancellable: false, running: false, completed: false, failed: true, statusTone: 'text-[var(--color-error-text)] font-semibold' },
+  cancelled: { cancellable: false, running: false, completed: false, failed: false, statusTone: 'text-[var(--color-text-secondary)]' },
 };
 
 const iconButtonClass = 'ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)]';
@@ -37,30 +56,22 @@ function TransferRow({
 }: { item: TransferItem } & Omit<TransferPanelProps, 'items'>) {
   const { t } = useTranslation();
   const { formatBytes } = useFormat();
-  const isActive = item.state === 'active' || item.state === 'queued';
-  const isCompleted = item.state === 'completed';
+  const presentation = STATE_PRESENTATION[item.state];
   const { subject, progress } = item;
   const operationLabel = item.operation === 'move' ? t('files.move') : t('files.copy');
   const RouteIcon = item.operation === 'move' ? ArrowRightIcon : item.origin === 'cross-profile' ? ArrowPathIcon : ClipboardDocumentIcon;
   const title = subject.type === 'file' ? subject.name : `${operationLabel}: ${subject.source} → ${subject.destination}`;
   const cancelLabel = subject.type === 'file' ? t('files.cancelUpload', { name: subject.name }) : t('files.cancelTransfer');
-  const statusTone = isCompleted
-    ? 'text-[var(--color-success-text)] font-medium'
-    : item.state === 'failed'
-      ? 'text-[var(--color-error-text)] font-semibold'
-      : item.state === 'active'
-        ? 'text-[var(--color-info-text)]'
-        : 'text-[var(--color-text-secondary)]';
 
   return (
     <li className="flex items-center gap-2.5 px-2 py-2 text-sm rounded-md hover:bg-[var(--color-hover)] transition-colors">
-      {isCompleted ? (
+      {presentation.completed ? (
         <CheckCircleIcon className="h-5 w-5 shrink-0 text-[var(--color-success-text)]" aria-hidden="true" />
       ) : subject.type === 'file' ? (
         <FileIcon name={subject.name} mimeType={subject.mimeType} className="h-5 w-5 shrink-0" />
       ) : (
         <RouteIcon
-          className={`h-5 w-5 shrink-0 ${item.state === 'active' ? `${progress.mode === 'pulse' ? 'animate-pulse' : 'animate-spin'} text-[var(--color-info-text)]` : 'text-[var(--color-text-secondary)]'}`}
+          className={`h-5 w-5 shrink-0 ${presentation.running ? `${progress.mode === 'pulse' ? 'animate-pulse' : 'animate-spin'} text-[var(--color-info-text)]` : 'text-[var(--color-text-secondary)]'}`}
           aria-hidden="true"
         />
       )}
@@ -76,13 +87,13 @@ function TransferRow({
             {progress.mode === 'count' && (
               <span className="text-xs text-[var(--color-text-secondary)]">{progress.done}/{progress.total}</span>
             )}
-            {item.state === 'active' && progress.mode === 'bytes' && (
+            {presentation.running && progress.mode === 'bytes' && (
               <span className="text-xs font-semibold text-[var(--color-info-text)]">{percentOf(item)}%</span>
             )}
-            <span className={`text-xs ${statusTone}`}>{t(`files.uploadStatus.${item.statusKey}`)}</span>
+            <span className={`text-xs ${presentation.statusTone}`}>{t(`files.uploadStatus.${item.statusKey}`)}</span>
           </div>
         </div>
-        {item.state === 'active' && (
+        {presentation.running && (
           <div className="h-1 w-full rounded-full bg-[var(--color-progress-track)] overflow-hidden mt-1.5">
             {progress.mode === 'pulse' ? (
               <div className="h-full bg-[var(--color-info-text)] animate-pulse w-full" />
@@ -91,7 +102,7 @@ function TransferRow({
             )}
           </div>
         )}
-        {isCompleted && (
+        {presentation.completed && (
           <div className="h-0.5 w-full rounded-full bg-[var(--color-progress-track)] overflow-hidden mt-1.5" aria-hidden="true">
             <div
               className="h-full bg-[var(--color-progress-success)]"
@@ -99,14 +110,14 @@ function TransferRow({
             />
           </div>
         )}
-        {item.state === 'failed' && item.error && (
+        {presentation.failed && item.error && (
           <span role="alert" className="text-xs text-[var(--color-error-text)] mt-0.5 truncate block">
             {item.error}
           </span>
         )}
       </div>
       <div className="shrink-0 flex items-center gap-1">
-        {isActive && (
+        {presentation.cancellable && (
           <button
             type="button"
             onClick={() => onCancel(item.id)}
@@ -128,7 +139,7 @@ function TransferRow({
             <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
-        {!isActive && (
+        {!presentation.cancellable && (
           <button
             type="button"
             onClick={() => onDismiss(item.id)}
@@ -178,7 +189,7 @@ export function TransferPanel({ items, onCancel, onDismiss, onRetry }: TransferP
         }
       `}</style>
       {!isExpanded ? (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[var(--layer-toast)] flex items-center gap-3 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/95 px-4 py-2.5 shadow-xl backdrop-blur-md transition-all duration-200 hover:border-[var(--color-text-secondary)] select-none">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[var(--layer-toast)] flex items-center gap-3 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-2.5 transition-colors duration-200 hover:border-[var(--color-text-secondary)] select-none">
           <button
             type="button"
             onClick={() => setIsExpanded(true)}
@@ -206,7 +217,7 @@ export function TransferPanel({ items, onCancel, onDismiss, onRetry }: TransferP
           {canClear && clearButton}
         </div>
       ) : (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[var(--layer-toast)] w-[calc(100vw-2rem)] max-w-lg md:max-w-xl rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] shadow-2xl overflow-hidden flex flex-col">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[var(--layer-toast)] ui-card w-[calc(100vw-2rem)] max-w-lg md:max-w-xl overflow-hidden flex flex-col">
           <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-4 py-3 bg-[var(--color-bg-secondary)]">
             <div className="flex items-center gap-2 min-w-0">
               <ArrowUpTrayIcon className="h-4 w-4 shrink-0 text-[var(--color-text-primary)]" aria-hidden="true" />
