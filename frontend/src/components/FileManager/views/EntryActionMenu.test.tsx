@@ -55,6 +55,81 @@ describe('EntryActionMenu', () => {
     expect(onDismiss).toHaveBeenCalledTimes(3);
   });
 
+  describe('keyboard navigation', () => {
+    const items = () => Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    const press = (key: string) =>
+      act(() => {
+        (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+      });
+
+    it('moves focus to the first item when it opens', async () => {
+      await renderMenu();
+      expect(document.activeElement).toBe(items()[0]);
+    });
+
+    it('moves focus with the arrow keys, wrapping at both ends', async () => {
+      await renderMenu();
+      press('ArrowDown');
+      expect(document.activeElement).toBe(items()[1]);
+      press('ArrowUp');
+      press('ArrowUp');
+      expect(document.activeElement).toBe(items()[4]);
+      press('ArrowDown');
+      expect(document.activeElement).toBe(items()[0]);
+    });
+
+    it('jumps to the first and last item with Home and End', async () => {
+      await renderMenu();
+      press('End');
+      expect(document.activeElement).toBe(items()[4]);
+      press('Home');
+      expect(document.activeElement).toBe(items()[0]);
+    });
+
+    it('activates the focused item', async () => {
+      onSelect.mockReset();
+      await renderMenu();
+      press('ArrowDown');
+      await view.click(document.activeElement);
+      expect(onSelect).toHaveBeenCalledWith('copy');
+    });
+
+    it('keeps only the focused item in the tab sequence', async () => {
+      await renderMenu();
+      expect(items().map((item) => item.tabIndex)).toEqual([0, -1, -1, -1, -1]);
+      press('ArrowDown');
+      expect(items().map((item) => item.tabIndex)).toEqual([-1, 0, -1, -1, -1]);
+    });
+
+    it('dismisses on Tab instead of leaving a focus trap behind', async () => {
+      onDismiss.mockReset();
+      await renderMenu();
+      press('Tab');
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns focus to the element that opened it when it closes', async () => {
+      const trigger = document.createElement('button');
+      document.body.append(trigger);
+      trigger.focus();
+      await renderMenu();
+      expect(document.activeElement).not.toBe(trigger);
+      await view.render(null);
+      expect(document.activeElement).toBe(trigger);
+      trigger.remove();
+    });
+
+    it('does not steal focus back when the opener is gone', async () => {
+      const trigger = document.createElement('button');
+      document.body.append(trigger);
+      trigger.focus();
+      await renderMenu();
+      trigger.remove();
+      await view.render(null);
+      expect(document.activeElement).toBe(document.body);
+    });
+  });
+
   it('removes its window listeners when unmounted', async () => {
     onDismiss.mockReset();
     await renderMenu();

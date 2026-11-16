@@ -1,8 +1,7 @@
-import { useEffect, useRef, type ComponentType, type SVGProps } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowDownTrayIcon, ArrowRightIcon, ClipboardDocumentIcon, PencilIcon, TrashIcon } from '../../icons';
-import type { EntryMenuAction } from './entryMenu';
+import { entryMenuItem, type EntryMenuAction } from './entryMenu';
 
 export type EntryMenuPosition = {
   x: number;
@@ -23,14 +22,6 @@ const MENU_WIDTH = 180;
 const MENU_HEIGHT = 220;
 const VIEWPORT_MARGIN = 8;
 
-const ITEMS: Record<EntryMenuAction, { labelKey: string; Icon: ComponentType<SVGProps<SVGSVGElement>>; danger?: boolean }> = {
-  rename: { labelKey: 'files.rename', Icon: PencilIcon },
-  copy: { labelKey: 'files.copy', Icon: ClipboardDocumentIcon },
-  move: { labelKey: 'files.move', Icon: ArrowRightIcon },
-  download: { labelKey: 'files.downloadAction', Icon: ArrowDownTrayIcon },
-  delete: { labelKey: 'files.deleteAction', Icon: TrashIcon, danger: true },
-};
-
 function clampToViewport({ x, y, align }: EntryMenuPosition) {
   let left = align === 'right' ? x - MENU_WIDTH : x;
   let top = y;
@@ -40,15 +31,32 @@ function clampToViewport({ x, y, align }: EntryMenuPosition) {
   return { left, top };
 }
 
-/** Floating per-entry action menu, portalled to the body; dismisses on Escape, outside press and scroll. */
+/**
+ * Floating per-entry action menu, portalled to the body. Focus moves to the first item on open and
+ * back to the opener on close; arrow keys, Home and End move between items. Dismisses on Escape,
+ * Tab, outside press and scroll.
+ */
 export function EntryActionMenu({ name, position, actions, onSelect, onDismiss }: EntryActionMenuProps) {
   const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
   const dismissRef = useRef(onDismiss);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
     dismissRef.current = onDismiss;
   }, [onDismiss]);
+
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => {
+      if (opener && opener !== document.body && document.contains(opener)) opener.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    itemRefs.current[activeIndex]?.focus();
+  }, [activeIndex]);
 
   useEffect(() => {
     const dismiss = () => dismissRef.current();
@@ -70,24 +78,47 @@ export function EntryActionMenu({ name, position, actions, onSelect, onDismiss }
 
   const { left, top } = clampToViewport(position);
 
+  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const last = actions.length - 1;
+    const target: Record<string, number> = {
+      ArrowDown: activeIndex === last ? 0 : activeIndex + 1,
+      ArrowUp: activeIndex === 0 ? last : activeIndex - 1,
+      Home: 0,
+      End: last,
+    };
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      onDismiss();
+    } else if (event.key in target) {
+      event.preventDefault();
+      setActiveIndex(target[event.key]);
+    }
+  };
+
   return createPortal(
     <div
       ref={menuRef}
       role="menu"
       aria-label={t('files.actionsFor', { name })}
-      style={{ position: 'fixed', top: `${top}px`, left: `${left}px`, zIndex: 50 }}
-      className="w-44 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-1.5 shadow-xl ring-1 ring-black/5 dark:ring-white/10 animate-in fade-in zoom-in-95 duration-100"
+      style={{ position: 'fixed', top: `${top}px`, left: `${left}px`, zIndex: 'var(--layer-menu)' }}
+      className="ui-section w-44 p-1.5"
       onClick={(event) => event.stopPropagation()}
+      onKeyDown={handleMenuKeyDown}
     >
-      {actions.map((action) => {
-        const { labelKey, Icon, danger } = ITEMS[action];
+      {actions.map((action, index) => {
+        const { labelKey, Icon, danger } = entryMenuItem(action);
         const tone = danger ? 'text-[var(--color-danger)]' : 'text-[var(--color-text-primary)]';
         return (
           <button
             key={action}
+            ref={(element) => {
+              itemRefs.current[index] = element;
+            }}
             type="button"
             role="menuitem"
-            className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm ${tone} hover:bg-[var(--color-hover)] transition-colors`}
+            tabIndex={index === activeIndex ? 0 : -1}
+            onFocus={() => setActiveIndex(index)}
+            className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm ${tone} hover:bg-[var(--color-hover)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-focus)]`}
             onClick={() => onSelect(action)}
           >
             <Icon className={`h-4 w-4 shrink-0 ${danger ? 'text-[var(--color-danger)]' : 'text-[var(--color-text-secondary)]'}`} aria-hidden="true" />
