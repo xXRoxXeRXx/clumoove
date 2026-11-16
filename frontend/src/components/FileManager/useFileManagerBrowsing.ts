@@ -8,7 +8,7 @@ import {
 } from '../../api/files';
 import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/profiles';
 import { useApiError } from '../../utils/apiError';
-import type { FileManagerBreadcrumb } from './useFileManagerActions';
+import type { FileManagerBreadcrumb } from './fileManagerTypes';
 
 export type SortField = 'name' | 'size' | 'modified';
 export type SortDirection = 'asc' | 'desc';
@@ -55,6 +55,7 @@ export type FileManagerBrowsing = {
   selection: FileManagerBrowsingSelection;
   preview: FileManagerBrowsingPreview;
   selectProfile: (profileId: string) => void;
+  isInteractive: (entry: FileEntry) => boolean;
   activateEntry: (entry: FileEntry, options?: { toggleSelection?: boolean }) => void;
   goUp: () => void;
   goToBreadcrumb: (index: number) => void;
@@ -455,7 +456,7 @@ export function useFileManagerBrowsing({
     entries: selectedEntries,
     allSelected: allLoadedSelected,
     partiallySelected: someLoadedSelected && !allLoadedSelected,
-    active: selectedEntries.length > 0,
+    active: selectedRefs.size > 0,
     isSelected: (ref: string) => selectedRefs.has(ref),
     toggle: toggleSelection,
     toggleAll: toggleSelectAll,
@@ -476,6 +477,11 @@ export function useFileManagerBrowsing({
     open: openPreview,
     close: closePreview,
   }), [closePreview, openPreview, previewEntry]);
+
+  const isInteractive = useCallback(
+    (entry: FileEntry) => entry.kind === 'file' || (capabilities.browse && !loading),
+    [capabilities.browse, loading],
+  );
 
   const activateEntry = useCallback((entry: FileEntry, options?: { toggleSelection?: boolean }) => {
     if (selection.active || options?.toggleSelection) {
@@ -508,6 +514,7 @@ export function useFileManagerBrowsing({
     selection,
     preview,
     selectProfile,
+    isInteractive,
     activateEntry,
     goUp,
     goToBreadcrumb,

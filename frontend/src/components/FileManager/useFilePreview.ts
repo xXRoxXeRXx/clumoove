@@ -67,15 +67,7 @@ const EMPTY_PREVIEW_PAYLOAD: PreviewPayload = {
 };
 
 function matchesPreviewTarget(a: PreviewTarget, b: PreviewTarget): boolean {
-  return (
-    a.apiUrl === b.apiUrl &&
-    a.token === b.token &&
-    a.profileId === b.profileId &&
-    a.entryRef === b.entryRef &&
-    a.entrySize === b.entrySize &&
-    a.mimeType === b.mimeType &&
-    a.supportsThumbnails === b.supportsThumbnails
-  );
+  return (Object.keys(a) as (keyof PreviewTarget)[]).every((key) => a[key] === b[key]);
 }
 
 function parseWorker<T>(worker: Worker, buffer: ArrayBuffer, signal: AbortSignal): Promise<T> {
@@ -287,15 +279,16 @@ export function useFilePreview({
   }
 
   const active = loaded && matchesPreviewTarget(loaded.target, target) ? loaded : null;
+  const { error, blobUrl, pdfData, text, docxHtml, sheets } = active ?? EMPTY_PREVIEW_PAYLOAD;
   return {
     kind,
     status: active?.status ?? 'loading',
-    error: active?.error ?? '',
-    blobUrl: active?.blobUrl ?? null,
-    pdfData: active?.pdfData ?? null,
-    text: active?.text ?? '',
-    docxHtml: active?.docxHtml ?? '',
-    sheets: active?.sheets ?? [],
+    error,
+    blobUrl,
+    pdfData,
+    text,
+    docxHtml,
+    sheets,
     fallback,
   };
 }

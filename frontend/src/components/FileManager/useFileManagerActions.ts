@@ -22,11 +22,7 @@ import {
 } from '../../api/files';
 import type { ConnectionProfilePublic } from '../../api/profiles';
 import { useApiError } from '../../utils/apiError';
-
-export type FileManagerBreadcrumb = {
-  ref: string | null;
-  name: string;
-};
+import type { FileManagerBreadcrumb } from './fileManagerTypes';
 
 export type FileTransferOperation = 'copy' | 'move';
 

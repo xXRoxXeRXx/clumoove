@@ -364,7 +364,7 @@ describe('useFileManagerBrowsing', () => {
     expect(latest.breadcrumbs).toEqual([{ ref: null, name: 'Dropbox' }]);
   });
 
-  it('drops disappeared entries from active selection on refresh', async () => {
+  it('keeps selection mode active after a refresh removes the selected entries', async () => {
     vi.mocked(listFileEntries)
       .mockResolvedValueOnce({ ok: true, status: 200, data: { entries: [docsDir, notesFile], next_cursor: null } })
       .mockResolvedValueOnce({ ok: true, status: 200, data: { entries: [docsDir], next_cursor: null } });
@@ -383,7 +383,7 @@ describe('useFileManagerBrowsing', () => {
     await flushAsync();
 
     expect(latest.selection.entries).toEqual([]);
-    expect(latest.selection.active).toBe(false);
+    expect(latest.selection.active).toBe(true);
   });
 
   it('discards stale directory and capability responses when rapid navigation or profile switching occurs', async () => {

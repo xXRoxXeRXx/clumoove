@@ -32,11 +32,9 @@ import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
 import { useFileManagerActions, type FileActionTransfer } from './useFileManagerActions';
-import { useFileManagerBrowsing, type SortDirection, type SortField } from './useFileManagerBrowsing';
+import { useFileManagerBrowsing, type SortField } from './useFileManagerBrowsing';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
-
-export type { SortField, SortDirection };
 
 type FileManagerProps = {
   apiUrl: string;
@@ -128,6 +126,11 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     } catch {
       // ignore storage errors
     }
+  };
+
+  const ariaSortFor = (field: SortField) => {
+    if (browsing.sortField !== field) return 'none';
+    return browsing.sortDirection === 'asc' ? 'ascending' : 'descending';
   };
 
   const renderSortHeader = (field: SortField, label: string, sortLabel: string) => {
@@ -296,6 +299,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   };
 
   const handleEntryClick = (entry: FileEntry, event?: React.MouseEvent | React.KeyboardEvent) => {
+    setIsBreadcrumbMenuOpen(false);
     browsing.activateEntry(entry, { toggleSelection: Boolean(event?.ctrlKey || event?.metaKey) });
   };
 
@@ -653,7 +657,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                             <span className="inline-flex min-w-0 items-center gap-1 shrink-0">
                               <button
                                 type="button"
-                                onClick={() => goToBreadcrumb(browsing.breadcrumbs.length - 2)}
+                                onClick={goUp}
                                 className="max-w-28 sm:max-w-36 md:max-w-44 truncate rounded px-1 py-0.5 hover:bg-[var(--color-hover)]"
                                 title={parentBreadcrumb.name}
                               >
@@ -798,21 +802,21 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                         <th scope="col" className="w-10 px-3 py-2 font-medium"><input ref={selectAllRef} type="checkbox" checked={browsing.selection.allSelected} onChange={browsing.selection.toggleAll} aria-label={t('files.selectAll')} /></th>
                         <th
                           scope="col"
-                          aria-sort={browsing.sortField === 'name' ? (browsing.sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          aria-sort={ariaSortFor('name')}
                           className="px-3 py-2 font-medium"
                         >
                           {renderSortHeader('name', t('files.name'), t('files.sortByName'))}
                         </th>
                         <th
                           scope="col"
-                          aria-sort={browsing.sortField === 'size' ? (browsing.sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          aria-sort={ariaSortFor('size')}
                           className="hidden sm:table-cell w-28 sm:w-32 px-3 py-2 font-medium whitespace-nowrap shrink-0"
                         >
                           {renderSortHeader('size', t('files.size'), t('files.sortBySize'))}
                         </th>
                         <th
                           scope="col"
-                          aria-sort={browsing.sortField === 'modified' ? (browsing.sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          aria-sort={ariaSortFor('modified')}
                           className="hidden sm:table-cell w-36 sm:w-44 px-3 py-2 font-medium whitespace-nowrap shrink-0"
                         >
                           {renderSortHeader('modified', t('files.modified'), t('files.sortByModified'))}
@@ -822,7 +826,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     </thead>
                     <tbody>
                       {browsing.entries.map((entry) => {
-                        const isInteractive = (entry.kind === 'directory' && browsing.capabilities.browse && !browsing.loading) || entry.kind === 'file';
+                        const isInteractive = browsing.isInteractive(entry);
                         const isSelected = browsing.selection.isSelected(entry.ref);
                         return (
                           <tr
@@ -904,7 +908,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
               ) : (
                 <div className="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 flex-1 auto-rows-max" role="grid" aria-label={t('files.title')}>
                   {browsing.entries.map((entry) => {
-                    const isInteractive = (entry.kind === 'directory' && browsing.capabilities.browse && !browsing.loading) || entry.kind === 'file';
+                    const isInteractive = browsing.isInteractive(entry);
                     const isSelected = browsing.selection.isSelected(entry.ref);
 
                     return (

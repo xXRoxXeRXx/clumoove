@@ -210,9 +210,9 @@ describe('useFilePreview', () => {
     createUrlSpy.mockReturnValue('blob:https://api.example.test/full-2');
     vi.mocked(getFileThumbnailResult).mockResolvedValueOnce({ blob: null, status: 404 });
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response(new Blob(['full'], { type: 'image/png' }), {
+      new Response('full', {
         status: 200,
-        headers: { 'Content-Length': '4' },
+        headers: { 'Content-Length': '4', 'Content-Type': 'image/png' },
       }),
     );
 
@@ -225,9 +225,9 @@ describe('useFilePreview', () => {
 
   it('sanitizes DOCX output, parses XLSX sheets, and discards stale in-flight preview loads on entry switch', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(new Blob(['bytes']), {
+      new Response('bytes', {
         status: 200,
-        headers: { 'Content-Length': '5' },
+        headers: { 'Content-Length': '5', 'Content-Type': 'image/png' },
       }),
     );
 
@@ -255,7 +255,7 @@ describe('useFilePreview', () => {
     fetchSpy.mockResolvedValueOnce(
       new Response('fast text', {
         status: 200,
-        headers: { 'Content-Length': '9' },
+        headers: { 'Content-Length': '9', 'Content-Type': 'image/png' },
       }),
     );
 
@@ -294,9 +294,9 @@ describe('useFilePreview', () => {
     const revokeUrlSpy = vi.spyOn(URL, 'revokeObjectURL');
 
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
-      new Response(new Blob(['img'], { type: 'image/png' }), {
+      new Response('img', {
         status: 200,
-        headers: { 'Content-Length': '3' },
+        headers: { 'Content-Length': '3', 'Content-Type': 'image/png' },
       }),
     );
 
@@ -325,9 +325,9 @@ describe('useFilePreview', () => {
 
   it('supports manual fallback transition when media or document viewer errors', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response(new Blob(['img'], { type: 'image/png' }), {
+      new Response('img', {
         status: 200,
-        headers: { 'Content-Length': '3' },
+        headers: { 'Content-Length': '3', 'Content-Type': 'image/png' },
       }),
     );
 
