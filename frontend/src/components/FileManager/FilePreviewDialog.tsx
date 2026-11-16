@@ -15,6 +15,7 @@ import type { FileEntry } from '../../api/files';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useFormat } from '../../utils/format';
 import { useFilePreview } from './useFilePreview';
+import type { FileRequestContext } from './actions/fileRequests';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -25,15 +26,13 @@ if (typeof window !== 'undefined') {
 }
 
 type FilePreviewContentProps = {
-  apiUrl: string;
-  token: string;
-  profileId: string;
+  request: FileRequestContext;
   entry: FileEntry;
   supportsThumbnails?: boolean;
   onDownload: (entry: FileEntry) => void;
 };
 
-function FilePreviewContent({ apiUrl, token, profileId, entry, supportsThumbnails, onDownload }: FilePreviewContentProps) {
+function FilePreviewContent({ request, entry, supportsThumbnails, onDownload }: FilePreviewContentProps) {
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
   const {
@@ -46,7 +45,7 @@ function FilePreviewContent({ apiUrl, token, profileId, entry, supportsThumbnail
     docxHtml,
     sheets,
     fallback,
-  } = useFilePreview({ apiUrl, token, profileId, entry, supportsThumbnails });
+  } = useFilePreview({ ...request, entry, supportsThumbnails });
   const [sheetIndex, setSheetIndex] = useState(0);
   const [pages, setPages] = useState(0);
   const [page, setPage] = useState(1);
@@ -203,9 +202,7 @@ function FilePreviewContent({ apiUrl, token, profileId, entry, supportsThumbnail
 }
 
 type FilePreviewDialogProps = {
-  apiUrl: string;
-  token: string;
-  profileId: string;
+  request: FileRequestContext;
   entry: FileEntry;
   entries?: FileEntry[];
   supportsThumbnails?: boolean;
@@ -214,7 +211,7 @@ type FilePreviewDialogProps = {
   onDownload: (entry: FileEntry) => void;
 };
 
-export function FilePreviewDialog({ apiUrl, token, profileId, entry, entries, supportsThumbnails, onNavigate, onClose, onDownload }: FilePreviewDialogProps) {
+export function FilePreviewDialog({ request, entry, entries, supportsThumbnails, onNavigate, onClose, onDownload }: FilePreviewDialogProps) {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -332,9 +329,7 @@ export function FilePreviewDialog({ apiUrl, token, profileId, entry, entries, su
 
           <FilePreviewContent
             key={entry.ref}
-            apiUrl={apiUrl}
-            token={token}
-            profileId={profileId}
+            request={request}
             entry={entry}
             supportsThumbnails={supportsThumbnails}
             onDownload={onDownload}

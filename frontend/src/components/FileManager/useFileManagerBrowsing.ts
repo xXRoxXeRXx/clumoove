@@ -8,15 +8,15 @@ import {
 } from '../../api/files';
 import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/profiles';
 import { useApiError } from '../../utils/apiError';
+import type { FileRequestContext } from './actions/fileRequests';
 import type { FileManagerBreadcrumb } from './fileManagerTypes';
 
 export type SortField = 'name' | 'size' | 'modified';
 export type SortDirection = 'asc' | 'desc';
 
 export type UseFileManagerBrowsingOptions = {
-  apiUrl: string;
-  token: string;
-  profileId: string;
+  /** Where requests go and which profile is browsed. */
+  request: FileRequestContext;
   initialBreadcrumbs?: FileBreadcrumb[];
   onProfileChange: (profileId: string) => void;
 };
@@ -159,12 +159,11 @@ function sortFileEntries(entries: FileEntry[], sortField: SortField, sortDirecti
 }
 
 export function useFileManagerBrowsing({
-  apiUrl,
-  token,
-  profileId,
+  request,
   initialBreadcrumbs,
   onProfileChange,
 }: UseFileManagerBrowsingOptions): FileManagerBrowsing {
+  const { apiUrl, token, profileId } = request;
   const translateApiError = useApiError();
   const [profiles, setProfiles] = useState<ConnectionProfilePublic[]>([]);
   const [profilesLoading, setProfilesLoading] = useState(true);

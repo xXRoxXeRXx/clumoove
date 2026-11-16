@@ -62,9 +62,7 @@ describe('FileThumbnail component', () => {
     act(() => {
       root.render(
         <FileThumbnail
-          apiUrl="https://api.example.test"
-          token="test-token"
-          profileId="p1"
+          request={{ apiUrl: 'https://api.example.test', token: 'test-token', profileId: 'p1' }}
           entry={imageEntry}
           thumbnailsEnabled={false}
         />
@@ -80,9 +78,7 @@ describe('FileThumbnail component', () => {
     act(() => {
       root.render(
         <FileThumbnail
-          apiUrl="https://api.example.test"
-          token="test-token"
-          profileId="p1"
+          request={{ apiUrl: 'https://api.example.test', token: 'test-token', profileId: 'p1' }}
           entry={dirEntry}
           thumbnailsEnabled={true}
         />
@@ -104,9 +100,7 @@ describe('FileThumbnail component', () => {
     act(() => {
       root.render(
         <FileThumbnail
-          apiUrl="https://api.example.test"
-          token="test-token"
-          profileId="p1"
+          request={{ apiUrl: 'https://api.example.test', token: 'test-token', profileId: 'p1' }}
           entry={imageEntry}
           thumbnailsEnabled={true}
           size="lg"
@@ -140,9 +134,7 @@ describe('FileThumbnail component', () => {
     act(() => {
       root.render(
         <FileThumbnail
-          apiUrl="https://api.example.test"
-          token="test-token"
-          profileId="p1"
+          request={{ apiUrl: 'https://api.example.test', token: 'test-token', profileId: 'p1' }}
           entry={{ ...imageEntry, ref: 'ref-photo-sm' }}
           thumbnailsEnabled={true}
           size="sm"
@@ -173,9 +165,7 @@ describe('FileThumbnail component', () => {
     act(() => {
       root.render(
         <FileThumbnail
-          apiUrl="https://api.example.test"
-          token="test-token"
-          profileId="p1"
+          request={{ apiUrl: 'https://api.example.test', token: 'test-token', profileId: 'p1' }}
           entry={{ ...imageEntry, ref: 'ref-photo-failed' }}
           thumbnailsEnabled={true}
         />

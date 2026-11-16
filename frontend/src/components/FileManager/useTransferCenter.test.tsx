@@ -54,8 +54,7 @@ describe('useTransferCenter', () => {
     await act(async () => {
       root.render(
         <Probe
-          apiUrl="https://api.example.test"
-          token="jwt"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt' }}
           transfers={transfers}
           onCancelTransfer={cancelTransfer}
           onDismissTransfer={dismissTransfer}

@@ -15,10 +15,14 @@ import {
   type FileMutationConflictStrategy,
 } from '../../../api/files';
 
-/** Where file requests go and who they act as. Bundled once instead of threaded through every call. */
-export type FileRequestContext = {
+/** Where API requests go and who sends them. */
+export type ApiAccess = {
   apiUrl: string;
   token: string;
+};
+
+/** Where file requests go and who they act as. Bundled once instead of threaded through every call. */
+export type FileRequestContext = ApiAccess & {
   profileId: string;
 };
 

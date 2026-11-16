@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { actionTransferToItem, uploadTaskToItem, type TransferItem } from './transferItems';
 import type { FileActionTransfer } from './useFileManagerActions';
+import type { ApiAccess } from './actions/fileRequests';
 import { useUploadQueue, type UploadTarget } from './useUploadQueue';
 
 /** How long a completed transfer stays visible before it dismisses itself. */
 export const AUTO_DISMISS_MS = 4000;
 
 export type UseTransferCenterOptions = {
-  apiUrl: string;
-  token: string;
+  /** Where uploads are sent and who sends them; each upload names its own target profile. */
+  request: ApiAccess;
   /** Same-profile and cross-profile transfers owned by the file actions. */
   transfers: FileActionTransfer[];
   onCancelTransfer: (transferId: string) => void | Promise<void>;
@@ -32,8 +33,7 @@ export type TransferCenter = {
  * set of lifecycle actions. Callers never need to know which queue owns an item.
  */
 export function useTransferCenter({
-  apiUrl,
-  token,
+  request,
   transfers,
   onCancelTransfer,
   onDismissTransfer,
@@ -45,7 +45,7 @@ export function useTransferCenter({
     cancel: cancelUpload,
     retry: retryUpload,
     dismiss: dismissUpload,
-  } = useUploadQueue({ apiUrl, token, onCompleted: onUploadCompleted });
+  } = useUploadQueue({ apiUrl: request.apiUrl, token: request.token, onCompleted: onUploadCompleted });
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set());
   const dismissTimers = useRef(new Map<string, number>());
 

@@ -51,6 +51,16 @@ export function toEntryRow(entry: FileEntry, ctx: EntryRowContext): EntryRowMode
   };
 }
 
+/** What the browsing area shows instead of entries, or `ready` when it has entries to render. */
+export type ListingState = 'no-profile' | 'unavailable' | 'loading' | 'ready';
+
+/** The listing state of the browsing area, from what is selected and what the connection supports. */
+export function listingState({ hasProfile, canBrowse, loading }: { hasProfile: boolean; canBrowse: boolean; loading: boolean }): ListingState {
+  if (!hasProfile) return 'no-profile';
+  if (!canBrowse && !loading) return 'unavailable';
+  return loading ? 'loading' : 'ready';
+}
+
 /** Where an entry menu opens from: a button's bottom-right corner or the pointer. */
 export type MenuAnchor = { type: 'button'; right: number; bottom: number } | { type: 'point'; x: number; y: number };
 

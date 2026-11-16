@@ -14,6 +14,7 @@ import {
   type FileManagerBrowsing,
   type UseFileManagerBrowsingOptions,
 } from './useFileManagerBrowsing';
+import type { FileRequestContext } from './actions/fileRequests';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -148,13 +149,16 @@ describe('useFileManagerBrowsing', () => {
     return null;
   }
 
-  async function renderBrowsing(overrides?: Partial<UseFileManagerBrowsingOptions>) {
+  async function renderBrowsing(overrides?: Partial<Omit<UseFileManagerBrowsingOptions, 'request'>> & Partial<FileRequestContext>) {
+    const { apiUrl, token, profileId, ...options } = overrides ?? {};
     const props: UseFileManagerBrowsingOptions = {
-      apiUrl: 'https://api.example.test',
-      token: 'jwt-token',
-      profileId: 'profile-1',
+      request: {
+        apiUrl: apiUrl ?? 'https://api.example.test',
+        token: token ?? 'jwt-token',
+        profileId: profileId ?? 'profile-1',
+      },
       onProfileChange,
-      ...overrides,
+      ...options,
     };
     await act(async () => {
       root.render(<Probe {...props} />);

@@ -1,8 +1,11 @@
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BatchSummaryBanner } from './BatchSummaryBanner';
+import { EntryCollection } from './EntryCollection';
 import { LoadMoreFooter } from './LoadMoreFooter';
 import { ProfileSidebar } from './ProfileSidebar';
+import { ScreenHeader } from './ScreenHeader';
+import { StatusBanners } from './StatusBanners';
 import { useRenderHarness } from './renderHarness';
 import { useViewMode } from './useViewMode';
 
@@ -148,5 +151,63 @@ describe('useViewMode', () => {
     await view.click(view.container.querySelector('button'));
     expect(view.container.textContent).toBe('grid');
     vi.restoreAllMocks();
+  });
+});
+
+describe('ScreenHeader', () => {
+  const view = useRenderHarness();
+
+  it('shows the title, and a back button only when a handler is given', async () => {
+    await view.render(<ScreenHeader />);
+    expect(view.container.querySelector('h1')!.textContent).toBe('File Manager');
+    expect(view.container.querySelector('button')).toBeNull();
+    const onBack = vi.fn();
+    await view.render(<ScreenHeader onBack={onBack} />);
+    await view.click(view.container.querySelector('button'));
+    expect(onBack).toHaveBeenCalled();
+  });
+});
+
+describe('StatusBanners', () => {
+  const view = useRenderHarness();
+
+  it('announces an error as an alert and the path fallback as a status, each only when present', async () => {
+    await view.render(<StatusBanners error="" pathFallback={false} />);
+    expect(view.container.querySelector('[role="alert"], [role="status"]')).toBeNull();
+    await view.render(<StatusBanners error="Boom" pathFallback />);
+    expect(view.container.querySelector('[role="alert"]')!.textContent).toBe('Boom');
+    expect(view.container.querySelector('[role="status"]')).not.toBeNull();
+  });
+});
+
+describe('EntryCollection', () => {
+  const view = useRenderHarness();
+  const selection = { active: false, allSelected: false, partiallySelected: false, onToggleAll: vi.fn() };
+  const sort = { field: 'name' as const, direction: 'asc' as const, onSort: vi.fn() };
+  const row = { ref: 'r1', name: 'a.txt', isDirectory: false, sizeLabel: '1 B', modifiedLabel: null, selected: false, clickable: true, nameDisabled: false, hasActions: false, menuOpen: false, thumbnail: null };
+  const renderCollection = (state: 'no-profile' | 'unavailable' | 'loading' | 'ready', rows: typeof row[], viewMode: 'list' | 'grid' = 'list') =>
+    view.render(<EntryCollection state={state} rows={rows} viewMode={viewMode} selection={selection} sort={sort} onActivate={vi.fn()} onToggleSelect={vi.fn()} onOpenMenu={vi.fn()} />);
+
+  it('shows a message or spinner instead of entries until the listing is ready', async () => {
+    await renderCollection('no-profile', [row]);
+    expect(view.container.textContent).toContain('Select a connection');
+    await renderCollection('unavailable', [row]);
+    expect(view.container.textContent).toContain('Browsing is not supported');
+    await renderCollection('loading', [row]);
+    expect(view.container.querySelector('table')).toBeNull();
+    expect(view.container.textContent).not.toContain('a.txt');
+  });
+
+  it('says so when a ready listing has no entries', async () => {
+    await renderCollection('ready', []);
+    expect(view.container.textContent).toContain('This folder is empty.');
+  });
+
+  it('renders the list or the grid for the view mode', async () => {
+    await renderCollection('ready', [row], 'list');
+    expect(view.container.querySelector('table')).not.toBeNull();
+    await renderCollection('ready', [row], 'grid');
+    expect(view.container.querySelector('[role="grid"]')).not.toBeNull();
+    expect(view.container.querySelector('table')).toBeNull();
   });
 });

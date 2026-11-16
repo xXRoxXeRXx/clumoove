@@ -110,9 +110,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={unsupported}
           onClose={onClose}
           onDownload={onDownload}
@@ -145,9 +143,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={file2}
           entries={[file1, dir, file2, file3]}
           onNavigate={onNavigate}
@@ -187,9 +183,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={file1}
           entries={[file1, file2]}
           onNavigate={onNavigate}
@@ -218,9 +212,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={file2}
           entries={[file1, file2, file3]}
           onNavigate={onNavigate}
@@ -264,9 +256,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={pdfEntry}
           onClose={onClose}
           onDownload={onDownload}
@@ -293,9 +283,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={entry}
           onClose={onClose}
           onDownload={onDownload}
@@ -340,9 +328,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={xlsxEntry}
           onClose={onClose}
           onDownload={onDownload}
@@ -418,9 +404,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={xlsxEntry}
           onClose={onClose}
           onDownload={onDownload}
@@ -479,9 +463,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={xlsxEntry}
           onClose={onClose}
           onDownload={onDownload}
@@ -531,9 +513,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={audioEntry}
           onClose={onClose}
           onDownload={onDownload}
@@ -576,9 +556,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={videoEntry}
           onClose={onClose}
           onDownload={onDownload}
@@ -612,9 +590,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={imageEntry}
           supportsThumbnails={true}
           onClose={onClose}
@@ -670,9 +646,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={imageEntry}
           supportsThumbnails={true}
           onClose={onClose}
@@ -723,9 +697,7 @@ describe('FilePreviewDialog', () => {
     await act(async () => {
       root.render(
         <FilePreviewDialog
-          apiUrl="https://api.example.test"
-          token="jwt-token"
-          profileId="profile-1"
+          request={{ apiUrl: 'https://api.example.test', token: 'jwt-token', profileId: 'profile-1' }}
           entry={imageEntry}
           supportsThumbnails={false}
           onClose={onClose}

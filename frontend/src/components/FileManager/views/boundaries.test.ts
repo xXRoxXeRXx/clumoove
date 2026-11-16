@@ -40,7 +40,7 @@ describe('presentation modules', () => {
   });
 
   it.each(sources)('$name uses design tokens instead of heavy shadows, blur or hard-coded rings', ({ text }) => {
-    expect(text).not.toMatch(/shadow-(lg|xl|2xl)|backdrop-blur|ring-black/);
+    expect(text).not.toMatch(/\bshadow-(lg|xl|2xl)\b|backdrop-blur|ring-black/);
   });
 
   it.each(sources)('$name holds no credentials, request cancellation or API access', ({ text }) => {

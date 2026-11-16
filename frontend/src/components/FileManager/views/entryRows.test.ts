@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { FileEntry } from '../../../api/files';
-import { toEntryRow, type EntryRowContext } from './entryRows';
+import { listingState, toEntryRow, type EntryRowContext } from './entryRows';
 
 const file = { ref: 'f', name: 'a.txt', kind: 'file', size: 2048, modified_at: '2026-01-01T00:00:00Z', allowed_actions: [] } as unknown as FileEntry;
 const dir = { ref: 'd', name: 'docs', kind: 'directory', size: 0, modified_at: null, allowed_actions: [] } as unknown as FileEntry;
@@ -40,5 +40,21 @@ describe('toEntryRow', () => {
   it('reflects selection, available actions and the open menu', () => {
     const row = toEntryRow(file, ctx({ isSelected: (ref) => ref === 'f', menuRef: 'f', hasEntryActions: () => false }));
     expect(row).toMatchObject({ selected: true, menuOpen: true, hasActions: false });
+  });
+});
+
+describe('listingState', () => {
+  it('asks for a profile before anything else', () => {
+    expect(listingState({ hasProfile: false, canBrowse: false, loading: true })).toBe('no-profile');
+  });
+
+  it('reports an unavailable listing only once loading has finished', () => {
+    expect(listingState({ hasProfile: true, canBrowse: false, loading: false })).toBe('unavailable');
+    expect(listingState({ hasProfile: true, canBrowse: false, loading: true })).toBe('loading');
+  });
+
+  it('is loading, then ready', () => {
+    expect(listingState({ hasProfile: true, canBrowse: true, loading: true })).toBe('loading');
+    expect(listingState({ hasProfile: true, canBrowse: true, loading: false })).toBe('ready');
   });
 });

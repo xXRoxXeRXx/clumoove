@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileIcon } from '../icons';
+import type { FileRequestContext } from './actions/fileRequests';
 import { type FileEntry } from '../../api/files';
 import {
   getCachedThumbnail,
@@ -9,9 +10,7 @@ import {
 } from '../../utils/thumbnailLoader';
 
 type FileThumbnailProps = {
-  apiUrl: string;
-  token: string;
-  profileId: string;
+  request: FileRequestContext;
   entry: FileEntry;
   thumbnailsEnabled: boolean;
   size?: ThumbnailSize;
@@ -29,9 +28,7 @@ function isProbableThumbnailCandidate(entry: FileEntry): boolean {
 }
 
 export function FileThumbnail({
-  apiUrl,
-  token,
-  profileId,
+  request,
   entry,
   thumbnailsEnabled,
   size = 'lg',
@@ -39,6 +36,7 @@ export function FileThumbnail({
   imageClassName,
   fallbackIconClassName,
 }: FileThumbnailProps) {
+  const { apiUrl, token, profileId } = request;
   const containerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(() => typeof IntersectionObserver === 'undefined');
   const [fetchedUrl, setFetchedUrl] = useState<string | null>(null);
