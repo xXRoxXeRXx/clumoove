@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowUpTrayIcon, FileIcon } from '../icons';
 import { useTranslation } from 'react-i18next';
-import { type FileCapabilities, type UploadConflictStrategy } from '../../api/files';
+import type { FileCapabilities, UploadConflictStrategy } from '../../api/files';
 import { useFormat } from '../../utils/format';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 

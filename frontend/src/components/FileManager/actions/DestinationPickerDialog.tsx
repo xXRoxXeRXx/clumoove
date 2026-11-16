@@ -21,7 +21,7 @@ export function DestinationPickerDialog({ model }: { model: DestinationPickerDia
       <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{model.entryName ? t('files.destinationPickerDescription', { name: model.entryName }) : t('files.batchDestinationPickerDescription', { count: model.itemCount })}</p>
       {model.error && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{model.error}</p>}
       <label className="mt-3 block text-sm font-medium" htmlFor="destination-profile">{t('files.destinationProfile')}</label>
-      <select id="destination-profile" className="ui-input mt-1 w-full px-3 py-2" value={model.profileId} disabled={model.loading || model.busy} onChange={(event) => model.selectProfile(event.target.value)}>
+      <select id="destination-profile" className="ui-input mt-1 w-full px-3 py-2" value={model.destinationProfileId} disabled={model.loading || model.busy} onChange={(event) => model.selectProfile(event.target.value)}>
         {model.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
       </select>
       <nav className="mt-3 flex flex-wrap gap-1 text-sm" aria-label={t('files.destinationBreadcrumb')}>

@@ -61,14 +61,14 @@ export type DestinationPickerDialogModel = {
   entryName: string | null;
   itemCount: number;
   profiles: ConnectionProfilePublic[];
-  profileId: string;
+  destinationProfileId: string;
   breadcrumbs: FileManagerBreadcrumb[];
   folders: FileEntry[];
   hasInvalidDestination: boolean;
   loading: boolean;
   busy: boolean;
   error: string;
-  selectProfile: (profileId: string) => void;
+  selectProfile: (id: string) => void;
   openFolder: (entry: FileEntry) => void;
   goToBreadcrumb: (index: number) => void;
   submit: () => Promise<void>;

@@ -255,7 +255,7 @@ export function useDestinationTransfer(
         entryName: target.kind === 'single' ? target.entry.name : null,
         itemCount: selectedEntries.length,
         profiles,
-        profileId: destinationProfileId,
+        destinationProfileId,
         breadcrumbs: browser.breadcrumbs,
         folders: browser.folders.filter((folder) => !targetEntries.some((entry) => entry.ref === folder.ref)),
         hasInvalidDestination: browser.breadcrumbs.some((breadcrumb) =>
