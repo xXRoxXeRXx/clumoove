@@ -10,11 +10,6 @@ import (
 	"backend/internal/queue"
 )
 
-type streamSlotPool interface {
-	Acquire(userID string) bool
-	Release(userID string)
-}
-
 // migrationDependencies contains only the infrastructure required by the
 // migration feature module. Cross-cutting request, profile-access, stream-pool,
 // and background concerns are injected at module construction.
