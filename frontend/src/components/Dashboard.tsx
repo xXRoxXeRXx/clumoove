@@ -20,7 +20,8 @@ import { connectSseLoop } from '../utils/sse';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import { logger } from '../utils/logger';
 import { isAuthFailureError } from '../utils/authFailure';
-import { isOAuthProvider } from '../types';
+import { isOAuthProvider, type JobAction } from '../types';
+import { canPerform } from '../utils/jobActions';
 import {
   QueueListIcon,
   SignalIcon,
@@ -49,6 +50,7 @@ interface MigrationResourceStats {
 interface ProgressData {
   id: string;
   status: string;
+  allowed_actions?: JobAction[];
   total_files: number;
   total_bytes: number;
   processed_files: number;
@@ -368,7 +370,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       <div className="ui-card p-6 space-y-6">
         <TransferDetailHeader backLabel={t('common.back')} onBack={onReset} title={t('migrations.migrationJobDetail')} id={data.id} actions={
           <>
-            {data.status === 'PAUSED' || data.status === 'PAUSED_CONNECTION_LOSS' ? (
+            {canPerform(data, 'resume') ? (
               <button
                 onClick={() => handleMigrationControl('resume')}
                 disabled={controlLoading !== null}
@@ -379,7 +381,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             ) : (
               <button
                 onClick={() => handleMigrationControl('pause')}
-                disabled={controlLoading !== null || data.status === 'COMPLETED' || data.status === 'FAILED' || data.status === 'CANCELLED'}
+                disabled={controlLoading !== null || !canPerform(data, 'pause')}
                 className="ui-button-secondary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
               >
                 {t('dashboard.pause')}

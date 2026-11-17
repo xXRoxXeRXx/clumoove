@@ -69,6 +69,9 @@ export type JobStatus =
   | 'CANCELLED'
   | 'IDLE';
 
+/** User actions the backend allows for a job in its current status. */
+export type JobAction = 'start' | 'pause' | 'resume' | 'cancel';
+
 export interface User {
   id?: string;
   email?: string;
@@ -83,6 +86,7 @@ export interface User {
 export interface Migration {
   id: string;
   status: JobStatus;
+  allowed_actions?: JobAction[];
   source_provider: string;
   source_url: string | null;
   target_provider: string;
@@ -105,6 +109,7 @@ export interface Migration {
 export interface SyncJob {
   id: string;
   status: JobStatus;
+  allowed_actions?: JobAction[];
   threads?: number;
   bandwidth_limit_mbps?: number;
   direction: 'one_way' | 'two_way';
@@ -140,6 +145,7 @@ export interface SyncJob {
 export interface BackupJob {
   id: string;
   status: string;
+  allowed_actions?: JobAction[];
   source_provider: string;
   source_url: string | null;
   target_provider: string;

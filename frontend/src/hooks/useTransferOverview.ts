@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { BackupJob, Migration, SyncJob } from '../types';
 import { useLiveTransferCollection } from './useLiveTransferCollection';
 import { backupOverviewAdapter, migrationOverviewAdapter, syncOverviewAdapter } from './transferOverviewAdapters';
+import { withStatus } from '../utils/jobActions';
 
 interface UseTransferOverviewOptions {
   apiUrl: string;
@@ -48,14 +49,14 @@ export function useTransferOverview({ apiUrl, token, backupActive = false }: Use
     const removed = new Set(ids);
     updateMigrations((current) => current.filter((item) => !removed.has(item.id)));
   }, [updateMigrations]);
-  const setMigrationStatus = useCallback((id: string, status: Migration['status']) => updateMigrations((current) => current.map((item) => item.id === id ? { ...item, status } : item)), [updateMigrations]);
+  const setMigrationStatus = useCallback((id: string, status: Migration['status']) => updateMigrations((current) => current.map((item) => item.id === id ? withStatus(item, status) : item)), [updateMigrations]);
   const removeSyncJob = useCallback((id: string) => updateSyncJobs((current) => current.filter((item) => item.id !== id)), [updateSyncJobs]);
   const removeSyncJobs = useCallback((ids: Iterable<string>) => {
     const removed = new Set(ids);
     updateSyncJobs((current) => current.filter((item) => !removed.has(item.id)));
   }, [updateSyncJobs]);
-  const setSyncJobStatus = useCallback((id: string, status: SyncJob['status']) => updateSyncJobs((current) => current.map((item) => item.id === id ? { ...item, status } : item)), [updateSyncJobs]);
-  const setBackupJobStatus = useCallback((id: string, status: BackupJob['status']) => updateBackupJobs((current) => current.map((item) => item.id === id ? { ...item, status } : item)), [updateBackupJobs]);
+  const setSyncJobStatus = useCallback((id: string, status: SyncJob['status']) => updateSyncJobs((current) => current.map((item) => item.id === id ? withStatus(item, status) : item)), [updateSyncJobs]);
+  const setBackupJobStatus = useCallback((id: string, status: BackupJob['status']) => updateBackupJobs((current) => current.map((item) => item.id === id ? withStatus(item, status) : item)), [updateBackupJobs]);
 
   return useMemo(() => ({
     migrations: { items: migrationCollection.items, loading: migrationCollection.loading, error: migrationCollection.error, remove: removeMigration, removeMany: removeMigrations, setStatus: setMigrationStatus },

@@ -29,10 +29,11 @@ function jsonResult<T>(data: T): { ok: true; status: number; data: T } {
   return { ok: true as const, status: 200, data };
 }
 
-function createBackupJob(status: BackupJob['status'] = 'IDLE'): BackupJob {
+function createBackupJob(status: BackupJob['status'] = 'IDLE', allowed_actions: BackupJob['allowed_actions'] = []): BackupJob {
   return {
     id: 'backup-123',
     status,
+    allowed_actions,
     source_provider: 'nextcloud',
     source_url: 'https://source.example.test',
     selected_paths: ['/photos', '/documents'],
@@ -166,7 +167,7 @@ describe('BackupDashboard', () => {
   });
 
   it('handles run now action triggering POST /api/backup/{id}/run', async () => {
-    const job = createBackupJob('IDLE');
+    const job = createBackupJob('IDLE', ['start', 'pause']);
     const runs = createBackupRuns();
 
     vi.mocked(apiJson).mockImplementation(async (url: string, init?: RequestInit) => {
@@ -242,5 +243,38 @@ describe('BackupDashboard', () => {
     });
 
     expect(container.textContent).toContain('Blöcke werden verarbeitet');
+  });
+
+  describe('controls rendered from allowed_actions', () => {
+    async function renderDetail(job: BackupJob): Promise<void> {
+      vi.mocked(apiJson).mockImplementation(async (url: string) => (url.endsWith('/runs') ? jsonResult([]) : jsonResult(job)));
+      await act(async () => {
+        root.render(<BackupDashboard backupId="backup-123" apiUrl="https://api.example.test" token="test-token" onBack={vi.fn()} />);
+      });
+    }
+
+    function control(label: string): HTMLButtonElement | undefined {
+      return Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === label);
+    }
+
+    it('enables run and pause only when the backend lists start and pause', async () => {
+      await renderDetail(createBackupJob('IDLE', ['start', 'pause']));
+      expect(control(i18n.t('backup.run'))?.disabled).toBe(false);
+      expect(control(i18n.t('backup.pause'))?.disabled).toBe(false);
+      expect(control(i18n.t('backup.resume'))).toBeUndefined();
+    });
+
+    it('shows resume instead of pause when the backend lists resume', async () => {
+      await renderDetail(createBackupJob('PAUSED', ['resume']));
+      expect(control(i18n.t('backup.resume'))?.disabled).toBe(false);
+      expect(control(i18n.t('backup.pause'))).toBeUndefined();
+      expect(control(i18n.t('backup.run'))?.disabled).toBe(true);
+    });
+
+    it('disables run and pause when the backend lists no actions, whatever the status says', async () => {
+      await renderDetail(createBackupJob('IDLE', []));
+      expect(control(i18n.t('backup.run'))?.disabled).toBe(true);
+      expect(control(i18n.t('backup.pause'))?.disabled).toBe(true);
+    });
   });
 });

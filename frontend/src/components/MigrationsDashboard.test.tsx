@@ -457,4 +457,88 @@ describe('MigrationsDashboard tabs', () => {
     });
     expect(backupRequests).toBe(2);
   });
+
+  describe('row controls rendered from allowed_actions', () => {
+    async function renderWith(lists: { migrations?: Migration[]; syncJobs?: SyncJob[]; backups?: BackupJob[] }): Promise<void> {
+      vi.mocked(apiJson).mockImplementation((url, options) => {
+        if (options?.method === 'POST') return Promise.resolve(jsonResponse(undefined));
+        const target = String(url);
+        if (target.endsWith('/api/migration')) return Promise.resolve(jsonResponse(lists.migrations ?? []));
+        if (target.endsWith('/api/sync')) return Promise.resolve(jsonResponse(lists.syncJobs ?? []));
+        if (target.endsWith('/api/backup')) return Promise.resolve(jsonResponse(lists.backups ?? []));
+        return Promise.resolve(jsonResponse([]));
+      });
+      container = document.createElement('div');
+      document.body.append(container);
+      root = createRoot(container);
+      await act(async () => {
+        root.render(<MigrationsDashboard apiUrl="https://api.example.test" token="token" user={null} onStartNewMigration={vi.fn()} onSelectActiveMigration={vi.fn()} />);
+        await new Promise((resolve) => window.setTimeout(resolve, 0));
+        await Promise.resolve();
+      });
+    }
+
+    function control(label: string): HTMLButtonElement | null {
+      return container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+    }
+
+    async function openTab(tab: DashboardTab): Promise<void> {
+      await act(async () => {
+        getTab(tab)?.click();
+        await Promise.resolve();
+      });
+    }
+
+    function getTab(tab: DashboardTab): HTMLButtonElement | null {
+      return container.querySelector<HTMLButtonElement>(`#${tab}-tab`);
+    }
+
+    it('lets the user resume a migration paused by connection loss when the backend allows it', async () => {
+      await renderWith({ migrations: [{ ...createMigration('https://loss.example.test', 'PAUSED_CONNECTION_LOSS'), allowed_actions: ['resume', 'cancel'] }] });
+      expect(control(i18n.t('dashboard.resume'))?.disabled).toBe(false);
+      expect(control(i18n.t('dashboard.pause'))).toBeNull();
+    });
+
+    it('disables the migration control when the backend allows neither pause nor resume', async () => {
+      await renderWith({ migrations: [{ ...createMigration('https://verifying.example.test', 'VERIFYING'), allowed_actions: ['cancel'] }] });
+      expect(control(i18n.t('dashboard.pause'))?.disabled).toBe(true);
+    });
+
+    it('does not infer a migration control from the status when the backend sent no actions', async () => {
+      await renderWith({ migrations: [createMigration('https://legacy.example.test', 'RUNNING')] });
+      expect(control(i18n.t('dashboard.pause'))?.disabled).toBe(true);
+    });
+
+    it('drops the stale actions after a successful pause until the next server frame', async () => {
+      await renderWith({ migrations: [{ ...createMigration('https://running.example.test', 'RUNNING'), allowed_actions: ['pause', 'cancel'] }] });
+      await act(async () => {
+        control(i18n.t('dashboard.pause'))?.click();
+        await Promise.resolve();
+      });
+      expect(vi.mocked(apiJson)).toHaveBeenCalledWith(
+        'https://api.example.test/api/migration/https%3A%2F%2Frunning.example.test/pause',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      expect(control(i18n.t('dashboard.resume'))?.disabled ?? control(i18n.t('dashboard.pause'))?.disabled).toBe(true);
+    });
+
+    it.each([
+      ['PAUSED', ['resume'] as const, 'sync.resume', false],
+      ['IDLE', ['start', 'pause'] as const, 'sync.pause', false],
+      ['PAUSED_CONNECTION_LOSS', [] as const, 'sync.pause', true],
+    ])('renders the sync control for %s from the backend actions', async (status, actions, label, disabled) => {
+      await renderWith({ syncJobs: [{ ...createSyncJob('https://sync.example.test'), status: status as SyncJob['status'], allowed_actions: [...actions] }] });
+      await openTab('sync');
+      expect(control(i18n.t(label))?.disabled).toBe(disabled);
+    });
+
+    it('renders the backup run and pause controls from the backend actions', async () => {
+      await renderWith({ backups: [{ ...createBackupJob('backup-1'), status: 'IDLE', allowed_actions: [] }, { ...createBackupJob('backup-2'), status: 'PAUSED', allowed_actions: ['resume'] }] });
+      await openTab('backup');
+      const runButtons = Array.from(container.querySelectorAll<HTMLButtonElement>(`button[aria-label="${i18n.t('backup.run')}"]`));
+      expect(runButtons.map((button) => button.disabled)).toEqual([true, true]);
+      expect(control(i18n.t('backup.resume'))?.disabled).toBe(false);
+      expect(control(i18n.t('backup.pause'))?.disabled).toBe(true);
+    });
+  });
 });

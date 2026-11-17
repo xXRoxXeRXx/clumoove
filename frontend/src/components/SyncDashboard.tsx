@@ -13,6 +13,7 @@ import { connectSseLoop } from '../utils/sse';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import { logger } from '../utils/logger';
 import { isAuthFailureError } from '../utils/authFailure';
+import { canPerform } from '../utils/jobActions';
 import { ErrorOverview } from './ErrorOverview';
 import { TransferDetailHeader } from './TransferDetailHeader';
 import { TransferProgress } from './TransferProgress';
@@ -314,8 +315,9 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         ? Math.min(Math.round((job.processed_files / job.total_files) * 100), 100)
         : (job?.status === 'IDLE' || job?.status === 'COMPLETED' ? 100 : 0));
 
-  const canPause = ['IDLE', 'INDEXING', 'RUNNING', 'VERIFYING'].includes(job.status);
-  const canStart = ['IDLE', 'FAILED'].includes(job.status);
+  const canPause = canPerform(job, 'pause');
+  const canResume = canPerform(job, 'resume');
+  const canStart = canPerform(job, 'start');
   const isAuthFailure = job.status === 'FAILED' && isAuthFailureError(job.error_message);
   const oauthReauthRoles = (['source', 'target'] as const).filter((role) =>
     isOAuthProvider(role === 'source' ? job.source_provider : job.target_provider),
@@ -341,7 +343,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               </button>
             )}
 
-            {job.status === 'PAUSED' ? (
+            {canResume ? (
               <button
                 onClick={handleResume}
                 disabled={actionLoading}
@@ -352,7 +354,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             ) : canPause ? (
               <button
                 onClick={handlePause}
-                disabled={actionLoading || !canPause}
+                disabled={actionLoading}
                 className="ui-button-secondary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
               >
                 {t('sync.pause')}
