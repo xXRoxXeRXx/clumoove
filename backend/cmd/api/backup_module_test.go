@@ -206,8 +206,10 @@ func assertStreamPoolSlotsAvailable(t *testing.T, pool streamSlotPool, userID st
 
 func TestBackupModuleNilRateLimiterFailsClosed(t *testing.T) {
 	module := newBackupAPI(backupDependencies{
-		requireUserID: func(_ http.ResponseWriter, r *http.Request) (string, bool) {
-			return r.Header.Get("X-Test-User"), true
+		requestEnv: requestEnv{
+			requireUserID: func(_ http.ResponseWriter, r *http.Request) (string, bool) {
+				return r.Header.Get("X-Test-User"), true
+			},
 		},
 	})
 	mux := http.NewServeMux()
@@ -237,8 +239,10 @@ func TestBackupModuleLifecycleOwnershipAndStateTransitions(t *testing.T) {
 		db:            database,
 		encryptionKey: key,
 		rateLimiter:   limiter,
-		writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
-			audits = append(audits, action)
+		requestEnv: requestEnv{
+			writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
+				audits = append(audits, action)
+			},
 		},
 	})
 
@@ -468,8 +472,10 @@ func TestBackupModuleVerificationLifecycleAndStream(t *testing.T) {
 		rateLimiter:        limiter,
 		streamPool:         sharedPool,
 		streamPollInterval: 10 * time.Millisecond,
-		writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
-			audits = append(audits, action)
+		requestEnv: requestEnv{
+			writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
+				audits = append(audits, action)
+			},
 		},
 	})
 
@@ -622,8 +628,10 @@ func TestBackupModuleRestorePreviewsRunsReportsAndStreams(t *testing.T) {
 		rateLimiter:        limiter,
 		streamPool:         sharedPool,
 		streamPollInterval: 10 * time.Millisecond,
-		writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
-			audits = append(audits, action)
+		requestEnv: requestEnv{
+			writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
+				audits = append(audits, action)
+			},
 		},
 	})
 

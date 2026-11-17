@@ -174,8 +174,10 @@ func TestMigrationModuleConnectBrowseAndStartWorkflows(t *testing.T) {
 			indexed = append(indexed, id)
 			indexedMu.Unlock()
 		},
-		writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
-			audits = append(audits, action)
+		requestEnv: requestEnv{
+			writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
+				audits = append(audits, action)
+			},
 		},
 	})
 
@@ -375,8 +377,10 @@ func TestMigrationModuleLifecycleActionsAndOwnership(t *testing.T) {
 			indexed = append(indexed, id)
 			indexedMu.Unlock()
 		},
-		writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
-			audits = append(audits, action)
+		requestEnv: requestEnv{
+			writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
+				audits = append(audits, action)
+			},
 		},
 	})
 

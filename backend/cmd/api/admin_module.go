@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-
-	"backend/internal/db"
 )
 
 // adminDependencies contains only the infrastructure required by the
@@ -17,9 +15,8 @@ type adminDependencies struct {
 	db             *sql.DB
 	encryptionKey  string
 	cancelSyncJob  func(context.Context, string) error
-	writeAudit     func(*http.Request, db.AuditAction, string, string, map[string]interface{})
 	getRedirectURI func(*http.Request) string
-	logf           func(*http.Request, string, ...any)
+	requestEnv
 }
 
 type adminAPI struct {
@@ -27,34 +24,28 @@ type adminAPI struct {
 }
 
 func newAdminAPI(deps adminDependencies) *adminAPI {
+	deps.requestEnv = deps.requestEnv.withDefaults("admin")
 	defaults := &APIServer{db: deps.db}
 	if deps.cancelSyncJob == nil {
 		deps.cancelSyncJob = func(context.Context, string) error {
 			return errors.New("sync cancellation unavailable")
 		}
 	}
-	if deps.writeAudit == nil {
-		deps.writeAudit = func(*http.Request, db.AuditAction, string, string, map[string]interface{}) {}
-	}
 	if deps.getRedirectURI == nil {
 		deps.getRedirectURI = defaults.getRedirectURI
-	}
-	if deps.logf == nil {
-		deps.logf = defaults.logf
 	}
 	return &adminAPI{adminDependencies: deps}
 }
 
 func (s *APIServer) administration() *adminAPI {
 	return newAdminAPI(adminDependencies{
+		requestEnv:    s.requestEnv(),
 		db:            s.db,
 		encryptionKey: s.encryptionKey,
 		cancelSyncJob: func(ctx context.Context, syncJobID string) error {
 			return s.syncPass.Cancel(ctx, syncJobID)
 		},
-		writeAudit:     s.writeAudit,
 		getRedirectURI: s.getRedirectURI,
-		logf:           s.logf,
 	})
 }
 
