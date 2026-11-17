@@ -71,6 +71,11 @@ func (api *migrationAPI) handleMigrationReauth(w http.ResponseWriter, r *http.Re
 		return
 	}
 	count, err := db.ResetFailedTasksForRetry(api.db, r.Context(), id)
+	if errors.Is(err, db.ErrMigrationNotRetryable) {
+		// Tokens were refreshed; a migration that is not finished simply has
+		// nothing to requeue.
+		count, err = 0, nil
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return

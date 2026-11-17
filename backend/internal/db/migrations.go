@@ -14,6 +14,7 @@ import (
 
 var (
 	ErrMigrationNotFailed         = errors.New("migration is not in a failed state")
+	ErrMigrationNotRetryable      = errors.New("migration is not in a finished state")
 	ErrMigrationIndexingClaimLost = errors.New("migration indexing claim lost")
 )
 

@@ -313,12 +313,12 @@ func (api *migrationAPI) handleRetryFailed(w http.ResponseWriter, r *http.Reques
 	}
 	id := mig.ID
 
-	if mig.Status != "COMPLETED" && mig.Status != "COMPLETED_WITH_ERRORS" && mig.Status != "FAILED" {
+	// The status guard is part of the SQL, so a state read here could go stale.
+	count, err := db.ResetFailedTasksForRetry(api.db, r.Context(), id)
+	if errors.Is(err, db.ErrMigrationNotRetryable) {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
-
-	count, err := db.ResetFailedTasksForRetry(api.db, r.Context(), id)
 	if err != nil {
 		api.logf(r, "Error resetting failed tasks for retry: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -335,14 +335,10 @@ func (api *migrationAPI) handleReindex(w http.ResponseWriter, r *http.Request) {
 	}
 	id := mig.ID
 
-	if mig.Status != "FAILED" && mig.Status != "COMPLETED_WITH_ERRORS" {
-		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
-		return
-	}
-
+	// The status guard is part of the SQL, so a state read here could go stale.
 	if err := db.ResetMigrationForReindex(api.db, r.Context(), id); err != nil {
 		if errors.Is(err, db.ErrMigrationNotFailed) {
-			writeError(w, http.StatusConflict, ErrMigrationReindexConflict)
+			writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 			return
 		}
 		api.logf(r, "Reindex error for migration %s: %v", id, err)

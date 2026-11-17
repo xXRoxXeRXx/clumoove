@@ -38,6 +38,17 @@ var migrationTransitions = map[MigrationEvent]migrationTransition{
 // a transition never needs to bump notification_generation.
 var unfinishedMigrationStates = []string{"PENDING", "SCHEDULED", "INDEXING", "RUNNING", "VERIFYING", "PAUSED", "PAUSED_CONNECTION_LOSS"}
 
+// Source states of the two recovery operations on a finished migration. Like
+// migrationTransitions, they are bound into the UPDATE that performs the
+// operation (see ResetFailedTasksForRetry and ResetMigrationForReindex), never
+// checked against a status read beforehand.
+var (
+	// migrationRetryFailedFrom: requeue failed and cancelled tasks.
+	migrationRetryFailedFrom = []string{"COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED"}
+	// migrationReindexFrom: discard the queue and discover again.
+	migrationReindexFrom = []string{"FAILED", "COMPLETED_WITH_ERRORS"}
+)
+
 // TransitionMigration applies event to the migration if, and only if, its
 // current status allows it. It reports whether the transition applied; a
 // migration in any other state is left untouched.

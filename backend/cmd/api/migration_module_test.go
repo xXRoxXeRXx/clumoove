@@ -487,6 +487,8 @@ func TestMigrationModuleLifecycleActionsAndOwnership(t *testing.T) {
 	assertAPIResponseError(t, doReq(http.MethodPost, "/api/migration/m-run/reauth", "user-1", `{"role":"source","access_token":"new-a","refresh_token":"new-r"}`), http.StatusConflict, ErrMigrationInvalidState, "reauth conflict")
 	state.setOAuthConflict(false)
 
+	// Reauth requeues the tasks of a migration that stopped on an auth failure.
+	state.setStatus("m-run", "FAILED")
 	recReauth := doReq(http.MethodPost, "/api/migration/m-run/reauth", "user-1", `{"role":"source","access_token":"new-a","refresh_token":"new-r","expires_in":1800}`)
 	if recReauth.Code != http.StatusOK || !strings.Contains(recReauth.Body.String(), `"retried":2`) {
 		t.Fatalf("reauth = %d %s", recReauth.Code, recReauth.Body.String())
@@ -916,6 +918,14 @@ func (c migrationModuleTestConn) ExecContext(_ context.Context, query string, ar
 	defer c.state.mu.Unlock()
 
 	switch {
+	case strings.Contains(query, "SET failed_retry_done = FALSE") || strings.Contains(query, "failed_retry_done = FALSE"):
+		if len(args) >= 4 {
+			rec := c.state.migrations[args[2].Value.(string)]
+			if rec == nil || !statusInPQArray(rec.status, args[3].Value) {
+				return driver.RowsAffected(0), nil
+			}
+			rec.status = "RUNNING"
+		}
 	case strings.Contains(query, "status = ANY($4::text[])") && strings.Contains(query, "UPDATE migrations"):
 		rec := c.state.migrations[args[2].Value.(string)]
 		if rec == nil || !statusInPQArray(rec.status, args[3].Value) {
@@ -938,17 +948,13 @@ func (c migrationModuleTestConn) ExecContext(_ context.Context, query string, ar
 		if rec := c.state.migrations[args[3].Value.(string)]; rec != nil {
 			rec.sourceRefreshTokenEnc, _ = args[1].Value.(string)
 		}
-	case strings.Contains(query, "SET failed_retry_done = FALSE") || strings.Contains(query, "failed_retry_done = FALSE"):
-		if len(args) >= 3 {
-			if rec := c.state.migrations[args[2].Value.(string)]; rec != nil {
-				rec.status = "RUNNING"
-			}
-		}
 	case strings.Contains(query, "SET total_files = 0") && strings.Contains(query, "UPDATE migrations"):
-		if rec := c.state.migrations[args[0].Value.(string)]; rec != nil {
-			rec.status = "INDEXING"
-			rec.discoveryComplete = false
+		rec := c.state.migrations[args[0].Value.(string)]
+		if rec == nil || !statusInPQArray(rec.status, args[1].Value) {
+			return driver.RowsAffected(0), nil
 		}
+		rec.status = "INDEXING"
+		rec.discoveryComplete = false
 	case strings.Contains(query, "DELETE FROM migrations WHERE id = $1"):
 		delete(c.state.migrations, args[0].Value.(string))
 	}
@@ -1075,6 +1081,16 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 			}},
 			columns: 10,
 		}, nil
+	}
+	if strings.Contains(query, "FROM migrations WHERE id = $1 AND status = ANY($2::text[]) FOR UPDATE") {
+		c.state.mu.Lock()
+		rec := c.state.migrations[args[0].Value.(string)]
+		match := rec != nil && statusInPQArray(rec.status, args[1].Value)
+		c.state.mu.Unlock()
+		if !match {
+			return &backupProfileConnectionRows{columns: 1}, nil
+		}
+		return &backupProfileConnectionRows{rows: [][]driver.Value{{int64(1)}}, columns: 1}, nil
 	}
 	if strings.Contains(query, "FROM migrations WHERE id = $1") {
 		id := args[0].Value.(string)

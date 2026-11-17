@@ -4,12 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
 	"backend/internal/sanitize"
+
+	"github.com/lib/pq"
 )
 
 type Task struct {
@@ -543,6 +546,11 @@ func CancelPendingTasksCtx(ctx context.Context, db *sql.DB, migrationID string) 
 	return err
 }
 
+// ResetFailedTasksForRetry requeues a finished migration's failed and cancelled
+// tasks. The status guard (migrationRetryFailedFrom) is enforced in SQL: the
+// migration row is locked in the same transaction as the writes, so a status
+// read before the call cannot go stale. A migration in any other state is left
+// untouched and ErrMigrationNotRetryable is returned.
 func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID string) (int, error) {
 	// Authentication failures used to cancel the untouched queue after marking
 	// the migration terminal.  Include those tasks so a successful reauth can
@@ -552,6 +560,17 @@ func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID strin
 		return 0, err
 	}
 	defer tx.Rollback()
+
+	var locked int
+	err = tx.QueryRowContext(ctx, `
+		SELECT 1 FROM migrations WHERE id = $1 AND status = ANY($2::text[]) FOR UPDATE
+	`, migrationID, pq.Array(migrationRetryFailedFrom)).Scan(&locked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrMigrationNotRetryable
+	}
+	if err != nil {
+		return 0, err
+	}
 
 	var count int
 	var bytesSum int64
@@ -588,8 +607,8 @@ func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID strin
 		    status = 'RUNNING',
 		    error_message = NULL,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $3 AND status IN ('COMPLETED', 'FAILED', 'COMPLETED_WITH_ERRORS')
-	`, count, bytesSum, migrationID)
+		WHERE id = $3 AND status = ANY($4::text[])
+	`, count, bytesSum, migrationID, pq.Array(migrationRetryFailedFrom))
 	if err != nil {
 		return 0, err
 	}
@@ -610,6 +629,10 @@ func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID strin
 	return count, nil
 }
 
+// ResetMigrationForReindex wipes a failed migration's task queue and restarts
+// discovery. The status guard (migrationReindexFrom) is part of the UPDATE, and
+// that UPDATE runs first so nothing is deleted for a migration in any other
+// state: it returns ErrMigrationNotFailed instead.
 func ResetMigrationForReindex(db *sql.DB, ctx context.Context, migrationID string) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -617,20 +640,26 @@ func ResetMigrationForReindex(db *sql.DB, ctx context.Context, migrationID strin
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM tasks WHERE migration_id = $1`, migrationID); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM indexing_errors WHERE migration_id = $1`, migrationID); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`
+	res, err := tx.Exec(`
 		UPDATE migrations
 		SET total_files = 0, total_bytes = 0, processed_files = 0, processed_bytes = 0,
 		    live_bytes = 0, skipped_files = 0, failed_files = 0, status = 'INDEXING',
 		    discovery_complete = FALSE, discovery_generation = discovery_generation + 1,
 		    error_message = NULL, email_sent = FALSE, notification_generation = notification_generation + 1, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1
-	`, migrationID); err != nil {
+		WHERE id = $1 AND status = ANY($2::text[])
+	`, migrationID, pq.Array(migrationReindexFrom))
+	if err != nil {
+		return err
+	}
+	if affected, err := res.RowsAffected(); err != nil {
+		return err
+	} else if affected == 0 {
+		return ErrMigrationNotFailed
+	}
+	if _, err := tx.Exec(`DELETE FROM tasks WHERE migration_id = $1`, migrationID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM indexing_errors WHERE migration_id = $1`, migrationID); err != nil {
 		return err
 	}
 

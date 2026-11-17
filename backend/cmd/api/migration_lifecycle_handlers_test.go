@@ -210,3 +210,81 @@ func slicesEqual(a, b []string) bool {
 	}
 	return true
 }
+
+// Retry-failed and reindex are guarded by the UPDATE itself: a worker may move
+// the migration out of the retryable states after the handler loaded the row.
+func TestMigrationRetryAndReindexRejectStatusThatChangesAfterTheRead(t *testing.T) {
+	for _, tc := range []struct{ name, path string }{
+		{"retry-failed", "/api/migration/m-race/retry-failed"},
+		{"reindex", "/api/migration/m-race/reindex"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newLifecycleHandlerHarness(t, map[string]string{"m-race": "FAILED"})
+			h.state.setFailedTasks("m-race", 2, 10)
+			h.state.afterMigrationRead = func(id string) { h.state.setStatus(id, "RUNNING") }
+
+			rec := performMigrationModuleRequest(h.mux, http.MethodPost, tc.path, "user-1", "")
+
+			assertAPIResponseError(t, rec, http.StatusConflict, ErrMigrationInvalidState, tc.name+" racing a status change")
+			if got := h.state.getStatus("m-race"); got != "RUNNING" {
+				t.Fatalf("status = %q, want RUNNING left untouched", got)
+			}
+		})
+	}
+}
+
+// Retry-failed is only offered for finished migrations; reindex only for the
+// failed ones. Anything else is a conflict, decided in SQL.
+func TestMigrationRetryAndReindexStatusGuards(t *testing.T) {
+	for _, tc := range []struct {
+		path, status string
+		wantOK       bool
+	}{
+		{"retry-failed", "COMPLETED", true},
+		{"retry-failed", "COMPLETED_WITH_ERRORS", true},
+		{"retry-failed", "FAILED", true},
+		{"retry-failed", "RUNNING", false},
+		{"retry-failed", "PAUSED", false},
+		{"reindex", "FAILED", true},
+		{"reindex", "COMPLETED_WITH_ERRORS", true},
+		{"reindex", "COMPLETED", false},
+		{"reindex", "RUNNING", false},
+	} {
+		t.Run(tc.path+"/"+tc.status, func(t *testing.T) {
+			h := newLifecycleHandlerHarness(t, map[string]string{"m-1": tc.status})
+			h.state.setFailedTasks("m-1", 1, 1)
+
+			rec := performMigrationModuleRequest(h.mux, http.MethodPost, "/api/migration/m-1/"+tc.path, "user-1", "")
+
+			if tc.wantOK {
+				if rec.Code >= 400 {
+					t.Fatalf("%s from %s = %d %s", tc.path, tc.status, rec.Code, rec.Body.String())
+				}
+				return
+			}
+			assertAPIResponseError(t, rec, http.StatusConflict, ErrMigrationInvalidState, tc.path+" from "+tc.status)
+			if got := h.state.getStatus("m-1"); got != tc.status {
+				t.Fatalf("status = %q, want unchanged %q", got, tc.status)
+			}
+		})
+	}
+}
+
+// Reauth refreshes the tokens even when the migration is not finished; it then
+// simply has no tasks to requeue.
+func TestMigrationReauthOfUnfinishedMigrationRequeuesNothing(t *testing.T) {
+	h := newLifecycleHandlerHarness(t, map[string]string{"m-run": "RUNNING"})
+	h.state.setFailedTasks("m-run", 2, 10)
+	rec := h.state.migrations["m-run"]
+	rec.sourceProvider = "google"
+
+	out := performMigrationModuleRequest(h.mux, http.MethodPost, "/api/migration/m-run/reauth", "user-1",
+		`{"role":"source","access_token":"a","refresh_token":"r"}`)
+
+	if out.Code != http.StatusOK || !strings.Contains(out.Body.String(), `"retried":0`) {
+		t.Fatalf("reauth = %d %s", out.Code, out.Body.String())
+	}
+	if got := h.state.getStatus("m-run"); got != "RUNNING" {
+		t.Fatalf("status = %q, want RUNNING", got)
+	}
+}
