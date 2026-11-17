@@ -805,6 +805,15 @@ type migrationModuleDBState struct {
 	// ownership checked, letting a test change the row before the caller's next
 	// statement (a lost race).
 	afterMigrationRead func(id string)
+	// migrationLookups counts statements that read a migration row or check its
+	// ownership, so tests can assert how many lookups a request performs.
+	migrationLookups int
+}
+
+func (s *migrationModuleDBState) lookupCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.migrationLookups
 }
 
 func (s *migrationModuleDBState) setOwnershipErr(err error) {
@@ -958,6 +967,7 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 		id := args[0].Value.(string)
 		userID := args[1].Value.(string)
 		c.state.mu.Lock()
+		c.state.migrationLookups++
 		lookupErr := c.state.ownershipErr
 		rec := c.state.migrations[id]
 		owned := rec != nil && rec.userID == userID
@@ -1069,9 +1079,20 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 	if strings.Contains(query, "FROM migrations WHERE id = $1") {
 		id := args[0].Value.(string)
 		c.state.mu.Lock()
+		c.state.migrationLookups++
 		m := c.state.migrations[id]
 		afterRead := c.state.afterMigrationRead
+		lookupErr := c.state.ownershipErr
 		c.state.mu.Unlock()
+		if len(args) > 1 {
+			// Owner-scoped lookup: WHERE id = $1 AND user_id = $2.
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			if owner, _ := args[1].Value.(string); m != nil && m.userID != owner {
+				m = nil
+			}
+		}
 		if m == nil {
 			return &backupProfileConnectionRows{columns: 43}, nil
 		}

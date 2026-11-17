@@ -259,10 +259,11 @@ func (api *migrationAPI) handleTargetMkdir(w http.ResponseWriter, r *http.Reques
 }
 
 func (api *migrationAPI) handlePause(w http.ResponseWriter, r *http.Request) {
-	id, userID, ok := api.requireOwnedMigration(w, r)
+	owned, userID, ok := api.requireOwnedMigration(w, r)
 	if !ok {
 		return
 	}
+	id := owned.ID
 
 	// The allowed source state is enforced by the UPDATE itself: a worker can
 	// finish the migration between any earlier read and this write.
@@ -281,16 +282,12 @@ func (api *migrationAPI) handlePause(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *migrationAPI) handleResume(w http.ResponseWriter, r *http.Request) {
-	id, userID, ok := api.requireOwnedMigration(w, r)
+	mig, userID, ok := api.requireOwnedMigration(w, r)
 	if !ok {
 		return
 	}
+	id := mig.ID
 
-	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
 	if mig.Status != "PAUSED" && mig.Status != "PAUSED_CONNECTION_LOSS" {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
@@ -310,16 +307,12 @@ func (api *migrationAPI) handleResume(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *migrationAPI) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
-	id, _, ok := api.requireOwnedMigration(w, r)
+	mig, _, ok := api.requireOwnedMigration(w, r)
 	if !ok {
 		return
 	}
+	id := mig.ID
 
-	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
 	if mig.Status != "COMPLETED" && mig.Status != "COMPLETED_WITH_ERRORS" && mig.Status != "FAILED" {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
@@ -336,16 +329,12 @@ func (api *migrationAPI) handleRetryFailed(w http.ResponseWriter, r *http.Reques
 }
 
 func (api *migrationAPI) handleReindex(w http.ResponseWriter, r *http.Request) {
-	id, _, ok := api.requireOwnedMigration(w, r)
+	mig, _, ok := api.requireOwnedMigration(w, r)
 	if !ok {
 		return
 	}
+	id := mig.ID
 
-	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
 	if mig.Status != "FAILED" && mig.Status != "COMPLETED_WITH_ERRORS" {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
@@ -370,10 +359,11 @@ func (api *migrationAPI) handleReindex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *migrationAPI) handleCancel(w http.ResponseWriter, r *http.Request) {
-	id, userID, ok := api.requireOwnedMigration(w, r)
+	owned, userID, ok := api.requireOwnedMigration(w, r)
 	if !ok {
 		return
 	}
+	id := owned.ID
 
 	applied, err := db.TransitionMigration(r.Context(), api.db, id, db.MigrationEventCancel, nil)
 	if err != nil {
@@ -409,10 +399,11 @@ type ThreadsRequest struct {
 }
 
 func (api *migrationAPI) handleSetThreads(w http.ResponseWriter, r *http.Request) {
-	id, _, ok := api.requireOwnedMigration(w, r)
+	owned, _, ok := api.requireOwnedMigration(w, r)
 	if !ok {
 		return
 	}
+	id := owned.ID
 
 	var req ThreadsRequest
 	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
@@ -435,10 +426,11 @@ func (api *migrationAPI) handleSetThreads(w http.ResponseWriter, r *http.Request
 }
 
 func (api *migrationAPI) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
-	id, _, ok := api.requireOwnedMigration(w, r)
+	mig, _, ok := api.requireOwnedMigration(w, r)
 	if !ok {
 		return
 	}
+	id := mig.ID
 
 	var req BandwidthRequest
 	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
@@ -456,13 +448,12 @@ func (api *migrationAPI) handleSetBandwidth(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
-	if err == nil {
-		switch mig.Status {
-		case "COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED", "CANCELLED":
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
-			return
-		}
+	// mig was loaded before the update above; it only decides whether to
+	// broadcast the new limit to workers and gates no state change.
+	switch mig.Status {
+	case "COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED", "CANCELLED":
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
 	}
 
 	if api.publishBandwidthChange != nil {
@@ -1043,10 +1034,11 @@ func (api *migrationAPI) handleMigrationStream(w http.ResponseWriter, r *http.Re
 }
 
 func (api *migrationAPI) handleDeleteMigration(w http.ResponseWriter, r *http.Request) {
-	id, userID, ok := api.requireOwnedMigrationStrict(w, r)
+	owned, userID, ok := api.requireOwnedMigrationStrict(w, r)
 	if !ok {
 		return
 	}
+	id := owned.ID
 
 	// A worker can already have loaded this migration and be streaming a file.
 	// Mark it cancelled and broadcast before deleting its rows so active workers
@@ -1213,10 +1205,11 @@ func sanitizeErrorListItems(items []db.ErrorListItem) {
 }
 
 func (api *migrationAPI) handleMigrationErrors(w http.ResponseWriter, r *http.Request) {
-	id, _, ok := api.requireOwnedMigrationStrict(w, r)
+	mig, _, ok := api.requireOwnedMigrationStrict(w, r)
 	if !ok {
 		return
 	}
+	id := mig.ID
 	limit, offset := parseErrorListPagination(r)
 	items, total, err := db.GetMigrationErrorsContext(r.Context(), api.db, id, limit, offset)
 	if err != nil {
@@ -1224,11 +1217,9 @@ func (api *migrationAPI) handleMigrationErrors(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if mig, mErr := db.GetMigrationContext(r.Context(), api.db, id); mErr == nil {
-		for i := range items {
-			if items[i].Kind == "transfer" && items[i].ResourceType == "files" {
-				items[i].Path = processor.ResolveTargetPath(items[i].ResourceType, items[i].Path, items[i].Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
-			}
+	for i := range items {
+		if items[i].Kind == "transfer" && items[i].ResourceType == "files" {
+			items[i].Path = processor.ResolveTargetPath(items[i].ResourceType, items[i].Path, items[i].Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
 		}
 	}
 	sanitizeErrorListItems(items)
