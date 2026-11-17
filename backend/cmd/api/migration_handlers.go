@@ -1097,25 +1097,7 @@ func (api *migrationAPI) loadOwnedMigration(w http.ResponseWriter, r *http.Reque
 		return nil, false
 	}
 
-	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
-		} else {
-			if errorLabel != "" {
-				api.logf(r, "%s %s: %v\n", errorLabel, id, err)
-			}
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-		}
-		return nil, false
-	}
-
-	if !mig.UserID.Valid || mig.UserID.String != userID {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
-		return nil, false
-	}
-
-	return mig, true
+	return api.lookupOwnedMigrationDetail(w, r, id, userID, errorLabel)
 }
 
 func (api *migrationAPI) handleGetStatus(w http.ResponseWriter, r *http.Request) {
@@ -1310,18 +1292,8 @@ func (api *migrationAPI) handleMigrationDetailStream(w http.ResponseWriter, r *h
 	}
 	defer api.releaseMigrationStream(userID)
 
-	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
-		} else {
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-		}
-		return
-	}
-
-	if !mig.UserID.Valid || mig.UserID.String != userID {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
+	mig, ok := api.lookupOwnedMigrationDetail(w, r, id, userID, "Error fetching migration for stream")
+	if !ok {
 		return
 	}
 

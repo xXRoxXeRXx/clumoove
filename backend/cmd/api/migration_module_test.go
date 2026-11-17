@@ -810,6 +810,15 @@ type migrationModuleDBState struct {
 	// migrationLookups counts statements that read a migration row or check its
 	// ownership, so tests can assert how many lookups a request performs.
 	migrationLookups int
+	// unscopedRowReads counts reads of a full migration row that were not
+	// scoped to an owner, i.e. rows that may belong to someone else.
+	unscopedRowReads int
+}
+
+func (s *migrationModuleDBState) unscopedReads() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.unscopedRowReads
 }
 
 func (s *migrationModuleDBState) lookupCount() int {
@@ -969,6 +978,16 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 		owned := ok && len(row) > 1 && row[1] == userID
 		return &backupProfileConnectionRows{rows: [][]driver.Value{{owned}}, columns: 1}, nil
 	}
+	if strings.Contains(query, "SELECT EXISTS") && strings.Contains(query, "migrations") && len(args) == 1 {
+		c.state.mu.Lock()
+		lookupErr := c.state.ownershipErr
+		exists := c.state.migrations[args[0].Value.(string)] != nil
+		c.state.mu.Unlock()
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		return &backupProfileConnectionRows{rows: [][]driver.Value{{exists}}, columns: 1}, nil
+	}
 	if strings.Contains(query, "SELECT EXISTS") && strings.Contains(query, "migrations") {
 		id := args[0].Value.(string)
 		userID := args[1].Value.(string)
@@ -1096,6 +1115,9 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 		id := args[0].Value.(string)
 		c.state.mu.Lock()
 		c.state.migrationLookups++
+		if len(args) == 1 {
+			c.state.unscopedRowReads++
+		}
 		m := c.state.migrations[id]
 		afterRead := c.state.afterMigrationRead
 		lookupErr := c.state.ownershipErr

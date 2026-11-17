@@ -1035,6 +1035,15 @@ func VerifyMigrationOwnershipContext(ctx context.Context, db *sql.DB, migrationI
 	return exists, err
 }
 
+// MigrationExistsContext reports whether a migration with this id exists,
+// whoever owns it. It reads no row data; it only lets a caller whose
+// owner-scoped lookup found nothing tell a missing id from a foreign one.
+func MigrationExistsContext(ctx context.Context, db *sql.DB, migrationID string) (bool, error) {
+	var exists bool
+	err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM migrations WHERE id = $1)`, migrationID).Scan(&exists)
+	return exists, err
+}
+
 func GetMigrationOwnerID(database queryExecerContext, migrationID string) (string, error) {
 	var owner sql.NullString
 	err := database.QueryRowContext(context.Background(), `SELECT user_id FROM migrations WHERE id = $1`, migrationID).Scan(&owner)

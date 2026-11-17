@@ -166,6 +166,38 @@ func (api *migrationAPI) loadOwnedMigrationRow(w http.ResponseWriter, r *http.Re
 	return mig, userID, true
 }
 
+// lookupOwnedMigrationDetail is the loader behind the read endpoints (detail,
+// report, detail stream), whose contract differs from requireOwnedMigration: a
+// missing migration is 404 MIGRATION_NOT_FOUND, a foreign one 403
+// MIGRATION_NOT_OWNED, and a lookup failure 500 INTERNAL_ERROR.
+//
+// The row is fetched with the owner-scoped query, so another account's data is
+// never loaded. Only when that finds nothing does a row-less existence check
+// pick between 404 and 403.
+func (api *migrationAPI) lookupOwnedMigrationDetail(w http.ResponseWriter, r *http.Request, id, userID, errorLabel string) (*db.Migration, bool) {
+	mig, err := db.GetOwnedMigrationContext(r.Context(), api.db, id, userID)
+	if err == nil {
+		return mig, true
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		exists, existsErr := db.MigrationExistsContext(r.Context(), api.db, id)
+		if existsErr == nil {
+			if exists {
+				writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
+			} else {
+				writeError(w, http.StatusNotFound, ErrMigrationNotFound)
+			}
+			return nil, false
+		}
+		err = existsErr
+	}
+	if errorLabel != "" {
+		api.logf(r, "%s %s: %v\n", errorLabel, id, err)
+	}
+	writeError(w, http.StatusInternalServerError, ErrInternalError)
+	return nil, false
+}
+
 // migrationGarbageCollector owns the hourly deletion of old terminal migrations
 // and their task histories.
 type migrationGarbageCollector struct {

@@ -857,9 +857,10 @@ func (api *syncAPI) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 	}
 
 	// job was loaded before the update above; its status only decides whether
-	// to broadcast the new limit and gates no state change. Only active passes have a worker-side throttler to update. The persisted
-	// value is used when a later pass starts, so idle and terminal jobs do not
-	// need a Redis broadcast.
+	// to broadcast the new limit and gates no state change. Only active passes
+	// have a worker-side throttler to update. The persisted value is used when
+	// a later pass starts, so idle and terminal jobs do not need a Redis
+	// broadcast.
 	if job.Status != "INDEXING" && job.Status != "RUNNING" && job.Status != "VERIFYING" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return

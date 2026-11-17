@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"errors"
 	"net/http"
 	"testing"
@@ -81,4 +82,35 @@ func TestMigrationOwnershipFailuresKeepErrorContract(t *testing.T) {
 			assertAPIResponseError(t, rec, tc.wantStatus, tc.wantCode, tc.name)
 		})
 	}
+}
+
+// Detail, report and the detail stream are owner-scoped in SQL: another
+// account's row is never loaded, yet a missing id is still 404 and a foreign
+// one still 403.
+func TestMigrationDetailEndpointsNeverReadForeignRows(t *testing.T) {
+	for _, path := range []string{"/api/migration/m-1", "/api/migration/m-1/report", "/api/migration/m-1/stream"} {
+		t.Run(path, func(t *testing.T) {
+			mux, state := newOwnershipLookupHarness(t, "COMPLETED")
+
+			rec := performMigrationModuleRequest(mux, http.MethodGet, path, "user-2", "")
+			assertAPIResponseError(t, rec, http.StatusForbidden, ErrMigrationNotOwned, "foreign "+path)
+
+			gone := strings.Replace(path, "m-1", "m-gone", 1)
+			rec = performMigrationModuleRequest(mux, http.MethodGet, gone, "user-1", "")
+			assertAPIResponseError(t, rec, http.StatusNotFound, ErrMigrationNotFound, "missing "+gone)
+
+			if got := state.unscopedReads(); got != 0 {
+				t.Fatalf("%d unscoped migration row reads, want 0", got)
+			}
+		})
+	}
+}
+
+func TestMigrationDetailLookupFailureIsInternalError(t *testing.T) {
+	mux, state := newOwnershipLookupHarness(t, "COMPLETED")
+	state.setOwnershipErr(errors.New("db down"))
+
+	rec := performMigrationModuleRequest(mux, http.MethodGet, "/api/migration/m-1", "user-1", "")
+
+	assertAPIResponseError(t, rec, http.StatusInternalServerError, ErrInternalError, "detail lookup failure")
 }
