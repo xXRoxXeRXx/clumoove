@@ -147,15 +147,6 @@ const createSyncJobQuery = `
 		RETURNING id, created_at, updated_at
 	`
 
-// CreateSyncJob inserts a sync job without a schedule. Production callers that
-// need periodic execution must use CreateSyncJobAndSchedule.
-func CreateSyncJob(db *sql.DB, s *SyncJob) (string, error) {
-	if err := insertSyncJob(context.Background(), db, s); err != nil {
-		return "", err
-	}
-	return s.ID, nil
-}
-
 func insertSyncJob(ctx context.Context, database queryExecerContext, s *SyncJob) error {
 	return database.QueryRowContext(ctx,
 		createSyncJobQuery,
@@ -263,11 +254,6 @@ func GetSyncJobOwnerID(database queryExecerContext, syncJobID string) (string, e
 	return owner.String, nil
 }
 
-// GetSyncJobsForUser lists all sync jobs for a user
-func GetSyncJobsForUser(db *sql.DB, userID string) ([]SyncJob, error) {
-	return GetSyncJobsForUserContext(context.Background(), db, userID)
-}
-
 // GetSyncJobsForUserContext lists sync jobs while honoring caller cancellation.
 func GetSyncJobsForUserContext(ctx context.Context, db *sql.DB, userID string) ([]SyncJob, error) {
 	query := `
@@ -357,32 +343,6 @@ func UpdateSyncJobBandwidthLimit(db *sql.DB, id string, limitMbps int) error {
 	return nil
 }
 
-// PauseSyncJob atomically pauses an active job, or an idle job whose schedule
-// the user wants to disable. A connection-loss pause is deliberately excluded:
-// it remains owned by the automatic recovery flow.
-func PauseSyncJob(db *sql.DB, id string, errMsg *string) (bool, error) {
-	var errVal sql.NullString
-	if errMsg != nil {
-		errVal = sql.NullString{String: *errMsg, Valid: true}
-	}
-	var pausedID string
-	err := db.QueryRow(`
-		UPDATE sync_jobs
-		SET status = 'PAUSED', verification_lease_until = NULL,
-		    error_message = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE error_message END,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $2 AND status IN ('IDLE', 'INDEXING', 'RUNNING', 'VERIFYING')
-		RETURNING id
-	`, errVal, id).Scan(&pausedID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 // PauseSyncJobAndDeactivateSchedules serializes the user-pause lifecycle with
 // its schedule and task mutations. The returned generation is the pass that
 // was paused and must be used to fence asynchronous cancellation signals.
@@ -448,31 +408,6 @@ func PauseSyncJobAndDeactivateSchedules(ctx context.Context, database *sql.DB, i
 		return 0, false, err
 	}
 	return generation, true, nil
-}
-
-// ResumeSyncJob atomically returns a user-paused job to IDLE so a new pass can
-// be claimed. It must not overwrite a live or connection-recovery lifecycle.
-func ResumeSyncJob(db *sql.DB, id string, errMsg *string) (bool, error) {
-	var errVal sql.NullString
-	if errMsg != nil {
-		errVal = sql.NullString{String: *errMsg, Valid: true}
-	}
-	var resumedID string
-	err := db.QueryRow(`
-		UPDATE sync_jobs
-		SET status = 'IDLE',
-		    error_message = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE error_message END,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $2 AND status = 'PAUSED'
-		RETURNING id
-	`, errVal, id).Scan(&resumedID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // ResumeSyncJobAndReactivateSchedules serializes the user-resume lifecycle
@@ -787,16 +722,6 @@ func UpdateSyncJobTotals(db *sql.DB, id string, generation, totalFiles int, tota
 	return true, nil
 }
 
-// AddSyncJobLiveBytes adds bytes to the live_bytes counter of a sync job for real-time speed display
-func AddSyncJobLiveBytes(db *sql.DB, ctx context.Context, id string, bytesDelta int64) error {
-	if bytesDelta <= 0 {
-		return nil
-	}
-	query := `UPDATE sync_jobs SET live_bytes = live_bytes + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
-	_, err := db.ExecContext(ctx, query, bytesDelta, id)
-	return err
-}
-
 // AddSyncJobLiveBytesForGeneration prevents a late worker from changing the
 // live counter after its sync pass has been superseded.
 func AddSyncJobLiveBytesForGeneration(db *sql.DB, ctx context.Context, id string, generation int, bytesDelta int64) error {
@@ -807,47 +732,11 @@ func AddSyncJobLiveBytesForGeneration(db *sql.DB, ctx context.Context, id string
 	return err
 }
 
-// UpdateSyncJobRunStats updates all statistics and final status at the end of a sync run
-func UpdateSyncJobRunStats(db *sql.DB, id string, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) error {
-	var errVal sql.NullString
-	if errMsg != nil {
-		errVal = sql.NullString{String: *errMsg, Valid: true}
-	}
-	query := `
-		UPDATE sync_jobs
-		SET last_run_status = $1,
-		    error_message = $2,
-		    last_run_at = CURRENT_TIMESTAMP,
-		    total_files = $3,
-		    processed_files = $4,
-		    changed_files = $5,
-		    deleted_files = $6,
-		    failed_files = $7,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $8
-	`
-	_, err := db.Exec(query, lastRunStatus, errVal, total, processed, changed, deleted, failed, id)
-	return err
-}
-
-// FinalizeSyncJobPass records a transfer/verification pass and returns it to
-// IDLE only from RUNNING or VERIFYING. It must not accept INDEXING: a newly
-// resumed pass can be INDEXING while a cancelled predecessor is winding down.
-func FinalizeSyncJobPass(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) (bool, error) {
-	return finalizeSyncJobPassWithStates(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, nil, nil, finalizeRunningSyncPass)
-}
-
 // FinalizeSyncJobPassWithStates atomically stores the next delta baseline and
 // exposes the completed pass. A state-write failure therefore leaves the job
 // active instead of reporting a success that cannot be reconciled next pass.
 func FinalizeSyncJobPassWithStates(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, upserts []*SyncState, deletes []SyncStateDelete) (bool, error) {
 	return finalizeSyncJobPassWithStates(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, upserts, deletes, finalizeRunningSyncPass)
-}
-
-// FinalizeEmptySyncJobPass completes an index-only pass that produced no
-// tasks. This is deliberately separate from transfer finalization.
-func FinalizeEmptySyncJobPass(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) (bool, error) {
-	return finalizeSyncJobPassWithStates(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, nil, nil, finalizeEmptySyncPass)
 }
 
 // FinalizeEmptySyncJobPassWithStates is the index-only equivalent of
@@ -944,54 +833,6 @@ func FailSyncJobPass(db *sql.DB, id string, generation int, errMsg string) (bool
 		log.Printf("notification event creation for sync %s failed: %v", id, err)
 	}
 	return true, nil
-}
-
-// ListActiveSyncJobs lists sync jobs that are active (running or indexing) or enabled (idle)
-func ListActiveSyncJobs(db *sql.DB) ([]SyncJob, error) {
-	query := `
-		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,
-		       source_refresh_token_encrypted, source_token_expires_at,
-		       target_url, target_username, target_password_encrypted,
-		       target_refresh_token_encrypted, target_token_expires_at,
-		       source_provider, target_provider, direction, conflict_strategy,
-		       delete_propagation, interval_minutes, threads, status, target_dir,
-		       selected_paths, last_run_at, last_run_status, error_message,
-		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, verified_files, changed_files, deleted_files, failed_files,
-		       created_at, updated_at
-		FROM sync_jobs
-		WHERE status IN ('IDLE', 'INDEXING', 'RUNNING', 'PAUSED_CONNECTION_LOSS')
-	`
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var list []SyncJob
-	for rows.Next() {
-		var s SyncJob
-		err := rows.Scan(
-			&s.ID, &s.UserID, &s.SourceProfileID, &s.TargetProfileID, &s.SourceURL, &s.SourceUsername, &s.SourcePasswordEncrypted,
-			&s.SourceRefreshTokenEncrypted, &s.SourceTokenExpiresAt,
-			&s.TargetURL, &s.TargetUsername, &s.TargetPasswordEncrypted,
-			&s.TargetRefreshTokenEncrypted, &s.TargetTokenExpiresAt,
-			&s.SourceProvider, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
-			&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.Status, &s.TargetDir,
-			&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage,
-			&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.VerifiedFiles, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
-			&s.CreatedAt, &s.UpdatedAt,
-		)
-		if err != nil {
-			return nil, err
-		}
-		list = append(list, s)
-	}
-	return list, rows.Err()
-}
-
-// VerifySyncJobOwnership checks if a sync job belongs to a specific user
-func VerifySyncJobOwnership(db *sql.DB, syncJobID, userID string) (bool, error) {
-	return VerifySyncJobOwnershipContext(context.Background(), db, syncJobID, userID)
 }
 
 // VerifySyncJobOwnershipContext verifies ownership while honoring caller cancellation.
@@ -1103,38 +944,6 @@ func GetFailedSyncTasksForReport(db *sql.DB, syncJobID string, generation int) (
 	return tasks, rows.Err()
 }
 
-// IncrementSyncJobProgress updates processed/changed/deleted/failed counters and bytes
-func IncrementSyncJobProgress(db *sql.DB, ctx context.Context, id string, filesDelta, changedDelta, deletedDelta, failedDelta int, bytesDelta int64) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	query := `
-		UPDATE sync_jobs
-		SET processed_files = processed_files + $1,
-		    processed_bytes = processed_bytes + $2,
-		    live_bytes = GREATEST(live_bytes, processed_bytes + $2),
-		    changed_files = changed_files + $3,
-		    deleted_files = deleted_files + $4,
-		    failed_files = failed_files + $5,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $6
-	`
-	result, err := tx.ExecContext(ctx, query, filesDelta, bytesDelta, changedDelta, deletedDelta, failedDelta, id)
-	if err != nil {
-		return err
-	}
-	if affected, err := result.RowsAffected(); err != nil {
-		return err
-	} else if affected != 1 {
-		return sql.ErrNoRows
-	}
-
-	return tx.Commit()
-}
-
 func IncrementSyncJobProgressForGeneration(db *sql.DB, ctx context.Context, id string, generation, filesDelta, changedDelta, deletedDelta, failedDelta int, bytesDelta int64) error {
 	res, err := db.ExecContext(ctx, `UPDATE sync_jobs SET processed_files = processed_files + $1, processed_bytes = processed_bytes + $2, live_bytes = GREATEST(live_bytes, processed_bytes + $2), changed_files = changed_files + $3, deleted_files = deleted_files + $4, failed_files = failed_files + $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6 AND run_generation = $7 AND status = 'RUNNING'`, filesDelta, bytesDelta, changedDelta, deletedDelta, failedDelta, id, generation)
 	if err != nil {
@@ -1230,54 +1039,6 @@ func UpdateClaimedSyncTaskStatus(db *sql.DB, ctx context.Context, t *Task) error
 	return nil
 }
 
-// UpsertSyncState inserts or updates a sync state row
-func UpsertSyncState(db *sql.DB, s *SyncState) error {
-	var etagVal sql.NullString
-	if s.ETag != "" {
-		etagVal = sql.NullString{String: s.ETag, Valid: true}
-	}
-	query := `
-		INSERT INTO sync_state (sync_job_id, side, rel_path, size, mtime, source_hash, target_hash, etag)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (sync_job_id, side, rel_path) DO UPDATE SET
-			size = EXCLUDED.size,
-			mtime = EXCLUDED.mtime,
-			source_hash = EXCLUDED.source_hash,
-			target_hash = EXCLUDED.target_hash,
-			etag = EXCLUDED.etag
-	`
-	_, err := db.Exec(query, s.SyncJobID, s.Side, s.RelPath, s.Size, s.Mtime, s.SourceHash, s.TargetHash, etagVal)
-	return err
-}
-
-// GetSyncState retrieves a single sync state
-func GetSyncState(db *sql.DB, syncJobID, side, relPath string) (*SyncState, error) {
-	query := `
-		SELECT id, sync_job_id, side, rel_path, size, mtime, source_hash, target_hash, etag
-		FROM sync_state
-		WHERE sync_job_id = $1 AND side = $2 AND rel_path = $3
-	`
-	var s SyncState
-	var etagVal sql.NullString
-	err := db.QueryRow(query, syncJobID, side, relPath).Scan(
-		&s.ID, &s.SyncJobID, &s.Side, &s.RelPath, &s.Size, &s.Mtime, &s.SourceHash, &s.TargetHash, &etagVal,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if etagVal.Valid {
-		s.ETag = etagVal.String
-	}
-	return &s, nil
-}
-
-// DeleteSyncState deletes a single sync state entry
-func DeleteSyncState(db *sql.DB, syncJobID, side, relPath string) error {
-	query := `DELETE FROM sync_state WHERE sync_job_id = $1 AND side = $2 AND rel_path = $3`
-	_, err := db.Exec(query, syncJobID, side, relPath)
-	return err
-}
-
 // ListSyncStateByJob lists all sync states for a job
 func ListSyncStateByJob(db *sql.DB, syncJobID string) ([]SyncState, error) {
 	query := `
@@ -1369,27 +1130,6 @@ func BulkCreateSyncTasks(ctx context.Context, db *sql.DB, tasks []*Task) error {
 		}
 	}
 
-	return tx.Commit()
-}
-
-// BulkUpsertSyncStates inserts or updates many sync_state rows inside a single
-// transaction. For each (sync_job_id, side, rel_path) pair that already exists
-// the size/mtime/hash columns are updated; new rows are inserted.
-// This replaces the per-file UpsertSyncState loop and is dramatically faster for
-// large directory trees (e.g. 1000 files → 1 tx with 1000 statements vs 1000 txs).
-func BulkUpsertSyncStates(db *sql.DB, upserts []*SyncState, deletes []SyncStateDelete) error {
-	if len(upserts) == 0 && len(deletes) == 0 {
-		return nil
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("bulk upsert sync states: begin tx: %w", err)
-	}
-	defer tx.Rollback()
-	if err := bulkUpsertSyncStatesTx(tx, upserts, deletes); err != nil {
-		return err
-	}
 	return tx.Commit()
 }
 
@@ -1509,11 +1249,6 @@ type SyncListParams struct {
 	Limit int
 }
 
-// ListAllSyncJobs returns every sync job across all users (read-only oversight).
-func ListAllSyncJobs(database *sql.DB, p SyncListParams) ([]AdminSyncView, int, error) {
-	return ListAllSyncJobsContext(context.Background(), database, p)
-}
-
 // ListAllSyncJobsContext lists sync jobs for administration while honoring caller cancellation.
 func ListAllSyncJobsContext(ctx context.Context, database *sql.DB, p SyncListParams) ([]AdminSyncView, int, error) {
 	var total int
@@ -1590,17 +1325,6 @@ func GetUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID 
 		tasks = append(tasks, &t)
 	}
 	return tasks, rows.Err()
-}
-
-// UpdateSyncStateTargetHash updates the target_hash in sync_state for a specific file.
-func UpdateSyncStateTargetHash(db *sql.DB, ctx context.Context, syncJobID, relPath, targetHash string) error {
-	query := `
-		UPDATE sync_state
-		SET target_hash = $3
-		WHERE sync_job_id = $1 AND side = 'target' AND rel_path = $2
-	`
-	_, err := db.ExecContext(ctx, query, syncJobID, relPath, targetHash)
-	return err
 }
 
 var ErrSyncInvalidState = errors.New("sync job is in an active state and cannot be modified")

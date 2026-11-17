@@ -6,11 +6,11 @@ import (
 )
 
 func TestRestoreConfigFingerprintCanonicalizesEquivalentConfiguration(t *testing.T) {
-	first, err := RestoreConfigFingerprint("snapshot", StringArray{"/documents/", "photos/sub"}, "Google", "/restore/", "profile", "rename")
+	first, err := RestoreConfigFingerprintWithIdentity("snapshot", StringArray{"/documents/", "photos/sub"}, "Google", "/restore/", "profile:profile", "rename")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := RestoreConfigFingerprint("snapshot", StringArray{"photos/sub/", "documents"}, "google", "restore", "profile", "RENAME")
+	second, err := RestoreConfigFingerprintWithIdentity("snapshot", StringArray{"photos/sub/", "documents"}, "google", "restore", "profile:profile", "RENAME")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,11 +21,11 @@ func TestRestoreConfigFingerprintCanonicalizesEquivalentConfiguration(t *testing
 
 func TestRestoreConfigFingerprintPathNormalization(t *testing.T) {
 	// Root and clean paths
-	first, err := RestoreConfigFingerprint("snap1", StringArray{"/"}, "s3", "/target", "p1", "OVERWRITE")
+	first, err := RestoreConfigFingerprintWithIdentity("snap1", StringArray{"/"}, "s3", "/target", "profile:p1", "OVERWRITE")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := RestoreConfigFingerprint("snap1", StringArray{""}, "s3", "target/", "p1", "overwrite")
+	second, err := RestoreConfigFingerprintWithIdentity("snap1", StringArray{""}, "s3", "target/", "profile:p1", "overwrite")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,11 +34,11 @@ func TestRestoreConfigFingerprintPathNormalization(t *testing.T) {
 	}
 
 	// Redundant slashes and dots
-	a, err := RestoreConfigFingerprint("snap1", StringArray{"a//b/c", "d/./e"}, "local", "/", "p1", "SKIP")
+	a, err := RestoreConfigFingerprintWithIdentity("snap1", StringArray{"a//b/c", "d/./e"}, "local", "/", "profile:p1", "SKIP")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := RestoreConfigFingerprint("snap1", StringArray{"d/e", "/a/b/c/"}, "local", "", "p1", "skip")
+	b, err := RestoreConfigFingerprintWithIdentity("snap1", StringArray{"d/e", "/a/b/c/"}, "local", "", "profile:p1", "skip")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,15 +48,15 @@ func TestRestoreConfigFingerprintPathNormalization(t *testing.T) {
 }
 
 func TestRestoreConfigFingerprintChangesForTargetOrSelection(t *testing.T) {
-	base, err := RestoreConfigFingerprint("snapshot", StringArray{"documents"}, "google", "restore", "profile", "RENAME")
+	base, err := RestoreConfigFingerprintWithIdentity("snapshot", StringArray{"documents"}, "google", "restore", "profile:profile", "RENAME")
 	if err != nil {
 		t.Fatal(err)
 	}
-	changedPath, err := RestoreConfigFingerprint("snapshot", StringArray{"photos"}, "google", "restore", "profile", "RENAME")
+	changedPath, err := RestoreConfigFingerprintWithIdentity("snapshot", StringArray{"photos"}, "google", "restore", "profile:profile", "RENAME")
 	if err != nil {
 		t.Fatal(err)
 	}
-	changedRoot, err := RestoreConfigFingerprint("snapshot", StringArray{"documents"}, "google", "different", "profile", "RENAME")
+	changedRoot, err := RestoreConfigFingerprintWithIdentity("snapshot", StringArray{"documents"}, "google", "different", "profile:profile", "RENAME")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,12 +70,12 @@ func TestRestoreConfigFingerprintChangesForTargetOrSelection(t *testing.T) {
 }
 
 func TestRestoreConfigFingerprintGolden(t *testing.T) {
-	fp, err := RestoreConfigFingerprint(
+	fp, err := RestoreConfigFingerprintWithIdentity(
 		"00000000-0000-0000-0000-000000000001",
 		StringArray{"pics", "docs"},
 		"Nextcloud",
 		"/Restored/",
-		"11111111-1111-1111-1111-111111111111",
+		"profile:11111111-1111-1111-1111-111111111111",
 		"rename",
 	)
 	if err != nil {

@@ -32,7 +32,6 @@ type RestoreStore interface {
 	SkipBlockedRestoreItemsContext(ctx context.Context) (int64, error)
 	ListRestoreItemBlocksContext(ctx context.Context, itemID, runID string) ([]RestoreItemBlock, error)
 	SetRestoreItemTargetPathContext(ctx context.Context, itemID, runID, targetPath string, claimEpoch ...int64) error
-	SetRestoreItemResolvedTargetPathContext(ctx context.Context, itemID, runID, resolvedTargetPath string, claimEpoch ...int64) error
 	SetRestoreDirectoryTargetPathContext(ctx context.Context, itemID, runID, snapshotPath, targetPath string, claimEpoch ...int64) error
 	ReserveRestoreTargetPathContext(ctx context.Context, runID, itemID, targetPath string) (bool, error)
 	MoveRestoreTargetReservationContext(ctx context.Context, runID, itemID, targetPath string) (bool, error)
@@ -134,10 +133,6 @@ func (s postgresRestoreStore) ListRestoreItemBlocksContext(ctx context.Context, 
 
 func (s postgresRestoreStore) SetRestoreItemTargetPathContext(ctx context.Context, itemID, runID, targetPath string, claimEpoch ...int64) error {
 	return SetRestoreItemTargetPathContext(ctx, s.db, itemID, runID, targetPath, claimEpoch...)
-}
-
-func (s postgresRestoreStore) SetRestoreItemResolvedTargetPathContext(ctx context.Context, itemID, runID, resolvedTargetPath string, claimEpoch ...int64) error {
-	return SetRestoreItemResolvedTargetPathContext(ctx, s.db, itemID, runID, resolvedTargetPath, claimEpoch...)
 }
 
 func (s postgresRestoreStore) SetRestoreDirectoryTargetPathContext(ctx context.Context, itemID, runID, snapshotPath, targetPath string, claimEpoch ...int64) error {

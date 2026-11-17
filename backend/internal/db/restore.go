@@ -39,16 +39,9 @@ func normalizeRestorePath(p string) string {
 	return clean
 }
 
-// RestoreConfigFingerprint is the stable identity of a restore configuration.
-// Limits and mutable credentials are deliberately excluded so a retry can use
-// fresh credentials while still proving it targets the same immutable data.
-func RestoreConfigFingerprint(snapshotID string, selectedPaths StringArray, provider, targetRoot, profileID, conflictStrategy string) ([sha256.Size]byte, error) {
-	return RestoreConfigFingerprintWithIdentity(snapshotID, selectedPaths, provider, targetRoot, "profile:"+profileID, conflictStrategy)
-}
-
-// RestoreConfigFingerprintWithIdentity is the direct-credential variant of
-// RestoreConfigFingerprint. identity is canonical non-secret connection
-// identity (for example an owned profile ID or normalized endpoint/user), so
+// RestoreConfigFingerprintWithIdentity is the stable identity of a restore
+// configuration. identity is canonical non-secret connection identity (for
+// example "profile:<id>" for an owned profile or a normalized endpoint/user), so
 // changing only a password, OAuth access token, or run limits never changes a
 // retry's immutable configuration.
 func RestoreConfigFingerprintWithIdentity(snapshotID string, selectedPaths StringArray, provider, targetRoot, identity, conflictStrategy string) ([sha256.Size]byte, error) {
@@ -263,13 +256,6 @@ func ListRestorePreviewItemsContext(ctx context.Context, database *sql.DB, previ
 	return items, rows.Err()
 }
 
-// ClaimNextRestoreItemContext claims one item while enforcing the persisted
-// per-run thread cap. Directories are claimed parent-first so empty directories
-// are preserved and files never race their required parent creation.
-func ClaimNextRestoreItemContext(ctx context.Context, database *sql.DB) (*RestoreItem, error) {
-	return ClaimNextRestoreItemForWorkerContext(ctx, database, "")
-}
-
 func ClaimNextRestoreItemForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*RestoreItem, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
@@ -409,12 +395,6 @@ func SkipRestoreItemContext(ctx context.Context, database *sql.DB, itemID, runID
 func SetRestoreItemTargetPathContext(ctx context.Context, database *sql.DB, itemID, runID, targetPath string, claimEpoch ...int64) error {
 	epoch := restoreClaimEpoch(claimEpoch)
 	_, err := database.ExecContext(ctx, `UPDATE restore_items SET target_path = $3, resolved_target_path = $3 WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND ($4 = 0 OR claim_epoch = $4)`, itemID, runID, targetPath, epoch)
-	return err
-}
-
-func SetRestoreItemResolvedTargetPathContext(ctx context.Context, database *sql.DB, itemID, runID, resolvedTargetPath string, claimEpoch ...int64) error {
-	epoch := restoreClaimEpoch(claimEpoch)
-	_, err := database.ExecContext(ctx, `UPDATE restore_items SET resolved_target_path = $3 WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND ($4 = 0 OR claim_epoch = $4)`, itemID, runID, resolvedTargetPath, epoch)
 	return err
 }
 
@@ -829,13 +809,6 @@ func restoreRunDestinations(run *RestoreRun) []any {
 	return []any{&run.ID, &run.RestoreJobID, &run.Generation, &run.Status, &run.TotalFiles, &run.TotalBytes, &run.ProcessedFiles, &run.ProcessedBytes, &run.FailedFiles, &run.ErrorCode, &run.StartedAt, &run.FinishedAt, &run.CreatedAt, &run.UpdatedAt}
 }
 
-// ClaimNextQueuedRestoreRunContext reserves a run for planning. Actual content
-// workers only see items after PlanRestoreRunContext commits their frozen block
-// recipes and pack pins.
-func ClaimNextQueuedRestoreRunContext(ctx context.Context, database *sql.DB) (*RestoreJob, *RestoreRun, error) {
-	return ClaimNextQueuedRestoreRunForWorkerContext(ctx, database, "")
-}
-
 func ClaimNextQueuedRestoreRunForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*RestoreJob, *RestoreRun, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
@@ -1055,12 +1028,6 @@ func CreateRestorePreviewContext(ctx context.Context, database *sql.DB, preview 
 	return id, err
 }
 
-// ClaimNextRestorePreviewContext assigns one queued preview to a worker. The
-// transition itself is the fence; another worker cannot observe it as QUEUED.
-func ClaimNextRestorePreviewContext(ctx context.Context, database *sql.DB) (*RestorePreview, error) {
-	return ClaimNextRestorePreviewForWorkerContext(ctx, database, "")
-}
-
 func ClaimNextRestorePreviewForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*RestorePreview, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
@@ -1094,16 +1061,6 @@ func ClaimNextRestorePreviewForWorkerContext(ctx context.Context, database *sql.
 	return preview, nil
 }
 
-// CompleteRestorePreviewContext records advisory counts and assigns a fixed
-// expiry. The snapshot remains rechecked atomically when it is consumed.
-func CompleteRestorePreviewContext(ctx context.Context, database *sql.DB, previewID string, files int, bytes int64) (bool, error) {
-	return CompleteRestorePreviewWithStatsContext(ctx, database, previewID, RestorePreviewStats{Files: files, Bytes: bytes})
-}
-
-func CompleteRestorePreviewWithStatsContext(ctx context.Context, database *sql.DB, previewID string, stats RestorePreviewStats) (bool, error) {
-	return CompleteRestorePreviewWithStatsFencedContext(ctx, database, previewID, 0, "", stats)
-}
-
 func CompleteRestorePreviewWithStatsFencedContext(ctx context.Context, database *sql.DB, previewID string, generation int, workerID string, stats RestorePreviewStats) (bool, error) {
 	if len(stats.ConflictExamples) == 0 {
 		stats.ConflictExamples = json.RawMessage("[]")
@@ -1123,10 +1080,6 @@ func CompleteRestorePreviewWithStatsFencedContext(ctx context.Context, database 
 	}
 	n, err := result.RowsAffected()
 	return n == 1, err
-}
-
-func FailRestorePreviewContext(ctx context.Context, database *sql.DB, previewID, errorCode string) error {
-	return FailRestorePreviewFencedContext(ctx, database, previewID, 0, "", errorCode)
 }
 
 func FailRestorePreviewFencedContext(ctx context.Context, database *sql.DB, previewID string, generation int, workerID, errorCode string) error {
@@ -1150,35 +1103,6 @@ func CancelRestorePreviewForOwnerContext(ctx context.Context, database *sql.DB, 
 	}
 	count, err := result.RowsAffected()
 	return count == 1, err
-}
-
-// CountRestorePreviewSelectionContext counts only stable files selected from a
-// visible snapshot. A selected path includes the file/directory itself and its
-// descendants; callers have already normalized and de-overlapped the paths.
-func CountRestorePreviewSelectionContext(ctx context.Context, database *sql.DB, preview *RestorePreview) (int, int64, error) {
-	if preview == nil || len(preview.SelectedPaths) == 0 {
-		return 0, 0, errors.New("restore selection is empty")
-	}
-	selectedPaths, err := json.Marshal(preview.SelectedPaths)
-	if err != nil {
-		return 0, 0, fmt.Errorf("encode restore selection: %w", err)
-	}
-	var files int
-	var bytes int64
-	err = database.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(SUM(i.size_bytes), 0)
-		FROM backup_snapshot_items i
-		JOIN backup_snapshots s ON s.id = i.backup_snapshot_id
-		WHERE s.id = $1 AND s.backup_job_id = $2 AND s.state IN ('READY', 'PARTIAL')
-			AND s.integrity_state <> 'DAMAGED' AND NOT i.is_dir AND i.state = 'AVAILABLE'
-			AND EXISTS (
-				SELECT 1 FROM jsonb_array_elements_text($3::jsonb) AS selected(path)
-				WHERE selected.path = '' OR i.relative_path = selected.path OR i.relative_path LIKE selected.path || '/%'
-			)`, preview.BackupSnapshotID, preview.BackupJobID, string(selectedPaths)).Scan(&files, &bytes)
-	if err != nil {
-		return 0, 0, err
-	}
-	return files, bytes, nil
 }
 
 // ExpireRestorePreviewsContext clears previews which can no longer be

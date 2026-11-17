@@ -526,7 +526,7 @@ func TestFinalizeAndFailSyncJobPass_NotificationEvents(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		finalized, err := FinalizeSyncJobPass(db, syncJob1, 1, "COMPLETED", nil, 5, 5, 1, 0, 0)
+		finalized, err := FinalizeSyncJobPassWithStates(db, syncJob1, 1, "COMPLETED", nil, 5, 5, 1, 0, 0, nil, nil)
 		if err != nil || !finalized {
 			t.Fatalf("FinalizeSyncJobPass failed = (%v, %v), want (true, nil)", finalized, err)
 		}
