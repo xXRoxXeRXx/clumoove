@@ -185,6 +185,71 @@ func TestGatewayOwnsNoFeatureHandlers(t *testing.T) {
 	}
 }
 
+// gatewayMethodAllowlist is the explicit set of methods APIServer may declare:
+// feature-module accessors and gateway composition, plus cross-cutting HTTP
+// policy (logging, request identity, client/scheme resolution, audit, headers).
+// Feature-owned behaviour such as daemons, profile access wiring, and request
+// connection helpers belongs on its feature module or shared component.
+var gatewayMethodAllowlist = map[string]bool{
+	// composition
+	"Handler": true, "contractTestHandler": true, "wrapMiddleware": true,
+	"setupRoutes": true, "featureModules": true, "routeMiddleware": true,
+	"buildMux": true, "backgroundDaemons": true, "profiles": true,
+	"streamPool": true, "accounts": true, "administration": true,
+	"backups": true, "files": true, "migrations": true, "notifications": true,
+	"connectionProfiles": true, "schedules": true, "syncs": true,
+	// cross-cutting HTTP policy
+	"logf": true, "logfContext": true, "infof": true, "warnf": true,
+	"logln": true, "loglnContext": true, "requestLogMiddleware": true,
+	"clientIPCategory": true, "securityHeadersMiddleware": true,
+	"requireUserID": true, "clientIP": true, "isSecure": true,
+	"writeAudit": true, "getRedirectURI": true, "requestScheme": true,
+	"publicHost": true,
+}
+
+// APIServer carries composition and cross-cutting HTTP policy only; any other
+// method is feature-owned behaviour that must move to its feature module.
+func TestGatewayDeclaresOnlyCompositionMethods(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(info os.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parse package: %v", err)
+	}
+	for _, pkg := range pkgs {
+		for fileName, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 {
+					continue
+				}
+				star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+				if !ok {
+					continue
+				}
+				if ident, ok := star.X.(*ast.Ident); ok && ident.Name == "APIServer" && !gatewayMethodAllowlist[fn.Name.Name] {
+					t.Errorf("%s: APIServer.%s is not in the composition allowlist; move it to its feature module", fileName, fn.Name.Name)
+				}
+			}
+		}
+	}
+}
+
+// Feature modules own their background daemons; the gateway only composes them
+// so main.go can start them without knowing what they do.
+func TestGatewayComposesFeatureOwnedDaemons(t *testing.T) {
+	server := newTestAPIGateway(t, nil)
+	var names []string
+	for _, d := range server.backgroundDaemons() {
+		names = append(names, d.name())
+	}
+	want := []string{"oauth_rotation", "migration_gc"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("backgroundDaemons() = %v, want %v", names, want)
+	}
+}
+
 // The gateway file composes modules; it must never declare route specs itself.
 func TestGatewayFileDeclaresNoRouteSpecs(t *testing.T) {
 	fset := token.NewFileSet()

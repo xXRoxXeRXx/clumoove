@@ -56,8 +56,7 @@ type APIServer struct {
 	// authStateLookup is nil in production, where AuthMiddleware queries PostgreSQL.
 	// Tests may inject an in-memory lookup to exercise route access contracts.
 	authStateLookup auth.AuthStateLookup
-	oauthRotationMu sync.Mutex
-	oauthRotations  *oauth.RotationCache
+	oauthRotations  sharedRotationCache
 }
 
 // Rate-limit and quota configuration for the public / sensitive endpoints.
@@ -209,8 +208,9 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	go server.RunOAuthRotationDaemon(ctx)
-	go server.runGarbageCollector(ctx)
+	for _, daemon := range server.backgroundDaemons() {
+		go daemon.Run(ctx)
+	}
 
 	sched := scheduler.NewScheduler(database, q, server.indexer)
 	sched.SetSyncEngine(syncEng)

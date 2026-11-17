@@ -1425,23 +1425,3 @@ func (api *migrationAPI) handleMigrationDetailStream(w http.ResponseWriter, r *h
 		}
 	}
 }
-
-func (s *APIServer) runGarbageCollector(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Hour)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.loglnContext(ctx, "Running Garbage Collector for old migrations...")
-			count, err := db.DeleteOldMigrations(s.db)
-			if err != nil {
-				s.logfContext(ctx, "Garbage Collector error: %v\n", err)
-			} else if count > 0 {
-				s.logfContext(ctx, "Garbage Collector cleaned up %d old migrations & task histories.\n", count)
-			}
-		}
-	}
-}
