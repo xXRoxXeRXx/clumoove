@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -130,4 +132,81 @@ func TestMigrationDeleteOfFinishedMigrationDoesNotCancelIt(t *testing.T) {
 			t.Fatalf("audits = %v, want no cancellation for an already finished migration", *h.audits)
 		}
 	}
+}
+
+// A user may resume a connection-loss pause early (unlike a sync job, whose
+// connection-loss pause belongs to the recovery worker). The SQL guard and the
+// advertised allowed_actions must agree on it.
+func TestMigrationResumeFromConnectionLossMatchesAllowedActions(t *testing.T) {
+	h := newLifecycleHandlerHarness(t, map[string]string{"m-loss": "PAUSED_CONNECTION_LOSS", "m-run": "RUNNING"})
+
+	if got := decodeAllowedActions(t, performMigrationModuleRequest(h.mux, http.MethodGet, "/api/migration/m-loss", "user-1", "")); !slicesEqual(got, []string{"resume", "cancel"}) {
+		t.Fatalf("detail allowed_actions = %v, want [resume cancel]", got)
+	}
+	assertAPIResponseError(t, performMigrationModuleRequest(h.mux, http.MethodPost, "/api/migration/m-run/resume", "user-1", ""), http.StatusConflict, ErrMigrationInvalidState, "resume RUNNING")
+
+	rec := performMigrationModuleRequest(h.mux, http.MethodPost, "/api/migration/m-loss/resume", "user-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resume = %d %s", rec.Code, rec.Body.String())
+	}
+	if got := h.state.getStatus("m-loss"); got != "INDEXING" {
+		t.Fatalf("status = %q, want INDEXING (discovery is incomplete in the fixture)", got)
+	}
+}
+
+func TestMigrationListAndDetailExposeAllowedActions(t *testing.T) {
+	h := newLifecycleHandlerHarness(t, map[string]string{"m-run": "RUNNING", "m-done": "COMPLETED"})
+
+	rec := performMigrationModuleRequest(h.mux, http.MethodGet, "/api/migration", "user-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d %s", rec.Code, rec.Body.String())
+	}
+	var list []struct {
+		ID             string   `json:"id"`
+		AllowedActions []string `json:"allowed_actions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{"m-run": {"pause", "cancel"}, "m-done": {}}
+	if len(list) != len(want) {
+		t.Fatalf("list = %+v", list)
+	}
+	for _, item := range list {
+		if item.AllowedActions == nil || !slicesEqual(item.AllowedActions, want[item.ID]) {
+			t.Errorf("list %s allowed_actions = %v, want %v", item.ID, item.AllowedActions, want[item.ID])
+		}
+	}
+	if got := decodeAllowedActions(t, performMigrationModuleRequest(h.mux, http.MethodGet, "/api/migration/m-run", "user-1", "")); !slicesEqual(got, []string{"pause", "cancel"}) {
+		t.Fatalf("detail allowed_actions = %v", got)
+	}
+}
+
+func decodeAllowedActions(t *testing.T, rec *httptest.ResponseRecorder) []string {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status request = %d %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		AllowedActions []string `json:"allowed_actions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.AllowedActions == nil {
+		t.Fatalf("allowed_actions missing from %s", rec.Body.String())
+	}
+	return body.AllowedActions
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 var (
@@ -103,16 +105,18 @@ func (m Migration) MarshalJSON() ([]byte, error) {
 	type Alias Migration
 	return json.Marshal(&struct {
 		Alias
-		UserID          *string `json:"user_id"`
-		SourceProfileID *string `json:"source_profile_id"`
-		TargetProfileID *string `json:"target_profile_id"`
-		ErrorMessage    *string `json:"error_message"`
+		UserID          *string     `json:"user_id"`
+		SourceProfileID *string     `json:"source_profile_id"`
+		TargetProfileID *string     `json:"target_profile_id"`
+		ErrorMessage    *string     `json:"error_message"`
+		AllowedActions  []JobAction `json:"allowed_actions"`
 	}{
 		Alias:           Alias(m),
 		UserID:          nullStringPtr(m.UserID),
 		SourceProfileID: nullStringPtr(m.SourceProfileID),
 		TargetProfileID: nullStringPtr(m.TargetProfileID),
 		ErrorMessage:    nullStringPtr(m.ErrorMessage),
+		AllowedActions:  AllowedMigrationActions(m.Status),
 	})
 }
 
@@ -399,23 +403,23 @@ func RecoverConnectionLostMigration(db *sql.DB, id string) (recovered bool, need
 }
 
 // ResumeMigration continues execution when discovery is complete, otherwise it
-// creates a new fenced discovery attempt.  The returned bool tells the caller
-// whether it must start an indexer.
-func ResumeMigration(db *sql.DB, id string) (bool, error) {
-	var needsDiscovery bool
-	err := db.QueryRow(`
+// creates a new fenced discovery attempt.  resumed reports whether the
+// status guard (the resume sources of the migration action table) applied, and
+// needsDiscovery whether the caller must start an indexer.
+func ResumeMigration(db *sql.DB, id string) (resumed bool, needsDiscovery bool, err error) {
+	err = db.QueryRow(`
 		UPDATE migrations
 		SET status = CASE WHEN discovery_complete THEN 'RUNNING' ELSE 'INDEXING' END,
 		    discovery_generation = CASE WHEN discovery_complete THEN discovery_generation ELSE discovery_generation + 1 END,
 		    indexing_lease_until = CASE WHEN discovery_complete THEN NULL ELSE CURRENT_TIMESTAMP + ($2 * INTERVAL '1 second') END,
 		    error_message = NULL, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND status IN ('PAUSED', 'PAUSED_CONNECTION_LOSS')
+		WHERE id = $1 AND status = ANY($3::text[])
 		RETURNING NOT discovery_complete
-	`, id, int64(indexingLeaseDuration.Seconds())).Scan(&needsDiscovery)
+	`, id, int64(indexingLeaseDuration.Seconds()), pq.Array(migrationActionSources[JobActionResume])).Scan(&needsDiscovery)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return false, false, nil
 	}
-	return needsDiscovery, err
+	return err == nil, needsDiscovery, err
 }
 
 // FailMigrationWhileIndexing records an indexing failure only if the indexer

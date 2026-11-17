@@ -1519,9 +1519,9 @@ func (s *backupModuleTestState) execQuery(query string, args []driver.NamedValue
 		}
 		return &backupProfileConnectionRows{rows: rows, columns: 43}, nil
 
-	case strings.Contains(query, "SELECT cron_expression, timezone FROM backup_jobs WHERE id = $1 AND user_id = $2 AND status = 'PAUSED' FOR UPDATE"):
+	case strings.Contains(query, "SELECT cron_expression, timezone FROM backup_jobs WHERE id = $1 AND user_id = $2 AND status = ANY($3::text[]) FOR UPDATE"):
 		j, ok := s.jobs[asString(args[0].Value)]
-		if !ok || j.userID != asString(args[1].Value) || j.status != "PAUSED" {
+		if !ok || j.userID != asString(args[1].Value) || !statusInPQArray(j.status, args[2].Value) {
 			return &backupProfileConnectionRows{columns: 2}, nil
 		}
 		return &backupProfileConnectionRows{rows: [][]driver.Value{{j.cronExpression, j.timezone}}, columns: 2}, nil
@@ -2025,7 +2025,7 @@ func (s *backupModuleTestState) execUpdate(query string, args []driver.NamedValu
 
 	case strings.Contains(query, "UPDATE backup_jobs SET status = 'PAUSED'"):
 		j, ok := s.jobs[asString(args[0].Value)]
-		if !ok || j.userID != asString(args[1].Value) || (j.status != "IDLE" && j.status != "FAILED" && j.status != "QUEUED" && j.status != "SCANNING" && j.status != "RUNNING" && j.status != "VERIFYING") {
+		if !ok || j.userID != asString(args[1].Value) || !statusInPQArray(j.status, args[2].Value) {
 			return driver.RowsAffected(0), nil
 		}
 		j.status = "PAUSED"
@@ -2048,7 +2048,7 @@ func (s *backupModuleTestState) execUpdate(query string, args []driver.NamedValu
 
 	case strings.Contains(query, "UPDATE backup_jobs SET status = 'IDLE'"):
 		j, ok := s.jobs[asString(args[0].Value)]
-		if !ok || j.userID != asString(args[1].Value) || j.status != "PAUSED" {
+		if !ok || j.userID != asString(args[1].Value) || !statusInPQArray(j.status, args[2].Value) {
 			return driver.RowsAffected(0), nil
 		}
 		j.status = "IDLE"

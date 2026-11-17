@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 type BackupJob struct {
@@ -64,15 +67,17 @@ func (b BackupJob) MarshalJSON() ([]byte, error) {
 	type alias BackupJob
 	return json.Marshal(&struct {
 		*alias
-		SourceProfileID      *string `json:"source_profile_id,omitempty"`
-		TargetProfileID      *string `json:"target_profile_id,omitempty"`
-		SourceTokenExpiresAt *string `json:"source_token_expires_at,omitempty"`
-		TargetTokenExpiresAt *string `json:"target_token_expires_at,omitempty"`
-		LastRunAt            *string `json:"last_run_at,omitempty"`
-		LastRunStatus        *string `json:"last_run_status,omitempty"`
-		ErrorCode            *string `json:"error_code,omitempty"`
+		SourceProfileID      *string     `json:"source_profile_id,omitempty"`
+		TargetProfileID      *string     `json:"target_profile_id,omitempty"`
+		SourceTokenExpiresAt *string     `json:"source_token_expires_at,omitempty"`
+		TargetTokenExpiresAt *string     `json:"target_token_expires_at,omitempty"`
+		LastRunAt            *string     `json:"last_run_at,omitempty"`
+		LastRunStatus        *string     `json:"last_run_status,omitempty"`
+		ErrorCode            *string     `json:"error_code,omitempty"`
+		AllowedActions       []JobAction `json:"allowed_actions"`
 	}{
 		alias:                (*alias)(&b),
+		AllowedActions:       AllowedBackupActions(b.Status),
 		SourceProfileID:      nullStringPtr(b.SourceProfileID),
 		TargetProfileID:      nullStringPtr(b.TargetProfileID),
 		SourceTokenExpiresAt: nullTimeISO(b.SourceTokenExpiresAt),
@@ -1668,7 +1673,7 @@ func ClaimBackupJobPassContext(ctx context.Context, database *sql.DB, jobID, tri
 	if status == "QUEUED" || status == "SCANNING" || status == "RUNNING" || status == "VERIFYING" {
 		return BackupPassClaim{Outcome: BackupClaimOverlap}, nil
 	}
-	if status != "IDLE" && status != "FAILED" {
+	if !slices.Contains(backupActionSources[JobActionStart], status) {
 		return BackupPassClaim{Outcome: BackupClaimBlocked}, nil
 	}
 
@@ -1690,8 +1695,8 @@ func ClaimBackupJobPassContext(ctx context.Context, database *sql.DB, jobID, tri
 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE backup_jobs SET status = 'QUEUED', run_generation = $1, error_code = NULL, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $2 AND run_generation = $3 AND status IN ('IDLE', 'FAILED')
-	`, run.Generation, jobID, generation)
+		WHERE id = $2 AND run_generation = $3 AND status = ANY($4::text[])
+	`, run.Generation, jobID, generation, pq.Array(backupActionSources[JobActionStart]))
 	if err != nil {
 		return BackupPassClaim{}, fmt.Errorf("reserve backup job: %w", err)
 	}

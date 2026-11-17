@@ -470,6 +470,9 @@ func TestSyncModuleBrowsingReportsErrorsAndStreams(t *testing.T) {
 	if recStatusRun.Code != http.StatusOK || !strings.Contains(recStatusRun.Body.String(), `"/Docs/active.txt"`) {
 		t.Fatalf("status running = %d %s", recStatusRun.Code, recStatusRun.Body.String())
 	}
+	if !strings.Contains(recStatusRun.Body.String(), `"allowed_actions":["pause"]`) {
+		t.Fatalf("running sync allowed_actions missing from %s", recStatusRun.Body.String())
+	}
 	recStatusVer := performSyncModuleRequest(mux, http.MethodGet, "/api/sync/s-verifying", "user-1", "")
 	if recStatusVer.Code != http.StatusOK || !strings.Contains(recStatusVer.Body.String(), `"/Docs/verify.txt"`) {
 		t.Fatalf("status verifying = %d %s", recStatusVer.Code, recStatusVer.Body.String())

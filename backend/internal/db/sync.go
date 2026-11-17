@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // SyncJob represents a continuous synchronization job.
@@ -70,18 +73,20 @@ func (s SyncJob) MarshalJSON() ([]byte, error) {
 	type alias SyncJob
 	aux := struct {
 		*alias
-		SourceProfileID      *string `json:"source_profile_id"`
-		TargetProfileID      *string `json:"target_profile_id"`
-		LastRunStatus        string  `json:"last_run_status,omitempty"`
-		ErrorMessage         string  `json:"error_message,omitempty"`
-		LastRunAt            *string `json:"last_run_at,omitempty"`
-		NextRunAt            *string `json:"next_run_at,omitempty"`
-		SourceTokenExpiresAt *string `json:"source_token_expires_at,omitempty"`
-		TargetTokenExpiresAt *string `json:"target_token_expires_at,omitempty"`
+		SourceProfileID      *string     `json:"source_profile_id"`
+		TargetProfileID      *string     `json:"target_profile_id"`
+		LastRunStatus        string      `json:"last_run_status,omitempty"`
+		ErrorMessage         string      `json:"error_message,omitempty"`
+		LastRunAt            *string     `json:"last_run_at,omitempty"`
+		NextRunAt            *string     `json:"next_run_at,omitempty"`
+		SourceTokenExpiresAt *string     `json:"source_token_expires_at,omitempty"`
+		TargetTokenExpiresAt *string     `json:"target_token_expires_at,omitempty"`
+		AllowedActions       []JobAction `json:"allowed_actions"`
 	}{
 		alias:           (*alias)(&s),
 		SourceProfileID: nullStringPtr(s.SourceProfileID),
 		TargetProfileID: nullStringPtr(s.TargetProfileID),
+		AllowedActions:  AllowedSyncActions(s.Status),
 	}
 	if s.LastRunStatus.Valid {
 		aux.LastRunStatus = s.LastRunStatus.String
@@ -376,7 +381,7 @@ func PauseSyncJobAndDeactivateSchedules(ctx context.Context, database *sql.DB, i
 		}
 		return 0, false, err
 	}
-	if status != "IDLE" && status != "INDEXING" && status != "RUNNING" && status != "VERIFYING" {
+	if !slices.Contains(syncActionSources[JobActionPause], status) {
 		return generation, false, nil
 	}
 
@@ -445,7 +450,7 @@ func ResumeSyncJobAndReactivateSchedules(ctx context.Context, database *sql.DB, 
 		}
 		return false, err
 	}
-	if status != "PAUSED" {
+	if !slices.Contains(syncActionSources[JobActionResume], status) {
 		return false, nil
 	}
 
@@ -458,8 +463,8 @@ func ResumeSyncJobAndReactivateSchedules(ctx context.Context, database *sql.DB, 
 		SET status = 'IDLE',
 		    error_message = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE error_message END,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $2 AND status = 'PAUSED'
-	`, errVal, id); err != nil {
+		WHERE id = $2 AND status = ANY($3::text[])
+	`, errVal, id, pq.Array(syncActionSources[JobActionResume])); err != nil {
 		return false, err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -649,9 +654,9 @@ func ClaimSyncJobPass(database *sql.DB, id string) (generation int, claimed bool
 	err = database.QueryRow(`
 		UPDATE sync_jobs
 		SET status = 'INDEXING', run_generation = run_generation + 1, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND status IN ('IDLE', 'FAILED')
+		WHERE id = $1 AND status = ANY($2::text[])
 		RETURNING run_generation
-	`, id).Scan(&generation)
+	`, id, pq.Array(syncActionSources[JobActionStart])).Scan(&generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}

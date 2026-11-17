@@ -286,19 +286,14 @@ func (api *migrationAPI) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
+	// The status guard is part of the UPDATE, so a state read here could go stale.
+	resumed, needsDiscovery, err := db.ResumeMigration(api.db, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if mig.Status != "PAUSED" && mig.Status != "PAUSED_CONNECTION_LOSS" {
+	if !resumed {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
-		return
-	}
-
-	needsDiscovery, err := db.ResumeMigration(api.db, id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if needsDiscovery && api.startIndexer != nil {
@@ -1257,6 +1252,7 @@ func (api *migrationAPI) migrationDetailPayload(ctx context.Context, mig *db.Mig
 	payload := map[string]interface{}{
 		"id":                   mig.ID,
 		"status":               mig.Status,
+		"allowed_actions":      db.AllowedMigrationActions(mig.Status),
 		"source_provider":      mig.SourceProvider,
 		"source_url":           mig.SourceURL,
 		"target_provider":      mig.TargetProvider,

@@ -997,7 +997,7 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 		id := args[0].Value.(string)
 		c.state.mu.Lock()
 		rec := c.state.migrations[id]
-		if rec == nil || (rec.status != "PAUSED" && rec.status != "PAUSED_CONNECTION_LOSS") {
+		if rec == nil || !statusInPQArray(rec.status, args[2].Value) {
 			c.state.mu.Unlock()
 			return &backupProfileConnectionRows{columns: 1}, nil
 		}
