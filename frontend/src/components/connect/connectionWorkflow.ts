@@ -111,7 +111,13 @@ export function resolveConnection(draft: ConnectionDraft): ResolvedConnection {
   };
 }
 
-function endpointError(role: ConnectionRole, draft: ConnectionDraft): string | null {
+// Validation runs in phases, mirroring the order in which the wizard has always
+// reported the first problem: SFTP/FTP fields, then SMB/S3 fields, then generic
+// missing credentials. validateConnectionPair applies each phase to the source
+// and then the target before moving to the next phase.
+type ValidationPhase = (role: ConnectionRole, draft: ConnectionDraft) => string | null;
+
+const sftpFtpError: ValidationPhase = (role, draft) => {
   const { provider } = draft;
   if (provider === 'sftp') {
     if (!draft.sftp.host.trim()) return `connect.errors.${role}SftpHost`;
@@ -120,21 +126,21 @@ function endpointError(role: ConnectionRole, draft: ConnectionDraft): string | n
   } else if (provider === 'ftp') {
     if (!draft.ftp.host.trim()) return `connect.errors.${role}FtpHost`;
     if (!resolveUrl(draft)) return 'connect.errors.ftpPort';
-  } else if (provider === 'smb') {
+  }
+  return null;
+};
+
+const smbS3Error: ValidationPhase = (role, draft) => {
+  const { provider } = draft;
+  if (provider === 'smb') {
     if (!draft.smb.host.trim() || !draft.smb.share.trim()) return `connect.errors.${role}Smb`;
   } else if (provider === 's3') {
     if (!draft.s3.bucket.trim() || !draft.s3.region.trim()) return `connect.errors.${role}S3`;
   }
   return null;
-}
+};
 
-/** Locale key of the first problem with this side of the connection, or null. */
-export function validateConnection(role: ConnectionRole, draft: ConnectionDraft): string | null {
-  // A saved profile supplies the credentials server-side.
-  if (draft.profileId !== '') return null;
-  const structural = endpointError(role, draft);
-  if (structural) return structural;
-
+const missingFieldsError: ValidationPhase = (_role, draft) => {
   const { provider } = draft;
   const resolved = resolveConnection(draft);
   const urlRequired = !FIXED_ENDPOINT_PROVIDERS.includes(provider);
@@ -146,6 +152,31 @@ export function validateConnection(role: ConnectionRole, draft: ConnectionDraft)
     return 'connect.errors.missingFields';
   }
   return null;
+};
+
+const VALIDATION_PHASES: readonly ValidationPhase[] = [sftpFtpError, smbS3Error, missingFieldsError];
+
+/** Runs one phase against a side; a saved profile supplies credentials server-side. */
+function phaseError(phase: ValidationPhase, role: ConnectionRole, draft: ConnectionDraft): string | null {
+  return draft.profileId !== '' ? null : phase(role, draft);
+}
+
+/** Locale key of the first problem with this side of the connection, or null. */
+export function validateConnection(role: ConnectionRole, draft: ConnectionDraft): string | null {
+  for (const phase of VALIDATION_PHASES) {
+    const error = phaseError(phase, role, draft);
+    if (error) return error;
+  }
+  return null;
+}
+
+/** Locale key of the first problem across both sides, or null. */
+export function validateConnectionPair(source: ConnectionDraft, target: ConnectionDraft): string | null {
+  for (const phase of VALIDATION_PHASES) {
+    const error = phaseError(phase, 'source', source) ?? phaseError(phase, 'target', target);
+    if (error) return error;
+  }
+  return null;
 }
 
 async function errorCodeOf(response: Response): Promise<string | undefined> {
@@ -155,7 +186,10 @@ async function errorCodeOf(response: Response): Promise<string | undefined> {
 
 export function createConnectionWorkflow({ apiUrl, token }: { apiUrl: string; token: string }): ConnectionWorkflow {
   const jsonHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-  const validation = (messageKey: string): { ok: false; failure: WorkflowFailure } => ({ ok: false, failure: { kind: 'validation', messageKey } });
+  const fail = (failure: WorkflowFailure): { ok: false; failure: WorkflowFailure } => ({ ok: false, failure });
+  const validation = (messageKey: string) => fail({ kind: 'validation', messageKey });
+  const apiFailure = (errorCode?: string) => fail({ kind: 'api', errorCode });
+  const networkFailure = () => fail({ kind: 'network' });
   const sideFields = (role: ConnectionRole, draft: ConnectionDraft, resolved: ResolvedConnection) => ({
     [`${role}_url`]: resolved.url,
     [`${role}_username`]: resolved.username,
@@ -180,15 +214,15 @@ export function createConnectionWorkflow({ apiUrl, token }: { apiUrl: string; to
           }),
         });
         const body = await response.json().catch(() => ({} as { success?: boolean; error_code?: string }));
-        if (!response.ok || !body.success) return { ok: false, failure: { kind: 'api', errorCode: body.error_code } };
+        if (!response.ok || !body.success) return apiFailure(body.error_code);
         return { ok: true };
       } catch {
-        return { ok: false, failure: { kind: 'network' } };
+        return networkFailure();
       }
     },
 
     async connect(source, target) {
-      const invalid = validateConnection('source', source) ?? validateConnection('target', target);
+      const invalid = validateConnectionPair(source, target);
       if (invalid) return validation(invalid);
 
       const resolvedSource = resolveConnection(source);
@@ -205,10 +239,10 @@ export function createConnectionWorkflow({ apiUrl, token }: { apiUrl: string; to
             target_profile_id: target.profileId,
           }),
         });
-        if (!response.ok) return { ok: false, failure: { kind: 'api', errorCode: await errorCodeOf(response) } };
+        if (!response.ok) return apiFailure(await errorCodeOf(response));
 
         const data = await response.json() as { success: boolean; files?: CloudFile[]; error_code?: string };
-        if (!data.success) return { ok: false, failure: { kind: 'api', errorCode: data.error_code } };
+        if (!data.success) return apiFailure(data.error_code);
         return {
           ok: true,
           files: data.files || [],
@@ -230,7 +264,7 @@ export function createConnectionWorkflow({ apiUrl, token }: { apiUrl: string; to
           },
         };
       } catch {
-        return { ok: false, failure: { kind: 'network' } };
+        return networkFailure();
       }
     },
 

@@ -24,7 +24,6 @@ import {
   type WorkflowFailure,
 } from './connect/connectionWorkflow';
 
-
 interface ConnectFormProps {
   onConnectSuccess: (config: MigrationConfig, initialFiles: CloudFile[]) => void;
   apiUrl: string;
@@ -33,7 +32,6 @@ interface ConnectFormProps {
   oauthProviders?: Record<string, boolean>;
   onBack?: () => void;
 }
-
 
 const formInputClass = 'ui-input w-full px-4 py-2.5 text-sm font-sans';
 const formMonoInputClass = `${formInputClass} font-mono`;
@@ -156,7 +154,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     // provider and name so the UI reflects the selection.
   };
 
-
   // Snapshot of each side's field state, handed to the form workflow.
   const sourceDraft: ConnectionDraft = {
     provider: sourceProvider, profileId: sourceProfileId, url: sourceUrl, username: sourceUser, password: sourcePass,
@@ -206,7 +203,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     });
   };
 
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -249,7 +245,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setLoading(false);
     }
   };
-
 
   const handleSourceProviderSelect = (val: ProviderId) => {
     setSourceProvider(val);

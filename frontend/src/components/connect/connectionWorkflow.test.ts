@@ -184,6 +184,40 @@ describe('connection workflow', () => {
       expect(apiFetch).not.toHaveBeenCalled();
     });
 
+    describe('first reported validation error', () => {
+      const badSftp = (patch: Partial<ConnectionDraft> = {}) => draft({
+        provider: 'sftp', username: 'u', password: 'p',
+        sftp: { host: '', port: '22', hostKey: VALID_SFTP_KEY, authMode: 'password', privateKey: '' }, ...patch,
+      });
+      const badSmb = draft({ provider: 'smb', username: 'u', password: 'p', smb: { host: '', port: '445', share: '', domain: '' } });
+      const badS3 = draft({ provider: 's3', username: 'u', password: 'p', s3: { bucket: '', region: 'us-east-1', endpoint: '' } });
+      const validationKey = async (source: ConnectionDraft, target: ConnectionDraft) => {
+        const result = await workflow.connect(source, target);
+        if (!('failure' in result)) return null;
+        const { failure } = result;
+        return failure.kind === 'validation' ? failure.messageKey : failure.kind;
+      };
+
+      it('reports a target SFTP/FTP problem before a source SMB or S3 problem', async () => {
+        expect(await validationKey(badSmb, badSftp())).toBe('connect.errors.targetSftpHost');
+        expect(await validationKey(badS3, draft({ provider: 'ftp', username: 'u', password: 'p' }))).toBe('connect.errors.targetFtpHost');
+      });
+
+      it('reports a source SMB problem before a target S3 problem and source S3 before target SMB', async () => {
+        expect(await validationKey(badSmb, badS3)).toBe('connect.errors.sourceSmb');
+        expect(await validationKey(badS3, badSmb)).toBe('connect.errors.sourceS3');
+      });
+
+      it('reports structural problems on either side before missing generic fields', async () => {
+        expect(await validationKey(nextcloud({ password: '' }), badSmb)).toBe('connect.errors.targetSmb');
+        expect(await validationKey(nextcloud({ password: '' }), nextcloud())).toBe('connect.errors.missingFields');
+      });
+
+      it('still reports the source SFTP/FTP problem first', async () => {
+        expect(await validationKey(badSftp(), badSftp())).toBe('connect.errors.sourceSftpHost');
+      });
+    });
+
     it('maps HTTP and logical failures to error codes', async () => {
       respond({ error_code: 'TARGET_CONNECTION_FAILED' }, { status: 400 });
       expect(await workflow.connect(nextcloud(), nextcloud())).toEqual({ ok: false, failure: { kind: 'api', errorCode: 'TARGET_CONNECTION_FAILED' } });
