@@ -16,17 +16,17 @@ import (
 
 func TestSnapshotRequestConnectionKeepsRequestCredentialsWithoutProfile(t *testing.T) {
 	const key = "01234567890123456789012345678901"
-	server := &APIServer{encryptionKey: key}
+	profiles := &ownedProfileAccess{encryptionKey: key}
 	request := httptest.NewRequest(http.MethodPost, "/api/migration/connect", nil)
 	request = request.WithContext(storage.WithLocalUserScope(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}), "user-1"))
 
-	got, err := server.snapshotRequestConnection(request, requestConnectionInput{
+	got, err := profiles.SnapshotRequest(request.Context(), auth.GetUserIDFromContext(request.Context()), requestConnectionInput{
 		Provider:     "local",
 		Password:     "request-secret",
 		RefreshToken: "request-refresh",
 	})
 	if err != nil {
-		t.Fatalf("snapshotRequestConnection() error = %v", err)
+		t.Fatalf("SnapshotRequest() error = %v", err)
 	}
 	if got.Provider != "local" || !got.HasPassword || !got.HasRefreshToken {
 		t.Fatalf("request-supplied snapshot metadata = %+v", got)

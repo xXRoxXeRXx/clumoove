@@ -70,7 +70,7 @@ Connection failures can embed URLs with credentials (`https://user:pass@host/…
 
 - OAuth2 access/refresh tokens are stored AES-GCM encrypted on migrations, sync jobs, backup jobs, and active restore runs
   (`source_refresh_token_encrypted`, `target_refresh_token_encrypted`).
-- `RunOAuthRotationDaemon` (API gateway) proactively refreshes Dropbox, Google, OneDrive, and HiDrive tokens before expiry for migrations, sync jobs, and restore runs. Backup runs use their own coordinated refresh logic.
+- `oauthRotationDaemon` (API gateway) proactively refreshes Dropbox, Google, OneDrive, and HiDrive tokens before expiry for migrations, sync jobs, and restore runs. Backup runs use their own coordinated refresh logic.
 - OAuth provider responses are limited to 1 MiB. Provider-controlled error descriptions are never returned or logged; only a rejected refresh credential (`invalid_grant`/equivalent) is terminal, while transient refresh failures remain eligible for the next rotation or task retry pass.
 - The worker also refreshes inline when a token is expired or within 2 minutes of expiry, using a
   per-migration mutex (`getOrCreateRefreshLock`) to serialize refreshes.

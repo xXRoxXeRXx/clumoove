@@ -84,7 +84,7 @@ func (s *APIServer) syncs() *syncAPI {
 		syncPass:               s.syncPass,
 		publishBandwidthChange: publishBandwidth,
 		oauthLocker:            oauthLocker,
-		oauthRotations:         s.rotationCache(),
+		oauthRotations:         s.oauthRotations.get(),
 	})
 }
 

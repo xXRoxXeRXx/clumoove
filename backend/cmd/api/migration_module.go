@@ -158,3 +158,33 @@ func (api *migrationAPI) verifyOwnedMigration(w http.ResponseWriter, r *http.Req
 
 	return id, userID, true
 }
+
+// migrationGarbageCollector owns the hourly deletion of old terminal migrations
+// and their task histories.
+type migrationGarbageCollector struct {
+	db           *sql.DB
+	loglnContext func(context.Context, ...any)
+	logfContext  func(context.Context, string, ...any)
+}
+
+func (gc *migrationGarbageCollector) name() string { return "migration_gc" }
+
+func (gc *migrationGarbageCollector) Run(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			gc.loglnContext(ctx, "Running Garbage Collector for old migrations...")
+			count, err := db.DeleteOldMigrations(gc.db)
+			if err != nil {
+				gc.logfContext(ctx, "Garbage Collector error: %v\n", err)
+			} else if count > 0 {
+				gc.logfContext(ctx, "Garbage Collector cleaned up %d old migrations & task histories.\n", count)
+			}
+		}
+	}
+}

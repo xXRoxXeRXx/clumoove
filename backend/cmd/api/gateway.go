@@ -282,3 +282,21 @@ func wrapRouteAccess(
 		panic("unsupported route access category")
 	}
 }
+
+// backgroundDaemons composes the long-running loops owned by feature modules.
+// main.go starts each one under the process context.
+func (server *APIServer) backgroundDaemons() []backgroundDaemon {
+	return []backgroundDaemon{
+		&oauthRotationDaemon{
+			db:            server.db,
+			queue:         server.queue,
+			encryptionKey: server.encryptionKey,
+			cache:         server.oauthRotations.get(),
+		},
+		&migrationGarbageCollector{
+			db:           server.db,
+			loglnContext: server.loglnContext,
+			logfContext:  server.logfContext,
+		},
+	}
+}
