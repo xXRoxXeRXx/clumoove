@@ -372,6 +372,9 @@ type BackupVerifyTarget struct {
 	ClaimEpoch int64
 }
 
+// Lease is the claim this worker holds on the target.
+func (t BackupVerifyTarget) Lease() Lease { return Lease{ID: t.ID, Epoch: t.ClaimEpoch} }
+
 func nullableBackupString(value string) any {
 	if value == "" {
 		return nil
@@ -442,18 +445,17 @@ func ReleaseBackupVerifyTargetClaimContext(ctx context.Context, database *sql.DB
 	return err
 }
 
-func CompleteBackupVerifyTargetContext(ctx context.Context, database *sql.DB, targetID string, exists bool, expectedSize, actualSize int64, claimEpoch ...int64) (string, error) {
+func CompleteBackupVerifyTargetContext(ctx context.Context, database *sql.DB, lease Lease, exists bool, expectedSize, actualSize int64) (string, error) {
+	if err := lease.validate(); err != nil {
+		return "", err
+	}
 	state := "COMPLETED"
 	if !exists || actualSize < 0 {
 		state = "MISSING"
 	} else if actualSize != expectedSize {
 		state = "DAMAGED"
 	}
-	epoch := int64(0)
-	if len(claimEpoch) > 0 {
-		epoch = claimEpoch[0]
-	}
-	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET state = $2, error_code = CASE WHEN $2 = 'COMPLETED' THEN NULL ELSE 'BACKUP_PACK_DAMAGED' END, worker_hash = NULL, claim_deadline = NULL, cursor = jsonb_build_object('completed', true) WHERE id = $1 AND state IN ('PENDING','RUNNING') AND ($3 = 0 OR claim_epoch = $3)`, targetID, state, epoch)
+	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET state = $2, error_code = CASE WHEN $2 = 'COMPLETED' THEN NULL ELSE 'BACKUP_PACK_DAMAGED' END, worker_hash = NULL, claim_deadline = NULL, cursor = jsonb_build_object('completed', true) WHERE id = $1 AND state IN ('PENDING','RUNNING') AND claim_epoch = $3`, lease.ID, state, lease.Epoch)
 	return state, err
 }
 
@@ -476,12 +478,11 @@ func CompleteBackupVerifyContext(ctx context.Context, database *sql.DB, maintena
 	return tx.Commit()
 }
 
-func MarkBackupVerifyTargetDamagedContext(ctx context.Context, database *sql.DB, targetID string, claimEpoch ...int64) error {
-	epoch := int64(0)
-	if len(claimEpoch) > 0 {
-		epoch = claimEpoch[0]
+func MarkBackupVerifyTargetDamagedContext(ctx context.Context, database *sql.DB, lease Lease) error {
+	if err := lease.validate(); err != nil {
+		return err
 	}
-	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET state = 'DAMAGED', error_code = 'BACKUP_PACK_DAMAGED', worker_hash = NULL, claim_deadline = NULL, cursor = jsonb_build_object('completed', true) WHERE id = $1 AND state IN ('PENDING','RUNNING') AND ($2 = 0 OR claim_epoch = $2)`, targetID, epoch)
+	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET state = 'DAMAGED', error_code = 'BACKUP_PACK_DAMAGED', worker_hash = NULL, claim_deadline = NULL, cursor = jsonb_build_object('completed', true) WHERE id = $1 AND state IN ('PENDING','RUNNING') AND claim_epoch = $2`, lease.ID, lease.Epoch)
 	return err
 }
 
@@ -490,12 +491,11 @@ func AddBackupVerifyProcessedBytesContext(ctx context.Context, database *sql.DB,
 	return err
 }
 
-func MarkBackupVerifyTargetReadContext(ctx context.Context, database *sql.DB, targetID string, bytes int64, claimEpoch ...int64) error {
-	epoch := int64(0)
-	if len(claimEpoch) > 0 {
-		epoch = claimEpoch[0]
+func MarkBackupVerifyTargetReadContext(ctx context.Context, database *sql.DB, lease Lease, bytes int64) error {
+	if err := lease.validate(); err != nil {
+		return err
 	}
-	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET bytes_read = $2 WHERE id = $1 AND state IN ('PENDING','RUNNING') AND ($3 = 0 OR claim_epoch = $3)`, targetID, bytes, epoch)
+	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET bytes_read = $2 WHERE id = $1 AND state IN ('PENDING','RUNNING') AND claim_epoch = $3`, lease.ID, bytes, lease.Epoch)
 	return err
 }
 

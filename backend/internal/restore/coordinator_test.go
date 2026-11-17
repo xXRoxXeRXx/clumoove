@@ -422,7 +422,7 @@ func TestRestoreHelpersAcceptFocusedAdapters(t *testing.T) {
 	defer testDB.Close()
 
 	dirRestorer := &minimalDirRestorer{existing: map[string]storage.CloudResource{}}
-	if err := (&Coordinator{db: testDB, store: db.NewRestoreStore(testDB)}).restoreDirectory(context.Background(), dirRestorer, &db.RestoreItem{TargetPath: "/restore/sub"}, "OVERWRITE"); err != nil {
+	if err := (&Coordinator{db: testDB, store: db.NewRestoreStore(testDB)}).restoreDirectory(context.Background(), dirRestorer, &db.RestoreItem{ID: "item-1", ClaimEpoch: 1, TargetPath: "/restore/sub"}, "OVERWRITE"); err != nil {
 		t.Fatalf("restoreDirectory() error = %v", err)
 	}
 	if len(dirRestorer.createdDirs) != 1 || dirRestorer.createdDirs[0] != "/restore/sub" {

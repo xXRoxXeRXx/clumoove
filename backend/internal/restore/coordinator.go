@@ -208,9 +208,9 @@ func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
 			errorCode = "RESTORE_TYPE_CONFLICT"
 		}
 		if isPermanentRestoreError(err) {
-			_ = c.store.FailRestoreItemContext(failureCtx, item.ID, item.RestoreRunID, errorCode, item.ClaimEpoch)
+			_ = c.store.FailRestoreItemContext(failureCtx, item.Lease(), item.RestoreRunID, errorCode)
 		} else {
-			_, _ = c.store.RetryRestoreItemContext(failureCtx, item.ID, item.RestoreRunID, errorCode, item.ClaimEpoch)
+			_, _ = c.store.RetryRestoreItemContext(failureCtx, item.Lease(), item.RestoreRunID, errorCode)
 		}
 	}
 	return true, nil
@@ -708,10 +708,10 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 	if sanitized := sanitize.SanitizeFilename(path.Base(item.TargetPath), runTarget.TargetProvider); sanitized.Changed {
 		resolvedPath := path.Join(path.Dir(item.TargetPath), sanitized.SanitizedName)
 		if item.IsDir {
-			if err := c.store.SetRestoreDirectoryTargetPathContext(ctx, item.ID, item.RestoreRunID, item.SnapshotRelativePath, resolvedPath, item.ClaimEpoch); err != nil {
+			if err := c.store.SetRestoreDirectoryTargetPathContext(ctx, item.Lease(), item.RestoreRunID, item.SnapshotRelativePath, resolvedPath); err != nil {
 				return err
 			}
-		} else if err := c.store.SetRestoreItemTargetPathContext(ctx, item.ID, item.RestoreRunID, resolvedPath, item.ClaimEpoch); err != nil {
+		} else if err := c.store.SetRestoreItemTargetPathContext(ctx, item.Lease(), item.RestoreRunID, resolvedPath); err != nil {
 			return err
 		}
 		item.TargetPath = resolvedPath
@@ -741,7 +741,7 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 		}
 		switch runTarget.ConflictStrategy {
 		case "SKIP":
-			return c.store.SkipRestoreItemContext(ctx, item.ID, item.RestoreRunID, "RESTORE_TARGET_EXISTS", item.ClaimEpoch)
+			return c.store.SkipRestoreItemContext(ctx, item.Lease(), item.RestoreRunID, "RESTORE_TARGET_EXISTS")
 		case "OVERWRITE":
 			overwriteExisting = true
 		case "RENAME":
@@ -863,7 +863,7 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 			}
 		}
 	}
-	if _, err = c.store.CompleteRestoreItemContext(ctx, item.ID, item.RestoreRunID, item.SizeBytes, verificationKind, item.ClaimEpoch); err != nil {
+	if _, err = c.store.CompleteRestoreItemContext(ctx, item.Lease(), item.RestoreRunID, item.SizeBytes, verificationKind); err != nil {
 		return err
 	}
 	return c.applyItemMetadata(ctx, targetProvider, item)
@@ -876,7 +876,7 @@ func (c *Coordinator) applyItemMetadata(ctx context.Context, target any, item *d
 	metadata := storage.FileMetadata{}
 	if len(item.SourceMetadata) > 0 && string(item.SourceMetadata) != "null" {
 		if err := json.Unmarshal(item.SourceMetadata, &metadata); err != nil {
-			return c.store.WarnRestoreItemContext(ctx, item.ID, item.RestoreRunID, "RESTORE_METADATA_INVALID", item.ClaimEpoch)
+			return c.store.WarnRestoreItemContext(ctx, item.Lease(), item.RestoreRunID, "RESTORE_METADATA_INVALID")
 		}
 	}
 	if item.SourceMTime.Valid {
@@ -884,10 +884,10 @@ func (c *Coordinator) applyItemMetadata(ctx context.Context, target any, item *d
 	}
 	applier, ok := target.(storage.MetadataApplier)
 	if !ok {
-		return c.store.WarnRestoreItemContext(ctx, item.ID, item.RestoreRunID, "RESTORE_METADATA_UNSUPPORTED", item.ClaimEpoch)
+		return c.store.WarnRestoreItemContext(ctx, item.Lease(), item.RestoreRunID, "RESTORE_METADATA_UNSUPPORTED")
 	}
 	if err := applier.ApplyMetadata(ctx, "files", item.TargetPath, metadata); err != nil {
-		return c.store.WarnRestoreItemContext(ctx, item.ID, item.RestoreRunID, "RESTORE_METADATA_FAILED", item.ClaimEpoch)
+		return c.store.WarnRestoreItemContext(ctx, item.Lease(), item.RestoreRunID, "RESTORE_METADATA_FAILED")
 	}
 	return nil
 }
@@ -925,9 +925,9 @@ func (c *Coordinator) reserveRestoreTargetPath(ctx context.Context, item *db.Res
 		if reserved {
 			if candidate != item.TargetPath {
 				if isDir {
-					err = c.store.SetRestoreDirectoryTargetPathContext(ctx, item.ID, item.RestoreRunID, item.SnapshotRelativePath, candidate, item.ClaimEpoch)
+					err = c.store.SetRestoreDirectoryTargetPathContext(ctx, item.Lease(), item.RestoreRunID, item.SnapshotRelativePath, candidate)
 				} else {
-					err = c.store.SetRestoreItemTargetPathContext(ctx, item.ID, item.RestoreRunID, candidate, item.ClaimEpoch)
+					err = c.store.SetRestoreItemTargetPathContext(ctx, item.Lease(), item.RestoreRunID, candidate)
 				}
 				if err != nil {
 					return err
@@ -951,9 +951,9 @@ func (c *Coordinator) moveRestoreTargetReservation(ctx context.Context, item *db
 		return reserved, err
 	}
 	if isDir {
-		err = c.store.SetRestoreDirectoryTargetPathContext(ctx, item.ID, item.RestoreRunID, item.SnapshotRelativePath, candidate, item.ClaimEpoch)
+		err = c.store.SetRestoreDirectoryTargetPathContext(ctx, item.Lease(), item.RestoreRunID, item.SnapshotRelativePath, candidate)
 	} else {
-		err = c.store.SetRestoreItemTargetPathContext(ctx, item.ID, item.RestoreRunID, candidate, item.ClaimEpoch)
+		err = c.store.SetRestoreItemTargetPathContext(ctx, item.Lease(), item.RestoreRunID, candidate)
 	}
 	if err != nil {
 		return false, err
@@ -1006,11 +1006,11 @@ func (c *Coordinator) restoreDirectory(ctx context.Context, target directoryRest
 			return err
 		}
 		if resource.IsDir {
-			return c.store.CompleteRestoreDirectoryContext(ctx, item.ID, item.RestoreRunID, item.ClaimEpoch)
+			return c.store.CompleteRestoreDirectoryContext(ctx, item.Lease(), item.RestoreRunID)
 		}
 		switch conflictStrategy {
 		case "SKIP":
-			return c.store.SkipRestoreItemContext(ctx, item.ID, item.RestoreRunID, "RESTORE_TARGET_FILE_CONFLICT", item.ClaimEpoch)
+			return c.store.SkipRestoreItemContext(ctx, item.Lease(), item.RestoreRunID, "RESTORE_TARGET_FILE_CONFLICT")
 		case "OVERWRITE":
 			if err := target.DeleteFile(ctx, "files", item.TargetPath); err != nil {
 				return err
@@ -1047,7 +1047,7 @@ func (c *Coordinator) restoreDirectory(ctx context.Context, target directoryRest
 	if err := target.CreateDirectory(ctx, "files", item.TargetPath); err != nil {
 		return err
 	}
-	return c.store.CompleteRestoreDirectoryContext(ctx, item.ID, item.RestoreRunID, item.ClaimEpoch)
+	return c.store.CompleteRestoreDirectoryContext(ctx, item.Lease(), item.RestoreRunID)
 }
 
 type limitedReadCloser struct {

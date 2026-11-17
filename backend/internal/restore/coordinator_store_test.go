@@ -42,10 +42,9 @@ type fakeRestoreStore struct {
 
 type itemOutcome struct {
 	called     bool
-	itemID     string
-	runID      string
-	code       string
-	claimEpoch []int64
+	lease db.Lease
+	runID string
+	code  string
 }
 
 func (f *fakeRestoreStore) note(name string) { f.calls = append(f.calls, name) }
@@ -102,14 +101,14 @@ func (f *fakeRestoreStore) GetRestoreRunTargetConnectionContext(context.Context,
 	f.note("load-target-connection")
 	return nil, f.connectErr
 }
-func (f *fakeRestoreStore) FailRestoreItemContext(_ context.Context, itemID, runID, code string, claimEpoch ...int64) error {
+func (f *fakeRestoreStore) FailRestoreItemContext(_ context.Context, lease db.Lease, runID, code string) error {
 	f.note("fail-item")
-	f.failedItem = itemOutcome{called: true, itemID: itemID, runID: runID, code: code, claimEpoch: claimEpoch}
+	f.failedItem = itemOutcome{called: true, lease: lease, runID: runID, code: code}
 	return nil
 }
-func (f *fakeRestoreStore) RetryRestoreItemContext(_ context.Context, itemID, runID, code string, claimEpoch ...int64) (bool, error) {
+func (f *fakeRestoreStore) RetryRestoreItemContext(_ context.Context, lease db.Lease, runID, code string) (bool, error) {
 	f.note("retry-item")
-	f.retriedItem = itemOutcome{called: true, itemID: itemID, runID: runID, code: code, claimEpoch: claimEpoch}
+	f.retriedItem = itemOutcome{called: true, lease: lease, runID: runID, code: code}
 	return true, nil
 }
 
@@ -241,7 +240,7 @@ func TestPollOnceRetriesTransientItemFailuresWithClaimEpoch(t *testing.T) {
 		t.Error("transient failure must not fail the item permanently")
 	}
 	got := store.retriedItem
-	if !got.called || got.itemID != "item-1" || got.runID != "run-1" || got.code != "RESTORE_TRANSFER_FAILED" || !reflect.DeepEqual(got.claimEpoch, []int64{9}) {
+	if !got.called || got.lease != (db.Lease{ID: "item-1", Epoch: 9}) || got.runID != "run-1" || got.code != "RESTORE_TRANSFER_FAILED" {
 		t.Errorf("retry = %+v, want item-1/run-1/RESTORE_TRANSFER_FAILED/epoch 9", got)
 	}
 }
@@ -267,7 +266,7 @@ func TestPollOnceFailsPermanentItemErrorsWithoutRetry(t *testing.T) {
 			t.Errorf("%s: permanent failure must not be retried", name)
 		}
 		got := store.failedItem
-		if !got.called || got.itemID != "item-2" || got.code != tc.code || !reflect.DeepEqual(got.claimEpoch, []int64{4}) {
+		if !got.called || got.lease != (db.Lease{ID: "item-2", Epoch: 4}) || got.code != tc.code {
 			t.Errorf("%s: failure = %+v, want item-2/%s/epoch 4", name, got, tc.code)
 		}
 	}

@@ -60,9 +60,9 @@ type BackupStore interface {
 	SnapshotBackupVerifyTargetsContext(ctx context.Context, maintenanceID, backupJobID string) error
 	ClaimNextBackupVerifyTargetContext(ctx context.Context, maintenanceID, workerID string) (*BackupVerifyTarget, error)
 	ReleaseBackupVerifyTargetClaimContext(ctx context.Context, targetID string, claimEpoch int64) error
-	CompleteBackupVerifyTargetContext(ctx context.Context, targetID string, exists bool, expectedSize, actualSize int64, claimEpoch ...int64) (string, error)
-	MarkBackupVerifyTargetReadContext(ctx context.Context, targetID string, bytes int64, claimEpoch ...int64) error
-	MarkBackupVerifyTargetDamagedContext(ctx context.Context, targetID string, claimEpoch ...int64) error
+	CompleteBackupVerifyTargetContext(ctx context.Context, lease Lease, exists bool, expectedSize, actualSize int64) (string, error)
+	MarkBackupVerifyTargetReadContext(ctx context.Context, lease Lease, bytes int64) error
+	MarkBackupVerifyTargetDamagedContext(ctx context.Context, lease Lease) error
 	AdvanceBackupVerifyCursorContext(ctx context.Context, maintenanceID, targetID string) error
 	AddBackupVerifyProcessedBytesContext(ctx context.Context, maintenanceID string, bytes int64) error
 	CompleteBackupVerifyContext(ctx context.Context, maintenanceID string) error
@@ -238,16 +238,16 @@ func (s postgresBackupStore) ReleaseBackupVerifyTargetClaimContext(ctx context.C
 	return ReleaseBackupVerifyTargetClaimContext(ctx, s.db, targetID, claimEpoch)
 }
 
-func (s postgresBackupStore) CompleteBackupVerifyTargetContext(ctx context.Context, targetID string, exists bool, expectedSize, actualSize int64, claimEpoch ...int64) (string, error) {
-	return CompleteBackupVerifyTargetContext(ctx, s.db, targetID, exists, expectedSize, actualSize, claimEpoch...)
+func (s postgresBackupStore) CompleteBackupVerifyTargetContext(ctx context.Context, lease Lease, exists bool, expectedSize, actualSize int64) (string, error) {
+	return CompleteBackupVerifyTargetContext(ctx, s.db, lease, exists, expectedSize, actualSize)
 }
 
-func (s postgresBackupStore) MarkBackupVerifyTargetReadContext(ctx context.Context, targetID string, bytes int64, claimEpoch ...int64) error {
-	return MarkBackupVerifyTargetReadContext(ctx, s.db, targetID, bytes, claimEpoch...)
+func (s postgresBackupStore) MarkBackupVerifyTargetReadContext(ctx context.Context, lease Lease, bytes int64) error {
+	return MarkBackupVerifyTargetReadContext(ctx, s.db, lease, bytes)
 }
 
-func (s postgresBackupStore) MarkBackupVerifyTargetDamagedContext(ctx context.Context, targetID string, claimEpoch ...int64) error {
-	return MarkBackupVerifyTargetDamagedContext(ctx, s.db, targetID, claimEpoch...)
+func (s postgresBackupStore) MarkBackupVerifyTargetDamagedContext(ctx context.Context, lease Lease) error {
+	return MarkBackupVerifyTargetDamagedContext(ctx, s.db, lease)
 }
 
 func (s postgresBackupStore) AdvanceBackupVerifyCursorContext(ctx context.Context, maintenanceID, targetID string) error {

@@ -31,16 +31,16 @@ type RestoreStore interface {
 	RecoverStaleRestoreItemsContext(ctx context.Context) (int64, error)
 	SkipBlockedRestoreItemsContext(ctx context.Context) (int64, error)
 	ListRestoreItemBlocksContext(ctx context.Context, itemID, runID string) ([]RestoreItemBlock, error)
-	SetRestoreItemTargetPathContext(ctx context.Context, itemID, runID, targetPath string, claimEpoch ...int64) error
-	SetRestoreDirectoryTargetPathContext(ctx context.Context, itemID, runID, snapshotPath, targetPath string, claimEpoch ...int64) error
+	SetRestoreItemTargetPathContext(ctx context.Context, lease Lease, runID, targetPath string) error
+	SetRestoreDirectoryTargetPathContext(ctx context.Context, lease Lease, runID, snapshotPath, targetPath string) error
 	ReserveRestoreTargetPathContext(ctx context.Context, runID, itemID, targetPath string) (bool, error)
 	MoveRestoreTargetReservationContext(ctx context.Context, runID, itemID, targetPath string) (bool, error)
-	CompleteRestoreItemContext(ctx context.Context, itemID, runID string, sizeBytes int64, verificationKind string, claimEpoch ...int64) (bool, error)
-	CompleteRestoreDirectoryContext(ctx context.Context, itemID, runID string, claimEpoch ...int64) error
-	WarnRestoreItemContext(ctx context.Context, itemID, runID, errorCode string, claimEpoch ...int64) error
-	RetryRestoreItemContext(ctx context.Context, itemID, runID, errorCode string, claimEpoch ...int64) (bool, error)
-	FailRestoreItemContext(ctx context.Context, itemID, runID, errorCode string, claimEpoch ...int64) error
-	SkipRestoreItemContext(ctx context.Context, itemID, runID, errorCode string, claimEpoch ...int64) error
+	CompleteRestoreItemContext(ctx context.Context, lease Lease, runID string, sizeBytes int64, verificationKind string) (bool, error)
+	CompleteRestoreDirectoryContext(ctx context.Context, lease Lease, runID string) error
+	WarnRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) error
+	RetryRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) (bool, error)
+	FailRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) error
+	SkipRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) error
 
 	// Target credential snapshot owned by the restore run.
 	GetRestoreRunTargetConnectionContext(ctx context.Context, runID string) (*RestoreRunTargetConnection, error)
@@ -131,12 +131,12 @@ func (s postgresRestoreStore) ListRestoreItemBlocksContext(ctx context.Context, 
 	return ListRestoreItemBlocksContext(ctx, s.db, itemID, runID)
 }
 
-func (s postgresRestoreStore) SetRestoreItemTargetPathContext(ctx context.Context, itemID, runID, targetPath string, claimEpoch ...int64) error {
-	return SetRestoreItemTargetPathContext(ctx, s.db, itemID, runID, targetPath, claimEpoch...)
+func (s postgresRestoreStore) SetRestoreItemTargetPathContext(ctx context.Context, lease Lease, runID, targetPath string) error {
+	return SetRestoreItemTargetPathContext(ctx, s.db, lease, runID, targetPath)
 }
 
-func (s postgresRestoreStore) SetRestoreDirectoryTargetPathContext(ctx context.Context, itemID, runID, snapshotPath, targetPath string, claimEpoch ...int64) error {
-	return SetRestoreDirectoryTargetPathContext(ctx, s.db, itemID, runID, snapshotPath, targetPath, claimEpoch...)
+func (s postgresRestoreStore) SetRestoreDirectoryTargetPathContext(ctx context.Context, lease Lease, runID, snapshotPath, targetPath string) error {
+	return SetRestoreDirectoryTargetPathContext(ctx, s.db, lease, runID, snapshotPath, targetPath)
 }
 
 func (s postgresRestoreStore) ReserveRestoreTargetPathContext(ctx context.Context, runID, itemID, targetPath string) (bool, error) {
@@ -147,28 +147,28 @@ func (s postgresRestoreStore) MoveRestoreTargetReservationContext(ctx context.Co
 	return MoveRestoreTargetReservationContext(ctx, s.db, runID, itemID, targetPath)
 }
 
-func (s postgresRestoreStore) CompleteRestoreItemContext(ctx context.Context, itemID, runID string, sizeBytes int64, verificationKind string, claimEpoch ...int64) (bool, error) {
-	return CompleteRestoreItemContext(ctx, s.db, itemID, runID, sizeBytes, verificationKind, claimEpoch...)
+func (s postgresRestoreStore) CompleteRestoreItemContext(ctx context.Context, lease Lease, runID string, sizeBytes int64, verificationKind string) (bool, error) {
+	return CompleteRestoreItemContext(ctx, s.db, lease, runID, sizeBytes, verificationKind)
 }
 
-func (s postgresRestoreStore) CompleteRestoreDirectoryContext(ctx context.Context, itemID, runID string, claimEpoch ...int64) error {
-	return CompleteRestoreDirectoryContext(ctx, s.db, itemID, runID, claimEpoch...)
+func (s postgresRestoreStore) CompleteRestoreDirectoryContext(ctx context.Context, lease Lease, runID string) error {
+	return CompleteRestoreDirectoryContext(ctx, s.db, lease, runID)
 }
 
-func (s postgresRestoreStore) WarnRestoreItemContext(ctx context.Context, itemID, runID, errorCode string, claimEpoch ...int64) error {
-	return WarnRestoreItemContext(ctx, s.db, itemID, runID, errorCode, claimEpoch...)
+func (s postgresRestoreStore) WarnRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) error {
+	return WarnRestoreItemContext(ctx, s.db, lease, runID, errorCode)
 }
 
-func (s postgresRestoreStore) RetryRestoreItemContext(ctx context.Context, itemID, runID, errorCode string, claimEpoch ...int64) (bool, error) {
-	return RetryRestoreItemContext(ctx, s.db, itemID, runID, errorCode, claimEpoch...)
+func (s postgresRestoreStore) RetryRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) (bool, error) {
+	return RetryRestoreItemContext(ctx, s.db, lease, runID, errorCode)
 }
 
-func (s postgresRestoreStore) FailRestoreItemContext(ctx context.Context, itemID, runID, errorCode string, claimEpoch ...int64) error {
-	return FailRestoreItemContext(ctx, s.db, itemID, runID, errorCode, claimEpoch...)
+func (s postgresRestoreStore) FailRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) error {
+	return FailRestoreItemContext(ctx, s.db, lease, runID, errorCode)
 }
 
-func (s postgresRestoreStore) SkipRestoreItemContext(ctx context.Context, itemID, runID, errorCode string, claimEpoch ...int64) error {
-	return SkipRestoreItemContext(ctx, s.db, itemID, runID, errorCode, claimEpoch...)
+func (s postgresRestoreStore) SkipRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) error {
+	return SkipRestoreItemContext(ctx, s.db, lease, runID, errorCode)
 }
 
 func (s postgresRestoreStore) GetRestoreRunTargetConnectionContext(ctx context.Context, runID string) (*RestoreRunTargetConnection, error) {

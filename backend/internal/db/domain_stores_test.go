@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"database/sql"
 	"database/sql/driver"
 	"io"
@@ -47,7 +48,12 @@ func (c *recordingConn) Prepare(query string) (driver.Stmt, error) {
 	return &recordingStmt{conn: c, query: query}, nil
 }
 func (c *recordingConn) Close() error              { return nil }
-func (c *recordingConn) Begin() (driver.Tx, error) { return nil, driver.ErrSkip }
+func (c *recordingConn) Begin() (driver.Tx, error) { return recordingTx{}, nil }
+
+type recordingTx struct{}
+
+func (recordingTx) Commit() error   { return nil }
+func (recordingTx) Rollback() error { return nil }
 
 func (s *recordingStmt) Close() error  { return nil }
 func (s *recordingStmt) NumInput() int { return -1 }
@@ -224,5 +230,150 @@ func TestRestoreStoreLoadsRestoreRunTargetConnection(t *testing.T) {
 	}
 	if *got != *want {
 		t.Errorf("connection = %+v, want %+v", *got, *want)
+	}
+}
+
+// requireFencedByEpoch asserts that the first recorded statement compares the
+// stored claim_epoch against the lease epoch and has no escape hatch that
+// disables the comparison.
+func requireFencedByEpoch(t *testing.T, rec *recordingDriver, lease Lease) {
+	t.Helper()
+	if len(rec.statements) == 0 {
+		t.Fatal("no statement recorded")
+	}
+	got := rec.statements[0]
+	if !strings.Contains(got.query, "claim_epoch = $") {
+		t.Errorf("query does not compare claim_epoch: %q", got.query)
+	}
+	if strings.Contains(got.query, "= 0 OR") {
+		t.Errorf("query keeps an escape hatch that disables epoch fencing: %q", got.query)
+	}
+	foundID, foundEpoch := false, false
+	for _, arg := range got.args {
+		if arg == driver.Value(lease.ID) {
+			foundID = true
+		}
+		if arg == driver.Value(lease.Epoch) {
+			foundEpoch = true
+		}
+	}
+	if !foundID || !foundEpoch {
+		t.Errorf("args = %v, want lease id %q and epoch %d", got.args, lease.ID, lease.Epoch)
+	}
+}
+
+func backupFencedWrites(lease Lease) map[string]func(BackupStore) error {
+	return map[string]func(BackupStore) error{
+		"complete": func(s BackupStore) error {
+			_, err := s.CompleteBackupVerifyTargetContext(context.Background(), lease, true, 10, 10)
+			return err
+		},
+		"mark read": func(s BackupStore) error {
+			return s.MarkBackupVerifyTargetReadContext(context.Background(), lease, 10)
+		},
+		"mark damaged": func(s BackupStore) error {
+			return s.MarkBackupVerifyTargetDamagedContext(context.Background(), lease)
+		},
+	}
+}
+
+func TestBackupStoreFencesVerifyTargetWritesByLease(t *testing.T) {
+	lease := Lease{ID: "target-1", Epoch: 5}
+	for name, write := range backupFencedWrites(lease) {
+		t.Run(name, func(t *testing.T) {
+			database, rec := openRecordingDB(t)
+			if err := write(NewBackupStore(database)); err != nil {
+				t.Fatalf("write error: %v", err)
+			}
+			requireFencedByEpoch(t, rec, lease)
+		})
+	}
+}
+
+func TestBackupVerifyTargetExposesItsClaimAsALease(t *testing.T) {
+	target := BackupVerifyTarget{ID: "target-1", ClaimEpoch: 3}
+	if got, want := target.Lease(), (Lease{ID: "target-1", Epoch: 3}); got != want {
+		t.Errorf("Lease() = %+v, want %+v", got, want)
+	}
+}
+
+func restoreFencedWrites(lease Lease) map[string]func(RestoreStore) error {
+	ctx := context.Background()
+	return map[string]func(RestoreStore) error{
+		"set item target path": func(s RestoreStore) error {
+			return s.SetRestoreItemTargetPathContext(ctx, lease, "run-1", "/target")
+		},
+		"complete item": func(s RestoreStore) error {
+			_, err := s.CompleteRestoreItemContext(ctx, lease, "run-1", 10, "SHA256")
+			return err
+		},
+		"warn": func(s RestoreStore) error {
+			return s.WarnRestoreItemContext(ctx, lease, "run-1", "RESTORE_METADATA_INVALID")
+		},
+		"retry": func(s RestoreStore) error {
+			_, err := s.RetryRestoreItemContext(ctx, lease, "run-1", "RESTORE_TRANSFER_FAILED")
+			return err
+		},
+		"fail": func(s RestoreStore) error {
+			return s.FailRestoreItemContext(ctx, lease, "run-1", "RESTORE_TRANSFER_FAILED")
+		},
+		"skip": func(s RestoreStore) error {
+			return s.SkipRestoreItemContext(ctx, lease, "run-1", "RESTORE_TARGET_EXISTS")
+		},
+		"set directory target path": func(s RestoreStore) error {
+			return s.SetRestoreDirectoryTargetPathContext(ctx, lease, "run-1", "dir", "/target/dir")
+		},
+		"complete directory": func(s RestoreStore) error {
+			return s.CompleteRestoreDirectoryContext(ctx, lease, "run-1")
+		},
+	}
+}
+
+func TestRestoreStoreFencesItemWritesByLease(t *testing.T) {
+	lease := Lease{ID: "item-1", Epoch: 6}
+	for name, write := range restoreFencedWrites(lease) {
+		t.Run(name, func(t *testing.T) {
+			database, rec := openRecordingDB(t)
+			if err := write(NewRestoreStore(database)); err != nil {
+				t.Fatalf("write error: %v", err)
+			}
+			// Item completion also bumps run counters in the same transaction;
+			// the fenced item update is always the first statement.
+			requireFencedByEpoch(t, rec, lease)
+		})
+	}
+}
+
+func TestRestoreItemExposesItsClaimAsALease(t *testing.T) {
+	item := RestoreItem{ID: "item-1", ClaimEpoch: 8}
+	if got, want := item.Lease(), (Lease{ID: "item-1", Epoch: 8}); got != want {
+		t.Errorf("Lease() = %+v, want %+v", got, want)
+	}
+}
+
+func TestFencedWritesRejectAZeroLeaseWithoutTouchingTheDatabase(t *testing.T) {
+	for _, lease := range []Lease{{}, {ID: "item-1"}} {
+		for name, write := range backupFencedWrites(lease) {
+			t.Run("backup/"+name, func(t *testing.T) {
+				database, rec := openRecordingDB(t)
+				if err := write(NewBackupStore(database)); !errors.Is(err, ErrInvalidLease) {
+					t.Errorf("error = %v, want ErrInvalidLease", err)
+				}
+				if len(rec.statements) != 0 {
+					t.Errorf("recorded statements for a zero lease: %+v", rec.statements)
+				}
+			})
+		}
+		for name, write := range restoreFencedWrites(lease) {
+			t.Run("restore/"+name, func(t *testing.T) {
+				database, rec := openRecordingDB(t)
+				if err := write(NewRestoreStore(database)); !errors.Is(err, ErrInvalidLease) {
+					t.Errorf("error = %v, want ErrInvalidLease", err)
+				}
+				if len(rec.statements) != 0 {
+					t.Errorf("recorded statements for a zero lease: %+v", rec.statements)
+				}
+			})
+		}
 	}
 }

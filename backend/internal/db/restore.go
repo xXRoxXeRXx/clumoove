@@ -188,6 +188,9 @@ type RestoreItem struct {
 	ErrorCode            sql.NullString  `json:"error_code,omitempty"`
 }
 
+// Lease is the claim this worker holds on the item.
+func (i RestoreItem) Lease() Lease { return Lease{ID: i.ID, Epoch: i.ClaimEpoch} }
+
 type RestoreItemBlock struct {
 	Ordinal       int
 	PackPath      string
@@ -218,13 +221,6 @@ type RestorePreviewItem struct {
 	State        string
 	SourceMTime  sql.NullTime
 	Metadata     json.RawMessage
-}
-
-func restoreClaimEpoch(values []int64) int64 {
-	if len(values) == 0 {
-		return 0
-	}
-	return values[0]
 }
 
 func ListRestorePreviewItemsContext(ctx context.Context, database *sql.DB, preview *RestorePreview) ([]RestorePreviewItem, error) {
@@ -319,14 +315,16 @@ func ListRestoreItemBlocksContext(ctx context.Context, database *sql.DB, itemID,
 	return blocks, rows.Err()
 }
 
-func CompleteRestoreItemContext(ctx context.Context, database *sql.DB, itemID, runID string, sizeBytes int64, verificationKind string, claimEpoch ...int64) (bool, error) {
+func CompleteRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID string, sizeBytes int64, verificationKind string) (bool, error) {
+	if err := lease.validate(); err != nil {
+		return false, err
+	}
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
-	epoch := restoreClaimEpoch(claimEpoch)
-	result, err := tx.ExecContext(ctx, `UPDATE restore_items SET status = 'COMPLETED', verification_kind = $3, error_code = NULL, claim_deadline = NULL WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND ($4 = 0 OR claim_epoch = $4)`, itemID, runID, verificationKind, epoch)
+	result, err := tx.ExecContext(ctx, `UPDATE restore_items SET status = 'COMPLETED', verification_kind = $3, error_code = NULL, claim_deadline = NULL WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND claim_epoch = $4`, lease.ID, runID, verificationKind, lease.Epoch)
 	if err != nil {
 		return false, err
 	}
@@ -340,9 +338,11 @@ func CompleteRestoreItemContext(ctx context.Context, database *sql.DB, itemID, r
 	return true, tx.Commit()
 }
 
-func CompleteRestoreDirectoryContext(ctx context.Context, database *sql.DB, itemID, runID string, claimEpoch ...int64) error {
-	epoch := restoreClaimEpoch(claimEpoch)
-	result, err := database.ExecContext(ctx, `UPDATE restore_items SET status = 'COMPLETED', error_code = NULL, claim_deadline = NULL WHERE id = $1 AND restore_run_id = $2 AND is_dir AND status = 'RUNNING' AND ($3 = 0 OR claim_epoch = $3)`, itemID, runID, epoch)
+func CompleteRestoreDirectoryContext(ctx context.Context, database *sql.DB, lease Lease, runID string) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	result, err := database.ExecContext(ctx, `UPDATE restore_items SET status = 'COMPLETED', error_code = NULL, claim_deadline = NULL WHERE id = $1 AND restore_run_id = $2 AND is_dir AND status = 'RUNNING' AND claim_epoch = $3`, lease.ID, runID, lease.Epoch)
 	if err != nil {
 		return err
 	}
@@ -352,30 +352,36 @@ func CompleteRestoreDirectoryContext(ctx context.Context, database *sql.DB, item
 	return nil
 }
 
-func WarnRestoreItemContext(ctx context.Context, database *sql.DB, itemID, runID, errorCode string, claimEpoch ...int64) error {
-	epoch := restoreClaimEpoch(claimEpoch)
-	_, err := database.ExecContext(ctx, `UPDATE restore_items SET status = 'WARNING', error_code = $3 WHERE id = $1 AND restore_run_id = $2 AND status = 'COMPLETED' AND ($4 = 0 OR claim_epoch = $4)`, itemID, runID, errorCode, epoch)
+func WarnRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	_, err := database.ExecContext(ctx, `UPDATE restore_items SET status = 'WARNING', error_code = $3 WHERE id = $1 AND restore_run_id = $2 AND status = 'COMPLETED' AND claim_epoch = $4`, lease.ID, runID, errorCode, lease.Epoch)
 	return err
 }
 
-func FailRestoreItemContext(ctx context.Context, database *sql.DB, itemID, runID, errorCode string, claimEpoch ...int64) error {
-	epoch := restoreClaimEpoch(claimEpoch)
-	_, err := database.ExecContext(ctx, `UPDATE restore_items SET status = 'FAILED', error_code = $3, claim_deadline = NULL WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND ($4 = 0 OR claim_epoch = $4)`, itemID, runID, errorCode, epoch)
+func FailRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	_, err := database.ExecContext(ctx, `UPDATE restore_items SET status = 'FAILED', error_code = $3, claim_deadline = NULL WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND claim_epoch = $4`, lease.ID, runID, errorCode, lease.Epoch)
 	return err
 }
 
 // RetryRestoreItemContext applies the restore retry contract atomically. The
 // stored attempt number is incremented for every failed claim. The first three
 // failures are rescheduled after 10s, 30s, and 90s; the fourth is terminal.
-func RetryRestoreItemContext(ctx context.Context, database *sql.DB, itemID, runID, errorCode string, claimEpoch ...int64) (bool, error) {
-	epoch := restoreClaimEpoch(claimEpoch)
+func RetryRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) (bool, error) {
+	if err := lease.validate(); err != nil {
+		return false, err
+	}
 	result, err := database.ExecContext(ctx, `
 		UPDATE restore_items
 		SET attempts = attempts + 1,
 			status = CASE WHEN attempts + 1 >= 4 THEN 'FAILED' ELSE 'PENDING' END,
 			next_retry_at = CASE WHEN attempts + 1 >= 4 THEN NULL ELSE CURRENT_TIMESTAMP + (ARRAY[INTERVAL '10 seconds', INTERVAL '30 seconds', INTERVAL '90 seconds'])[attempts + 1] END,
 			error_code = $3, worker_hash = NULL, claim_deadline = NULL
-		WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND ($4 = 0 OR claim_epoch = $4)`, itemID, runID, errorCode, epoch)
+		WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND claim_epoch = $4`, lease.ID, runID, errorCode, lease.Epoch)
 	if err != nil {
 		return false, err
 	}
@@ -386,15 +392,19 @@ func RetryRestoreItemContext(ctx context.Context, database *sql.DB, itemID, runI
 	return true, nil
 }
 
-func SkipRestoreItemContext(ctx context.Context, database *sql.DB, itemID, runID, errorCode string, claimEpoch ...int64) error {
-	epoch := restoreClaimEpoch(claimEpoch)
-	_, err := database.ExecContext(ctx, `UPDATE restore_items SET status = 'SKIPPED', error_code = $3, claim_deadline = NULL WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND ($4 = 0 OR claim_epoch = $4)`, itemID, runID, errorCode, epoch)
+func SkipRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	_, err := database.ExecContext(ctx, `UPDATE restore_items SET status = 'SKIPPED', error_code = $3, claim_deadline = NULL WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND claim_epoch = $4`, lease.ID, runID, errorCode, lease.Epoch)
 	return err
 }
 
-func SetRestoreItemTargetPathContext(ctx context.Context, database *sql.DB, itemID, runID, targetPath string, claimEpoch ...int64) error {
-	epoch := restoreClaimEpoch(claimEpoch)
-	_, err := database.ExecContext(ctx, `UPDATE restore_items SET target_path = $3, resolved_target_path = $3 WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND ($4 = 0 OR claim_epoch = $4)`, itemID, runID, targetPath, epoch)
+func SetRestoreItemTargetPathContext(ctx context.Context, database *sql.DB, lease Lease, runID, targetPath string) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	_, err := database.ExecContext(ctx, `UPDATE restore_items SET target_path = $3, resolved_target_path = $3 WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND claim_epoch = $4`, lease.ID, runID, targetPath, lease.Epoch)
 	return err
 }
 
@@ -450,14 +460,16 @@ func MoveRestoreTargetReservationContext(ctx context.Context, database *sql.DB, 
 // SetRestoreDirectoryTargetPathContext persists a directory rename and rewrites
 // every selected descendant in the same transaction. This makes retry target
 // paths stable even after a coordinator crash.
-func SetRestoreDirectoryTargetPathContext(ctx context.Context, database *sql.DB, itemID, runID, snapshotPath, targetPath string, claimEpoch ...int64) error {
+func SetRestoreDirectoryTargetPathContext(ctx context.Context, database *sql.DB, lease Lease, runID, snapshotPath, targetPath string) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	epoch := restoreClaimEpoch(claimEpoch)
-	result, err := tx.ExecContext(ctx, `UPDATE restore_items SET target_path = $4, resolved_target_path = $4 WHERE id = $1 AND restore_run_id = $2 AND snapshot_relative_path = $3 AND is_dir AND status = 'RUNNING' AND ($5 = 0 OR claim_epoch = $5)`, itemID, runID, snapshotPath, targetPath, epoch)
+	result, err := tx.ExecContext(ctx, `UPDATE restore_items SET target_path = $4, resolved_target_path = $4 WHERE id = $1 AND restore_run_id = $2 AND snapshot_relative_path = $3 AND is_dir AND status = 'RUNNING' AND claim_epoch = $5`, lease.ID, runID, snapshotPath, targetPath, lease.Epoch)
 	if err != nil {
 		return err
 	}

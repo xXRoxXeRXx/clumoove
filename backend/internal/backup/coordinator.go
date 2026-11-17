@@ -308,7 +308,7 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 		}
 		state := "COMPLETED"
 		if !exists || size != verifyTarget.SizeBytes {
-			state, err = c.store.CompleteBackupVerifyTargetContext(ctx, verifyTarget.ID, exists, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
+			state, err = c.store.CompleteBackupVerifyTargetContext(ctx, verifyTarget.Lease(), exists, verifyTarget.SizeBytes, size)
 			if err != nil {
 				return err
 			}
@@ -348,7 +348,7 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 					return validationErr
 				}
 				state = "DAMAGED"
-				if err := c.store.MarkBackupVerifyTargetDamagedContext(ctx, verifyTarget.ID, verifyTarget.ClaimEpoch); err != nil {
+				if err := c.store.MarkBackupVerifyTargetDamagedContext(ctx, verifyTarget.Lease()); err != nil {
 					return err
 				}
 			} else {
@@ -357,7 +357,7 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 				if err := c.store.AddBackupVerifyProcessedBytesContext(ctx, maintenance.ID, verifyTarget.SizeBytes); err != nil {
 					return err
 				}
-				if err := c.store.MarkBackupVerifyTargetReadContext(ctx, verifyTarget.ID, verifyTarget.SizeBytes, verifyTarget.ClaimEpoch); err != nil {
+				if err := c.store.MarkBackupVerifyTargetReadContext(ctx, verifyTarget.Lease(), verifyTarget.SizeBytes); err != nil {
 					return err
 				}
 				if verifyTarget.PackID.Valid {
@@ -365,13 +365,13 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 						return err
 					}
 				}
-				state, err = c.store.CompleteBackupVerifyTargetContext(ctx, verifyTarget.ID, true, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
+				state, err = c.store.CompleteBackupVerifyTargetContext(ctx, verifyTarget.Lease(), true, verifyTarget.SizeBytes, size)
 				if err != nil {
 					return err
 				}
 			}
 		} else {
-			state, err = c.store.CompleteBackupVerifyTargetContext(ctx, verifyTarget.ID, true, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
+			state, err = c.store.CompleteBackupVerifyTargetContext(ctx, verifyTarget.Lease(), true, verifyTarget.SizeBytes, size)
 			if err != nil {
 				return err
 			}
