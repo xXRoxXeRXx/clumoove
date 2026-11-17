@@ -664,6 +664,15 @@ type syncModuleDBState struct {
 	ownershipErr error
 	oauthErr     error
 	nextID       int
+	// syncLookups counts statements that read a sync job row or check its
+	// ownership, so tests can assert how many lookups a request performs.
+	syncLookups int
+}
+
+func (s *syncModuleDBState) lookupCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.syncLookups
 }
 
 func (s *syncModuleDBState) setJob(rec *syncModuleRecord) {
@@ -850,6 +859,7 @@ func (c syncModuleTestConn) QueryContext(_ context.Context, query string, args [
 
 	switch {
 	case strings.Contains(query, "SELECT EXISTS(SELECT 1 FROM sync_jobs"):
+		c.state.syncLookups++
 		if c.state.ownershipErr != nil {
 			return nil, c.state.ownershipErr
 		}
@@ -926,8 +936,18 @@ func (c syncModuleTestConn) QueryContext(_ context.Context, query string, args [
 		return &backupProfileConnectionRows{rows: [][]driver.Value{{rec.status}}, columns: 1}, nil
 
 	case strings.Contains(query, "FROM sync_jobs WHERE id = $1"):
+		c.state.syncLookups++
 		id := args[0].Value.(string)
 		rec := c.state.jobs[id]
+		if len(args) > 1 {
+			// Owner-scoped lookup: WHERE id = $1 AND user_id = $2.
+			if c.state.ownershipErr != nil {
+				return nil, c.state.ownershipErr
+			}
+			if owner, _ := args[1].Value.(string); rec != nil && rec.userID != owner {
+				rec = nil
+			}
+		}
 		if rec == nil {
 			return &backupProfileConnectionRows{columns: 47}, nil
 		}

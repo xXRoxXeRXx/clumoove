@@ -242,6 +242,19 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 
 // GetMigrationContext retrieves a migration while honoring caller cancellation.
 func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration, error) {
+	return queryMigration(ctx, db, `WHERE id = $1`, id)
+}
+
+// GetOwnedMigrationContext loads a migration only if it belongs to userID, in a
+// single owner-scoped query. A missing migration and one owned by another user
+// are indistinguishable: both return sql.ErrNoRows.
+func GetOwnedMigrationContext(ctx context.Context, db *sql.DB, id, userID string) (*Migration, error) {
+	return queryMigration(ctx, db, `WHERE id = $1 AND user_id = $2`, id, userID)
+}
+
+// queryMigration selects the full migration row. where is a fixed SQL fragment
+// supplied by the callers above; values are always passed as parameters.
+func queryMigration(ctx context.Context, db *sql.DB, where string, args ...any) (*Migration, error) {
 	query := `
 		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted, source_provider,
 		       source_refresh_token_encrypted, source_token_expires_at, COALESCE(source_mega_session_id_encrypted, ''), COALESCE(source_mega_master_key_encrypted, ''),
@@ -252,10 +265,10 @@ func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration
 		       discovery_complete, discovery_generation, indexing_lease_until,
 		       created_at, updated_at, target_dir, threads, bandwidth_limit_mbps,
 		       picker_session_id, selected_paths, selected_calendars, selected_contacts
-		FROM migrations WHERE id = $1
+		FROM migrations ` + where + `
 	`
 	var m Migration
-	err := db.QueryRowContext(ctx, query, id).Scan(
+	err := db.QueryRowContext(ctx, query, args...).Scan(
 		&m.ID, &m.UserID, &m.SourceProfileID, &m.TargetProfileID, &m.SourceURL, &m.SourceUsername, &m.SourcePasswordEncrypted, &m.SourceProvider,
 		&m.SourceRefreshTokenEncrypted, &m.SourceTokenExpiresAt, &m.SourceMegaSessionIDEncrypted, &m.SourceMegaMasterKeyEncrypted,
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted, &m.TargetProvider,

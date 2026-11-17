@@ -215,6 +215,19 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 
 // GetSyncJobContext retrieves a sync job while honoring caller cancellation.
 func GetSyncJobContext(ctx context.Context, db *sql.DB, id string) (*SyncJob, error) {
+	return querySyncJob(ctx, db, `WHERE id = $1`, id)
+}
+
+// GetOwnedSyncJobContext loads a sync job only if it belongs to userID, in a
+// single owner-scoped query. A missing job and one owned by another user are
+// indistinguishable: both return sql.ErrNoRows.
+func GetOwnedSyncJobContext(ctx context.Context, db *sql.DB, id, userID string) (*SyncJob, error) {
+	return querySyncJob(ctx, db, `WHERE id = $1 AND user_id = $2`, id, userID)
+}
+
+// querySyncJob selects the full sync job row. where is a fixed SQL fragment
+// supplied by the callers above; values are always passed as parameters.
+func querySyncJob(ctx context.Context, db *sql.DB, where string, args ...any) (*SyncJob, error) {
 	query := `
 		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,
 		       source_refresh_token_encrypted, source_token_expires_at, COALESCE(source_mega_session_id_encrypted, ''), COALESCE(source_mega_master_key_encrypted, ''),
@@ -226,10 +239,10 @@ func GetSyncJobContext(ctx context.Context, db *sql.DB, id string) (*SyncJob, er
 		       (SELECT next_run_at FROM schedules WHERE task_type = 'sync' AND task_id = sync_jobs.id AND is_active = TRUE LIMIT 1),
 		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, verified_files, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
-		FROM sync_jobs WHERE id = $1
+		FROM sync_jobs ` + where + `
 	`
 	var s SyncJob
-	err := db.QueryRowContext(ctx, query, id).Scan(
+	err := db.QueryRowContext(ctx, query, args...).Scan(
 		&s.ID, &s.UserID, &s.SourceProfileID, &s.TargetProfileID, &s.SourceURL, &s.SourceUsername, &s.SourcePasswordEncrypted,
 		&s.SourceRefreshTokenEncrypted, &s.SourceTokenExpiresAt, &s.SourceMegaSessionIDEncrypted, &s.SourceMegaMasterKeyEncrypted,
 		&s.TargetURL, &s.TargetUsername, &s.TargetPasswordEncrypted,
