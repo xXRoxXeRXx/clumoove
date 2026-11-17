@@ -270,8 +270,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		SourceHash:       task.SourceHash.String,
 		Throttler:        migrationThrottler,
 		Progress:         progressChan,
-		// Migrations never fail a task over metadata and bound no call by time.
-		Metadata: &MetadataPolicy{},
+		Metadata:         &migrationMetadataPolicy,
 		Finalize: func(finalizeCtx context.Context) error {
 			if !useTempThenRename(targetClient, deleteAfterUpload) {
 				return nil
@@ -303,11 +302,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		}
 	}
 
-	if transfer.MetadataErr != nil && !errors.Is(transfer.MetadataErr, storage.ErrUnsupportedOnPlatform) {
-		// Metadata propagation is non-fatal, but must remain visible to
-		// operators rather than allowing the task to appear silently complete.
-		processorLogf("Warning: metadata propagation failed for task %s (target provider %s): %v", task.ID, mig.TargetProvider, transfer.MetadataErr)
-	}
+	logNonFatalMetadataError(task.ID, mig.TargetProvider, transfer.MetadataErr)
 
 	// File-manager moves reuse the transfer pipeline but must never remove the
 	// source until the destination stream has completed successfully. Directory
@@ -324,16 +319,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 	// the transfer phase for maximum speed. Full checksum verification is performed
 	// post-transfer by the Verifier daemon.
 	if task.ResourceType == "files" {
-		workerHashAlgo := transfer.SourceAlgorithm
-		workerHashVal := formatWorkerHashValue(transfer.SourceAlgorithm, transfer.SourceHasher)
-		// When source and target use different algorithms, retain the hash
-		// calculated for the bytes written to the target. The verifier promotes
-		// this value when it matches the target provider's native algorithm.
-		if transfer.TargetHasher != nil {
-			workerHashAlgo = transfer.TargetAlgorithm
-			workerHashVal = formatWorkerHashValue(transfer.TargetAlgorithm, transfer.TargetHasher)
-		}
-		workerHash := fmt.Sprintf("%s:%s", workerHashAlgo, workerHashVal)
+		workerHash := transfer.WorkerHash()
 		task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
 		task.TargetHash = sql.NullString{String: workerHash, Valid: true}
 

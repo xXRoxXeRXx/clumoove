@@ -31,7 +31,8 @@ type transferTarget interface {
 
 // MetadataPolicy states how applying source file metadata to the target
 // affects a transfer. Metadata is always applied after the destination has been
-// finalized and size-verified, to the final (not staging) path.
+// finalized and size-verified, to the final (not staging) path. The zero value
+// applies metadata without a timeout and never fails the transfer.
 type MetadataPolicy struct {
 	// Timeout bounds one ApplyMetadata call. Zero inherits the request context.
 	Timeout time.Duration
@@ -43,6 +44,24 @@ type MetadataPolicy struct {
 
 // failMetadataOnAuth fails a transfer only when the target rejected credentials.
 func failMetadataOnAuth(err error) bool { return errors.Is(err, storage.ErrAuth) }
+
+// Per-caller metadata policies. Migrations never fail a task over metadata and
+// bound no call by time; sync bounds each call and fails only on ErrAuth.
+// Restore reports every outcome as a typed warning and does not use these.
+var (
+	migrationMetadataPolicy = MetadataPolicy{}
+	syncMetadataPolicy      = MetadataPolicy{Timeout: 15 * time.Second, FailOn: failMetadataOnAuth}
+)
+
+// logNonFatalMetadataError keeps a metadata failure that did not fail the
+// transfer visible to operators. Platforms that cannot store the metadata are
+// expected and stay quiet.
+func logNonFatalMetadataError(taskID, targetProvider string, err error) {
+	if err == nil || errors.Is(err, storage.ErrUnsupportedOnPlatform) {
+		return
+	}
+	processorLogf("Warning: metadata propagation failed for task %s (target provider %s): %v", taskID, targetProvider, err)
+}
 
 // transferRequest contains the provider-facing part of a file transfer. It is
 // intentionally independent of task persistence and queue lifecycle so it can
@@ -71,9 +90,11 @@ type transferRequest struct {
 	// before Finalize, so a caller can remove its staging object. It is not
 	// called for failures after Finalize has started.
 	AbortUpload func(context.Context)
-	// Metadata, when set, applies UploadOptions.Metadata to the final path
-	// through the target's optional MetadataApplier under the given policy. It
-	// is skipped when there is no modification time or description to apply.
+	// Metadata, when non-nil, applies UploadOptions.Metadata to the final path
+	// through the target's optional MetadataApplier under the given policy. A
+	// nil Metadata leaves the target untouched; a pointer to the zero
+	// MetadataPolicy applies it and never fails the transfer. It is skipped
+	// when there is no modification time or description to apply.
 	Metadata *MetadataPolicy
 }
 
@@ -226,9 +247,9 @@ func runTransferCore(req transferRequest) (transferResult, error) {
 			return transferResult{}, fmt.Errorf("target size mismatch: got %d bytes, expected %d", size, req.FileSize)
 		}
 	}
-	metadataErr, err := applyTransferMetadata(req)
-	if err != nil {
-		return transferResult{}, err
+	metadataFatal, metadataErr := applyTransferMetadata(req)
+	if metadataFatal {
+		return transferResult{}, metadataErr
 	}
 	return transferResult{
 		SourceAlgorithm: sourceAlgo,
@@ -241,15 +262,15 @@ func runTransferCore(req transferRequest) (transferResult, error) {
 }
 
 // applyTransferMetadata applies the request's metadata under its policy. It
-// returns a non-fatal failure separately from the error that fails the transfer.
-func applyTransferMetadata(req transferRequest) (nonFatal, fatal error) {
+// reports whether the policy makes a failure fatal, with the application error.
+func applyTransferMetadata(req transferRequest) (fatal bool, err error) {
 	if req.Metadata == nil {
-		return nil, nil
+		return false, nil
 	}
 	applier, ok := req.Target.(storage.MetadataApplier)
 	meta := req.UploadOptions.Metadata
 	if !ok || (meta.ModifiedTime.IsZero() && meta.Description == "") {
-		return nil, nil
+		return false, nil
 	}
 	finalPath := req.VerificationPath
 	if finalPath == "" {
@@ -261,12 +282,17 @@ func applyTransferMetadata(req transferRequest) (nonFatal, fatal error) {
 		ctx, cancel = context.WithTimeout(ctx, req.Metadata.Timeout)
 		defer cancel()
 	}
-	err := applier.ApplyMetadata(ctx, req.ResourceType, finalPath, meta)
-	if err == nil {
-		return nil, nil
+	err = applier.ApplyMetadata(ctx, req.ResourceType, finalPath, meta)
+	return err != nil && req.Metadata.FailOn != nil && req.Metadata.FailOn(err), err
+}
+
+// WorkerHash is the stream hash recorded on a task. When the source and target
+// algorithms differ it is the hash of the bytes written to the target, which
+// the verifier promotes when it matches the target provider's native algorithm.
+func (r transferResult) WorkerHash() string {
+	algorithm, hasher := r.SourceAlgorithm, r.SourceHasher
+	if r.TargetHasher != nil {
+		algorithm, hasher = r.TargetAlgorithm, r.TargetHasher
 	}
-	if req.Metadata.FailOn != nil && req.Metadata.FailOn(err) {
-		return nil, err
-	}
-	return err, nil
+	return fmt.Sprintf("%s:%s", algorithm, formatWorkerHashValue(algorithm, hasher))
 }

@@ -6,6 +6,8 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
+	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -31,12 +33,6 @@ func (s *syncFakeSource) InspectResource(context.Context, string, string) (stora
 	return storage.CloudResource{LastModified: s.modified}, nil
 }
 
-type syncMetadataCall struct {
-	path       string
-	meta       storage.FileMetadata
-	finalReady bool
-}
-
 // syncFakeTarget is an in-memory provider that records the order of uploads,
 // promotions and metadata calls so the sync transfer sequence can be asserted.
 type syncFakeTarget struct {
@@ -46,8 +42,8 @@ type syncFakeTarget struct {
 	uploads      []string
 	renames      []string
 	storeShort   bool
-	metaErr      error
-	metaCalls    []syncMetadataCall
+	uploadOpts   []storage.UploadOptions
+	metadata     metadataRecorder
 }
 
 func newSyncFakeTarget(atomic bool) *syncFakeTarget {
@@ -82,6 +78,17 @@ func (t *syncFakeTarget) StreamUploadChunked(ctx context.Context, kind, filePath
 	return t.StreamUpload(ctx, kind, filePath, stream, size)
 }
 
+// StreamUploadWithOptions makes the fake a storage.TransferUploader, which is
+// how real providers receive the source checksum and modification time.
+func (t *syncFakeTarget) StreamUploadWithOptions(ctx context.Context, kind, filePath string, stream io.Reader, size int64, opts storage.UploadOptions) (storage.UploadResult, error) {
+	t.uploadOpts = append(t.uploadOpts, opts)
+	return storage.UploadResult{}, t.StreamUpload(ctx, kind, filePath, stream, size)
+}
+
+func (t *syncFakeTarget) StreamUploadChunkedWithOptions(ctx context.Context, kind, filePath string, stream io.Reader, size int64, _ chan<- int64, opts storage.UploadOptions) (storage.UploadResult, error) {
+	return t.StreamUploadWithOptions(ctx, kind, filePath, stream, size, opts)
+}
+
 func (t *syncFakeTarget) FileExists(_ context.Context, _, filePath string) (bool, int64, error) {
 	data, ok := t.files[filePath]
 	return ok, int64(len(data)), nil
@@ -106,10 +113,8 @@ func (t *syncFakeTarget) RenameFile(_ context.Context, _, oldPath, newPath strin
 // syncMetaTarget adds the optional MetadataApplier capability.
 type syncMetaTarget struct{ *syncFakeTarget }
 
-func (t syncMetaTarget) ApplyMetadata(_ context.Context, _, filePath string, meta storage.FileMetadata) error {
-	_, ready := t.files[filePath]
-	t.metaCalls = append(t.metaCalls, syncMetadataCall{path: filePath, meta: meta, finalReady: ready})
-	return t.metaErr
+func (t syncMetaTarget) ApplyMetadata(ctx context.Context, _, filePath string, meta storage.FileMetadata) error {
+	return t.metadata.record(ctx, t.files, filePath, meta)
 }
 
 func newSyncTestTask(size int) *db.Task {
@@ -141,6 +146,10 @@ func TestExecuteSyncTransferRecordsTargetStreamHash(t *testing.T) {
 		{"s3 target records SHA256", "nextcloud", "s3", fmt.Sprintf("SHA256:%x", sha256.Sum256(data))},
 		{"google target records MD5", "nextcloud", "google", fmt.Sprintf("MD5:%x", md5.Sum(data))},
 		{"google to google keeps MD5", "google", "google", fmt.Sprintf("MD5:%x", md5.Sum(data))},
+		{"onedrive target records QUICKXOR", "nextcloud", "onedrive", "QUICKXOR:" + quickXor(data)},
+		{"dropbox target records DROPBOX", "nextcloud", "dropbox", "DROPBOX:" + dropboxHash(data)},
+		{"hidrive target records HIDRIVE", "nextcloud", "hidrive", "HIDRIVE:" + hidriveHash(data)},
+		{"dropbox source keeps its own algorithm", "dropbox", "dropbox", "DROPBOX:" + dropboxHash(data)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -159,6 +168,65 @@ func TestExecuteSyncTransferRecordsTargetStreamHash(t *testing.T) {
 				t.Fatal("target file does not hold the source bytes")
 			}
 		})
+	}
+}
+
+func quickXor(data []byte) string {
+	h := storage.NewQuickXorHasher()
+	h.Write(data)
+	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+}
+
+func dropboxHash(data []byte) string {
+	h := storage.NewDropboxHasher()
+	h.Write(data)
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func hidriveHash(data []byte) string {
+	h := storage.NewHiDriveHasher()
+	h.Write(data)
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func TestExecuteSyncTransferForwardsSourceChecksum(t *testing.T) {
+	data := []byte("checksum forwarding")
+	cases := []struct {
+		name         string
+		srcProvider  string
+		sourceHash   string
+		wantChecksum string
+	}{
+		{"parsed source hash is forwarded", "nextcloud", "SHA1:ABCDEF", "SHA1:abcdef"},
+		{"webdav source hash is ignored", "webdav", "SHA1:abcdef", ""},
+		{"hidrive native hash is ignored", "hidrive", "HIDRIVE:abcdef", ""},
+		{"no source hash forwards nothing", "nextcloud", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			task := newSyncTestTask(len(data))
+			task.SourceHash = sql.NullString{String: c.sourceHash, Valid: c.sourceHash != ""}
+			target := newSyncFakeTarget(false)
+			if err := runSyncTestTransfer(t, task, &syncFakeSource{data: data}, target, c.srcProvider, "nextcloud"); err != nil {
+				t.Fatalf("executeSyncTransfer() error = %v", err)
+			}
+			if len(target.uploadOpts) != 1 || target.uploadOpts[0].Checksum != c.wantChecksum {
+				t.Fatalf("upload options = %+v, want checksum %q", target.uploadOpts, c.wantChecksum)
+			}
+		})
+	}
+}
+
+func TestExecuteSyncTransferForwardsSourceModifiedTimeToUpload(t *testing.T) {
+	data := []byte("upload mtime")
+	modified := time.Date(2026, 9, 8, 7, 6, 5, 0, time.UTC)
+	task := newSyncTestTask(len(data))
+	target := newSyncFakeTarget(false)
+	if err := runSyncTestTransfer(t, task, &syncFakeSource{data: data, modified: modified}, target, "nextcloud", "nextcloud"); err != nil {
+		t.Fatalf("executeSyncTransfer() error = %v", err)
+	}
+	if len(target.uploadOpts) != 1 || !target.uploadOpts[0].Metadata.ModifiedTime.Equal(modified) {
+		t.Fatalf("upload options = %+v, want the source modification time", target.uploadOpts)
 	}
 }
 
@@ -253,11 +321,11 @@ func TestExecuteSyncTransferAppliesSourceModifiedTimeToFinalPath(t *testing.T) {
 	if err := runSyncTestTransfer(t, task, &syncFakeSource{data: data, modified: modified}, target, "nextcloud", "nextcloud"); err != nil {
 		t.Fatalf("executeSyncTransfer() error = %v", err)
 	}
-	if len(base.metaCalls) != 1 {
-		t.Fatalf("ApplyMetadata calls = %d, want 1", len(base.metaCalls))
+	if len(base.metadata.calls) != 1 {
+		t.Fatalf("ApplyMetadata calls = %d, want 1", len(base.metadata.calls))
 	}
-	call := base.metaCalls[0]
-	if call.path != "/dst/docs/a.txt" || !call.finalReady || !call.meta.ModifiedTime.Equal(modified) {
+	call := base.metadata.calls[0]
+	if call.path != "/dst/docs/a.txt" || !call.finalPresent || !call.meta.ModifiedTime.Equal(modified) {
 		t.Fatalf("ApplyMetadata call = %+v, want the final promoted path with the source mtime", call)
 	}
 }
@@ -269,8 +337,8 @@ func TestExecuteSyncTransferSkipsMetadataWithoutSourceModifiedTime(t *testing.T)
 	if err := runSyncTestTransfer(t, task, &syncFakeSource{data: data}, syncMetaTarget{base}, "nextcloud", "nextcloud"); err != nil {
 		t.Fatalf("executeSyncTransfer() error = %v", err)
 	}
-	if len(base.metaCalls) != 0 {
-		t.Fatalf("ApplyMetadata calls = %d, want 0", len(base.metaCalls))
+	if len(base.metadata.calls) != 0 {
+		t.Fatalf("ApplyMetadata calls = %d, want 0", len(base.metadata.calls))
 	}
 }
 
@@ -290,7 +358,7 @@ func TestExecuteSyncTransferMetadataFailurePolicy(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			task := newSyncTestTask(len(data))
 			base := newSyncFakeTarget(true)
-			base.metaErr = c.metaErr
+			base.metadata.err = c.metaErr
 			err := runSyncTestTransfer(t, task, &syncFakeSource{data: data, modified: modified}, syncMetaTarget{base}, "nextcloud", "nextcloud")
 			if c.wantErr {
 				if !errors.Is(err, storage.ErrAuth) {

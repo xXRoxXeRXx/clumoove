@@ -4,16 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"backend/internal/db"
 	"backend/internal/storage"
 	"backend/internal/throttle"
 )
-
-// syncMetadataTimeout bounds one metadata call; a sync task fails over
-// metadata only when the target rejects its credentials.
-const syncMetadataTimeout = 15 * time.Second
 
 // syncTransfer is the provider-facing input for one sync upload/download task.
 type syncTransfer struct {
@@ -31,6 +26,12 @@ type syncTransfer struct {
 // executeSyncTransfer copies one file for a sync task through the shared
 // transfer core and records the stream hashes on the task. Task lifecycle
 // persistence stays with the caller.
+//
+// Deliberate differences from the former inline implementation: the source
+// modification time is read once before the upload and reused for the upload
+// options and for metadata; metadata is applied after the target size check;
+// size verification uses the upload receipt's resource ID when one is returned;
+// and non-fatal metadata failures are logged.
 func executeSyncTransfer(ctx context.Context, tr syncTransfer) error {
 	task, tgtClient, tgtPath := tr.Task, tr.Target, tr.TargetPath
 
@@ -63,7 +64,7 @@ func executeSyncTransfer(ctx context.Context, tr syncTransfer) error {
 		SourceHash:       task.SourceHash.String,
 		Throttler:        tr.Throttler,
 		Progress:         tr.Progress,
-		Metadata:         &MetadataPolicy{Timeout: syncMetadataTimeout, FailOn: failMetadataOnAuth},
+		Metadata:         &syncMetadataPolicy,
 	}
 	if useTempUpload {
 		req.AbortUpload = func(abortCtx context.Context) {
@@ -84,13 +85,8 @@ func executeSyncTransfer(ctx context.Context, tr syncTransfer) error {
 		return err
 	}
 
-	workerHashAlgo := transfer.SourceAlgorithm
-	workerHashVal := formatWorkerHashValue(transfer.SourceAlgorithm, transfer.SourceHasher)
-	if transfer.TargetHasher != nil {
-		workerHashAlgo = transfer.TargetAlgorithm
-		workerHashVal = formatWorkerHashValue(transfer.TargetAlgorithm, transfer.TargetHasher)
-	}
-	workerHash := fmt.Sprintf("%s:%s", workerHashAlgo, workerHashVal)
+	workerHash := transfer.WorkerHash()
+	logNonFatalMetadataError(task.ID, tr.TargetProvider, transfer.MetadataErr)
 	task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
 	task.TargetHash = sql.NullString{String: workerHash, Valid: true}
 	if task.ResourceType != "files" || task.IsDirectory() {
