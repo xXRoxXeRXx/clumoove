@@ -1287,27 +1287,6 @@ func (api *migrationAPI) migrationDetailPayload(ctx context.Context, mig *db.Mig
 	return payload
 }
 
-func acquireStreamLease(
-	w http.ResponseWriter,
-	r *http.Request,
-	limiter rateLimiter,
-	clientIP string,
-	pool streamSlotPool,
-	userID, rateLimitScope string,
-) bool {
-	if limiter == nil || !limiter.Allow(r.Context(), rateLimitScope, clientIP, streamRateLimit, streamRateWindow) {
-		w.Header().Set("Retry-After", "15")
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-		return false
-	}
-	if pool == nil || !pool.Acquire(userID) {
-		w.Header().Set("Retry-After", "15")
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-		return false
-	}
-	return true
-}
-
 func (api *migrationAPI) acquireMigrationStream(w http.ResponseWriter, r *http.Request, userID string) bool {
 	return acquireStreamLease(w, r, api.rateLimiter, api.clientIP(r), api.streamPool, userID, "migration-stream")
 }
