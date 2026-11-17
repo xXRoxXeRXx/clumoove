@@ -270,6 +270,8 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		SourceHash:       task.SourceHash.String,
 		Throttler:        migrationThrottler,
 		Progress:         progressChan,
+		// Migrations never fail a task over metadata and bound no call by time.
+		Metadata: &MetadataPolicy{},
 		Finalize: func(finalizeCtx context.Context) error {
 			if !useTempThenRename(targetClient, deleteAfterUpload) {
 				return nil
@@ -301,16 +303,10 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		}
 	}
 
-	if applier, ok := targetClient.(storage.MetadataApplier); ok {
-		if !transferMeta.ModifiedTime.IsZero() || transferMeta.Description != "" {
-			if err := applier.ApplyMetadata(ctx, task.ResourceType, targetPath, transferMeta); err != nil {
-				if !errors.Is(err, storage.ErrUnsupportedOnPlatform) {
-					// Metadata propagation is non-fatal, but must remain visible to
-					// operators rather than allowing the task to appear silently complete.
-					processorLogf("Warning: metadata propagation failed for task %s (target provider %s): %v", task.ID, mig.TargetProvider, err)
-				}
-			}
-		}
+	if transfer.MetadataErr != nil && !errors.Is(transfer.MetadataErr, storage.ErrUnsupportedOnPlatform) {
+		// Metadata propagation is non-fatal, but must remain visible to
+		// operators rather than allowing the task to appear silently complete.
+		processorLogf("Warning: metadata propagation failed for task %s (target provider %s): %v", task.ID, mig.TargetProvider, transfer.MetadataErr)
 	}
 
 	// File-manager moves reuse the transfer pipeline but must never remove the

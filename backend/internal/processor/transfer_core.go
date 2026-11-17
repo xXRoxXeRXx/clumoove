@@ -5,9 +5,11 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
+	"time"
 
 	"backend/internal/storage"
 	"backend/internal/throttle"
@@ -26,6 +28,21 @@ type transferTarget interface {
 	uploadTarget
 	storage.FileExister
 }
+
+// MetadataPolicy states how applying source file metadata to the target
+// affects a transfer. Metadata is always applied after the destination has been
+// finalized and size-verified, to the final (not staging) path.
+type MetadataPolicy struct {
+	// Timeout bounds one ApplyMetadata call. Zero inherits the request context.
+	Timeout time.Duration
+	// FailOn reports whether an ApplyMetadata error fails the transfer. A nil
+	// FailOn never fails it. Errors that do not fail the transfer are returned
+	// in transferResult.MetadataErr so the caller decides whether to log them.
+	FailOn func(error) bool
+}
+
+// failMetadataOnAuth fails a transfer only when the target rejected credentials.
+func failMetadataOnAuth(err error) bool { return errors.Is(err, storage.ErrAuth) }
 
 // transferRequest contains the provider-facing part of a file transfer. It is
 // intentionally independent of task persistence and queue lifecycle so it can
@@ -50,6 +67,14 @@ type transferRequest struct {
 	// before the destination is size-verified (for example, to promote an
 	// overwrite temporary object).
 	Finalize func(context.Context) error
+	// AbortUpload runs when the upload or the source completeness check fails,
+	// before Finalize, so a caller can remove its staging object. It is not
+	// called for failures after Finalize has started.
+	AbortUpload func(context.Context)
+	// Metadata, when set, applies UploadOptions.Metadata to the final path
+	// through the target's optional MetadataApplier under the given policy. It
+	// is skipped when there is no modification time or description to apply.
+	Metadata *MetadataPolicy
 }
 
 // transferResult retains hashers that are complete when runTransferCore
@@ -60,6 +85,9 @@ type transferResult struct {
 	TargetAlgorithm string
 	TargetHasher    hash.Hash
 	UploadReceipt   storage.UploadReceipt
+	// MetadataErr is a metadata application failure the request's policy did
+	// not treat as fatal.
+	MetadataErr error
 }
 
 func transferSourceHasher(provider, sourceHash string) (string, string, hash.Hash) {
@@ -165,9 +193,15 @@ func runTransferCore(req transferRequest) (transferResult, error) {
 	}
 	uploadResult, err := streamUploadWithOptions(uploadCtx, req.Target, req.ResourceType, req.TargetPath, uploadReader, req.FileSize, req.Progress, uploadOpts)
 	if err != nil {
+		if req.AbortUpload != nil {
+			req.AbortUpload(req.Context)
+		}
 		return transferResult{}, fmt.Errorf("upload to target failed: %w", err)
 	}
 	if err := reader.VerifyComplete(); err != nil {
+		if req.AbortUpload != nil {
+			req.AbortUpload(req.Context)
+		}
 		return transferResult{}, err
 	}
 	if req.Finalize != nil {
@@ -192,11 +226,47 @@ func runTransferCore(req transferRequest) (transferResult, error) {
 			return transferResult{}, fmt.Errorf("target size mismatch: got %d bytes, expected %d", size, req.FileSize)
 		}
 	}
+	metadataErr, err := applyTransferMetadata(req)
+	if err != nil {
+		return transferResult{}, err
+	}
 	return transferResult{
 		SourceAlgorithm: sourceAlgo,
 		SourceHasher:    sourceHasher,
 		TargetAlgorithm: targetAlgo,
 		TargetHasher:    targetHasher,
 		UploadReceipt:   uploadResult.Receipt,
+		MetadataErr:     metadataErr,
 	}, nil
+}
+
+// applyTransferMetadata applies the request's metadata under its policy. It
+// returns a non-fatal failure separately from the error that fails the transfer.
+func applyTransferMetadata(req transferRequest) (nonFatal, fatal error) {
+	if req.Metadata == nil {
+		return nil, nil
+	}
+	applier, ok := req.Target.(storage.MetadataApplier)
+	meta := req.UploadOptions.Metadata
+	if !ok || (meta.ModifiedTime.IsZero() && meta.Description == "") {
+		return nil, nil
+	}
+	finalPath := req.VerificationPath
+	if finalPath == "" {
+		finalPath = req.TargetPath
+	}
+	ctx := req.Context
+	if req.Metadata.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, req.Metadata.Timeout)
+		defer cancel()
+	}
+	err := applier.ApplyMetadata(ctx, req.ResourceType, finalPath, meta)
+	if err == nil {
+		return nil, nil
+	}
+	if req.Metadata.FailOn != nil && req.Metadata.FailOn(err) {
+		return nil, err
+	}
+	return err, nil
 }

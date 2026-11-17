@@ -2,20 +2,18 @@ package processor
 
 import (
 	"context"
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
 	"database/sql"
-	"errors"
 	"fmt"
-	"hash"
-	"io"
 	"time"
 
 	"backend/internal/db"
 	"backend/internal/storage"
 	"backend/internal/throttle"
 )
+
+// syncMetadataTimeout bounds one metadata call; a sync task fails over
+// metadata only when the target rejects its credentials.
+const syncMetadataTimeout = 15 * time.Second
 
 // syncTransfer is the provider-facing input for one sync upload/download task.
 type syncTransfer struct {
@@ -30,13 +28,11 @@ type syncTransfer struct {
 	Progress       chan<- int64
 }
 
-// executeSyncTransfer copies one file for a sync task and records the stream
-// hashes on the task. Task lifecycle persistence stays with the caller.
+// executeSyncTransfer copies one file for a sync task through the shared
+// transfer core and records the stream hashes on the task. Task lifecycle
+// persistence stays with the caller.
 func executeSyncTransfer(ctx context.Context, tr syncTransfer) error {
-	task, srcClient, tgtClient := tr.Task, tr.Source, tr.Target
-	srcProvider, tgtProvider := tr.SourceProvider, tr.TargetProvider
-	srcPath, tgtPath := tr.SourcePath, tr.TargetPath
-	jobThrottler, progressChan := tr.Throttler, tr.Progress
+	task, tgtClient, tgtPath := tr.Task, tr.Target, tr.TargetPath
 
 	// Sync updates may replace an existing destination. Use the same staging
 	// decision as migrations so providers whose RenameFile is non-atomic (such
@@ -47,170 +43,60 @@ func executeSyncTransfer(ctx context.Context, tr syncTransfer) error {
 		uploadPath = tgtPath + ".tmp"
 	}
 
-	transferDeadline := transferTimeout(task.FileSize)
-	downloadCtx, downloadCancel := context.WithTimeout(ctx, transferDeadline)
-	defer downloadCancel()
-
-	downloadStream, err := srcClient.StreamDownload(downloadCtx, task.ResourceType, srcPath)
-	if err != nil {
-		return fmt.Errorf("failed to download from source: %w", err)
-	}
-	defer downloadStream.Close()
-
-	throttledDownloadStream := throttle.NewThrottledReader(downloadCtx, downloadStream, jobThrottler)
-
-	var sourceHasher hash.Hash
-	sourceAlgo := "SHA1"
-	sourceHashStr := ""
-
-	if task.SourceHash.Valid && task.SourceHash.String != "" && srcProvider != "webdav" {
-		algo, cleanHash := storage.ParseHashString(task.SourceHash.String)
-		// HiDrive's native chash cannot be recomputed by the streaming hasher.
-		if algo == "SHA1" || algo == "SHA256" || algo == "MD5" || algo == "DROPBOX" {
-			sourceHashStr = cleanHash
-			sourceAlgo = algo
-		}
-	}
-
-	if srcProvider == "dropbox" {
-		sourceAlgo = "DROPBOX"
-	} else if srcProvider == "google" || srcProvider == "koofr" {
-		sourceAlgo = "MD5"
-	} else if srcProvider == "onedrive" {
-		sourceAlgo = "QUICKXOR"
-	}
-
-	if sourceAlgo == "MD5" {
-		sourceHasher = md5.New()
-	} else if sourceAlgo == "DROPBOX" {
-		sourceHasher = storage.NewDropboxHasher()
-	} else if sourceAlgo == "SHA256" {
-		sourceHasher = sha256.New()
-	} else if sourceAlgo == "QUICKXOR" {
-		sourceHasher = storage.NewQuickXorHasher()
-	} else {
-		sourceHasher = sha1.New()
-		sourceAlgo = "SHA1"
-	}
-
-	var targetHasher hash.Hash
-	targetAlgo := "SHA1"
-	if tgtProvider == "dropbox" {
-		targetAlgo = "DROPBOX"
-		targetHasher = storage.NewDropboxHasher()
-	} else if tgtProvider == "s3" {
-		targetAlgo = "SHA256"
-		targetHasher = sha256.New()
-	} else if tgtProvider == "google" || tgtProvider == "koofr" {
-		targetAlgo = "MD5"
-		targetHasher = md5.New()
-	} else if tgtProvider == "hidrive" {
-		targetAlgo = "HIDRIVE"
-		targetHasher = storage.NewHiDriveHasher()
-	} else if tgtProvider == "onedrive" {
-		targetAlgo = "QUICKXOR"
-		targetHasher = storage.NewQuickXorHasher()
-	} else {
-		targetAlgo = "SHA1"
-		targetHasher = sha1.New()
-	}
-
-	var activeWriter io.Writer
-	if sourceAlgo == targetAlgo {
-		activeWriter = sourceHasher
-		targetHasher = nil
-	} else {
-		activeWriter = io.MultiWriter(sourceHasher, targetHasher)
-	}
-
-	sizedReader := newExpectedSizeReader(throttledDownloadStream, task.FileSize)
-	hashingReader := io.TeeReader(sizedReader, activeWriter)
-	uploadCtx, uploadCancel := context.WithTimeout(ctx, transferDeadline)
-	defer uploadCancel()
-
 	var uploadOpts storage.UploadOptions
-	if srcRes, err := srcClient.InspectResource(ctx, task.ResourceType, srcPath); err == nil && !srcRes.LastModified.IsZero() {
+	if srcRes, err := tr.Source.InspectResource(ctx, task.ResourceType, tr.SourcePath); err == nil && !srcRes.LastModified.IsZero() {
 		uploadOpts.Metadata = storage.FileMetadata{ModifiedTime: srcRes.LastModified}
 	}
-	if sourceHashStr != "" && sourceAlgo != "ETAG" {
-		uploadOpts.Checksum = fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr)
-	}
 
-	uploadReader := io.Reader(hashingReader)
-	if task.FileSize <= chunkedUploadThreshold {
-		uploadReader = &ProgressReader{
-			Reader:       hashingReader,
-			ProgressChan: progressChan,
+	req := transferRequest{
+		Context:          ctx,
+		Source:           tr.Source,
+		Target:           tgtClient,
+		SourceProvider:   tr.SourceProvider,
+		TargetProvider:   tr.TargetProvider,
+		ResourceType:     task.ResourceType,
+		SourcePath:       tr.SourcePath,
+		TargetPath:       uploadPath,
+		VerificationPath: tgtPath,
+		UploadOptions:    uploadOpts,
+		FileSize:         task.FileSize,
+		SourceHash:       task.SourceHash.String,
+		Throttler:        tr.Throttler,
+		Progress:         tr.Progress,
+		Metadata:         &MetadataPolicy{Timeout: syncMetadataTimeout, FailOn: failMetadataOnAuth},
+	}
+	if useTempUpload {
+		req.AbortUpload = func(abortCtx context.Context) {
+			cleanupStagingUpload(abortCtx, tgtClient, task.ResourceType, uploadPath)
+		}
+		// Rename the staging object only when the provider guarantees an atomic
+		// replacement. Non-atomic providers uploaded directly to tgtPath above.
+		req.Finalize = func(finalizeCtx context.Context) error {
+			backupPath := overwriteBackupPath(tgtPath, task.ID)
+			if err := promoteOverwrite(finalizeCtx, tgtClient, task.ResourceType, tgtPath, uploadPath, backupPath); err != nil {
+				return fmt.Errorf("failed to promote temporary upload to target path: %w", err)
+			}
+			return nil
 		}
 	}
-	throttledUploadReader := throttle.NewUploadThrottledReader(uploadCtx, uploadReader, jobThrottler)
-	_, err = streamUploadWithOptions(uploadCtx, tgtClient, task.ResourceType, uploadPath, throttledUploadReader, task.FileSize, progressChan, uploadOpts)
-
+	transfer, err := runTransferCore(req)
 	if err != nil {
-		if useTempUpload {
-			cleanupStagingUpload(ctx, tgtClient, task.ResourceType, uploadPath)
-		}
-		return fmt.Errorf("failed to upload: %w", err)
-	}
-	if err := sizedReader.VerifyComplete(); err != nil {
-		if useTempUpload {
-			cleanupStagingUpload(ctx, tgtClient, task.ResourceType, uploadPath)
-		}
 		return err
 	}
 
-	// Rename the staging object only when the provider guarantees an atomic
-	// replacement. Non-atomic providers uploaded directly to tgtPath above.
-	if useTempUpload {
-		backupPath := overwriteBackupPath(tgtPath, task.ID)
-		if err := promoteOverwrite(ctx, tgtClient, task.ResourceType, tgtPath, uploadPath, backupPath); err != nil {
-			return fmt.Errorf("failed to promote temporary upload to target path: %w", err)
-		}
+	workerHashAlgo := transfer.SourceAlgorithm
+	workerHashVal := formatWorkerHashValue(transfer.SourceAlgorithm, transfer.SourceHasher)
+	if transfer.TargetHasher != nil {
+		workerHashAlgo = transfer.TargetAlgorithm
+		workerHashVal = formatWorkerHashValue(transfer.TargetAlgorithm, transfer.TargetHasher)
 	}
-
-	// Preserve source modification time on target if supported
-	if srcRes, err := srcClient.InspectResource(ctx, task.ResourceType, srcPath); err == nil && !srcRes.LastModified.IsZero() {
-		if applier, ok := tgtClient.(storage.MetadataApplier); ok {
-			metaCtx, metaCancel := context.WithTimeout(ctx, 15*time.Second)
-			err := applier.ApplyMetadata(metaCtx, task.ResourceType, tgtPath, storage.FileMetadata{
-				ModifiedTime: srcRes.LastModified,
-			})
-			metaCancel()
-			if errors.Is(err, storage.ErrAuth) {
-				return err
-			}
-		}
-	}
-
-	if task.ResourceType == "files" {
-		exists, targetSize, err := storage.VerifyTargetSizeByResourceID(ctx, tgtClient, task.ResourceType, tgtPath, "")
-		if err != nil {
-			return fmt.Errorf("failed to verify target size: %w", err)
-		}
-		if !exists || targetSize != task.FileSize {
-			return fmt.Errorf("target size mismatch: got %d bytes, expected %d", targetSize, task.FileSize)
-		}
-	}
-
-	// Stream Hash Registration & Fast Task Completion
-	var finalTargetHashVal string
-	if targetHasher != nil {
-		finalTargetHashVal = formatWorkerHashValue(targetAlgo, targetHasher)
-	} else if sourceHasher != nil {
-		finalTargetHashVal = formatWorkerHashValue(sourceAlgo, sourceHasher)
-	}
-	workerHashAlgo := sourceAlgo
-	if targetHasher != nil {
-		workerHashAlgo = targetAlgo
-	}
-	workerHash := fmt.Sprintf("%s:%s", workerHashAlgo, finalTargetHashVal)
-
+	workerHash := fmt.Sprintf("%s:%s", workerHashAlgo, workerHashVal)
 	task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
 	task.TargetHash = sql.NullString{String: workerHash, Valid: true}
 	if task.ResourceType != "files" || task.IsDirectory() {
 		task.ChecksumVerified = true
 	} else if tgtClient.VerificationMode() == storage.VerificationSizeOnly {
-		// Size was already verified above.
+		// Size was already verified by the transfer core.
 		task.ChecksumVerified = true
 	} else if tgtClient.VerificationMode() == storage.VerificationCryptographicHash {
 		tryInlineHashVerify(ctx, task, tgtClient, task.ResourceType, tgtPath, "")

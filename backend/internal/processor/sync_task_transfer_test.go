@@ -59,8 +59,8 @@ func newSyncFakeTarget(atomic bool) *syncFakeTarget {
 }
 
 func (t *syncFakeTarget) CreateParentDirectories(context.Context, string, string) error { return nil }
-func (t *syncFakeTarget) SupportsAtomicRename() bool                                     { return t.atomicRename }
-func (t *syncFakeTarget) VerificationMode() storage.VerificationMode                     { return t.verifyMode }
+func (t *syncFakeTarget) SupportsAtomicRename() bool                                    { return t.atomicRename }
+func (t *syncFakeTarget) VerificationMode() storage.VerificationMode                    { return t.verifyMode }
 func (t *syncFakeTarget) GetFileHash(context.Context, string, string) (string, error) {
 	return "", storage.ErrChecksumNotAvailable
 }

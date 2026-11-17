@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -271,5 +272,138 @@ func TestRunTransferCoreForwardsTypedUploadOptionsAndVerifiesByReceiptID(t *test
 	}
 	if result.UploadReceipt.TargetResourceID != "immich-asset-42" {
 		t.Fatalf("result.UploadReceipt.TargetResourceID = %q, want immich-asset-42", result.UploadReceipt.TargetResourceID)
+	}
+}
+
+type metadataTransferTarget struct {
+	memoryTransferProvider
+	err       error
+	calls     []string
+	finalSeen bool
+	meta      storage.FileMetadata
+	deadline  bool
+}
+
+func (t *metadataTransferTarget) ApplyMetadata(ctx context.Context, _, filePath string, meta storage.FileMetadata) error {
+	_, t.finalSeen = t.files[filePath]
+	_, t.deadline = ctx.Deadline()
+	t.calls = append(t.calls, filePath)
+	t.meta = meta
+	return t.err
+}
+
+func metadataTransferRequest(source transferSource, target transferTarget, data []byte, meta storage.FileMetadata, policy *MetadataPolicy) transferRequest {
+	return transferRequest{
+		Context:          context.Background(),
+		Source:           source,
+		Target:           target,
+		ResourceType:     "files",
+		SourcePath:       "/source",
+		TargetPath:       "/target.tmp",
+		VerificationPath: "/target",
+		FileSize:         int64(len(data)),
+		UploadOptions:    storage.UploadOptions{Metadata: meta},
+		Metadata:         policy,
+		Finalize: func(context.Context) error {
+			return nil
+		},
+	}
+}
+
+func TestRunTransferCoreAppliesMetadataToFinalPathUnderPolicy(t *testing.T) {
+	data := []byte("metadata policy")
+	modified := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	authErr := fmt.Errorf("denied: %w", storage.ErrAuth)
+	otherErr := fmt.Errorf("props rejected")
+	cases := []struct {
+		name         string
+		policy       *MetadataPolicy
+		meta         storage.FileMetadata
+		applyErr     error
+		wantCalls    int
+		wantErr      error
+		wantNonFatal error
+		wantDeadline bool
+	}{
+		{"nil policy never applies", nil, storage.FileMetadata{ModifiedTime: modified}, nil, 0, nil, nil, false},
+		{"empty metadata is skipped", &MetadataPolicy{}, storage.FileMetadata{}, nil, 0, nil, nil, false},
+		{"success", &MetadataPolicy{}, storage.FileMetadata{ModifiedTime: modified}, nil, 1, nil, nil, false},
+		{"description alone is applied", &MetadataPolicy{}, storage.FileMetadata{Description: "note"}, nil, 1, nil, nil, false},
+		{"default policy never fails", &MetadataPolicy{}, storage.FileMetadata{ModifiedTime: modified}, authErr, 1, nil, authErr, false},
+		{"migration-style policy reports non-fatal error", &MetadataPolicy{}, storage.FileMetadata{ModifiedTime: modified}, otherErr, 1, nil, otherErr, false},
+		{"auth policy fails on auth", &MetadataPolicy{Timeout: time.Minute, FailOn: failMetadataOnAuth}, storage.FileMetadata{ModifiedTime: modified}, authErr, 1, authErr, nil, true},
+		{"auth policy ignores other errors", &MetadataPolicy{Timeout: time.Minute, FailOn: failMetadataOnAuth}, storage.FileMetadata{ModifiedTime: modified}, otherErr, 1, nil, otherErr, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			target := &metadataTransferTarget{memoryTransferProvider: memoryTransferProvider{files: map[string][]byte{}}, err: c.applyErr}
+			source := &streamOnlyTransferSource{data: data}
+			// Promote the staging object so the final path exists when metadata runs.
+			req := metadataTransferRequest(source, target, data, c.meta, c.policy)
+			req.Finalize = func(context.Context) error {
+				target.files["/target"] = target.files["/target.tmp"]
+				delete(target.files, "/target.tmp")
+				return nil
+			}
+			result, err := runTransferCore(req)
+			if c.wantErr != nil {
+				if !errors.Is(err, c.wantErr) {
+					t.Fatalf("error = %v, want %v", err, c.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("runTransferCore() error = %v", err)
+			}
+			if len(target.calls) != c.wantCalls {
+				t.Fatalf("ApplyMetadata calls = %v, want %d", target.calls, c.wantCalls)
+			}
+			if c.wantCalls > 0 {
+				if target.calls[0] != "/target" || !target.finalSeen {
+					t.Fatalf("metadata applied to %q (final present=%v), want the promoted /target", target.calls[0], target.finalSeen)
+				}
+				if !target.meta.ModifiedTime.Equal(c.meta.ModifiedTime) || target.meta.Description != c.meta.Description {
+					t.Fatalf("applied metadata = %+v, want %+v", target.meta, c.meta)
+				}
+				if target.deadline != c.wantDeadline {
+					t.Fatalf("metadata context has deadline = %v, want %v", target.deadline, c.wantDeadline)
+				}
+			}
+			if c.wantErr == nil && !errors.Is(result.MetadataErr, c.wantNonFatal) {
+				t.Fatalf("MetadataErr = %v, want %v", result.MetadataErr, c.wantNonFatal)
+			}
+		})
+	}
+}
+
+func TestRunTransferCoreAbortsStagingOnlyBeforeFinalize(t *testing.T) {
+	data := []byte("abort hook")
+	cases := []struct {
+		name      string
+		size      int64
+		finalize  func(context.Context) error
+		wantAbort bool
+	}{
+		{"truncated source aborts", int64(len(data)) + 1, nil, true},
+		{"finalize failure does not abort", int64(len(data)), func(context.Context) error { return errors.New("promote failed") }, false},
+		{"success does not abort", int64(len(data)), func(context.Context) error { return nil }, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			target := &memoryTransferProvider{files: map[string][]byte{}}
+			aborted := false
+			_, _ = runTransferCore(transferRequest{
+				Context:      context.Background(),
+				Source:       &streamOnlyTransferSource{data: data},
+				Target:       target,
+				ResourceType: "files",
+				SourcePath:   "/source",
+				TargetPath:   "/target",
+				FileSize:     c.size,
+				Finalize:     c.finalize,
+				AbortUpload:  func(context.Context) { aborted = true },
+			})
+			if aborted != c.wantAbort {
+				t.Fatalf("abort called = %v, want %v", aborted, c.wantAbort)
+			}
+		})
 	}
 }
