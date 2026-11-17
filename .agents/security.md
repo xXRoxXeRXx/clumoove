@@ -12,7 +12,7 @@
 - **Passwords**: Enforce 12-character minimum and bcrypt's 72-byte maximum limit across creation, reset, and change endpoints.
 - **OAuth2 Token Handling**:
   - Encrypted on migration/sync records (`source_refresh_token_encrypted`, `target_refresh_token_encrypted`).
-  - Rotated by `RunOAuthRotationDaemon` before expiration. Transient refresh failures are retried; only rejected credentials terminate jobs. Token updates are atomic against previous ciphertext. Responses capped at 1 MiB; upstream provider errors are never forwarded.
+  - Rotated by `oauthRotationDaemon` before expiration. Transient refresh failures are retried; only rejected credentials terminate jobs. Token updates are atomic against previous ciphertext. Responses capped at 1 MiB; upstream provider errors are never forwarded.
 - **Refresh Tokens & Sessions**:
   - Stored as hashes only, mapped to public session IDs and capped User-Agent strings.
   - Revocation by ID does not disclose whether a cross-account session exists.

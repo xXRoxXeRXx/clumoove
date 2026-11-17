@@ -17,11 +17,8 @@ type backupDependencies struct {
 	rateLimiter        rateLimiter
 	profiles           *ownedProfileAccess
 	streamPool         streamSlotPool
-	requireUserID      func(http.ResponseWriter, *http.Request) (string, bool)
-	clientIP           func(*http.Request) string
-	writeAudit         func(*http.Request, db.AuditAction, string, string, map[string]interface{})
-	logf               func(*http.Request, string, ...any)
 	streamPollInterval time.Duration
+	requestEnv
 }
 
 type backupAPI struct {
@@ -29,6 +26,7 @@ type backupAPI struct {
 }
 
 func newBackupAPI(deps backupDependencies) *backupAPI {
+	deps.requestEnv = deps.requestEnv.withDefaults("backup")
 	if deps.profiles == nil {
 		deps.profiles = &ownedProfileAccess{
 			db:            deps.db,
@@ -38,32 +36,17 @@ func newBackupAPI(deps backupDependencies) *backupAPI {
 	if deps.streamPool == nil {
 		deps.streamPool = newUserStreamPool(maxStreamsPerUser)
 	}
-	if deps.requireUserID == nil {
-		deps.requireUserID = requireAuthenticatedUserID
-	}
-	if deps.clientIP == nil {
-		deps.clientIP = (&APIServer{}).clientIP
-	}
-	if deps.writeAudit == nil {
-		deps.writeAudit = func(*http.Request, db.AuditAction, string, string, map[string]interface{}) {}
-	}
-	if deps.logf == nil {
-		deps.logf = (&APIServer{}).logf
-	}
 	return &backupAPI{backupDependencies: deps}
 }
 
 func (s *APIServer) backups() *backupAPI {
 	return newBackupAPI(backupDependencies{
+		requestEnv:    s.requestEnv(),
 		db:            s.db,
 		encryptionKey: s.encryptionKey,
 		rateLimiter:   s.rateLimiter,
 		profiles:      s.profiles(),
 		streamPool:    s.streamPool(),
-		requireUserID: s.requireUserID,
-		clientIP:      s.clientIP,
-		writeAudit:    s.writeAudit,
-		logf:          s.logf,
 	})
 }
 

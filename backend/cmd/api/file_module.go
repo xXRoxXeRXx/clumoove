@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"backend/internal/db"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -90,10 +89,7 @@ type fileDependencies struct {
 	sessionStore         fileSessionStore
 	publishCancelEvent   func(context.Context, string) error
 	startTransferIndexer func(context.Context, string)
-	requireUserID        func(http.ResponseWriter, *http.Request) (string, bool)
-	clientIP             func(*http.Request) string
-	writeAudit           func(*http.Request, db.AuditAction, string, string, map[string]interface{})
-	logf                 func(*http.Request, string, ...any)
+	requestEnv
 }
 
 type fileAPI struct {
@@ -101,6 +97,7 @@ type fileAPI struct {
 }
 
 func newFileAPI(deps fileDependencies) *fileAPI {
+	deps.requestEnv = deps.requestEnv.withDefaults("file")
 	if deps.backgroundCtx == nil {
 		deps.backgroundCtx = context.Background()
 	}
@@ -109,18 +106,6 @@ func newFileAPI(deps fileDependencies) *fileAPI {
 			db:            deps.db,
 			encryptionKey: deps.encryptionKey,
 		}
-	}
-	if deps.requireUserID == nil {
-		deps.requireUserID = requireAuthenticatedUserID
-	}
-	if deps.clientIP == nil {
-		deps.clientIP = (&APIServer{}).clientIP
-	}
-	if deps.writeAudit == nil {
-		deps.writeAudit = func(*http.Request, db.AuditAction, string, string, map[string]interface{}) {}
-	}
-	if deps.logf == nil {
-		deps.logf = (&APIServer{}).logf
 	}
 	return &fileAPI{fileDependencies: deps}
 }
@@ -137,6 +122,7 @@ func (s *APIServer) files() *fileAPI {
 		startIndexer = s.indexer.Start
 	}
 	return newFileAPI(fileDependencies{
+		requestEnv:           s.requestEnv(),
 		db:                   s.db,
 		encryptionKey:        s.encryptionKey,
 		backgroundCtx:        s.backgroundCtx,
@@ -145,10 +131,6 @@ func (s *APIServer) files() *fileAPI {
 		sessionStore:         newRedisFileSessionStore(redisClient),
 		publishCancelEvent:   publishCancel,
 		startTransferIndexer: startIndexer,
-		requireUserID:        s.requireUserID,
-		clientIP:             s.clientIP,
-		writeAudit:           s.writeAudit,
-		logf:                 s.logf,
 	})
 }
 

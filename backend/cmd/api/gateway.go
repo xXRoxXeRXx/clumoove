@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"sync"
 
 	"backend/internal/auth"
 	"backend/internal/config"
@@ -101,53 +100,6 @@ func newAPIGateway(cfg gatewayConfig) (*APIServer, error) {
 	}, nil
 }
 
-type userStreamPool struct {
-	mu     sync.Mutex
-	active map[string]int
-	limit  int
-}
-
-func newUserStreamPool(limit int) *userStreamPool {
-	return &userStreamPool{
-		active: make(map[string]int),
-		limit:  limit,
-	}
-}
-
-func (p *userStreamPool) Acquire(userID string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.active == nil {
-		p.active = make(map[string]int)
-	}
-	if p.active[userID] >= p.limit {
-		return false
-	}
-	p.active[userID]++
-	return true
-}
-
-func (p *userStreamPool) Release(userID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.active[userID]--
-	if p.active[userID] <= 0 {
-		delete(p.active, userID)
-	}
-}
-
-func (s *APIServer) streamPool() *userStreamPool {
-	if s == nil {
-		return nil
-	}
-	s.streamMu.Lock()
-	defer s.streamMu.Unlock()
-	if s.streams == nil {
-		s.streams = newUserStreamPool(maxStreamsPerUser)
-	}
-	return s.streams
-}
-
 // Handler composes the HTTP routing mux and outer gateway middleware chain.
 func (server *APIServer) Handler() http.Handler {
 	return server.wrapMiddleware(server.setupRoutes())
@@ -185,18 +137,26 @@ type featureModule struct {
 // routes only need the authenticated middleware.
 type authenticatedRegistrar func(mux *http.ServeMux, authenticated func(http.Handler) http.Handler, overrideHandler http.HandlerFunc)
 
-func authenticatedModule(name string, authenticated func(http.Handler) http.Handler, routes []routeSpec, register authenticatedRegistrar) featureModule {
+// composeFeatureModule builds a module's route list exactly once and registers
+// that same list, so the contract view and the mux can never diverge.
+func composeFeatureModule(
+	name string,
+	buildRoutes func() []routeSpec,
+	register func(mux *http.ServeMux, routes []routeSpec, overrideHandler http.HandlerFunc),
+) featureModule {
+	routes := buildRoutes()
 	return featureModule{
 		name:   name,
 		routes: routes,
 		register: func(mux *http.ServeMux, overrideHandler http.HandlerFunc) {
-			register(mux, authenticated, overrideHandler)
+			register(mux, routes, overrideHandler)
 		},
 	}
 }
 
 // featureModules lists every feature module composed into the gateway. Each
-// module owns its endpoint registration and feature dependencies.
+// module owns its route table and feature dependencies; the gateway decides
+// only which access middleware guards them.
 func (server *APIServer) featureModules(mw routeMiddleware) []featureModule {
 	accounts := server.accounts()
 	files := server.files()
@@ -207,28 +167,29 @@ func (server *APIServer) featureModules(mw routeMiddleware) []featureModule {
 	profiles := server.connectionProfiles()
 	admin := server.administration()
 	notifications := server.notifications()
+
+	authenticated := func(mux *http.ServeMux, routes []routeSpec, o http.HandlerFunc) {
+		registerRouteSpecs(mux, routes, mw.authenticated, nil, nil, o)
+	}
+	strictAuthenticated := func(module string) func(*http.ServeMux, []routeSpec, http.HandlerFunc) {
+		return func(mux *http.ServeMux, routes []routeSpec, o http.HandlerFunc) {
+			registerAuthenticatedRouteSpecs(module, mux, routes, mw.authenticated, o)
+		}
+	}
 	return []featureModule{
-		{
-			name:   "accounts",
-			routes: accounts.routes(),
-			register: func(mux *http.ServeMux, o http.HandlerFunc) {
-				accounts.registerRoutesWithHandler(mux, mw.authenticated, mw.allowMustChange, o)
-			},
-		},
-		authenticatedModule("files", mw.authenticated, files.routes(), files.registerRoutesWithHandler),
-		authenticatedModule("migrations", mw.authenticated, migrations.routes(), migrations.registerRoutesWithHandler),
-		authenticatedModule("syncs", mw.authenticated, syncs.routes(), syncs.registerRoutesWithHandler),
-		authenticatedModule("backups", mw.authenticated, backups.routes(), backups.registerRoutesWithHandler),
-		authenticatedModule("schedules", mw.authenticated, schedules.routes(), schedules.registerRoutesWithHandler),
-		authenticatedModule("profiles", mw.authenticated, profiles.routes(), profiles.registerRoutesWithHandler),
-		{
-			name:   "administration",
-			routes: admin.routes(),
-			register: func(mux *http.ServeMux, o http.HandlerFunc) {
-				admin.registerRoutesWithHandler(mux, mw.authenticated, mw.adminOnly, o)
-			},
-		},
-		authenticatedModule("notifications", mw.authenticated, notifications.routes(), notifications.registerRoutesWithHandler),
+		composeFeatureModule("accounts", accounts.routes, func(mux *http.ServeMux, routes []routeSpec, o http.HandlerFunc) {
+			registerRouteSpecs(mux, routes, mw.authenticated, mw.allowMustChange, nil, o)
+		}),
+		composeFeatureModule("files", files.routes, authenticated),
+		composeFeatureModule("migrations", migrations.routes, authenticated),
+		composeFeatureModule("syncs", syncs.routes, authenticated),
+		composeFeatureModule("backups", backups.routes, authenticated),
+		composeFeatureModule("schedules", schedules.routes, strictAuthenticated("schedule")),
+		composeFeatureModule("profiles", profiles.routes, strictAuthenticated("profile")),
+		composeFeatureModule("administration", admin.routes, func(mux *http.ServeMux, routes []routeSpec, o http.HandlerFunc) {
+			registerRouteSpecs(mux, routes, mw.authenticated, nil, mw.adminOnly, o)
+		}),
+		composeFeatureModule("notifications", notifications.routes, strictAuthenticated("notification")),
 	}
 }
 
@@ -319,5 +280,23 @@ func wrapRouteAccess(
 		return adminOnly(base)
 	default:
 		panic("unsupported route access category")
+	}
+}
+
+// backgroundDaemons composes the long-running loops owned by feature modules.
+// main.go starts each one under the process context.
+func (server *APIServer) backgroundDaemons() []backgroundDaemon {
+	return []backgroundDaemon{
+		&oauthRotationDaemon{
+			db:            server.db,
+			queue:         server.queue,
+			encryptionKey: server.encryptionKey,
+			cache:         server.oauthRotations.get(),
+		},
+		&migrationGarbageCollector{
+			db:           server.db,
+			loglnContext: server.loglnContext,
+			logfContext:  server.logfContext,
+		},
 	}
 }

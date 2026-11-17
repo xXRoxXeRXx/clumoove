@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"backend/internal/crypto"
@@ -45,30 +46,41 @@ type ownedProfileAccess struct {
 	oauthLocker     oauth.TokenLocker
 }
 
-func (s *APIServer) rotationCache() *oauth.RotationCache {
-	if s == nil {
-		return nil
-	}
-	s.oauthRotationMu.Lock()
-	defer s.oauthRotationMu.Unlock()
-	if s.oauthRotations == nil {
-		s.oauthRotations = oauth.NewRotationCache()
-	}
-	return s.oauthRotations
+// sharedRotationCache lazily creates the single OAuth rotation cache that
+// profile access, sync, and the rotation daemon must share.
+type sharedRotationCache struct {
+	mu    sync.Mutex
+	cache *oauth.RotationCache
 }
 
-func (s *APIServer) profiles() *ownedProfileAccess {
-	var locker oauth.TokenLocker
-	if s != nil && s.queue != nil {
-		locker = s.queue
+func (c *sharedRotationCache) get() *oauth.RotationCache {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cache == nil {
+		c.cache = oauth.NewRotationCache()
 	}
+	return c.cache
+}
+
+// newOwnedProfileAccess assembles profile access from explicit dependencies so
+// it never needs the HTTP gateway.
+func newOwnedProfileAccess(database *sql.DB, encryptionKey string, factory profileProviderFactory, locker oauth.TokenLocker, rotations *oauth.RotationCache) *ownedProfileAccess {
 	return &ownedProfileAccess{
-		db:              s.db,
-		encryptionKey:   s.encryptionKey,
-		providerFactory: s.providerFactory,
-		oauthRotations:  s.rotationCache(),
+		db:              database,
+		encryptionKey:   encryptionKey,
+		providerFactory: factory,
+		oauthRotations:  rotations,
 		oauthLocker:     locker,
 	}
+}
+
+// profiles composes the shared profile access component from gateway state.
+func (s *APIServer) profiles() *ownedProfileAccess {
+	var locker oauth.TokenLocker
+	if s.queue != nil {
+		locker = s.queue
+	}
+	return newOwnedProfileAccess(s.db, s.encryptionKey, s.providerFactory, locker, s.oauthRotations.get())
 }
 
 func (a *ownedProfileAccess) currentTime() time.Time {

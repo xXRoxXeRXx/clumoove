@@ -3,8 +3,6 @@ package main
 import (
 	"database/sql"
 	"net/http"
-
-	"backend/internal/db"
 )
 
 // accountDependencies contains only the infrastructure required by the
@@ -17,13 +15,8 @@ type accountDependencies struct {
 	jwtSecret         string
 	rateLimiter       rateLimiter
 	dummyPasswordHash string
-	requireUserID     func(http.ResponseWriter, *http.Request) (string, bool)
-	clientIP          func(*http.Request) string
-	writeAudit        func(*http.Request, db.AuditAction, string, string, map[string]interface{})
 	getRedirectURI    func(*http.Request) string
-	logf              func(*http.Request, string, ...any)
-	infof             func(*http.Request, string, ...any)
-	warnf             func(*http.Request, string, ...any)
+	requestEnv
 }
 
 type accountAPI struct {
@@ -31,45 +24,23 @@ type accountAPI struct {
 }
 
 func newAccountAPI(deps accountDependencies) *accountAPI {
+	deps.requestEnv = deps.requestEnv.withDefaults("account")
 	defaults := &APIServer{db: deps.db}
-	if deps.requireUserID == nil {
-		deps.requireUserID = requireAuthenticatedUserID
-	}
-	if deps.clientIP == nil {
-		deps.clientIP = defaults.clientIP
-	}
-	if deps.writeAudit == nil {
-		deps.writeAudit = func(*http.Request, db.AuditAction, string, string, map[string]interface{}) {}
-	}
 	if deps.getRedirectURI == nil {
 		deps.getRedirectURI = defaults.getRedirectURI
-	}
-	if deps.logf == nil {
-		deps.logf = defaults.logf
-	}
-	if deps.infof == nil {
-		deps.infof = defaults.infof
-	}
-	if deps.warnf == nil {
-		deps.warnf = defaults.warnf
 	}
 	return &accountAPI{accountDependencies: deps}
 }
 
 func (s *APIServer) accounts() *accountAPI {
 	return newAccountAPI(accountDependencies{
+		requestEnv:        s.requestEnv(),
 		db:                s.db,
 		encryptionKey:     s.encryptionKey,
 		jwtSecret:         s.jwtSecret,
 		rateLimiter:       s.rateLimiter,
 		dummyPasswordHash: s.dummyPasswordHash,
-		requireUserID:     s.requireUserID,
-		clientIP:          s.clientIP,
-		writeAudit:        s.writeAudit,
 		getRedirectURI:    s.getRedirectURI,
-		logf:              s.logf,
-		infof:             s.infof,
-		warnf:             s.warnf,
 	})
 }
 

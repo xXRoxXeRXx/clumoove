@@ -10,11 +10,6 @@ import (
 	"backend/internal/queue"
 )
 
-type streamSlotPool interface {
-	Acquire(userID string) bool
-	Release(userID string)
-}
-
 // migrationDependencies contains only the infrastructure required by the
 // migration feature module. Cross-cutting request, profile-access, stream-pool,
 // and background concerns are injected at module construction.
@@ -28,12 +23,8 @@ type migrationDependencies struct {
 	publishCancelEvent     func(context.Context, string) error
 	publishBandwidthChange func(context.Context, queue.BandwidthEvent) error
 	startIndexer           func(context.Context, string)
-	requireUserID          func(http.ResponseWriter, *http.Request) (string, bool)
-	clientIP               func(*http.Request) string
-	writeAudit             func(*http.Request, db.AuditAction, string, string, map[string]interface{})
-	logf                   func(*http.Request, string, ...any)
 	logfContext            func(context.Context, string, ...any)
-	infof                  func(*http.Request, string, ...any)
+	requestEnv
 }
 
 type migrationAPI struct {
@@ -41,6 +32,7 @@ type migrationAPI struct {
 }
 
 func newMigrationAPI(deps migrationDependencies) *migrationAPI {
+	deps.requestEnv = deps.requestEnv.withDefaults("migration")
 	if deps.backgroundCtx == nil {
 		deps.backgroundCtx = context.Background()
 	}
@@ -53,23 +45,8 @@ func newMigrationAPI(deps migrationDependencies) *migrationAPI {
 	if deps.streamPool == nil {
 		deps.streamPool = newUserStreamPool(maxStreamsPerUser)
 	}
-	if deps.requireUserID == nil {
-		deps.requireUserID = requireAuthenticatedUserID
-	}
-	if deps.clientIP == nil {
-		deps.clientIP = (&APIServer{}).clientIP
-	}
-	if deps.writeAudit == nil {
-		deps.writeAudit = func(*http.Request, db.AuditAction, string, string, map[string]interface{}) {}
-	}
-	if deps.logf == nil {
-		deps.logf = (&APIServer{}).logf
-	}
 	if deps.logfContext == nil {
 		deps.logfContext = (&APIServer{}).logfContext
-	}
-	if deps.infof == nil {
-		deps.infof = (&APIServer{}).infof
 	}
 	return &migrationAPI{migrationDependencies: deps}
 }
@@ -86,6 +63,7 @@ func (s *APIServer) migrations() *migrationAPI {
 		startIndexer = s.indexer.Start
 	}
 	return newMigrationAPI(migrationDependencies{
+		requestEnv:             s.requestEnv(),
 		db:                     s.db,
 		encryptionKey:          s.encryptionKey,
 		backgroundCtx:          s.backgroundCtx,
@@ -95,12 +73,7 @@ func (s *APIServer) migrations() *migrationAPI {
 		publishCancelEvent:     publishCancel,
 		publishBandwidthChange: publishBandwidth,
 		startIndexer:           startIndexer,
-		requireUserID:          s.requireUserID,
-		clientIP:               s.clientIP,
-		writeAudit:             s.writeAudit,
-		logf:                   s.logf,
 		logfContext:            s.logfContext,
-		infof:                  s.infof,
 	})
 }
 
@@ -184,4 +157,34 @@ func (api *migrationAPI) verifyOwnedMigration(w http.ResponseWriter, r *http.Req
 	}
 
 	return id, userID, true
+}
+
+// migrationGarbageCollector owns the hourly deletion of old terminal migrations
+// and their task histories.
+type migrationGarbageCollector struct {
+	db           *sql.DB
+	loglnContext func(context.Context, ...any)
+	logfContext  func(context.Context, string, ...any)
+}
+
+func (gc *migrationGarbageCollector) name() string { return "migration_gc" }
+
+func (gc *migrationGarbageCollector) Run(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			gc.loglnContext(ctx, "Running Garbage Collector for old migrations...")
+			count, err := db.DeleteOldMigrations(gc.db)
+			if err != nil {
+				gc.logfContext(ctx, "Garbage Collector error: %v\n", err)
+			} else if count > 0 {
+				gc.logfContext(ctx, "Garbage Collector cleaned up %d old migrations & task histories.\n", count)
+			}
+		}
+	}
 }
