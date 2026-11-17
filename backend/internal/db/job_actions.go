@@ -79,11 +79,5 @@ func AllowedSyncActions(status string) []JobAction { return syncActionSources.al
 // AllowedBackupActions lists the actions a backup job in status allows.
 func AllowedBackupActions(status string) []JobAction { return backupActionSources.allowed(status) }
 
-// MigrationActionSources returns the statuses action may start from.
-func MigrationActionSources(action JobAction) []string { return migrationActionSources[action] }
-
-// SyncActionSources returns the statuses action may start from.
-func SyncActionSources(action JobAction) []string { return syncActionSources[action] }
-
 // BackupActionSources returns the statuses action may start from.
 func BackupActionSources(action JobAction) []string { return backupActionSources[action] }

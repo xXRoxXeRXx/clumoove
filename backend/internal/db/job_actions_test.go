@@ -82,8 +82,8 @@ func TestActionSourcesAgreeWithAllowedActions(t *testing.T) {
 		sources func(JobAction) []string
 		allowed func(string) []JobAction
 	}{
-		{"migration", MigrationActionSources, AllowedMigrationActions},
-		{"sync", SyncActionSources, AllowedSyncActions},
+		{"migration", func(a JobAction) []string { return migrationActionSources[a] }, AllowedMigrationActions},
+		{"sync", func(a JobAction) []string { return syncActionSources[a] }, AllowedSyncActions},
 		{"backup", BackupActionSources, AllowedBackupActions},
 	}
 	for _, kind := range kinds {
