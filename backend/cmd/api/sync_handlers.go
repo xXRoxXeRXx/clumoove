@@ -437,13 +437,8 @@ func (api *syncAPI) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !api.requireSyncOwnership(w, r, id, userID) {
-		return
-	}
-
-	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+	job, ok := api.requireOwnedSync(w, r, id, userID)
+	if !ok {
 		return
 	}
 
@@ -610,13 +605,8 @@ func (api *syncAPI) handleDownloadSyncReport(w http.ResponseWriter, r *http.Requ
 
 	id := r.PathValue("id")
 
-	if !api.requireSyncOwnership(w, r, id, userID) {
-		return
-	}
-
-	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+	job, ok := api.requireOwnedSync(w, r, id, userID)
+	if !ok {
 		return
 	}
 
@@ -846,7 +836,8 @@ func (api *syncAPI) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 	if !authenticated {
 		return
 	}
-	if !api.requireSyncOwnership(w, r, id, userID) {
+	job, ok := api.requireOwnedSync(w, r, id, userID)
+	if !ok {
 		return
 	}
 
@@ -865,15 +856,11 @@ func (api *syncAPI) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
-	if err != nil {
-		api.logf(r, "Error loading sync job %s after bandwidth update: %v", id, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	// Only active passes have a worker-side throttler to update. The persisted
-	// value is used when a later pass starts, so idle and terminal jobs do not
-	// need a Redis broadcast.
+	// job was loaded before the update above; its status only decides whether
+	// to broadcast the new limit and gates no state change. Only active passes
+	// have a worker-side throttler to update. The persisted value is used when
+	// a later pass starts, so idle and terminal jobs do not need a Redis
+	// broadcast.
 	if job.Status != "INDEXING" && job.Status != "RUNNING" && job.Status != "VERIFYING" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
@@ -956,14 +943,8 @@ func (api *syncAPI) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
 		return
 	}
-	if !api.requireSyncOwnership(w, r, id, userID) {
-		return
-	}
-
-	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
-	if err != nil {
-		api.logf(r, "Error getting sync job %s for browse: %v", id, err)
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+	job, owned := api.requireOwnedSync(w, r, id, userID)
+	if !owned {
 		return
 	}
 
@@ -1067,7 +1048,8 @@ func (api *syncAPI) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
 		return
 	}
-	if !api.requireSyncOwnership(w, r, id, userID) {
+	job, ok := api.requireOwnedSync(w, r, id, userID)
+	if !ok {
 		return
 	}
 
@@ -1082,13 +1064,6 @@ func (api *syncAPI) handleSyncMkdir(w http.ResponseWriter, r *http.Request) {
 	dirPath, valid := syncMkdirPath(req.Path, req.Name)
 	if !valid {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrFolderPathInvalid})
-		return
-	}
-
-	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
-	if err != nil {
-		api.logf(r, "handleSyncMkdir: failed to load sync job %s: %v", id, err)
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
 	}
 
@@ -1132,22 +1107,12 @@ func (api *syncAPI) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request
 	}
 
 	id := r.PathValue("id")
-	if !api.requireSyncOwnership(w, r, id, userID) {
+	job, ok := api.requireOwnedSync(w, r, id, userID)
+	if !ok {
 		return
 	}
 
-	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
-	if err != nil {
-		api.logf(r, "Error getting sync job %s for scope update: %v", id, err)
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
-		return
-	}
-
-	if job.Status == "INDEXING" || job.Status == "RUNNING" || job.Status == "VERIFYING" {
-		writeError(w, http.StatusConflict, ErrSyncInvalidState)
-		return
-	}
-
+	// The status guard is enforced by UpdateSyncJobScope under a row lock.
 	if job.SourceProvider == "immich" || job.TargetProvider == "immich" {
 		writeError(w, http.StatusBadRequest, ErrImmichSyncUnsupported)
 		return

@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 var (
 	ErrMigrationNotFailed         = errors.New("migration is not in a failed state")
+	ErrMigrationNotRetryable      = errors.New("migration is not in a finished state")
 	ErrMigrationIndexingClaimLost = errors.New("migration indexing claim lost")
 )
 
@@ -103,16 +106,18 @@ func (m Migration) MarshalJSON() ([]byte, error) {
 	type Alias Migration
 	return json.Marshal(&struct {
 		Alias
-		UserID          *string `json:"user_id"`
-		SourceProfileID *string `json:"source_profile_id"`
-		TargetProfileID *string `json:"target_profile_id"`
-		ErrorMessage    *string `json:"error_message"`
+		UserID          *string     `json:"user_id"`
+		SourceProfileID *string     `json:"source_profile_id"`
+		TargetProfileID *string     `json:"target_profile_id"`
+		ErrorMessage    *string     `json:"error_message"`
+		AllowedActions  []JobAction `json:"allowed_actions"`
 	}{
 		Alias:           Alias(m),
 		UserID:          nullStringPtr(m.UserID),
 		SourceProfileID: nullStringPtr(m.SourceProfileID),
 		TargetProfileID: nullStringPtr(m.TargetProfileID),
 		ErrorMessage:    nullStringPtr(m.ErrorMessage),
+		AllowedActions:  AllowedMigrationActions(m.Status),
 	})
 }
 
@@ -238,6 +243,19 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 
 // GetMigrationContext retrieves a migration while honoring caller cancellation.
 func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration, error) {
+	return queryMigration(ctx, db, `WHERE id = $1`, id)
+}
+
+// GetOwnedMigrationContext loads a migration only if it belongs to userID, in a
+// single owner-scoped query. A missing migration and one owned by another user
+// are indistinguishable: both return sql.ErrNoRows.
+func GetOwnedMigrationContext(ctx context.Context, db *sql.DB, id, userID string) (*Migration, error) {
+	return queryMigration(ctx, db, `WHERE id = $1 AND user_id = $2`, id, userID)
+}
+
+// queryMigration selects the full migration row. where is a fixed SQL fragment
+// supplied by the callers above; values are always passed as parameters.
+func queryMigration(ctx context.Context, db *sql.DB, where string, args ...any) (*Migration, error) {
 	query := `
 		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted, source_provider,
 		       source_refresh_token_encrypted, source_token_expires_at, COALESCE(source_mega_session_id_encrypted, ''), COALESCE(source_mega_master_key_encrypted, ''),
@@ -248,10 +266,10 @@ func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration
 		       discovery_complete, discovery_generation, indexing_lease_until,
 		       created_at, updated_at, target_dir, threads, bandwidth_limit_mbps,
 		       picker_session_id, selected_paths, selected_calendars, selected_contacts
-		FROM migrations WHERE id = $1
+		FROM migrations ` + where + `
 	`
 	var m Migration
-	err := db.QueryRowContext(ctx, query, id).Scan(
+	err := db.QueryRowContext(ctx, query, args...).Scan(
 		&m.ID, &m.UserID, &m.SourceProfileID, &m.TargetProfileID, &m.SourceURL, &m.SourceUsername, &m.SourcePasswordEncrypted, &m.SourceProvider,
 		&m.SourceRefreshTokenEncrypted, &m.SourceTokenExpiresAt, &m.SourceMegaSessionIDEncrypted, &m.SourceMegaMasterKeyEncrypted,
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted, &m.TargetProvider,
@@ -399,23 +417,23 @@ func RecoverConnectionLostMigration(db *sql.DB, id string) (recovered bool, need
 }
 
 // ResumeMigration continues execution when discovery is complete, otherwise it
-// creates a new fenced discovery attempt.  The returned bool tells the caller
-// whether it must start an indexer.
-func ResumeMigration(db *sql.DB, id string) (bool, error) {
-	var needsDiscovery bool
-	err := db.QueryRow(`
+// creates a new fenced discovery attempt.  resumed reports whether the
+// status guard (the resume sources of the migration action table) applied, and
+// needsDiscovery whether the caller must start an indexer.
+func ResumeMigration(db *sql.DB, id string) (resumed bool, needsDiscovery bool, err error) {
+	err = db.QueryRow(`
 		UPDATE migrations
 		SET status = CASE WHEN discovery_complete THEN 'RUNNING' ELSE 'INDEXING' END,
 		    discovery_generation = CASE WHEN discovery_complete THEN discovery_generation ELSE discovery_generation + 1 END,
 		    indexing_lease_until = CASE WHEN discovery_complete THEN NULL ELSE CURRENT_TIMESTAMP + ($2 * INTERVAL '1 second') END,
 		    error_message = NULL, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND status IN ('PAUSED', 'PAUSED_CONNECTION_LOSS')
+		WHERE id = $1 AND status = ANY($3::text[])
 		RETURNING NOT discovery_complete
-	`, id, int64(indexingLeaseDuration.Seconds())).Scan(&needsDiscovery)
+	`, id, int64(indexingLeaseDuration.Seconds()), pq.Array(migrationActionSources[JobActionResume])).Scan(&needsDiscovery)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return false, false, nil
 	}
-	return needsDiscovery, err
+	return err == nil, needsDiscovery, err
 }
 
 // FailMigrationWhileIndexing records an indexing failure only if the indexer
@@ -1014,6 +1032,15 @@ func VerifyMigrationOwnershipContext(ctx context.Context, db *sql.DB, migrationI
 	query := `SELECT EXISTS(SELECT 1 FROM migrations WHERE id = $1 AND user_id = $2)`
 	var exists bool
 	err := db.QueryRowContext(ctx, query, migrationID, userID).Scan(&exists)
+	return exists, err
+}
+
+// MigrationExistsContext reports whether a migration with this id exists,
+// whoever owns it. It reads no row data; it only lets a caller whose
+// owner-scoped lookup found nothing tell a missing id from a foreign one.
+func MigrationExistsContext(ctx context.Context, db *sql.DB, migrationID string) (bool, error) {
+	var exists bool
+	err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM migrations WHERE id = $1)`, migrationID).Scan(&exists)
 	return exists, err
 }
 

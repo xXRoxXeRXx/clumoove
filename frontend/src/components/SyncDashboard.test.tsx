@@ -222,6 +222,7 @@ describe('SyncDashboard initial snapshot ordering', () => {
     const job: SyncJob = {
       ...createSyncJob('https://source.example.test'),
       status: 'FAILED',
+      allowed_actions: ['start'],
       source_provider: 'google',
       target_provider: 'dropbox',
       error_message: 'Authentication failed - please check your credentials',
@@ -279,6 +280,7 @@ describe('SyncDashboard initial snapshot ordering', () => {
     const job: SyncJob = {
       ...createSyncJob('https://source.example.test'),
       status: 'FAILED',
+      allowed_actions: ['start'],
       source_provider: 'nextcloud',
       target_provider: 'dropbox',
       error_message: 'Authentication failed - please check your credentials',
@@ -334,5 +336,74 @@ describe('SyncDashboard initial snapshot ordering', () => {
     });
 
     expect(toast).toHaveBeenCalledWith(i18n.t('dashboard.downloadFailed'), 'error');
+  });
+
+  describe('controls rendered from allowed_actions', () => {
+    async function renderDetail(job: SyncJob): Promise<void> {
+      vi.mocked(apiJson).mockResolvedValue(jsonResult(job));
+      container = document.createElement('div');
+      document.body.append(container);
+      root = createRoot(container);
+      await act(async () => {
+        root.render(<SyncDashboard syncId="sync-1" apiUrl="https://api.example.test" token="token" onBack={vi.fn()} />);
+        await Promise.resolve();
+      });
+    }
+
+    function controlLabels(): string[] {
+      const wanted = [i18n.t('sync.pause'), i18n.t('sync.resume'), i18n.t('sync.syncNow')];
+      return Array.from(container.querySelectorAll('button'))
+        .map((button) => button.textContent?.trim() ?? '')
+        .filter((label) => wanted.includes(label));
+    }
+
+    it.each([
+      ['IDLE', ['start', 'pause'] as const, ['sync.pause', 'sync.syncNow']],
+      ['PAUSED', ['resume'] as const, ['sync.resume']],
+      ['FAILED', ['start'] as const, ['sync.syncNow']],
+      ['RUNNING', ['pause'] as const, ['sync.pause']],
+    ])('renders exactly the controls the backend allows for %s', async (status, actions, labelKeys) => {
+      await renderDetail({ ...createSyncJob('https://source.example.test'), status: status as SyncJob['status'], allowed_actions: [...actions] });
+      expect(controlLabels()).toEqual(labelKeys.map((key) => i18n.t(key)));
+    });
+
+    it('offers no pause, resume or start in PAUSED_CONNECTION_LOSS, which belongs to connection recovery', async () => {
+      await renderDetail({ ...createSyncJob('https://source.example.test'), status: 'PAUSED_CONNECTION_LOSS', allowed_actions: [] });
+      expect(controlLabels()).toEqual([]);
+    });
+
+    it('does not infer controls from the status when the backend sent no actions', async () => {
+      await renderDetail({ ...createSyncJob('https://source.example.test'), status: 'IDLE', allowed_actions: undefined });
+      expect(controlLabels()).toEqual([]);
+    });
+
+    it.each([
+      ['IDLE', ['start', 'pause', 'edit_scope'] as const, true],
+      ['PAUSED', ['resume', 'edit_scope'] as const, true],
+      ['RUNNING', ['pause'] as const, false],
+      // The status alone no longer decides: only the backend's list does.
+      ['IDLE', ['start', 'pause'] as const, false],
+    ])('offers Edit for %s only when the backend lists edit_scope (%j -> %s)', async (status, actions, shown) => {
+      await renderDetail({ ...createSyncJob('https://source.example.test'), status: status as SyncJob['status'], allowed_actions: [...actions] });
+      const editButtons = Array.from(container.querySelectorAll('button')).filter((button) => button.textContent?.trim() === i18n.t('sync.edit'));
+      expect(editButtons.length).toBe(shown ? 1 : 0);
+    });
+
+    it('follows a new allowed_actions list delivered by the stream', async () => {
+      const streams = new Map<string, SseHandlers>();
+      vi.mocked(connectSseLoop).mockImplementation((options) => {
+        streams.set(options.url, options.handlers);
+        return new Promise<void>(() => {});
+      });
+      await renderDetail({ ...createSyncJob('https://source.example.test'), status: 'RUNNING', allowed_actions: ['pause'] });
+      expect(controlLabels()).toEqual([i18n.t('sync.pause')]);
+
+      await act(async () => {
+        streams.get('https://api.example.test/api/sync/stream')?.onEvent('sync_jobs', JSON.stringify([
+          { ...createSyncJob('https://source.example.test'), status: 'PAUSED', allowed_actions: ['resume'] },
+        ]));
+      });
+      expect(controlLabels()).toEqual([i18n.t('sync.resume')]);
+    });
   });
 });

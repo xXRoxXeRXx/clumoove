@@ -27,6 +27,7 @@ import {
 import { ProgressBar } from './ProgressBar';
 import { BackupSnapshotBrowser } from './BackupSnapshotBrowser';
 import { formatCronHuman } from '../utils/cronFormatter';
+import { canPerform } from '../utils/jobActions';
 
 interface MigrationsDashboardProps {
   apiUrl: string;
@@ -180,7 +181,7 @@ export function MigrationsDashboard({
 
   const handleMigrationControl = async (migration: Migration, e: React.MouseEvent) => {
     e.stopPropagation();
-    const action = ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(migration.status) ? 'resume' : 'pause';
+    const action = canPerform(migration, 'resume') ? 'resume' : 'pause';
     setControlLoading(migration.id);
     try {
       const result = await controlMigration({ apiUrl, token, migrationId: migration.id, action });
@@ -633,12 +634,12 @@ export function MigrationsDashboard({
                        <td data-label={t('migrations.actions')} className="py-4 px-4 text-right whitespace-nowrap">
                         <div className="flex justify-end items-center gap-2">
                           {(() => {
-                            const isPaused = ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status);
+                            const isPaused = canPerform(mig, 'resume');
                             const label = isPaused ? t('dashboard.resume') : t('dashboard.pause');
                             return (
                           <button
                             onClick={(e) => handleMigrationControl(mig, e)}
-                            disabled={controlLoading === mig.id || !['RUNNING', 'INDEXING', 'PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status)}
+                            disabled={controlLoading === mig.id || !(isPaused || canPerform(mig, 'pause'))}
                             className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
                             aria-label={label}
                             title={label}
@@ -843,7 +844,7 @@ function SyncList({
 
   const handleSyncControl = async (job: SyncJob, e: React.MouseEvent) => {
     e.stopPropagation();
-    const action = job.status === 'PAUSED' ? 'resume' : 'pause';
+    const action = canPerform(job, 'resume') ? 'resume' : 'pause';
     setControlLoading(job.id);
     try {
       const result = action === 'pause'
@@ -976,12 +977,12 @@ function SyncList({
               <td className="py-4 px-4 text-right whitespace-nowrap">
                 <div className="flex justify-end items-center gap-2">
                   {(() => {
-                    const isPaused = job.status === 'PAUSED';
+                    const isPaused = canPerform(job, 'resume');
                     const label = isPaused ? t('sync.resume') : t('sync.pause');
                     return (
                   <button
                     onClick={(e) => handleSyncControl(job, e)}
-                    disabled={controlLoading === job.id || !['IDLE', 'INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED'].includes(job.status)}
+                    disabled={controlLoading === job.id || !(isPaused || canPerform(job, 'pause'))}
                     className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
                     aria-label={label}
                     title={label}
@@ -1136,8 +1137,7 @@ function BackupList({
         </thead>
         <tbody className="divide-y divide-[var(--color-border-light)]">
           {backupJobs.map((job) => {
-            const isPaused = job.status === 'PAUSED';
-            const running = ['QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status);
+            const isPaused = canPerform(job, 'resume');
             const badgeStatus = job.status === 'QUEUED' ? 'PENDING' : job.status === 'SCANNING' ? 'INDEXING' : job.status;
             const pauseLabel = isPaused ? t('backup.resume') : t('backup.pause');
             return (
@@ -1185,7 +1185,7 @@ function BackupList({
                     <button
                       type="button"
                       onClick={() => void handleAction(job, 'run')}
-                      disabled={running || controlLoading !== null}
+                      disabled={!canPerform(job, 'start') || controlLoading !== null}
                       className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
                       aria-label={t('backup.run')}
                       title={t('backup.run')}
@@ -1199,7 +1199,7 @@ function BackupList({
                     <button
                       type="button"
                       onClick={() => void handleAction(job, isPaused ? 'resume' : 'pause')}
-                      disabled={controlLoading !== null || (!isPaused && !['IDLE', 'FAILED', 'QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status))}
+                      disabled={controlLoading !== null || !(isPaused || canPerform(job, 'pause'))}
                       className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
                       aria-label={pauseLabel}
                       title={pauseLabel}

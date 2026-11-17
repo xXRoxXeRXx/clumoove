@@ -18,6 +18,8 @@ import (
 	"backend/internal/oauth"
 	"backend/internal/scheduler"
 	"backend/internal/storage"
+
+	"github.com/lib/pq"
 )
 
 type backupScheduleAndTuning struct {
@@ -1044,7 +1046,7 @@ func (api *backupAPI) handleBackupStateChange(w http.ResponseWriter, r *http.Req
 
 	var result sql.Result
 	if pause {
-		result, err = tx.ExecContext(r.Context(), `UPDATE backup_jobs SET status = 'PAUSED' WHERE id = $1 AND user_id = $2 AND status IN ('IDLE','FAILED','QUEUED','SCANNING','RUNNING','VERIFYING')`, id, userID)
+		result, err = tx.ExecContext(r.Context(), `UPDATE backup_jobs SET status = 'PAUSED' WHERE id = $1 AND user_id = $2 AND status = ANY($3::text[])`, id, userID, pq.Array(db.BackupActionSources(db.JobActionPause)))
 		if err == nil {
 			updated, rowsErr := result.RowsAffected()
 			if rowsErr != nil {
@@ -1062,13 +1064,13 @@ func (api *backupAPI) handleBackupStateChange(w http.ResponseWriter, r *http.Req
 		}
 	} else {
 		var cronExpression, timezone string
-		err = tx.QueryRowContext(r.Context(), `SELECT cron_expression, timezone FROM backup_jobs WHERE id = $1 AND user_id = $2 AND status = 'PAUSED' FOR UPDATE`, id, userID).Scan(&cronExpression, &timezone)
+		err = tx.QueryRowContext(r.Context(), `SELECT cron_expression, timezone FROM backup_jobs WHERE id = $1 AND user_id = $2 AND status = ANY($3::text[]) FOR UPDATE`, id, userID, pq.Array(db.BackupActionSources(db.JobActionResume))).Scan(&cronExpression, &timezone)
 		if err == sql.ErrNoRows {
 			writeConflictError(w, ErrBackupInvalidState)
 			return
 		}
 		if err == nil {
-			result, err = tx.ExecContext(r.Context(), `UPDATE backup_jobs SET status = 'IDLE' WHERE id = $1 AND user_id = $2 AND status = 'PAUSED'`, id, userID)
+			result, err = tx.ExecContext(r.Context(), `UPDATE backup_jobs SET status = 'IDLE' WHERE id = $1 AND user_id = $2 AND status = ANY($3::text[])`, id, userID, pq.Array(db.BackupActionSources(db.JobActionResume)))
 		}
 		if err == nil {
 			nextRun, nextErr := scheduler.NextRunInLocation(cronExpression, timezone, time.Now())

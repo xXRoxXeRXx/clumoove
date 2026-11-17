@@ -176,6 +176,11 @@ func TestSyncModuleSetupSchedulingScopeAndTuning(t *testing.T) {
 	state.setJobStatus(jobID, "RUNNING")
 	assertAPIResponseError(t, performSyncModuleRequest(mux, http.MethodPut, "/api/sync/"+jobID+"/scope", "user-1", `{"selected_paths":["/Photos"]}`), http.StatusConflict, ErrSyncInvalidState, "scope while running")
 
+	// Only the states that advertise edit_scope may change the scope; a
+	// connection-loss pause belongs to the worker's recovery.
+	state.setJobStatus(jobID, "PAUSED_CONNECTION_LOSS")
+	assertAPIResponseError(t, performSyncModuleRequest(mux, http.MethodPut, "/api/sync/"+jobID+"/scope", "user-1", `{"selected_paths":["/Photos"]}`), http.StatusConflict, ErrSyncInvalidState, "scope during connection loss")
+
 	// 4. PUT /api/sync/{id}/threads
 	assertAPIResponseError(t, performSyncModuleRequest(mux, http.MethodPut, "/api/sync/"+jobID+"/threads", "user-1", `{"threads":0}`), http.StatusBadRequest, ErrThreadsOutOfRange, "threads too low")
 	assertAPIResponseError(t, performSyncModuleRequest(mux, http.MethodPut, "/api/sync/"+jobID+"/threads", "user-1", `{"threads":17}`), http.StatusBadRequest, ErrThreadsOutOfRange, "threads too high")
@@ -470,6 +475,9 @@ func TestSyncModuleBrowsingReportsErrorsAndStreams(t *testing.T) {
 	if recStatusRun.Code != http.StatusOK || !strings.Contains(recStatusRun.Body.String(), `"/Docs/active.txt"`) {
 		t.Fatalf("status running = %d %s", recStatusRun.Code, recStatusRun.Body.String())
 	}
+	if !strings.Contains(recStatusRun.Body.String(), `"allowed_actions":["pause"]`) {
+		t.Fatalf("running sync allowed_actions missing from %s", recStatusRun.Body.String())
+	}
 	recStatusVer := performSyncModuleRequest(mux, http.MethodGet, "/api/sync/s-verifying", "user-1", "")
 	if recStatusVer.Code != http.StatusOK || !strings.Contains(recStatusVer.Body.String(), `"/Docs/verify.txt"`) {
 		t.Fatalf("status verifying = %d %s", recStatusVer.Code, recStatusVer.Body.String())
@@ -661,6 +669,15 @@ type syncModuleDBState struct {
 	ownershipErr error
 	oauthErr     error
 	nextID       int
+	// syncLookups counts statements that read a sync job row or check its
+	// ownership, so tests can assert how many lookups a request performs.
+	syncLookups int
+}
+
+func (s *syncModuleDBState) lookupCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.syncLookups
 }
 
 func (s *syncModuleDBState) setJob(rec *syncModuleRecord) {
@@ -847,6 +864,7 @@ func (c syncModuleTestConn) QueryContext(_ context.Context, query string, args [
 
 	switch {
 	case strings.Contains(query, "SELECT EXISTS(SELECT 1 FROM sync_jobs"):
+		c.state.syncLookups++
 		if c.state.ownershipErr != nil {
 			return nil, c.state.ownershipErr
 		}
@@ -923,8 +941,18 @@ func (c syncModuleTestConn) QueryContext(_ context.Context, query string, args [
 		return &backupProfileConnectionRows{rows: [][]driver.Value{{rec.status}}, columns: 1}, nil
 
 	case strings.Contains(query, "FROM sync_jobs WHERE id = $1"):
+		c.state.syncLookups++
 		id := args[0].Value.(string)
 		rec := c.state.jobs[id]
+		if len(args) > 1 {
+			// Owner-scoped lookup: WHERE id = $1 AND user_id = $2.
+			if c.state.ownershipErr != nil {
+				return nil, c.state.ownershipErr
+			}
+			if owner, _ := args[1].Value.(string); rec != nil && rec.userID != owner {
+				rec = nil
+			}
+		}
 		if rec == nil {
 			return &backupProfileConnectionRows{columns: 47}, nil
 		}

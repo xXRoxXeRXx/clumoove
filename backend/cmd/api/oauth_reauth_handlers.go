@@ -25,21 +25,17 @@ func oauthExpiry(seconds int) time.Time {
 }
 
 func (api *migrationAPI) handleMigrationReauth(w http.ResponseWriter, r *http.Request) {
-	id, _, ok := api.requireOwnedMigrationStrict(w, r)
+	mig, _, ok := api.requireOwnedMigrationStrict(w, r)
 	if !ok {
 		return
 	}
+	id := mig.ID
 	var req oauthReauthRequest
 	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 	if (req.Role != "source" && req.Role != "target") || req.AccessToken == "" || req.RefreshToken == "" {
 		writeValidationError(w, ErrRefreshTokenMissing)
-		return
-	}
-	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrMigrationNotFound)
 		return
 	}
 	provider, expected := mig.SourceProvider, mig.SourceRefreshTokenEncrypted
@@ -75,6 +71,11 @@ func (api *migrationAPI) handleMigrationReauth(w http.ResponseWriter, r *http.Re
 		return
 	}
 	count, err := db.ResetFailedTasksForRetry(api.db, r.Context(), id)
+	if errors.Is(err, db.ErrMigrationNotRetryable) {
+		// Tokens were refreshed; a migration that is not finished simply has
+		// nothing to requeue.
+		count, err = 0, nil
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -88,12 +89,8 @@ func (api *syncAPI) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	if !api.requireSyncOwnership(w, r, id, userID) {
-		return
-	}
-	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+	job, ok := api.requireOwnedSync(w, r, id, userID)
+	if !ok {
 		return
 	}
 	var req oauthReauthRequest

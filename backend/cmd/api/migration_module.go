@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"time"
 
@@ -118,42 +119,83 @@ func (api *migrationAPI) allowRateLimit(r *http.Request, scope string, limit int
 	return api.rateLimiter.Allow(r.Context(), scope, api.clientIP(r), limit, window)
 }
 
-func (api *migrationAPI) requireOwnedMigration(w http.ResponseWriter, r *http.Request) (string, string, bool) {
-	return api.verifyOwnedMigration(w, r, false)
+// requireOwnedMigration loads the migration with one owner-scoped query and
+// writes the error response itself when it cannot return it. A missing and a
+// foreign migration are indistinguishable (403 MIGRATION_NOT_OWNED), and a
+// lookup failure is reported the same way.
+//
+// The returned row is a snapshot: it must not be used to guard a state
+// transition. Status guards belong in the UPDATE statement itself.
+func (api *migrationAPI) requireOwnedMigration(w http.ResponseWriter, r *http.Request) (*db.Migration, string, bool) {
+	return api.loadOwnedMigrationRow(w, r, false)
 }
 
-func (api *migrationAPI) requireOwnedMigrationStrict(w http.ResponseWriter, r *http.Request) (string, string, bool) {
-	return api.verifyOwnedMigration(w, r, true)
+// requireOwnedMigrationStrict behaves like requireOwnedMigration but reports a
+// lookup failure as 500 INTERNAL_ERROR instead of masking it as not-owned.
+func (api *migrationAPI) requireOwnedMigrationStrict(w http.ResponseWriter, r *http.Request) (*db.Migration, string, bool) {
+	return api.loadOwnedMigrationRow(w, r, true)
 }
 
-func (api *migrationAPI) verifyOwnedMigration(w http.ResponseWriter, r *http.Request, internalErrorOnLookupFailure bool) (string, string, bool) {
+func (api *migrationAPI) loadOwnedMigrationRow(w http.ResponseWriter, r *http.Request, internalErrorOnLookupFailure bool) (*db.Migration, string, bool) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
-		return "", "", false
+		return nil, "", false
 	}
 
 	userID, authenticated := api.requireUserID(w, r)
 	if !authenticated {
-		return "", "", false
+		return nil, "", false
 	}
 
-	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), api.db, id, userID)
+	mig, err := db.GetOwnedMigrationContext(r.Context(), api.db, id, userID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
+			return nil, "", false
+		}
 		if internalErrorOnLookupFailure {
 			api.logf(r, "Error checking migration %s ownership: %v", id, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return "", "", false
+			return nil, "", false
 		}
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
-		return "", "", false
-	}
-	if !owns {
-		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
-		return "", "", false
+		return nil, "", false
 	}
 
-	return id, userID, true
+	return mig, userID, true
+}
+
+// lookupOwnedMigrationDetail is the loader behind the read endpoints (detail,
+// report, detail stream), whose contract differs from requireOwnedMigration: a
+// missing migration is 404 MIGRATION_NOT_FOUND, a foreign one 403
+// MIGRATION_NOT_OWNED, and a lookup failure 500 INTERNAL_ERROR.
+//
+// The row is fetched with the owner-scoped query, so another account's data is
+// never loaded. Only when that finds nothing does a row-less existence check
+// pick between 404 and 403.
+func (api *migrationAPI) lookupOwnedMigrationDetail(w http.ResponseWriter, r *http.Request, id, userID, errorLabel string) (*db.Migration, bool) {
+	mig, err := db.GetOwnedMigrationContext(r.Context(), api.db, id, userID)
+	if err == nil {
+		return mig, true
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		exists, existsErr := db.MigrationExistsContext(r.Context(), api.db, id)
+		if existsErr == nil {
+			if exists {
+				writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
+			} else {
+				writeError(w, http.StatusNotFound, ErrMigrationNotFound)
+			}
+			return nil, false
+		}
+		err = existsErr
+	}
+	if errorLabel != "" {
+		api.logf(r, "%s %s: %v\n", errorLabel, id, err)
+	}
+	writeError(w, http.StatusInternalServerError, ErrInternalError)
+	return nil, false
 }
 
 // migrationGarbageCollector owns the hourly deletion of old terminal migrations

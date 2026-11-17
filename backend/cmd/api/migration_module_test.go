@@ -487,6 +487,8 @@ func TestMigrationModuleLifecycleActionsAndOwnership(t *testing.T) {
 	assertAPIResponseError(t, doReq(http.MethodPost, "/api/migration/m-run/reauth", "user-1", `{"role":"source","access_token":"new-a","refresh_token":"new-r"}`), http.StatusConflict, ErrMigrationInvalidState, "reauth conflict")
 	state.setOAuthConflict(false)
 
+	// Reauth requeues the tasks of a migration that stopped on an auth failure.
+	state.setStatus("m-run", "FAILED")
 	recReauth := doReq(http.MethodPost, "/api/migration/m-run/reauth", "user-1", `{"role":"source","access_token":"new-a","refresh_token":"new-r","expires_in":1800}`)
 	if recReauth.Code != http.StatusOK || !strings.Contains(recReauth.Body.String(), `"retried":2`) {
 		t.Fatalf("reauth = %d %s", recReauth.Code, recReauth.Body.String())
@@ -805,6 +807,24 @@ type migrationModuleDBState struct {
 	// ownership checked, letting a test change the row before the caller's next
 	// statement (a lost race).
 	afterMigrationRead func(id string)
+	// migrationLookups counts statements that read a migration row or check its
+	// ownership, so tests can assert how many lookups a request performs.
+	migrationLookups int
+	// unscopedRowReads counts reads of a full migration row that were not
+	// scoped to an owner, i.e. rows that may belong to someone else.
+	unscopedRowReads int
+}
+
+func (s *migrationModuleDBState) unscopedReads() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.unscopedRowReads
+}
+
+func (s *migrationModuleDBState) lookupCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.migrationLookups
 }
 
 func (s *migrationModuleDBState) setOwnershipErr(err error) {
@@ -907,6 +927,14 @@ func (c migrationModuleTestConn) ExecContext(_ context.Context, query string, ar
 	defer c.state.mu.Unlock()
 
 	switch {
+	case strings.Contains(query, "SET failed_retry_done = FALSE") || strings.Contains(query, "failed_retry_done = FALSE"):
+		if len(args) >= 4 {
+			rec := c.state.migrations[args[2].Value.(string)]
+			if rec == nil || !statusInPQArray(rec.status, args[3].Value) {
+				return driver.RowsAffected(0), nil
+			}
+			rec.status = "RUNNING"
+		}
 	case strings.Contains(query, "status = ANY($4::text[])") && strings.Contains(query, "UPDATE migrations"):
 		rec := c.state.migrations[args[2].Value.(string)]
 		if rec == nil || !statusInPQArray(rec.status, args[3].Value) {
@@ -929,17 +957,13 @@ func (c migrationModuleTestConn) ExecContext(_ context.Context, query string, ar
 		if rec := c.state.migrations[args[3].Value.(string)]; rec != nil {
 			rec.sourceRefreshTokenEnc, _ = args[1].Value.(string)
 		}
-	case strings.Contains(query, "SET failed_retry_done = FALSE") || strings.Contains(query, "failed_retry_done = FALSE"):
-		if len(args) >= 3 {
-			if rec := c.state.migrations[args[2].Value.(string)]; rec != nil {
-				rec.status = "RUNNING"
-			}
-		}
 	case strings.Contains(query, "SET total_files = 0") && strings.Contains(query, "UPDATE migrations"):
-		if rec := c.state.migrations[args[0].Value.(string)]; rec != nil {
-			rec.status = "INDEXING"
-			rec.discoveryComplete = false
+		rec := c.state.migrations[args[0].Value.(string)]
+		if rec == nil || !statusInPQArray(rec.status, args[1].Value) {
+			return driver.RowsAffected(0), nil
 		}
+		rec.status = "INDEXING"
+		rec.discoveryComplete = false
 	case strings.Contains(query, "DELETE FROM migrations WHERE id = $1"):
 		delete(c.state.migrations, args[0].Value.(string))
 	}
@@ -954,10 +978,21 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 		owned := ok && len(row) > 1 && row[1] == userID
 		return &backupProfileConnectionRows{rows: [][]driver.Value{{owned}}, columns: 1}, nil
 	}
+	if strings.Contains(query, "SELECT EXISTS") && strings.Contains(query, "migrations") && len(args) == 1 {
+		c.state.mu.Lock()
+		lookupErr := c.state.ownershipErr
+		exists := c.state.migrations[args[0].Value.(string)] != nil
+		c.state.mu.Unlock()
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		return &backupProfileConnectionRows{rows: [][]driver.Value{{exists}}, columns: 1}, nil
+	}
 	if strings.Contains(query, "SELECT EXISTS") && strings.Contains(query, "migrations") {
 		id := args[0].Value.(string)
 		userID := args[1].Value.(string)
 		c.state.mu.Lock()
+		c.state.migrationLookups++
 		lookupErr := c.state.ownershipErr
 		rec := c.state.migrations[id]
 		owned := rec != nil && rec.userID == userID
@@ -997,7 +1032,7 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 		id := args[0].Value.(string)
 		c.state.mu.Lock()
 		rec := c.state.migrations[id]
-		if rec == nil || (rec.status != "PAUSED" && rec.status != "PAUSED_CONNECTION_LOSS") {
+		if rec == nil || !statusInPQArray(rec.status, args[2].Value) {
 			c.state.mu.Unlock()
 			return &backupProfileConnectionRows{columns: 1}, nil
 		}
@@ -1066,12 +1101,36 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 			columns: 10,
 		}, nil
 	}
+	if strings.Contains(query, "FROM migrations WHERE id = $1 AND status = ANY($2::text[]) FOR UPDATE") {
+		c.state.mu.Lock()
+		rec := c.state.migrations[args[0].Value.(string)]
+		match := rec != nil && statusInPQArray(rec.status, args[1].Value)
+		c.state.mu.Unlock()
+		if !match {
+			return &backupProfileConnectionRows{columns: 1}, nil
+		}
+		return &backupProfileConnectionRows{rows: [][]driver.Value{{int64(1)}}, columns: 1}, nil
+	}
 	if strings.Contains(query, "FROM migrations WHERE id = $1") {
 		id := args[0].Value.(string)
 		c.state.mu.Lock()
+		c.state.migrationLookups++
+		if len(args) == 1 {
+			c.state.unscopedRowReads++
+		}
 		m := c.state.migrations[id]
 		afterRead := c.state.afterMigrationRead
+		lookupErr := c.state.ownershipErr
 		c.state.mu.Unlock()
+		if len(args) > 1 {
+			// Owner-scoped lookup: WHERE id = $1 AND user_id = $2.
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			if owner, _ := args[1].Value.(string); m != nil && m.userID != owner {
+				m = nil
+			}
+		}
 		if m == nil {
 			return &backupProfileConnectionRows{columns: 43}, nil
 		}

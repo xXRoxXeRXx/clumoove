@@ -19,6 +19,7 @@ import { Tabs, type TabItem } from './Tabs';
 import { EditBackupModal } from './EditBackupModal';
 import { BackupSnapshotBrowser } from './BackupSnapshotBrowser';
 import { formatCronHuman } from '../utils/cronFormatter';
+import { canPerform } from '../utils/jobActions';
 import {
   ArrowPathIcon,
   CalendarDaysIcon,
@@ -232,8 +233,10 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
     );
   }
 
-  const isPaused = job.status === 'PAUSED';
-  const isRunning = ['QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status);
+  const isRunning = ['QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status); // presentation only
+  const canRun = canPerform(job, 'start');
+  const canResume = canPerform(job, 'resume');
+  const canPause = canPerform(job, 'pause');
   const badgeStatus = job.status === 'QUEUED' ? 'PENDING' : job.status === 'SCANNING' ? 'INDEXING' : job.status;
 
   const totalBytes = job.total_bytes || 0;
@@ -264,7 +267,7 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
             <button
               type="button"
               onClick={() => void handleAction('run')}
-              disabled={isRunning || actionLoading !== null}
+              disabled={!canRun || actionLoading !== null}
               className="ui-button-primary flex items-center gap-2 px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
             >
               {actionLoading === 'run' ? (
@@ -277,18 +280,18 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
 
             <button
               type="button"
-              onClick={() => void handleAction(isPaused ? 'resume' : 'pause')}
-              disabled={actionLoading !== null || (!isPaused && !['IDLE', 'FAILED', 'QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status))}
+              onClick={() => void handleAction(canResume ? 'resume' : 'pause')}
+              disabled={actionLoading !== null || (!canResume && !canPause)}
               className="ui-button-secondary flex items-center gap-2 px-3 py-1.5 text-xs disabled:opacity-40"
             >
-              {actionLoading === (isPaused ? 'resume' : 'pause') ? (
+              {actionLoading === (canResume ? 'resume' : 'pause') ? (
                 <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
-              ) : isPaused ? (
+              ) : canResume ? (
                 <PlayIcon className="size-4" aria-hidden="true" />
               ) : (
                 <PauseIcon className="size-4" aria-hidden="true" />
               )}
-              <span>{isPaused ? t('backup.resume') : t('backup.pause')}</span>
+              <span>{canResume ? t('backup.resume') : t('backup.pause')}</span>
             </button>
 
             <button

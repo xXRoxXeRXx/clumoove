@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // SyncJob represents a continuous synchronization job.
@@ -70,18 +73,20 @@ func (s SyncJob) MarshalJSON() ([]byte, error) {
 	type alias SyncJob
 	aux := struct {
 		*alias
-		SourceProfileID      *string `json:"source_profile_id"`
-		TargetProfileID      *string `json:"target_profile_id"`
-		LastRunStatus        string  `json:"last_run_status,omitempty"`
-		ErrorMessage         string  `json:"error_message,omitempty"`
-		LastRunAt            *string `json:"last_run_at,omitempty"`
-		NextRunAt            *string `json:"next_run_at,omitempty"`
-		SourceTokenExpiresAt *string `json:"source_token_expires_at,omitempty"`
-		TargetTokenExpiresAt *string `json:"target_token_expires_at,omitempty"`
+		SourceProfileID      *string     `json:"source_profile_id"`
+		TargetProfileID      *string     `json:"target_profile_id"`
+		LastRunStatus        string      `json:"last_run_status,omitempty"`
+		ErrorMessage         string      `json:"error_message,omitempty"`
+		LastRunAt            *string     `json:"last_run_at,omitempty"`
+		NextRunAt            *string     `json:"next_run_at,omitempty"`
+		SourceTokenExpiresAt *string     `json:"source_token_expires_at,omitempty"`
+		TargetTokenExpiresAt *string     `json:"target_token_expires_at,omitempty"`
+		AllowedActions       []JobAction `json:"allowed_actions"`
 	}{
 		alias:           (*alias)(&s),
 		SourceProfileID: nullStringPtr(s.SourceProfileID),
 		TargetProfileID: nullStringPtr(s.TargetProfileID),
+		AllowedActions:  AllowedSyncActions(s.Status),
 	}
 	if s.LastRunStatus.Valid {
 		aux.LastRunStatus = s.LastRunStatus.String
@@ -210,6 +215,19 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 
 // GetSyncJobContext retrieves a sync job while honoring caller cancellation.
 func GetSyncJobContext(ctx context.Context, db *sql.DB, id string) (*SyncJob, error) {
+	return querySyncJob(ctx, db, `WHERE id = $1`, id)
+}
+
+// GetOwnedSyncJobContext loads a sync job only if it belongs to userID, in a
+// single owner-scoped query. A missing job and one owned by another user are
+// indistinguishable: both return sql.ErrNoRows.
+func GetOwnedSyncJobContext(ctx context.Context, db *sql.DB, id, userID string) (*SyncJob, error) {
+	return querySyncJob(ctx, db, `WHERE id = $1 AND user_id = $2`, id, userID)
+}
+
+// querySyncJob selects the full sync job row. where is a fixed SQL fragment
+// supplied by the callers above; values are always passed as parameters.
+func querySyncJob(ctx context.Context, db *sql.DB, where string, args ...any) (*SyncJob, error) {
 	query := `
 		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,
 		       source_refresh_token_encrypted, source_token_expires_at, COALESCE(source_mega_session_id_encrypted, ''), COALESCE(source_mega_master_key_encrypted, ''),
@@ -221,10 +239,10 @@ func GetSyncJobContext(ctx context.Context, db *sql.DB, id string) (*SyncJob, er
 		       (SELECT next_run_at FROM schedules WHERE task_type = 'sync' AND task_id = sync_jobs.id AND is_active = TRUE LIMIT 1),
 		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, verified_files, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
-		FROM sync_jobs WHERE id = $1
+		FROM sync_jobs ` + where + `
 	`
 	var s SyncJob
-	err := db.QueryRowContext(ctx, query, id).Scan(
+	err := db.QueryRowContext(ctx, query, args...).Scan(
 		&s.ID, &s.UserID, &s.SourceProfileID, &s.TargetProfileID, &s.SourceURL, &s.SourceUsername, &s.SourcePasswordEncrypted,
 		&s.SourceRefreshTokenEncrypted, &s.SourceTokenExpiresAt, &s.SourceMegaSessionIDEncrypted, &s.SourceMegaMasterKeyEncrypted,
 		&s.TargetURL, &s.TargetUsername, &s.TargetPasswordEncrypted,
@@ -376,7 +394,7 @@ func PauseSyncJobAndDeactivateSchedules(ctx context.Context, database *sql.DB, i
 		}
 		return 0, false, err
 	}
-	if status != "IDLE" && status != "INDEXING" && status != "RUNNING" && status != "VERIFYING" {
+	if !slices.Contains(syncActionSources[JobActionPause], status) {
 		return generation, false, nil
 	}
 
@@ -445,7 +463,7 @@ func ResumeSyncJobAndReactivateSchedules(ctx context.Context, database *sql.DB, 
 		}
 		return false, err
 	}
-	if status != "PAUSED" {
+	if !slices.Contains(syncActionSources[JobActionResume], status) {
 		return false, nil
 	}
 
@@ -458,8 +476,8 @@ func ResumeSyncJobAndReactivateSchedules(ctx context.Context, database *sql.DB, 
 		SET status = 'IDLE',
 		    error_message = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE error_message END,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $2 AND status = 'PAUSED'
-	`, errVal, id); err != nil {
+		WHERE id = $2 AND status = ANY($3::text[])
+	`, errVal, id, pq.Array(syncActionSources[JobActionResume])); err != nil {
 		return false, err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -649,9 +667,9 @@ func ClaimSyncJobPass(database *sql.DB, id string) (generation int, claimed bool
 	err = database.QueryRow(`
 		UPDATE sync_jobs
 		SET status = 'INDEXING', run_generation = run_generation + 1, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND status IN ('IDLE', 'FAILED')
+		WHERE id = $1 AND status = ANY($2::text[])
 		RETURNING run_generation
-	`, id).Scan(&generation)
+	`, id, pq.Array(syncActionSources[JobActionStart])).Scan(&generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -1343,7 +1361,7 @@ func GetUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID 
 	return tasks, rows.Err()
 }
 
-var ErrSyncInvalidState = errors.New("sync job is in an active state and cannot be modified")
+var ErrSyncInvalidState = errors.New("sync job is in a state that does not allow this change")
 
 // DeleteSyncStateForJob removes all cached sync_state entries for a sync job (used on scope changes to prevent false deletions).
 func DeleteSyncStateForJob(exec queryExecerContext, syncJobID string) error {
@@ -1367,7 +1385,7 @@ func UpdateSyncJobScope(db *sql.DB, syncJobID string, selectedPaths []string, ta
 		}
 		return err
 	}
-	if status == "RUNNING" || status == "INDEXING" || status == "VERIFYING" {
+	if !slices.Contains(syncActionSources[JobActionEditScope], status) {
 		return ErrSyncInvalidState
 	}
 
