@@ -12,14 +12,18 @@ import { isOAuthProvider, type CloudFile, type MigrationConfig, type ProviderId 
 
 import { useApiError } from '../utils/apiError';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
-import { apiFetch } from '../utils/apiClient';
 import { ProfileSelect } from './connect/ProfileSelect';
 import { SaveProfileRow } from './connect/SaveProfileRow';
 import { ProviderSelector } from './connect/ProviderSelector';
 import { FixedCredentialsFields } from './connect/FixedCredentialsFields';
-import { buildFtpUrl, type FtpTlsMode } from '../utils/providerUrls';
+import type { FtpTlsMode } from '../utils/providerUrls';
+import {
+  createConnectionWorkflow,
+  type ConnectionDraft,
+  type SavedProfileSummary,
+  type WorkflowFailure,
+} from './connect/connectionWorkflow';
 
-type ConnectResponse = { success: boolean; files?: CloudFile[]; error_code?: string };
 
 interface ConnectFormProps {
   onConnectSuccess: (config: MigrationConfig, initialFiles: CloudFile[]) => void;
@@ -30,7 +34,6 @@ interface ConnectFormProps {
   onBack?: () => void;
 }
 
-const sftpHostKeyFingerprintPattern = /^SHA256:[A-Za-z0-9+/]{43}$/;
 
 const formInputClass = 'ui-input w-full px-4 py-2.5 text-sm font-sans';
 const formMonoInputClass = `${formInputClass} font-mono`;
@@ -108,7 +111,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [sourceVerified, setSourceVerified] = useState(false);
 
   // Reusable connection profiles (role-agnostic; usable as source or target)
-  const [profiles, setProfiles] = useState<{ id: string; name: string; provider: string }[]>([]);
+  const [profiles, setProfiles] = useState<SavedProfileSummary[]>([]);
   const [sourceProfileId, setSourceProfileId] = useState('');
   const [targetProfileId, setTargetProfileId] = useState('');
   const [sourceSaveProfile, setSourceSaveProfile] = useState(false);
@@ -121,25 +124,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const { openOAuthPopup } = useOAuthPopup(apiUrl);
 
   const getProfile = (id: string) => profiles.find((x) => x.id === id);
-  // Load reusable connection profiles for the dropdowns.
+  const workflow = useMemo(() => createConnectionWorkflow({ apiUrl, token }), [apiUrl, token]);
+
+  // Load reusable connection profiles for the dropdowns (non-fatal on failure).
+  const reloadProfiles = () => workflow.listProfiles().then(setProfiles);
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await apiFetch(`${apiUrl}/api/profiles`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-        });
-        const data = await res.json().catch(() => ({ profiles: [] })) as { profiles?: { id: string; name: string; provider: string }[] };
-        if (!cancelled && data.profiles) {
-          setProfiles(data.profiles);
-        }
-      } catch {
-        // Non-fatal: dropdowns simply stay empty.
-      }
-    };
-    load();
+    workflow.listProfiles().then((list) => { if (!cancelled) setProfiles(list); });
     return () => { cancelled = true; };
-  }, [apiUrl, token]);
+  }, [workflow]);
 
   // Apply a stored profile's credentials into the form. Only overwrites the
   // fields the provider type supports; explicit ad-hoc entry still wins because
@@ -163,88 +156,29 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     // provider and name so the UI reflects the selection.
   };
 
-  // Build the final provider URL for the source side (mirrors handleSubmit's logic).
-  const finalSourceUrlValue = (): string => sourceProfileId !== '' ? '' : (sourceProvider === 'smb'
-    ? `smb://${sourceSmbHost}:${sourceSmbPort}/${sourceSmbShare.replace(/^\//, '')}${sourceSmbDomain ? '?domain=' + encodeURIComponent(sourceSmbDomain) : ''}`
-    : sourceProvider === 's3'
-    ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}`
-    : sourceProvider === 'sftp'
-    ? `sftp://${sourceSftpHost}:${sourceSftpPort}?host_key=${encodeURIComponent(sourceSftpHostKey.trim())}`
-    : sourceProvider === 'ftp'
-    ? buildFtpUrl(sourceFtpHost, sourceFtpPort, sourceFtpTlsMode)
-    : sourceProvider === 'magentacloud' || sourceProvider === 'koofr' || sourceProvider === 'local' || sourceProvider === 'mega'
-    ? ''
-    : (isOAuthProvider(sourceProvider) ? (sourceProvider === 'onedrive' ? 'oauth://onedrive' : `https://api.${sourceProvider}.com`) : sourceUrl));
 
-  // Build the final provider URL for the target side.
-  const finalTargetUrlValue = (): string => targetProfileId !== '' ? '' : (targetProvider === 'smb'
-    ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
-    : targetProvider === 's3'
-    ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}`
-    : targetProvider === 'sftp'
-    ? `sftp://${targetSftpHost}:${targetSftpPort}?host_key=${encodeURIComponent(targetSftpHostKey.trim())}`
-    : targetProvider === 'ftp'
-    ? buildFtpUrl(targetFtpHost, targetFtpPort, targetFtpTlsMode)
-    : targetProvider === 'magentacloud' || targetProvider === 'koofr' || targetProvider === 'local' || targetProvider === 'mega'
-    ? ''
-    : (isOAuthProvider(targetProvider) ? (targetProvider === 'onedrive' ? 'oauth://onedrive' : `https://api.${targetProvider}.com`) : targetUrl));
-  // Build the final credentials for the source side (reuses shared URL/user/pass logic).
-  const finalSourceUserValue = (): string => sourceProfileId !== '' ? '' : (sourceProvider === 'local'
-    ? ''
-    : isOAuthProvider(sourceProvider) ? (sourceOAuthUser || sourceProvider) : sourceUser);
-  const finalSourcePassValue = (): string => sourceProfileId !== '' ? '' : (sourceProvider === 'local'
-    ? ''
-    : sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass);
-
-  // Build the final credentials for the target side.
-  const finalTargetUserValue = (): string => targetProfileId !== '' ? '' : (targetProvider === 'local'
-    ? ''
-    : isOAuthProvider(targetProvider) ? (targetOAuthUser || targetProvider) : targetUser);
-  const finalTargetPassValue = (): string => targetProfileId !== '' ? '' : (targetProvider === 'local'
-    ? ''
-    : targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass);
-  // Persist a connection as a reusable profile (called after a successful connect).
-  const saveProfile = async (role: 'source' | 'target', name: string) => {
-    if (!name.trim()) return false;
-    const isOAuth = (role === 'source'
-      ? isOAuthProvider(sourceProvider)
-      : isOAuthProvider(targetProvider));
-    const payload: Record<string, unknown> = {
-      name: name.trim(),
-      provider: role === 'source' ? sourceProvider : targetProvider,
-      url: role === 'source' ? finalSourceUrlValue() : finalTargetUrlValue(),
-      username: role === 'source' ? (isOAuth ? (sourceOAuthUser || sourceProvider) : sourceUser) : (isOAuth ? (targetOAuthUser || targetProvider) : targetUser),
-    };
-    if (!isOAuth && role === 'source' && sourcePass) payload.password = sourcePass;
-    if (!isOAuth && role === 'target' && targetPass) payload.password = targetPass;
-    if (isOAuth && role === 'source' && sourceRefreshToken) {
-      payload.refresh_token = sourceRefreshToken;
-      payload.oauth_user = sourceOAuthUser || sourceProvider;
-    }
-    if (isOAuth && role === 'target' && targetRefreshToken) {
-      payload.refresh_token = targetRefreshToken;
-      payload.oauth_user = targetOAuthUser || targetProvider;
-    }
-    try {
-      const res = await apiFetch(`${apiUrl}/api/profiles`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
-      return res.ok;
-    } catch {
-      return false;
-    }
+  // Snapshot of each side's field state, handed to the form workflow.
+  const sourceDraft: ConnectionDraft = {
+    provider: sourceProvider, profileId: sourceProfileId, url: sourceUrl, username: sourceUser, password: sourcePass,
+    refreshToken: sourceRefreshToken, tokenExpiresIn: sourceTokenExpiresIn, oauthUser: sourceOAuthUser,
+    smb: { host: sourceSmbHost, port: sourceSmbPort, share: sourceSmbShare, domain: sourceSmbDomain },
+    s3: { endpoint: sourceS3Endpoint, region: sourceS3Region, bucket: sourceS3Bucket },
+    sftp: { host: sourceSftpHost, port: sourceSftpPort, hostKey: sourceSftpHostKey, authMode: sourceSftpAuthMode, privateKey: sourceSftpPrivateKey },
+    ftp: { host: sourceFtpHost, port: sourceFtpPort, tlsMode: sourceFtpTlsMode },
+  };
+  const targetDraft: ConnectionDraft = {
+    provider: targetProvider, profileId: targetProfileId, url: targetUrl, username: targetUser, password: targetPass,
+    refreshToken: targetRefreshToken, tokenExpiresIn: targetTokenExpiresIn, oauthUser: targetOAuthUser,
+    smb: { host: targetSmbHost, port: targetSmbPort, share: targetSmbShare, domain: targetSmbDomain },
+    s3: { endpoint: targetS3Endpoint, region: targetS3Region, bucket: targetS3Bucket },
+    sftp: { host: targetSftpHost, port: targetSftpPort, hostKey: targetSftpHostKey, authMode: targetSftpAuthMode, privateKey: targetSftpPrivateKey },
+    ftp: { host: targetFtpHost, port: targetFtpPort, tlsMode: targetFtpTlsMode },
   };
 
-  // Reload the saved profiles so the dropdowns reflect a freshly created one.
-  const refreshProfiles = () => {
-    apiFetch(`${apiUrl}/api/profiles`, { headers: { 'Authorization': `Bearer ${token}` } })
-      .then((res) => res.json())
-      .then((data: { profiles?: { id: string; name: string; provider: string }[] }) => {
-        if (data.profiles) setProfiles(data.profiles);
-      })
-      .catch(() => { /* non-fatal */ });
+  const describeFailure = (failure: WorkflowFailure): string => {
+    if (failure.kind === 'validation') return t(failure.messageKey);
+    if (failure.kind === 'api') return translateApiError(failure.errorCode);
+    return t('connect.errors.networkError');
   };
 
   const startOAuth = (provider: string, type: 'source' | 'target') => {
@@ -275,274 +209,47 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // A selected saved profile supplies the credentials server-side, so the
-    // client-side field checks are satisfied by its presence.
-    const sourceProfileSelected = sourceProfileId !== '';
-    const targetProfileSelected = targetProfileId !== '';
-
-    const finalSourceUrl = finalSourceUrlValue();
-    const finalSourceUser = finalSourceUserValue();
-    const finalSourcePass = finalSourcePassValue();
-    const finalTargetUrl = finalTargetUrlValue();
-    const finalTargetUser = finalTargetUserValue();
-    const finalTargetPass = finalTargetPassValue();
-
-    if (sourceProvider === 'sftp' && !sourceProfileSelected) {
-      if (!sourceSftpHost.trim()) {
-        setError(t('connect.errors.sourceSftpHost'));
-        return;
-      }
-      if (!sftpHostKeyFingerprintPattern.test(sourceSftpHostKey.trim())) {
-        setError(t('connect.errors.sourceSftpHostKey'));
-        return;
-      }
-      if (sourceSftpAuthMode === 'key' && !sourceSftpPrivateKey.trim()) {
-        setError(t('connect.errors.sourceSftpKey'));
-        return;
-      }
-    }
-    if (sourceProvider === 'ftp' && !sourceProfileSelected) {
-      if (!sourceFtpHost.trim()) {
-        setError(t('connect.errors.sourceFtpHost'));
-        return;
-      }
-      if (!finalSourceUrl) {
-        setError(t('connect.errors.ftpPort'));
-        return;
-      }
-    }
-    if (targetProvider === 'sftp' && !targetProfileSelected) {
-      if (!targetSftpHost.trim()) {
-        setError(t('connect.errors.targetSftpHost'));
-        return;
-      }
-      if (!sftpHostKeyFingerprintPattern.test(targetSftpHostKey.trim())) {
-        setError(t('connect.errors.targetSftpHostKey'));
-        return;
-      }
-      if (targetSftpAuthMode === 'key' && !targetSftpPrivateKey.trim()) {
-        setError(t('connect.errors.targetSftpKey'));
-        return;
-      }
-    }
-    if (targetProvider === 'ftp' && !targetProfileSelected) {
-      if (!targetFtpHost.trim()) {
-        setError(t('connect.errors.targetFtpHost'));
-        return;
-      }
-      if (!finalTargetUrl) {
-        setError(t('connect.errors.ftpPort'));
-        return;
-      }
-    }
-    if (sourceProvider === 'smb' && !sourceProfileSelected) {
-      if (!sourceSmbHost.trim() || !sourceSmbShare.trim()) {
-        setError(t('connect.errors.sourceSmb'));
-        return;
-      }
-    }
-    if (sourceProvider === 's3' && !sourceProfileSelected) {
-      if (!sourceS3Bucket.trim() || !sourceS3Region.trim()) {
-        setError(t('connect.errors.sourceS3'));
-        return;
-      }
-    }
-    if (targetProvider === 'smb' && !targetProfileSelected) {
-      if (!targetSmbHost.trim() || !targetSmbShare.trim()) {
-        setError(t('connect.errors.targetSmb'));
-        return;
-      }
-    }
-    if (targetProvider === 's3' && !targetProfileSelected) {
-      if (!targetS3Bucket.trim() || !targetS3Region.trim()) {
-        setError(t('connect.errors.targetS3'));
-        return;
-      }
-    }
-
-    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'koofr' && sourceProvider !== 'local' && sourceProvider !== 'mega';
-    const targetUrlRequired = targetProvider !== 'magentacloud' && targetProvider !== 'koofr' && targetProvider !== 'local' && targetProvider !== 'mega';
-
-    if (
-      (sourceUrlRequired && !sourceProfileSelected && !finalSourceUrl) ||
-      (sourceProvider !== 'local' && sourceProvider !== 'immich' && !sourceProfileSelected && !finalSourceUser) ||
-      (sourceProvider !== 'local' && !sourceProfileSelected && !finalSourcePass) ||
-      (targetUrlRequired && !targetProfileSelected && !finalTargetUrl) ||
-      (targetProvider !== 'local' && targetProvider !== 'immich' && !targetProfileSelected && !finalTargetUser) ||
-      (targetProvider !== 'local' && !targetProfileSelected && !finalTargetPass)
-    ) {
-      setError(t('connect.errors.missingFields'));
-      return;
-    }
-
     setLoading(true);
     setError(null);
-
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/connect`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          source_url: finalSourceUrl,
-          source_username: finalSourceUser,
-          source_password: finalSourcePass,
-          source_refresh_token: sourceRefreshToken,
-          source_token_expires_in: sourceTokenExpiresIn,
-          target_url: finalTargetUrl,
-          target_username: finalTargetUser,
-          target_password: finalTargetPass,
-          target_refresh_token: targetRefreshToken,
-          target_token_expires_in: targetTokenExpiresIn,
-          source_provider: sourceProvider,
-          target_provider: targetProvider,
-          source_picker_session_id: '',
-          source_profile_id: sourceProfileId,
-          target_profile_id: targetProfileId,
-        }),
-      });
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({} as { error_code?: string }));
-        throw new Error(translateApiError(body.error_code));
+      const result = await workflow.connect(sourceDraft, targetDraft);
+      if ('failure' in result) {
+        setError(describeFailure(result.failure));
+        return;
       }
+      onConnectSuccess(result.config, result.files);
 
-      const data = await response.json() as ConnectResponse;
-      if (data.success) {
-        onConnectSuccess(
-          {
-            source_url: finalSourceUrl,
-            source_username: finalSourceUser,
-            source_password: finalSourcePass,
-            source_refresh_token: sourceRefreshToken,
-            source_token_expires_in: sourceTokenExpiresIn,
-            target_url: finalTargetUrl,
-            target_username: finalTargetUser,
-            target_password: finalTargetPass,
-            target_refresh_token: targetRefreshToken,
-            target_token_expires_in: targetTokenExpiresIn,
-            source_provider: sourceProvider,
-            target_provider: targetProvider,
-            source_profile_id: sourceProfileId,
-            target_profile_id: targetProfileId,
-          },
-          data.files || []
-        );
-
-        // Best-effort: persist the connection as a reusable profile
-        // when the user opted in. Fire-and-forget; failures are silent.
-        if (sourceSaveProfile) {
-          const name = sourceProfileName.trim() || `${finalSourceUrlValue() || sourceProvider}`;
-          saveProfile('source', name).then((ok) => { if (ok) refreshProfiles(); });
-        }
-        if (targetSaveProfile) {
-          const name = targetProfileName.trim() || `${finalTargetUrlValue() || targetProvider}`;
-          saveProfile('target', name).then((ok) => { if (ok) refreshProfiles(); });
-        }
-      } else {
-        setError(translateApiError(data.error_code));
+      // Best-effort: persist the connection as a reusable profile
+      // when the user opted in. Fire-and-forget; failures are silent.
+      const saves: [boolean, ConnectionDraft, string][] = [
+        [sourceSaveProfile, sourceDraft, sourceProfileName],
+        [targetSaveProfile, targetDraft, targetProfileName],
+      ];
+      for (const [enabled, draft, name] of saves) {
+        if (enabled) workflow.saveProfile(draft, name.trim() || workflow.defaultProfileName(draft)).then((ok) => { if (ok) reloadProfiles(); });
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('connect.errors.networkError'));
     } finally {
       setLoading(false);
     }
   };
+
   const verifyAndAdvance = async () => {
     setSourceVerified(false);
-
-    const sourceProfileSelected = sourceProfileId !== '';
-
-    const finalSourceUrl = finalSourceUrlValue();
-    const finalSourceUser = finalSourceUserValue();
-    const finalSourcePass = finalSourcePassValue();
-
-    if (sourceProvider === 'sftp' && !sourceProfileSelected) {
-      if (!sourceSftpHost.trim()) {
-        setError(t('connect.errors.sourceSftpHost'));
-        return;
-      }
-      if (!sftpHostKeyFingerprintPattern.test(sourceSftpHostKey.trim())) {
-        setError(t('connect.errors.sourceSftpHostKey'));
-        return;
-      }
-      if (sourceSftpAuthMode === 'key' && !sourceSftpPrivateKey.trim()) {
-        setError(t('connect.errors.sourceSftpKey'));
-        return;
-      }
-    }
-    if (sourceProvider === 'ftp' && !sourceProfileSelected) {
-      if (!sourceFtpHost.trim()) {
-        setError(t('connect.errors.sourceFtpHost'));
-        return;
-      }
-      if (!finalSourceUrl) {
-        setError(t('connect.errors.ftpPort'));
-        return;
-      }
-    }
-    if (sourceProvider === 'smb' && !sourceProfileSelected) {
-      if (!sourceSmbHost.trim() || !sourceSmbShare.trim()) {
-        setError(t('connect.errors.sourceSmb'));
-        return;
-      }
-    }
-    if (sourceProvider === 's3' && !sourceProfileSelected) {
-      if (!sourceS3Bucket.trim() || !sourceS3Region.trim()) {
-        setError(t('connect.errors.sourceS3'));
-        return;
-      }
-    }
-
-    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'koofr' && sourceProvider !== 'local' && sourceProvider !== 'mega';
-    if (
-      (sourceUrlRequired && !sourceProfileSelected && !finalSourceUrl) ||
-      (sourceProvider !== 'local' && sourceProvider !== 'immich' && !sourceProfileSelected && !finalSourceUser) ||
-      (sourceProvider !== 'local' && !sourceProfileSelected && !finalSourcePass)
-    ) {
-      setError(t('connect.errors.missingFields'));
-      return;
-    }
-
     setLoading(true);
     setError(null);
-
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/connect/test`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          source_url: finalSourceUrl,
-          source_username: finalSourceUser,
-          source_password: finalSourcePass,
-          source_refresh_token: sourceRefreshToken,
-          source_token_expires_in: sourceTokenExpiresIn,
-          source_provider: sourceProvider,
-          source_profile_id: sourceProfileId,
-          role: 'source',
-        }),
-      });
-
-      const body = await response.json().catch(() => ({} as { success?: boolean; error_code?: string }));
-      if (!response.ok || !body.success) {
-        setError(translateApiError(body.error_code));
+      const result = await workflow.testSource(sourceDraft);
+      if ('failure' in result) {
+        setError(describeFailure(result.failure));
         return;
       }
-
       setSourceVerified(true);
       setSubStep(2);
-    } catch {
-      setError(t('connect.errors.networkError'));
     } finally {
       setLoading(false);
     }
   };
+
 
   const handleSourceProviderSelect = (val: ProviderId) => {
     setSourceProvider(val);
