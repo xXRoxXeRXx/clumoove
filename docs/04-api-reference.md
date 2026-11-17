@@ -81,24 +81,6 @@ Batch requests accept at most 200 sealed refs and are non-transactional. They no
 
 ## 2. Migrations
 
-### Allowed actions
-
-Migration, sync and backup list, detail and stream payloads carry `allowed_actions`: the user actions
-(`start`, `pause`, `resume`, `cancel`) the job's current status allows. The backend is the single source
-of truth (`backend/internal/db/job_actions.go`); the same status sets are bound into the SQL guard of each
-transition, and the dashboards render their controls from this field instead of hard-coded status lists.
-
-| Kind | `start` | `pause` | `resume` | `cancel` |
-| :--- | :------ | :------ | :------- | :------- |
-| Migration | - | `RUNNING`, `INDEXING` | `PAUSED`, `PAUSED_CONNECTION_LOSS` | `PENDING`, `SCHEDULED`, `INDEXING`, `RUNNING`, `VERIFYING`, `PAUSED`, `PAUSED_CONNECTION_LOSS` |
-| Sync job | `IDLE`, `FAILED` | `IDLE`, `INDEXING`, `RUNNING`, `VERIFYING` | `PAUSED` | - |
-| Backup job | `IDLE`, `FAILED` | `IDLE`, `FAILED`, `QUEUED`, `SCANNING`, `RUNNING`, `VERIFYING` | `PAUSED` | - |
-
-`PAUSED_CONNECTION_LOSS` is deliberately different per kind. A migration may be resumed by the user early,
-because its task queue and progress are preserved. A sync job in `PAUSED_CONNECTION_LOSS` has no user
-action: the worker's connection recovery releases it to `IDLE` and makes its schedule due, and the status
-counts as an active pass, so a manual pause, resume or start would race that recovery.
-
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
 | `GET` | `/migration` | JWT | List the user's migrations. |
@@ -324,7 +306,27 @@ Validation rules applied server-side:
 
 ---
 
-## 13. Error Codes
+## 13. Allowed Actions
+
+Migration, sync and backup list, detail and stream payloads carry `allowed_actions`: the user actions
+(`start`, `pause`, `resume`, `cancel`) the job's current status allows. The backend is the single source
+of truth (`backend/internal/db/job_actions.go`); the same status sets are bound into the SQL guard of each
+transition, and the dashboards render their controls from this field instead of hard-coded status lists.
+
+| Kind | `start` | `pause` | `resume` | `cancel` |
+| :--- | :------ | :------ | :------- | :------- |
+| Migration | - | `RUNNING`, `INDEXING` | `PAUSED`, `PAUSED_CONNECTION_LOSS` | `PENDING`, `SCHEDULED`, `INDEXING`, `RUNNING`, `VERIFYING`, `PAUSED`, `PAUSED_CONNECTION_LOSS` |
+| Sync job | `IDLE`, `FAILED` | `IDLE`, `INDEXING`, `RUNNING`, `VERIFYING` | `PAUSED` | - |
+| Backup job | `IDLE`, `FAILED` | `IDLE`, `FAILED`, `QUEUED`, `SCANNING`, `RUNNING`, `VERIFYING` | `PAUSED` | - |
+
+`PAUSED_CONNECTION_LOSS` is deliberately different per kind. A migration may be resumed by the user early,
+because its task queue and progress are preserved. A sync job in `PAUSED_CONNECTION_LOSS` has no user
+action: the worker's connection recovery releases it to `IDLE` and makes its schedule due, and the status
+counts as an active pass, so a manual pause, resume or start would race that recovery.
+
+---
+
+## 14. Error Codes
 
 Error codes are typed constants (`APIErrorCode`). Examples include `ErrMigrationNotOwned`,
 `ErrMigrationNotFound`, `ErrMigrationInvalidState`, `ErrProviderUnsupported`, `ErrSourceConnectionFailed`,
