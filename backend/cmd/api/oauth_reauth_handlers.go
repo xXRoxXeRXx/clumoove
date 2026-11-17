@@ -84,12 +84,8 @@ func (api *syncAPI) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	if !api.requireSyncOwnership(w, r, id, userID) {
-		return
-	}
-	job, err := db.GetSyncJobContext(r.Context(), api.db, id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+	job, ok := api.requireOwnedSync(w, r, id, userID)
+	if !ok {
 		return
 	}
 	var req oauthReauthRequest

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"time"
 
@@ -133,9 +134,28 @@ func (api *syncAPI) releaseSyncStream(userID string) {
 	}
 }
 
-// requireSyncOwnership deliberately maps a missing job and a job belonging to
-// another account to the same response. This prevents sync IDs being used for
-// account enumeration while keeping database failures distinguishable.
+// requireOwnedSync loads the sync job with one owner-scoped query. A missing job
+// and a job belonging to another account get the same response, which prevents
+// sync IDs being used for account enumeration while keeping database failures
+// distinguishable.
+//
+// The returned row is a snapshot: it must not be used to guard a state
+// transition. Status guards belong in the UPDATE statement itself.
+func (api *syncAPI) requireOwnedSync(w http.ResponseWriter, r *http.Request, id, userID string) (*db.SyncJob, bool) {
+	job, err := db.GetOwnedSyncJobContext(r.Context(), api.db, id, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, ErrSyncNotFound)
+			return nil, false
+		}
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return nil, false
+	}
+	return job, true
+}
+
+// requireSyncOwnership is the existence-only variant of requireOwnedSync for
+// handlers that never read the row. It shares the same error contract.
 func (api *syncAPI) requireSyncOwnership(w http.ResponseWriter, r *http.Request, id, userID string) bool {
 	owned, err := db.VerifySyncJobOwnershipContext(r.Context(), api.db, id, userID)
 	if err != nil {
