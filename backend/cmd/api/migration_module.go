@@ -37,16 +37,13 @@ func newMigrationAPI(deps migrationDependencies) *migrationAPI {
 		deps.backgroundCtx = context.Background()
 	}
 	if deps.profiles == nil {
-		deps.profiles = &ownedProfileAccess{
-			db:            deps.db,
-			encryptionKey: deps.encryptionKey,
-		}
+		deps.profiles = newOwnedProfileAccess(deps.db, deps.encryptionKey, nil, nil, nil)
 	}
 	if deps.streamPool == nil {
-		deps.streamPool = newUserStreamPool(maxStreamsPerUser)
+		deps.streamPool = newDefaultUserStreamPool()
 	}
 	if deps.logfContext == nil {
-		deps.logfContext = (&APIServer{}).logfContext
+		deps.logfContext = handlerLogfContext
 	}
 	return &migrationAPI{migrationDependencies: deps}
 }
@@ -167,7 +164,7 @@ type migrationGarbageCollector struct {
 	logfContext  func(context.Context, string, ...any)
 }
 
-func (gc *migrationGarbageCollector) name() string { return "migration_gc" }
+func (gc *migrationGarbageCollector) Name() string { return "migration_gc" }
 
 func (gc *migrationGarbageCollector) Run(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Hour)

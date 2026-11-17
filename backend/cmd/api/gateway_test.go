@@ -156,9 +156,49 @@ func TestAPIGatewayHandlerComposesMiddlewareAndAccessControl(t *testing.T) {
 	})
 }
 
-// The root gateway composes feature modules and cross-cutting HTTP policy only.
-// Feature endpoint handlers must live on their feature module, not on APIServer.
-func TestGatewayOwnsNoFeatureHandlers(t *testing.T) {
+// receiverTypeName returns the base type name of a method receiver, looking
+// through pointers, parentheses and generic instantiations so value receivers
+// are not missed.
+func receiverTypeName(expr ast.Expr) string {
+	for {
+		switch e := expr.(type) {
+		case *ast.StarExpr:
+			expr = e.X
+		case *ast.ParenExpr:
+			expr = e.X
+		case *ast.IndexExpr:
+			expr = e.X
+		case *ast.IndexListExpr:
+			expr = e.X
+		case *ast.Ident:
+			return e.Name
+		default:
+			return ""
+		}
+	}
+}
+
+// apiServerMethods returns every method declared on APIServer (pointer or
+// value receiver) in the given files, keyed by method name with the declaring
+// file as value.
+func apiServerMethods(files map[string]*ast.File) map[string]string {
+	methods := map[string]string{}
+	for fileName, file := range files {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 {
+				continue
+			}
+			if receiverTypeName(fn.Recv.List[0].Type) == "APIServer" {
+				methods[fn.Name.Name] = fileName
+			}
+		}
+	}
+	return methods
+}
+
+func parseNonTestPackageFiles(t *testing.T) map[string]*ast.File {
+	t.Helper()
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", func(info os.FileInfo) bool {
 		return !strings.HasSuffix(info.Name(), "_test.go")
@@ -166,72 +206,112 @@ func TestGatewayOwnsNoFeatureHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse package: %v", err)
 	}
+	files := map[string]*ast.File{}
 	for _, pkg := range pkgs {
-		for fileName, file := range pkg.Files {
-			for _, decl := range file.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 {
-					continue
-				}
-				star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
-				if !ok {
-					continue
-				}
-				if ident, ok := star.X.(*ast.Ident); ok && ident.Name == "APIServer" && strings.HasPrefix(fn.Name.Name, "handle") {
-					t.Errorf("%s: APIServer.%s is a feature handler; move it to its feature module", fileName, fn.Name.Name)
-				}
-			}
+		for name, file := range pkg.Files {
+			files[name] = file
+		}
+	}
+	return files
+}
+
+func TestAPIServerMethodsDetectsPointerAndValueReceivers(t *testing.T) {
+	src := `package main
+type APIServer struct{}
+func (s *APIServer) pointerMethod() {}
+func (s APIServer) valueMethod() {}
+func (APIServer) anonymousValueMethod() {}
+func (s *(APIServer)) parenMethod() {}
+func (s *Other) unrelated() {}
+func free() {}
+`
+	file, err := parser.ParseFile(token.NewFileSet(), "src.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got := apiServerMethods(map[string]*ast.File{"src.go": file})
+	for _, want := range []string{"pointerMethod", "valueMethod", "anonymousValueMethod", "parenMethod"} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("apiServerMethods missed %s (got %v)", want, got)
+		}
+	}
+	for _, unwanted := range []string{"unrelated", "free"} {
+		if _, ok := got[unwanted]; ok {
+			t.Errorf("apiServerMethods wrongly reported %s", unwanted)
 		}
 	}
 }
 
-// gatewayMethodAllowlist is the explicit set of methods APIServer may declare:
-// feature-module accessors and gateway composition, plus cross-cutting HTTP
-// policy (logging, request identity, client/scheme resolution, audit, headers).
-// Feature-owned behaviour such as daemons, profile access wiring, and request
-// connection helpers belongs on its feature module or shared component.
-var gatewayMethodAllowlist = map[string]bool{
+// The root gateway composes feature modules and cross-cutting HTTP policy only.
+// Feature endpoint handlers must live on their feature module, not on APIServer.
+func TestGatewayOwnsNoFeatureHandlers(t *testing.T) {
+	for name, fileName := range apiServerMethods(parseNonTestPackageFiles(t)) {
+		if strings.HasPrefix(name, "handle") {
+			t.Errorf("%s: APIServer.%s is a feature handler; move it to its feature module", fileName, name)
+		}
+	}
+}
+
+// gatewayMethodAllowlist is the explicit set of methods APIServer may declare,
+// each with the reason it belongs on the gateway. Feature-owned behaviour such
+// as daemons, profile access wiring, and request connection helpers belongs on
+// its feature module or shared component.
+var gatewayMethodAllowlist = map[string]string{
 	// composition
-	"Handler": true, "contractTestHandler": true, "wrapMiddleware": true,
-	"setupRoutes": true, "featureModules": true, "routeMiddleware": true,
-	"buildMux": true, "backgroundDaemons": true, "profiles": true,
-	"streamPool": true, "requestEnv": true, "accounts": true, "administration": true,
-	"backups": true, "files": true, "migrations": true, "notifications": true,
-	"connectionProfiles": true, "schedules": true, "syncs": true,
+	"Handler":             "public entry point returning the composed http.Handler",
+	"contractTestHandler": "composes the full mux for route-contract tests",
+	"wrapMiddleware":      "applies the gateway-wide middleware chain",
+	"setupRoutes":         "registers every feature module's routes on the mux",
+	"featureModules":      "lists the composed feature modules",
+	"buildMux":            "builds the route mux from the feature modules",
+	"routeMiddleware":     "wraps a route with the middleware its access category requires",
+	"backgroundDaemons":   "composes feature-owned daemons for main.go",
+	"profiles":            "composes the shared profile access component",
+	"streamPool":          "owns the process-wide shared stream pool",
+	"requestEnv":          "hands cross-cutting request helpers to modules",
+	"accounts":            "feature module accessor",
+	"administration":      "feature module accessor",
+	"backups":             "feature module accessor",
+	"files":               "feature module accessor",
+	"migrations":          "feature module accessor",
+	"notifications":       "feature module accessor",
+	"connectionProfiles":  "feature module accessor",
+	"schedules":           "feature module accessor",
+	"syncs":               "feature module accessor",
 	// cross-cutting HTTP policy
-	"logf": true, "logfContext": true, "infof": true, "warnf": true,
-	"logln": true, "loglnContext": true, "requestLogMiddleware": true,
-	"clientIPCategory": true, "securityHeadersMiddleware": true,
-	"requireUserID": true, "clientIP": true, "isSecure": true,
-	"writeAudit": true, "getRedirectURI": true, "requestScheme": true,
-	"publicHost": true,
+	"logf":                      "request-scoped failure logging policy",
+	"logfContext":               "context-scoped failure logging policy",
+	"infof":                     "request-scoped lifecycle logging policy",
+	"warnf":                     "request-scoped warning logging policy",
+	"logln":                     "request-scoped plain logging policy",
+	"loglnContext":              "context-scoped plain logging policy",
+	"requestLogMiddleware":      "gateway-wide request logging middleware",
+	"clientIPCategory":          "classifies client address for request logs",
+	"securityHeadersMiddleware": "gateway-wide security headers middleware",
+	"requireUserID":             "request identity lookup shared by modules",
+	"clientIP":                  "trusted-proxy-aware client address resolution",
+	"isSecure":                  "TLS/scheme detection for headers and cookies",
+	"writeAudit":                "audit logging shared by modules",
+	"getRedirectURI":            "OAuth callback URL resolution from public host",
+	"requestScheme":             "externally visible scheme resolution",
+	"publicHost":                "externally visible host resolution",
 }
 
 // APIServer carries composition and cross-cutting HTTP policy only; any other
 // method is feature-owned behaviour that must move to its feature module.
 func TestGatewayDeclaresOnlyCompositionMethods(t *testing.T) {
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(info os.FileInfo) bool {
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}, 0)
-	if err != nil {
-		t.Fatalf("parse package: %v", err)
+	methods := apiServerMethods(parseNonTestPackageFiles(t))
+	for name, fileName := range methods {
+		if _, ok := gatewayMethodAllowlist[name]; !ok {
+			t.Errorf("%s: APIServer.%s is not in the composition allowlist; move it to its feature module", fileName, name)
+		}
 	}
-	for _, pkg := range pkgs {
-		for fileName, file := range pkg.Files {
-			for _, decl := range file.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 {
-					continue
-				}
-				star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
-				if !ok {
-					continue
-				}
-				if ident, ok := star.X.(*ast.Ident); ok && ident.Name == "APIServer" && !gatewayMethodAllowlist[fn.Name.Name] {
-					t.Errorf("%s: APIServer.%s is not in the composition allowlist; move it to its feature module", fileName, fn.Name.Name)
-				}
-			}
+	for name, reason := range gatewayMethodAllowlist {
+		if reason == "" {
+			t.Errorf("allowlist entry %q has no reason", name)
+		}
+		if _, ok := methods[name]; !ok {
+			t.Errorf("allowlist entry %q is not an APIServer method; remove it", name)
 		}
 	}
 }
@@ -242,7 +322,7 @@ func TestGatewayComposesFeatureOwnedDaemons(t *testing.T) {
 	server := newTestAPIGateway(t, nil)
 	var names []string
 	for _, d := range server.backgroundDaemons() {
-		names = append(names, d.name())
+		names = append(names, d.Name())
 	}
 	want := []string{"oauth_rotation", "migration_gc"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {

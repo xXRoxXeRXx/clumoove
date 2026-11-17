@@ -25,9 +25,8 @@ type accountAPI struct {
 
 func newAccountAPI(deps accountDependencies) *accountAPI {
 	deps.requestEnv = deps.requestEnv.withDefaults("account")
-	defaults := &APIServer{db: deps.db}
 	if deps.getRedirectURI == nil {
-		deps.getRedirectURI = defaults.getRedirectURI
+		deps.getRedirectURI = defaultRedirectURI
 	}
 	return &accountAPI{accountDependencies: deps}
 }

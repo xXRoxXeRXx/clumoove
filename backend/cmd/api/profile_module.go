@@ -23,7 +23,7 @@ type profileAPI struct {
 func newProfileAPI(deps profileDependencies) *profileAPI {
 	deps.requestEnv = deps.requestEnv.withDefaults("profile")
 	if deps.profiles == nil {
-		deps.profiles = &ownedProfileAccess{db: deps.db, encryptionKey: deps.encryptionKey}
+		deps.profiles = newOwnedProfileAccess(deps.db, deps.encryptionKey, nil, nil, nil)
 	}
 	return &profileAPI{profileDependencies: deps}
 }

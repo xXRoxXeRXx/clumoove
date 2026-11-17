@@ -277,8 +277,13 @@ func writeConflictError(w http.ResponseWriter, code APIErrorCode) {
 // reverse proxy is configured, the leftmost X-Forwarded-For address is used;
 // otherwise the connection's remote address (port stripped) is used.
 func (s *APIServer) clientIP(r *http.Request) string {
+	return clientIPFor(r, s.trustedProxy)
+}
+
+// clientIPFor is the gateway-independent form of APIServer.clientIP.
+func clientIPFor(r *http.Request, trustedProxy bool) string {
 	var raw string
-	if s.trustedProxy {
+	if trustedProxy {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			if idx := strings.IndexByte(xff, ','); idx >= 0 {
 				raw = strings.TrimSpace(xff[:idx])
@@ -363,7 +368,12 @@ func generateRandomString(n int) string {
 // getRedirectURI derives the OAuth callback URL from the public host. It is never
 // configurable: the provider console must be registered with exactly this value.
 func (s *APIServer) getRedirectURI(r *http.Request) string {
-	return fmt.Sprintf("%s://%s/api/oauth/callback", s.requestScheme(r), s.publicHost(r))
+	return redirectURIFor(r, s.trustedProxy)
+}
+
+// redirectURIFor is the gateway-independent form of APIServer.getRedirectURI.
+func redirectURIFor(r *http.Request, trustedProxy bool) string {
+	return fmt.Sprintf("%s://%s/api/oauth/callback", requestSchemeFor(r, trustedProxy), publicHostFor(r, trustedProxy))
 }
 
 // requestScheme returns the externally visible scheme for the request. TLS
@@ -374,10 +384,15 @@ func (s *APIServer) getRedirectURI(r *http.Request) string {
 // separately and gated behind TRUSTED_PROXY, so a spoofed header cannot redirect
 // to an attacker-controlled host.
 func (s *APIServer) requestScheme(r *http.Request) string {
+	return requestSchemeFor(r, s.trustedProxy)
+}
+
+// requestSchemeFor is the gateway-independent form of APIServer.requestScheme.
+func requestSchemeFor(r *http.Request, trustedProxy bool) string {
 	if r.TLS != nil {
 		return "https"
 	}
-	if s.trustedProxy {
+	if trustedProxy {
 		if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
 			if strings.EqualFold(proto, "http") {
 				return "http"
@@ -397,7 +412,12 @@ func (s *APIServer) requestScheme(r *http.Request) string {
 // prevent header/redirect injection. An untrusted or malformed value falls back
 // to the request's Host header, which is always safe and port-preserving.
 func (s *APIServer) publicHost(r *http.Request) string {
-	if s.trustedProxy {
+	return publicHostFor(r, s.trustedProxy)
+}
+
+// publicHostFor is the gateway-independent form of APIServer.publicHost.
+func publicHostFor(r *http.Request, trustedProxy bool) string {
+	if trustedProxy {
 		if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
 			// Only the first (leftmost) value is authoritative; comma-separated
 			// lists may carry client-supplied copies behind a proxy.

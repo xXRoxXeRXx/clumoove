@@ -36,7 +36,8 @@ Responsibilities (started in `main()`):
 - `migrationGarbageCollector` deletes terminal migrations and their cascaded task histories after 30 days; it runs hourly and stops with the API context.
 
 Key server struct fields: `db`, `queue`, `indexer`, `encryptionKey`, `jwtSecret`, `rateLimiter`,
-`activeStreams`, `trustedProxy`.
+`streams` (shared per-user SSE stream pool), `oauthRotations` (shared OAuth rotation cache handed to the
+profile-access component and the rotation daemon), `trustedProxy`.
 
 ### `cmd/worker` — Migration, Sync, Backup & Restore Engine
 
@@ -112,7 +113,7 @@ migrations** so the schema self-heals on first boot:
 
 Key query helpers include `CreateMigration`, `GetMigration`, `UpdateMigrationStatus`,
 `UpdateMigrationStatusIfIndexing`, `IncrementMigrationProgress` (transitions to `COMPLETED`/`FAILED`),
-`CreateSyncJob`, `GetSyncJob`, `ListSyncJobs`, `CreateConnectionProfile`, `ListConnectionProfiles`,
+`CreateSyncJobAndSchedule`, `GetSyncJob`, `ListSyncJobs`, `CreateConnectionProfile`, `ListConnectionProfiles`,
 `CreateBackupJob`, `GetBackupJob`, `ListBackupJobs`, `CreateBackupRun`, `GetBackupRun`, `ListBackupSnapshots`,
 `CreateRestorePreview`, `GetRestorePreview`, `CreateRestoreRun`, `GetRestoreRun`,
 `CreateTask`, `GetTask`, `UpdateTaskStatus`, `ResetMigrationForReindex` (TOCTOU-safe),

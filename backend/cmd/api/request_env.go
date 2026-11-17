@@ -36,21 +36,20 @@ func (s *APIServer) requestEnv() requestEnv {
 // replaced by a safe default. A missing audit writer is never silently
 // dropped: the event is reported through logf under the module's name.
 func (e requestEnv) withDefaults(module string) requestEnv {
-	defaults := &APIServer{}
 	if e.requireUserID == nil {
 		e.requireUserID = requireAuthenticatedUserID
 	}
 	if e.clientIP == nil {
-		e.clientIP = defaults.clientIP
+		e.clientIP = defaultClientIP
 	}
 	if e.logf == nil {
-		e.logf = defaults.logf
+		e.logf = handlerLogf
 	}
 	if e.infof == nil {
-		e.infof = defaults.infof
+		e.infof = handlerInfof
 	}
 	if e.warnf == nil {
-		e.warnf = defaults.warnf
+		e.warnf = handlerWarnf
 	}
 	if e.writeAudit == nil {
 		logf := e.logf
@@ -60,3 +59,11 @@ func (e requestEnv) withDefaults(module string) requestEnv {
 	}
 	return e
 }
+
+// defaultClientIP resolves the client address from the connection only; a
+// module that needs trusted-proxy handling receives the gateway's resolver.
+func defaultClientIP(r *http.Request) string { return clientIPFor(r, false) }
+
+// defaultRedirectURI derives the OAuth callback URL without trusting proxy
+// headers; the gateway injects its trusted-proxy-aware resolver.
+func defaultRedirectURI(r *http.Request) string { return redirectURIFor(r, false) }

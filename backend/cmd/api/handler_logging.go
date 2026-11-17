@@ -14,10 +14,21 @@ import (
 // request ID added by requestLogMiddleware; error details are redacted by the
 // observability package before emission.
 func (s *APIServer) logf(r *http.Request, format string, args ...any) {
-	s.logfContext(r.Context(), format, args...)
+	handlerLogf(r, format, args...)
 }
 
 func (s *APIServer) logfContext(ctx context.Context, format string, args ...any) {
+	handlerLogfContext(ctx, format, args...)
+}
+
+// handlerLogf, handlerLogfContext, handlerInfof and handlerWarnf are the
+// gateway-independent logging helpers; the APIServer methods delegate to them
+// and requestEnv defaults to them so modules never need an APIServer.
+func handlerLogf(r *http.Request, format string, args ...any) {
+	handlerLogfContext(r.Context(), format, args...)
+}
+
+func handlerLogfContext(ctx context.Context, format string, args ...any) {
 	err := fmt.Errorf(format, args...)
 	observability.Logger(ctx).ErrorContext(ctx, "handler_failure", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 }
@@ -25,11 +36,19 @@ func (s *APIServer) logfContext(ctx context.Context, format string, args ...any)
 // infof is reserved for non-sensitive successful lifecycle and delivery
 // events. Failures must continue to use logf so their details are redacted.
 func (s *APIServer) infof(r *http.Request, format string, args ...any) {
+	handlerInfof(r, format, args...)
+}
+
+func handlerInfof(r *http.Request, format string, args ...any) {
 	ctx := r.Context()
 	observability.Logger(ctx).InfoContext(ctx, "handler_event", slog.String("message", fmt.Sprintf(format, args...)))
 }
 
 func (s *APIServer) warnf(r *http.Request, format string, args ...any) {
+	handlerWarnf(r, format, args...)
+}
+
+func handlerWarnf(r *http.Request, format string, args ...any) {
 	ctx := r.Context()
 	observability.Logger(ctx).WarnContext(ctx, "handler_warning", slog.String("message", fmt.Sprintf(format, args...)))
 }

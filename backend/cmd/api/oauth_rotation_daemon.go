@@ -18,7 +18,7 @@ import (
 // backgroundDaemon is a long-running loop owned by a feature module. The
 // gateway composes daemons and main.go starts them under the process context.
 type backgroundDaemon interface {
-	name() string
+	Name() string
 	Run(ctx context.Context)
 }
 
@@ -31,7 +31,7 @@ type oauthRotationDaemon struct {
 	cache         *oauth.RotationCache
 }
 
-func (d *oauthRotationDaemon) name() string { return "oauth_rotation" }
+func (d *oauthRotationDaemon) Name() string { return "oauth_rotation" }
 
 func (d *oauthRotationDaemon) Run(ctx context.Context) {
 	logger := oauthRotationLogger(ctx)

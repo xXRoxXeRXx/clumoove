@@ -28,13 +28,10 @@ type backupAPI struct {
 func newBackupAPI(deps backupDependencies) *backupAPI {
 	deps.requestEnv = deps.requestEnv.withDefaults("backup")
 	if deps.profiles == nil {
-		deps.profiles = &ownedProfileAccess{
-			db:            deps.db,
-			encryptionKey: deps.encryptionKey,
-		}
+		deps.profiles = newOwnedProfileAccess(deps.db, deps.encryptionKey, nil, nil, nil)
 	}
 	if deps.streamPool == nil {
-		deps.streamPool = newUserStreamPool(maxStreamsPerUser)
+		deps.streamPool = newDefaultUserStreamPool()
 	}
 	return &backupAPI{backupDependencies: deps}
 }

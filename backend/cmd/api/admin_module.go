@@ -25,14 +25,13 @@ type adminAPI struct {
 
 func newAdminAPI(deps adminDependencies) *adminAPI {
 	deps.requestEnv = deps.requestEnv.withDefaults("admin")
-	defaults := &APIServer{db: deps.db}
 	if deps.cancelSyncJob == nil {
 		deps.cancelSyncJob = func(context.Context, string) error {
 			return errors.New("sync cancellation unavailable")
 		}
 	}
 	if deps.getRedirectURI == nil {
-		deps.getRedirectURI = defaults.getRedirectURI
+		deps.getRedirectURI = defaultRedirectURI
 	}
 	return &adminAPI{adminDependencies: deps}
 }

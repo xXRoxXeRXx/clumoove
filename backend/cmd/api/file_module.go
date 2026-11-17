@@ -102,10 +102,7 @@ func newFileAPI(deps fileDependencies) *fileAPI {
 		deps.backgroundCtx = context.Background()
 	}
 	if deps.profiles == nil {
-		deps.profiles = &ownedProfileAccess{
-			db:            deps.db,
-			encryptionKey: deps.encryptionKey,
-		}
+		deps.profiles = newOwnedProfileAccess(deps.db, deps.encryptionKey, nil, nil, nil)
 	}
 	return &fileAPI{fileDependencies: deps}
 }

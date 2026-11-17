@@ -58,6 +58,10 @@ func (p *userStreamPool) Release(userID string) {
 	}
 }
 
+// newDefaultUserStreamPool builds a pool with the standard per-user cap. Modules
+// and the gateway use it so the cap is stated in exactly one place.
+func newDefaultUserStreamPool() *userStreamPool { return newUserStreamPool(maxStreamsPerUser) }
+
 // streamPool returns the server's shared pool, creating it on first use.
 func (s *APIServer) streamPool() *userStreamPool {
 	if s == nil {
@@ -66,7 +70,7 @@ func (s *APIServer) streamPool() *userStreamPool {
 	s.streamMu.Lock()
 	defer s.streamMu.Unlock()
 	if s.streams == nil {
-		s.streams = newUserStreamPool(maxStreamsPerUser)
+		s.streams = newDefaultUserStreamPool()
 	}
 	return s.streams
 }

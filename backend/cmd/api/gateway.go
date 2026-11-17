@@ -94,7 +94,7 @@ func newAPIGateway(cfg gatewayConfig) (*APIServer, error) {
 		backgroundCtx:     bgCtx,
 		rateLimiter:       rl,
 		dummyPasswordHash: cfg.DummyPasswordHash,
-		streams:           newUserStreamPool(maxStreamsPerUser),
+		streams:           newDefaultUserStreamPool(),
 		trustedProxy:      cfg.TrustedProxy,
 		authStateLookup:   cfg.AuthStateLookup,
 	}, nil

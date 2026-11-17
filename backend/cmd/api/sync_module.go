@@ -50,15 +50,10 @@ func newSyncAPI(deps syncDependencies) *syncAPI {
 		deps.oauthLocker = deps.profiles.oauthLocker
 	}
 	if deps.profiles == nil {
-		deps.profiles = &ownedProfileAccess{
-			db:             deps.db,
-			encryptionKey:  deps.encryptionKey,
-			oauthRotations: deps.oauthRotations,
-			oauthLocker:    deps.oauthLocker,
-		}
+		deps.profiles = newOwnedProfileAccess(deps.db, deps.encryptionKey, nil, deps.oauthLocker, deps.oauthRotations)
 	}
 	if deps.streamPool == nil {
-		deps.streamPool = newUserStreamPool(maxStreamsPerUser)
+		deps.streamPool = newDefaultUserStreamPool()
 	}
 	if deps.streamPollInterval <= 0 {
 		deps.streamPollInterval = 3 * time.Second
