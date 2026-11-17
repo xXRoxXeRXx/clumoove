@@ -25,10 +25,7 @@ type notificationDependencies struct {
 	db            *sql.DB
 	encryptionKey string
 	rateLimiter   rateLimiter
-	requireUserID func(http.ResponseWriter, *http.Request) (string, bool)
-	clientIP      func(*http.Request) string
-	writeAudit    func(*http.Request, db.AuditAction, string, string, map[string]interface{})
-	logf          func(*http.Request, string, ...any)
+	requestEnv
 }
 
 type notificationAPI struct {
@@ -36,6 +33,7 @@ type notificationAPI struct {
 }
 
 func newNotificationAPI(deps notificationDependencies) *notificationAPI {
+	deps.requestEnv = deps.requestEnv.withDefaults("notification")
 	return &notificationAPI{notificationDependencies: deps}
 }
 
@@ -50,13 +48,10 @@ func (api *notificationAPI) routes() []routeSpec {
 
 func (s *APIServer) notifications() *notificationAPI {
 	return newNotificationAPI(notificationDependencies{
+		requestEnv:    s.requestEnv(),
 		db:            s.db,
 		encryptionKey: s.encryptionKey,
 		rateLimiter:   s.rateLimiter,
-		requireUserID: s.requireUserID,
-		clientIP:      s.clientIP,
-		writeAudit:    s.writeAudit,
-		logf:          s.logf,
 	})
 }
 

@@ -38,8 +38,8 @@ Run by the worker runtime (`cmd/worker/runtime.go`, `runWorker`) alongside `Proc
   - Supports `METADATA`, `BUDGETED` (64 MiB–1 TiB), or `FULL` checks with pack pins and live SSE progress.
 
 ## Daemon Processes in API
-- **OAuth Token Rotation (`RunOAuthRotationDaemon`)**: Rotates Dropbox, Google, OneDrive, and HiDrive refresh tokens for active migrations, sync jobs, and restore runs before expiry. (Backup runs coordinate refresh separately).
-- **Garbage Collector (`runGarbageCollector`)**: Runs hourly; deletes terminal migrations and cascaded task histories after 30 days. Stops cleanly with API context.
+- **OAuth Token Rotation (`oauthRotationDaemon`)**: Rotates Dropbox, Google, OneDrive, and HiDrive refresh tokens for active migrations, sync jobs, and restore runs before expiry. (Backup runs coordinate refresh separately).
+- **Garbage Collector (`migrationGarbageCollector`)**: Runs hourly; deletes terminal migrations and cascaded task histories after 30 days. Stops cleanly with API context.
 
 ## Public Website & Frontend Deployment
 - **Public Website (`website/`)**: Independent static Vite package served separately from the authenticated SPA. In production, public host must never be permitted by application CORS or proxy authenticated API routes.

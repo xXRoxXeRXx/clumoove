@@ -118,8 +118,10 @@ func TestSyncModuleSetupSchedulingScopeAndTuning(t *testing.T) {
 			bandwidthEvents = append(bandwidthEvents, ev)
 			return nil
 		},
-		writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
-			audits = append(audits, action)
+		requestEnv: requestEnv{
+			writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
+				audits = append(audits, action)
+			},
 		},
 	})
 
@@ -242,11 +244,13 @@ func TestSyncModuleLifecycleOwnershipAndReauth(t *testing.T) {
 		encryptionKey: key,
 		rateLimiter:   limiter,
 		syncPass:      pass,
-		writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
-			audits = append(audits, action)
-		},
-		warnf: func(_ *http.Request, format string, _ ...any) {
-			warnings = append(warnings, format)
+		requestEnv: requestEnv{
+			writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
+				audits = append(audits, action)
+			},
+			warnf: func(_ *http.Request, format string, _ ...any) {
+				warnings = append(warnings, format)
+			},
 		},
 	})
 
@@ -729,8 +733,8 @@ func (d syncModuleTestDriver) Open(string) (driver.Conn, error) {
 type syncModuleTestConn struct{ state *syncModuleDBState }
 
 func (c syncModuleTestConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("unused") }
-func (c syncModuleTestConn) Close() error                       { return nil }
-func (c syncModuleTestConn) Begin() (driver.Tx, error)          { return syncModuleTestTx{}, nil }
+func (c syncModuleTestConn) Close() error                        { return nil }
+func (c syncModuleTestConn) Begin() (driver.Tx, error)           { return syncModuleTestTx{}, nil }
 func (c syncModuleTestConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
 	return syncModuleTestTx{}, nil
 }
@@ -1084,7 +1088,7 @@ func (f *fakeSyncPass) Delete(_ context.Context, id string) error {
 	return f.deleteErr
 }
 
-func (f *fakeSyncPass) Cancel(context.Context, string) error              { return nil }
+func (f *fakeSyncPass) Cancel(context.Context, string) error { return nil }
 func (f *fakeSyncPass) Trigger(context.Context, string) (appSync.TriggerResult, error) {
 	return appSync.TriggerResult{}, nil
 }

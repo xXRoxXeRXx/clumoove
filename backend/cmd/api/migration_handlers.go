@@ -1287,27 +1287,6 @@ func (api *migrationAPI) migrationDetailPayload(ctx context.Context, mig *db.Mig
 	return payload
 }
 
-func acquireStreamLease(
-	w http.ResponseWriter,
-	r *http.Request,
-	limiter rateLimiter,
-	clientIP string,
-	pool streamSlotPool,
-	userID, rateLimitScope string,
-) bool {
-	if limiter == nil || !limiter.Allow(r.Context(), rateLimitScope, clientIP, streamRateLimit, streamRateWindow) {
-		w.Header().Set("Retry-After", "15")
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-		return false
-	}
-	if pool == nil || !pool.Acquire(userID) {
-		w.Header().Set("Retry-After", "15")
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-		return false
-	}
-	return true
-}
-
 func (api *migrationAPI) acquireMigrationStream(w http.ResponseWriter, r *http.Request, userID string) bool {
 	return acquireStreamLease(w, r, api.rateLimiter, api.clientIP(r), api.streamPool, userID, "migration-stream")
 }
@@ -1421,26 +1400,6 @@ func (api *migrationAPI) handleMigrationDetailStream(w http.ResponseWriter, r *h
 			}
 			if isTerminalMigrationStatus(mig.Status) {
 				return
-			}
-		}
-	}
-}
-
-func (s *APIServer) runGarbageCollector(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Hour)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.loglnContext(ctx, "Running Garbage Collector for old migrations...")
-			count, err := db.DeleteOldMigrations(s.db)
-			if err != nil {
-				s.logfContext(ctx, "Garbage Collector error: %v\n", err)
-			} else if count > 0 {
-				s.logfContext(ctx, "Garbage Collector cleaned up %d old migrations & task histories.\n", count)
 			}
 		}
 	}

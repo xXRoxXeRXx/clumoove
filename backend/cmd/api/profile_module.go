@@ -3,8 +3,6 @@ package main
 import (
 	"database/sql"
 	"net/http"
-
-	"backend/internal/db"
 )
 
 // profileDependencies contains only the infrastructure required by the
@@ -15,10 +13,7 @@ type profileDependencies struct {
 	encryptionKey string
 	profiles      *ownedProfileAccess
 	rateLimiter   rateLimiter
-	requireUserID func(http.ResponseWriter, *http.Request) (string, bool)
-	clientIP      func(*http.Request) string
-	writeAudit    func(*http.Request, db.AuditAction, string, string, map[string]interface{})
-	logf          func(*http.Request, string, ...any)
+	requestEnv
 }
 
 type profileAPI struct {
@@ -26,38 +21,20 @@ type profileAPI struct {
 }
 
 func newProfileAPI(deps profileDependencies) *profileAPI {
+	deps.requestEnv = deps.requestEnv.withDefaults("profile")
 	if deps.profiles == nil {
 		deps.profiles = &ownedProfileAccess{db: deps.db, encryptionKey: deps.encryptionKey}
-	}
-	if deps.requireUserID == nil {
-		deps.requireUserID = requireAuthenticatedUserID
-	}
-	if deps.clientIP == nil {
-		deps.clientIP = (&APIServer{}).clientIP
-	}
-	if deps.logf == nil {
-		deps.logf = (&APIServer{}).logf
-	}
-	if deps.writeAudit == nil {
-		// A mis-wired module must not drop audit events silently.
-		logf := deps.logf
-		deps.writeAudit = func(r *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
-			logf(r, "profile module: audit writer not configured, dropped %s", action)
-		}
 	}
 	return &profileAPI{profileDependencies: deps}
 }
 
 func (s *APIServer) connectionProfiles() *profileAPI {
 	return newProfileAPI(profileDependencies{
+		requestEnv:    s.requestEnv(),
 		db:            s.db,
 		encryptionKey: s.encryptionKey,
 		profiles:      s.profiles(),
 		rateLimiter:   s.rateLimiter,
-		requireUserID: s.requireUserID,
-		clientIP:      s.clientIP,
-		writeAudit:    s.writeAudit,
-		logf:          s.logf,
 	})
 }
 

@@ -125,9 +125,11 @@ func (r *scheduleModuleRows) Next(dest []driver.Value) error {
 func newScheduleModuleTestAPI(t *testing.T, state *scheduleModuleState) *scheduleAPI {
 	t.Helper()
 	return newScheduleAPI(scheduleDependencies{
-		db:            newScheduleModuleTestDB(t, state),
-		requireUserID: requireAuthenticatedUserID,
-		logf:          func(*http.Request, string, ...any) {},
+		db: newScheduleModuleTestDB(t, state),
+		requestEnv: requestEnv{
+			requireUserID: requireAuthenticatedUserID,
+			logf:          func(*http.Request, string, ...any) {},
+		},
 	})
 }
 

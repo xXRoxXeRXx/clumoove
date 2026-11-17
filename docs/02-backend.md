@@ -29,11 +29,11 @@ Responsibilities (started in `main()`):
 - Applies Redis-backed rate limits with atomic `INCR` plus `PEXPIRE`; there is no process-local
   rate-limit eviction goroutine.
 - Starts background goroutines:
-  - `server.RunOAuthRotationDaemon` — proactive OAuth2 token rotation.
+  - `oauthRotationDaemon` (started via `server.backgroundDaemons()`) — proactive OAuth2 token rotation.
   - `sched.Run(ctx)` — the Core Scheduler Engine.
 - Graceful shutdown on `SIGINT`/`SIGTERM` (5-second window).
 
-- `server.runGarbageCollector` deletes terminal migrations and their cascaded task histories after 30 days; it runs hourly and stops with the API context.
+- `migrationGarbageCollector` deletes terminal migrations and their cascaded task histories after 30 days; it runs hourly and stops with the API context.
 
 Key server struct fields: `db`, `queue`, `indexer`, `encryptionKey`, `jwtSecret`, `rateLimiter`,
 `activeStreams`, `trustedProxy`.

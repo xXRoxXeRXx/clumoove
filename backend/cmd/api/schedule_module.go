@@ -9,9 +9,8 @@ import (
 // schedule feature module. Cross-cutting request concerns stay owned by the
 // root server and are injected as narrow functions.
 type scheduleDependencies struct {
-	db            *sql.DB
-	requireUserID func(http.ResponseWriter, *http.Request) (string, bool)
-	logf          func(*http.Request, string, ...any)
+	db *sql.DB
+	requestEnv
 }
 
 type scheduleAPI struct {
@@ -19,20 +18,14 @@ type scheduleAPI struct {
 }
 
 func newScheduleAPI(deps scheduleDependencies) *scheduleAPI {
-	if deps.requireUserID == nil {
-		deps.requireUserID = requireAuthenticatedUserID
-	}
-	if deps.logf == nil {
-		deps.logf = (&APIServer{}).logf
-	}
+	deps.requestEnv = deps.requestEnv.withDefaults("schedule")
 	return &scheduleAPI{scheduleDependencies: deps}
 }
 
 func (s *APIServer) schedules() *scheduleAPI {
 	return newScheduleAPI(scheduleDependencies{
-		db:            s.db,
-		requireUserID: s.requireUserID,
-		logf:          s.logf,
+		requestEnv: s.requestEnv(),
+		db:         s.db,
 	})
 }
 

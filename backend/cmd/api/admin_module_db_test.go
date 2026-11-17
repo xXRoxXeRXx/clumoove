@@ -45,8 +45,10 @@ func newAdminTestHarness(t *testing.T) *adminTestHarness {
 			h.cancels = append(h.cancels, id)
 			return h.cancelErr[id]
 		},
-		writeAudit: func(_ *http.Request, action db.AuditAction, target, actor string, details map[string]interface{}) {
-			h.audits = append(h.audits, recordedAudit{action, target, actor, details})
+		requestEnv: requestEnv{
+			writeAudit: func(_ *http.Request, action db.AuditAction, target, actor string, details map[string]interface{}) {
+				h.audits = append(h.audits, recordedAudit{action, target, actor, details})
+			},
 		},
 	})
 	return h
