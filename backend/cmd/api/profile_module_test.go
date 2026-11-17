@@ -50,9 +50,11 @@ func serveProfile(t *testing.T, api *profileAPI, method, path, userID string) *h
 
 func TestProfileModuleRateLimitsMutatingAndTestRoutes(t *testing.T) {
 	api := newProfileAPI(profileDependencies{
-		rateLimiter:   blockAllFileRateLimiter{},
-		requireUserID: requireAuthenticatedUserID,
-		clientIP:      func(*http.Request) string { return "203.0.113.1" },
+		rateLimiter: blockAllFileRateLimiter{},
+		requestEnv: requestEnv{
+			requireUserID: requireAuthenticatedUserID,
+			clientIP:      func(*http.Request) string { return "203.0.113.1" },
+		},
 	})
 	for _, route := range []struct{ method, path string }{
 		{http.MethodPost, "/api/profiles"},
@@ -68,9 +70,11 @@ func TestProfileModuleRateLimitsMutatingAndTestRoutes(t *testing.T) {
 
 func TestProfileModuleRequiresAuthenticatedUser(t *testing.T) {
 	api := newProfileAPI(profileDependencies{
-		rateLimiter:   allowAllFileRateLimiter{},
-		requireUserID: requireAuthenticatedUserID,
-		clientIP:      func(*http.Request) string { return "203.0.113.1" },
+		rateLimiter: allowAllFileRateLimiter{},
+		requestEnv: requestEnv{
+			requireUserID: requireAuthenticatedUserID,
+			clientIP:      func(*http.Request) string { return "203.0.113.1" },
+		},
 	})
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/api/profiles"},
@@ -100,8 +104,10 @@ func TestProfileModuleGetMapsOwnershipOutcomes(t *testing.T) {
 		db:            database,
 		encryptionKey: key,
 		rateLimiter:   allowAllFileRateLimiter{},
-		requireUserID: requireAuthenticatedUserID,
-		logf:          func(*http.Request, string, ...any) {},
+		requestEnv: requestEnv{
+			requireUserID: requireAuthenticatedUserID,
+			logf:          func(*http.Request, string, ...any) {},
+		},
 	})
 
 	t.Run("owner", func(t *testing.T) {

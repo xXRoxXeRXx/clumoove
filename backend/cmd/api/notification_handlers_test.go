@@ -31,7 +31,9 @@ func TestNotificationErrorCode(t *testing.T) {
 
 func TestNotificationRoutesRequireAnAuthenticatedUser(t *testing.T) {
 	api := newNotificationAPI(notificationDependencies{
-		requireUserID: (&APIServer{}).requireUserID,
+		requestEnv: requestEnv{
+			requireUserID: (&APIServer{}).requireUserID,
+		},
 	})
 	mux := http.NewServeMux()
 	middlewareCalls := 0

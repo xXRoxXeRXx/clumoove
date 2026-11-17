@@ -26,12 +26,8 @@ type syncDependencies struct {
 	publishBandwidthChange func(context.Context, queue.BandwidthEvent) error
 	oauthLocker            oauth.TokenLocker
 	oauthRotations         *oauth.RotationCache
-	requireUserID          func(http.ResponseWriter, *http.Request) (string, bool)
-	clientIP               func(*http.Request) string
-	writeAudit             func(*http.Request, db.AuditAction, string, string, map[string]interface{})
-	logf                   func(*http.Request, string, ...any)
-	warnf                  func(*http.Request, string, ...any)
 	streamPollInterval     time.Duration
+	requestEnv
 }
 
 type syncAPI struct {
@@ -39,6 +35,7 @@ type syncAPI struct {
 }
 
 func newSyncAPI(deps syncDependencies) *syncAPI {
+	deps.requestEnv = deps.requestEnv.withDefaults("sync")
 	if deps.backgroundCtx == nil {
 		deps.backgroundCtx = context.Background()
 	}
@@ -63,21 +60,6 @@ func newSyncAPI(deps syncDependencies) *syncAPI {
 	if deps.streamPool == nil {
 		deps.streamPool = newUserStreamPool(maxStreamsPerUser)
 	}
-	if deps.requireUserID == nil {
-		deps.requireUserID = requireAuthenticatedUserID
-	}
-	if deps.clientIP == nil {
-		deps.clientIP = (&APIServer{}).clientIP
-	}
-	if deps.writeAudit == nil {
-		deps.writeAudit = func(*http.Request, db.AuditAction, string, string, map[string]interface{}) {}
-	}
-	if deps.logf == nil {
-		deps.logf = (&APIServer{}).logf
-	}
-	if deps.warnf == nil {
-		deps.warnf = (&APIServer{}).warnf
-	}
 	if deps.streamPollInterval <= 0 {
 		deps.streamPollInterval = 3 * time.Second
 	}
@@ -92,6 +74,7 @@ func (s *APIServer) syncs() *syncAPI {
 		oauthLocker = s.queue
 	}
 	return newSyncAPI(syncDependencies{
+		requestEnv:             s.requestEnv(),
 		db:                     s.db,
 		encryptionKey:          s.encryptionKey,
 		backgroundCtx:          s.backgroundCtx,
@@ -102,11 +85,6 @@ func (s *APIServer) syncs() *syncAPI {
 		publishBandwidthChange: publishBandwidth,
 		oauthLocker:            oauthLocker,
 		oauthRotations:         s.rotationCache(),
-		requireUserID:          s.requireUserID,
-		clientIP:               s.clientIP,
-		writeAudit:             s.writeAudit,
-		logf:                   s.logf,
-		warnf:                  s.warnf,
 	})
 }
 

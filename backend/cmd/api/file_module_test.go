@@ -281,8 +281,10 @@ func TestFileModuleHTTPWorkflowsAndErrorSemantics(t *testing.T) {
 			},
 		},
 		sessionStore: sessions,
-		writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
-			audits = append(audits, action)
+		requestEnv: requestEnv{
+			writeAudit: func(_ *http.Request, action db.AuditAction, _, _ string, _ map[string]interface{}) {
+				audits = append(audits, action)
+			},
 		},
 	})
 
@@ -371,7 +373,7 @@ func TestFileModuleHTTPWorkflowsAndErrorSemantics(t *testing.T) {
 
 	encodedName := base64.RawURLEncoding.EncodeToString([]byte("notes.txt"))
 	recUpload := doReq(http.MethodPut, "/api/files/profiles/p-nc/content", "user-1", "upload-data", map[string]string{
-		"X-Clumoove-File-Name": encodedName,
+		"X-Clumoove-File-Name":  encodedName,
 		"X-Clumoove-Parent-Ref": docsRef,
 	})
 	if recUpload.Code != http.StatusCreated {

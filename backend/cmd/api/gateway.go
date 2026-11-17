@@ -185,18 +185,26 @@ type featureModule struct {
 // routes only need the authenticated middleware.
 type authenticatedRegistrar func(mux *http.ServeMux, authenticated func(http.Handler) http.Handler, overrideHandler http.HandlerFunc)
 
-func authenticatedModule(name string, authenticated func(http.Handler) http.Handler, routes []routeSpec, register authenticatedRegistrar) featureModule {
+// composeFeatureModule builds a module's route list exactly once and registers
+// that same list, so the contract view and the mux can never diverge.
+func composeFeatureModule(
+	name string,
+	buildRoutes func() []routeSpec,
+	register func(mux *http.ServeMux, routes []routeSpec, overrideHandler http.HandlerFunc),
+) featureModule {
+	routes := buildRoutes()
 	return featureModule{
 		name:   name,
 		routes: routes,
 		register: func(mux *http.ServeMux, overrideHandler http.HandlerFunc) {
-			register(mux, authenticated, overrideHandler)
+			register(mux, routes, overrideHandler)
 		},
 	}
 }
 
 // featureModules lists every feature module composed into the gateway. Each
-// module owns its endpoint registration and feature dependencies.
+// module owns its route table and feature dependencies; the gateway decides
+// only which access middleware guards them.
 func (server *APIServer) featureModules(mw routeMiddleware) []featureModule {
 	accounts := server.accounts()
 	files := server.files()
@@ -207,28 +215,29 @@ func (server *APIServer) featureModules(mw routeMiddleware) []featureModule {
 	profiles := server.connectionProfiles()
 	admin := server.administration()
 	notifications := server.notifications()
+
+	authenticated := func(mux *http.ServeMux, routes []routeSpec, o http.HandlerFunc) {
+		registerRouteSpecs(mux, routes, mw.authenticated, nil, nil, o)
+	}
+	strictAuthenticated := func(module string) func(*http.ServeMux, []routeSpec, http.HandlerFunc) {
+		return func(mux *http.ServeMux, routes []routeSpec, o http.HandlerFunc) {
+			registerAuthenticatedRouteSpecs(module, mux, routes, mw.authenticated, o)
+		}
+	}
 	return []featureModule{
-		{
-			name:   "accounts",
-			routes: accounts.routes(),
-			register: func(mux *http.ServeMux, o http.HandlerFunc) {
-				accounts.registerRoutesWithHandler(mux, mw.authenticated, mw.allowMustChange, o)
-			},
-		},
-		authenticatedModule("files", mw.authenticated, files.routes(), files.registerRoutesWithHandler),
-		authenticatedModule("migrations", mw.authenticated, migrations.routes(), migrations.registerRoutesWithHandler),
-		authenticatedModule("syncs", mw.authenticated, syncs.routes(), syncs.registerRoutesWithHandler),
-		authenticatedModule("backups", mw.authenticated, backups.routes(), backups.registerRoutesWithHandler),
-		authenticatedModule("schedules", mw.authenticated, schedules.routes(), schedules.registerRoutesWithHandler),
-		authenticatedModule("profiles", mw.authenticated, profiles.routes(), profiles.registerRoutesWithHandler),
-		{
-			name:   "administration",
-			routes: admin.routes(),
-			register: func(mux *http.ServeMux, o http.HandlerFunc) {
-				admin.registerRoutesWithHandler(mux, mw.authenticated, mw.adminOnly, o)
-			},
-		},
-		authenticatedModule("notifications", mw.authenticated, notifications.routes(), notifications.registerRoutesWithHandler),
+		composeFeatureModule("accounts", accounts.routes, func(mux *http.ServeMux, routes []routeSpec, o http.HandlerFunc) {
+			registerRouteSpecs(mux, routes, mw.authenticated, mw.allowMustChange, nil, o)
+		}),
+		composeFeatureModule("files", files.routes, authenticated),
+		composeFeatureModule("migrations", migrations.routes, authenticated),
+		composeFeatureModule("syncs", syncs.routes, authenticated),
+		composeFeatureModule("backups", backups.routes, authenticated),
+		composeFeatureModule("schedules", schedules.routes, strictAuthenticated("schedule")),
+		composeFeatureModule("profiles", profiles.routes, strictAuthenticated("profile")),
+		composeFeatureModule("administration", admin.routes, func(mux *http.ServeMux, routes []routeSpec, o http.HandlerFunc) {
+			registerRouteSpecs(mux, routes, mw.authenticated, nil, mw.adminOnly, o)
+		}),
+		composeFeatureModule("notifications", notifications.routes, strictAuthenticated("notification")),
 	}
 }
 
