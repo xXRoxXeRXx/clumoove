@@ -92,8 +92,13 @@ func (api *fileAPI) handleFileTransferCancel(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, ErrFilesNotFound)
 		return
 	}
-	if err := db.UpdateMigrationStatus(api.db, id, "CANCELLED", nil); err != nil {
+	applied, err := db.TransitionMigration(r.Context(), api.db, id, db.MigrationEventCancel, nil)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !applied {
+		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
 	if err := db.CancelPendingTasks(api.db, id); err != nil {

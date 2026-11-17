@@ -111,7 +111,7 @@ migrations** so the schema self-heals on first boot:
 - **Default-credential rejection:** if the DB host is publicly reachable and the DSN still contains
   `postgres:postgres@`, startup fails (local/private hosts are exempted).
 
-Key query helpers include `CreateMigration`, `GetMigration`, `UpdateMigrationStatus`,
+Key query helpers include `CreateMigration`, `GetMigration`, `TransitionMigration` (guarded pause/cancel/fail transitions),
 `UpdateMigrationStatusIfIndexing`, `IncrementMigrationProgress` (transitions to `COMPLETED`/`FAILED`),
 `CreateSyncJobAndSchedule`, `GetSyncJob`, `ListSyncJobs`, `CreateConnectionProfile`, `ListConnectionProfiles`,
 `CreateBackupJob`, `GetBackupJob`, `ListBackupJobs`, `CreateBackupRun`, `GetBackupRun`, `ListBackupSnapshots`,

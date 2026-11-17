@@ -33,6 +33,26 @@ type oauthRotationDaemon struct {
 
 func (d *oauthRotationDaemon) Name() string { return "oauth_rotation" }
 
+// failMigrationAfterRefreshFailure marks a migration FAILED only if it is still
+// in flight; a migration the user cancelled or that already finished keeps its
+// status. Failing to record the outcome is logged, not retried, because the next
+// rotation tick re-evaluates the job.
+func (d *oauthRotationDaemon) failMigrationAfterRefreshFailure(ctx context.Context, migrationID, provider string) {
+	errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", provider)
+	if _, err := db.TransitionMigration(ctx, d.db, migrationID, db.MigrationEventFail, &errMsg); err != nil {
+		oauthRotationLogger(ctx).ErrorContext(ctx, "oauth_rotation_mark_failed_error", slog.String("job_type", "migration"), slog.String("job_id", migrationID), observability.Error(err))
+	}
+}
+
+// failSyncJobAfterRefreshFailure is the sync-job counterpart of
+// failMigrationAfterRefreshFailure.
+func (d *oauthRotationDaemon) failSyncJobAfterRefreshFailure(ctx context.Context, syncJobID, provider string) {
+	errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", provider)
+	if _, err := db.FailSyncJobIfActive(ctx, d.db, syncJobID, errMsg); err != nil {
+		oauthRotationLogger(ctx).ErrorContext(ctx, "oauth_rotation_mark_failed_error", slog.String("job_type", "sync"), slog.String("job_id", syncJobID), observability.Error(err))
+	}
+}
+
 func (d *oauthRotationDaemon) Run(ctx context.Context) {
 	logger := oauthRotationLogger(ctx)
 	logger.InfoContext(ctx, "oauth_rotation_daemon_started")
@@ -127,8 +147,7 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthTokens(ctx context.Context) {
 					}, expectedRefreshEnc)
 				},
 				markFailed: func() {
-					errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", entry.Provider)
-					_ = db.UpdateMigrationStatus(d.db, entry.MigrationID, "FAILED", &errMsg)
+					d.failMigrationAfterRefreshFailure(ctx, entry.MigrationID, entry.Provider)
 				},
 			})
 		}
@@ -167,8 +186,7 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthTokens(ctx context.Context) {
 					return db.UpdateSyncJobOAuthTokensContext(persistCtx, d.db, entry.SyncJobID, entry.Role, accessEnc, refreshEnc, expiresAt, expectedRefreshEnc)
 				},
 				markFailed: func() {
-					errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", entry.Provider)
-					_ = db.UpdateSyncJobStatus(d.db, entry.SyncJobID, "FAILED", &errMsg)
+					d.failSyncJobAfterRefreshFailure(ctx, entry.SyncJobID, entry.Provider)
 				},
 			})
 		}

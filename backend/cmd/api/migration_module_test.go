@@ -801,6 +801,10 @@ type migrationModuleDBState struct {
 	oauthConflict     bool
 	ownershipErr      error
 	nextID            int
+	// afterMigrationRead runs after a migration row has been read or its
+	// ownership checked, letting a test change the row before the caller's next
+	// statement (a lost race).
+	afterMigrationRead func(id string)
 }
 
 func (s *migrationModuleDBState) setOwnershipErr(err error) {
@@ -903,13 +907,13 @@ func (c migrationModuleTestConn) ExecContext(_ context.Context, query string, ar
 	defer c.state.mu.Unlock()
 
 	switch {
-	case strings.Contains(query, "SET notification_generation") && strings.Contains(query, "UPDATE migrations"):
-		if len(args) >= 3 {
-			if rec := c.state.migrations[args[2].Value.(string)]; rec != nil {
-				rec.status, _ = args[0].Value.(string)
-				rec.updatedAt = time.Now().UTC()
-			}
+	case strings.Contains(query, "status = ANY($4::text[])") && strings.Contains(query, "UPDATE migrations"):
+		rec := c.state.migrations[args[2].Value.(string)]
+		if rec == nil || !statusInPQArray(rec.status, args[3].Value) {
+			return driver.RowsAffected(0), nil
 		}
+		rec.status, _ = args[0].Value.(string)
+		rec.updatedAt = time.Now().UTC()
 	case strings.Contains(query, "SET threads = $1") && strings.Contains(query, "UPDATE migrations"):
 		if rec := c.state.migrations[args[1].Value.(string)]; rec != nil {
 			rec.threads, _ = args[0].Value.(int64)
@@ -957,9 +961,14 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 		lookupErr := c.state.ownershipErr
 		rec := c.state.migrations[id]
 		owned := rec != nil && rec.userID == userID
+		afterRead := c.state.afterMigrationRead
 		c.state.mu.Unlock()
 		if lookupErr != nil {
 			return nil, lookupErr
+		}
+		if afterRead != nil {
+			// The caller has now observed the row; change it before its next statement.
+			defer afterRead(id)
 		}
 		return &backupProfileConnectionRows{rows: [][]driver.Value{{owned}}, columns: 1}, nil
 	}
@@ -1061,11 +1070,16 @@ func (c migrationModuleTestConn) QueryContext(_ context.Context, query string, a
 		id := args[0].Value.(string)
 		c.state.mu.Lock()
 		m := c.state.migrations[id]
+		afterRead := c.state.afterMigrationRead
 		c.state.mu.Unlock()
 		if m == nil {
 			return &backupProfileConnectionRows{columns: 43}, nil
 		}
 		row := make([]driver.Value, 43)
+		if afterRead != nil {
+			// The row is snapshotted below; mutate after the caller sees it.
+			defer afterRead(id)
+		}
 		for _, idx := range []int{4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 18, 19, 36, 39} {
 			row[idx] = ""
 		}

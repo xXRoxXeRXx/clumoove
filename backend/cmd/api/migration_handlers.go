@@ -264,19 +264,15 @@ func (api *migrationAPI) handlePause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mig, err := db.GetMigrationContext(r.Context(), api.db, id)
+	// The allowed source state is enforced by the UPDATE itself: a worker can
+	// finish the migration between any earlier read and this write.
+	applied, err := db.TransitionMigration(r.Context(), api.db, id, db.MigrationEventPause, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
+	if !applied {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
-		return
-	}
-
-	err = db.UpdateMigrationStatus(api.db, id, "PAUSED", nil)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -379,9 +375,13 @@ func (api *migrationAPI) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := db.UpdateMigrationStatus(api.db, id, "CANCELLED", nil)
+	applied, err := db.TransitionMigration(r.Context(), api.db, id, db.MigrationEventCancel, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !applied {
+		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
 
@@ -1051,7 +1051,11 @@ func (api *migrationAPI) handleDeleteMigration(w http.ResponseWriter, r *http.Re
 	// A worker can already have loaded this migration and be streaming a file.
 	// Mark it cancelled and broadcast before deleting its rows so active workers
 	// cancel their request contexts instead of continuing against deleted tasks.
-	if err := db.UpdateMigrationStatus(api.db, id, "CANCELLED", nil); err != nil {
+	// A migration that already finished (or was already cancelled) has nothing
+	// left to cancel but must still be deletable, so a transition that does not
+	// apply is not an error here.
+	cancelled, err := db.TransitionMigration(r.Context(), api.db, id, db.MigrationEventCancel, nil)
+	if err != nil {
 		api.logf(r, "Error cancelling migration %s before deletion: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -1063,7 +1067,9 @@ func (api *migrationAPI) handleDeleteMigration(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	api.writeAudit(r, db.AuditMigrationCancelled, id, userID, map[string]interface{}{"reason": "deletion"})
+	if cancelled {
+		api.writeAudit(r, db.AuditMigrationCancelled, id, userID, map[string]interface{}{"reason": "deletion"})
+	}
 	if api.publishCancelEvent == nil {
 		api.logf(r, "Failed to publish cancel event for migration %s before deletion: publisher unavailable", id)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

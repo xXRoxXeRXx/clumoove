@@ -362,33 +362,6 @@ func ListAllMigrationsContext(ctx context.Context, database *sql.DB, p Migration
 	return views, total, nil
 }
 
-func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string) error {
-	// Terminal status and its durable outbox record are intentionally atomic:
-	// callers retry the state transition on a database failure, while the repair
-	// sweep protects migrations created by older/interrupted code paths.
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	query := `
-		UPDATE migrations
-		SET notification_generation = CASE WHEN status IN ('COMPLETED','COMPLETED_WITH_ERRORS','FAILED') AND $1 NOT IN ('COMPLETED','COMPLETED_WITH_ERRORS','FAILED') THEN notification_generation + 1 ELSE notification_generation END,
-		    status = $1, error_message = $2, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $3
-	`
-	_, err = tx.Exec(query, status, errMsg, id)
-	if err != nil {
-		return err
-	}
-	if isTerminalMigrationStatus(status) {
-		if err := createMigrationNotificationEventTx(tx, id); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
 // PauseMigrationForConnectionLoss transitions only an active migration. A
 // worker can observe a network failure after a user has cancelled the job, so
 // this guard must be part of the update rather than a preceding read.

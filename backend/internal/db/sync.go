@@ -311,6 +311,22 @@ func UpdateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) e
 	return err
 }
 
+// FailSyncJobIfActive marks a sync job FAILED only while a pass is in flight.
+// The source-state predicate is part of the UPDATE, so a job the user already
+// paused or that already finished is never overwritten by a late failure.
+func FailSyncJobIfActive(ctx context.Context, database *sql.DB, id string, errMsg string) (bool, error) {
+	result, err := database.ExecContext(ctx, `
+		UPDATE sync_jobs
+		SET status = 'FAILED', verification_lease_until = NULL, error_message = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2 AND status IN ('INDEXING', 'RUNNING', 'VERIFYING')
+	`, errMsg, id)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
 // UpdateSyncJobStatusForGeneration prevents a late worker from changing a
 // successor pass's lifecycle state.
 func UpdateSyncJobStatusForGeneration(db *sql.DB, id string, generation int, status string, errMsg *string) error {

@@ -59,6 +59,7 @@ func setupNotificationsTestDB(t *testing.T) *sql.DB {
 			target_password_encrypted TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'IDLE',
 			run_generation INT NOT NULL DEFAULT 0,
+			verification_lease_until TIMESTAMPTZ,
 			target_dir TEXT NOT NULL DEFAULT '/',
 			last_run_at TIMESTAMPTZ,
 			last_run_status TEXT,

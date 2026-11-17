@@ -720,13 +720,15 @@ func (c fileModuleTestConn) BeginTx(context.Context, driver.TxOptions) (driver.T
 }
 
 func (c fileModuleTestConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	if strings.Contains(query, "UPDATE migrations") && len(args) >= 3 {
+	if strings.Contains(query, "status = ANY($4::text[])") && strings.Contains(query, "UPDATE migrations") {
 		c.state.mu.Lock()
-		if rec := c.state.migrations[args[2].Value.(string)]; rec != nil {
-			rec.status = args[0].Value.(string)
-			rec.updatedAt = time.Now().UTC()
+		defer c.state.mu.Unlock()
+		rec := c.state.migrations[args[2].Value.(string)]
+		if rec == nil || !statusInPQArray(rec.status, args[3].Value) {
+			return driver.RowsAffected(0), nil
 		}
-		c.state.mu.Unlock()
+		rec.status = args[0].Value.(string)
+		rec.updatedAt = time.Now().UTC()
 	}
 	return driver.RowsAffected(1), nil
 }
@@ -821,4 +823,41 @@ func (tx fileModuleTestTx) ExecContext(ctx context.Context, query string, args [
 }
 func (tx fileModuleTestTx) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	return fileModuleTestConn{state: tx.state}.QueryContext(ctx, query, args)
+}
+
+func TestFileTransferCancelLeavesFinishedTransferUnchanged(t *testing.T) {
+	database, state := newFileModuleTestDB(t, nil)
+	var cancelledIDs []string
+	api := newFileAPI(fileDependencies{
+		db:            database,
+		encryptionKey: "01234567890123456789012345678901",
+		rateLimiter:   allowAllFileRateLimiter{},
+		publishCancelEvent: func(_ context.Context, migrationID string) error {
+			cancelledIDs = append(cancelledIDs, migrationID)
+			return nil
+		},
+	})
+	mux := http.NewServeMux()
+	api.registerRoutes(mux, headerAuthMiddleware)
+
+	for _, status := range []string{"COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED"} {
+		id := "transfer-" + status
+		state.setMigration(id, "user-1", fileManagerTransferMarker+"copy", status)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/files/transfers/"+id+"/cancel", nil)
+		req.Header.Set("X-Test-User", "user-1")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		assertAPIResponseError(t, rec, http.StatusConflict, ErrMigrationInvalidState, "cancel "+status+" transfer")
+		state.mu.Lock()
+		got := state.migrations[id].status
+		state.mu.Unlock()
+		if got != status {
+			t.Fatalf("%s transfer status = %q, want unchanged", status, got)
+		}
+	}
+	if len(cancelledIDs) != 0 {
+		t.Fatalf("cancel events = %v, want none", cancelledIDs)
+	}
 }
