@@ -398,28 +398,6 @@ func SnapshotBackupVerifyTargetsContext(ctx context.Context, database *sql.DB, m
 	return tx.Commit()
 }
 
-func ListPendingBackupVerifyTargetsContext(ctx context.Context, database *sql.DB, maintenanceID string) ([]BackupVerifyTarget, error) {
-	rows, err := database.QueryContext(ctx, `
-		SELECT t.id, t.backup_pack_id, t.pack_remote_path, t.pack_sha256, t.pack_size_bytes
-		FROM backup_verify_targets t
-		LEFT JOIN backup_packs p ON p.id = t.backup_pack_id
-		WHERE t.backup_maintenance_id = $1 AND t.state = 'PENDING'
-		ORDER BY p.last_checked_at NULLS FIRST, t.id`, maintenanceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var targets []BackupVerifyTarget
-	for rows.Next() {
-		var target BackupVerifyTarget
-		if err := rows.Scan(&target.ID, &target.PackID, &target.RemotePath, &target.SHA256, &target.SizeBytes); err != nil {
-			return nil, err
-		}
-		targets = append(targets, target)
-	}
-	return targets, rows.Err()
-}
-
 // ClaimNextBackupVerifyTargetContext grants one bounded pack check. The
 // persisted target state, epoch, and deadline allow another worker to resume
 // after a crash without losing the live-pack pin or replaying a finished pack.
@@ -763,32 +741,6 @@ func RecordBackupPackAndBlocksContext(ctx context.Context, database *sql.DB, job
 	return ids, nil
 }
 
-func CreateBackupSnapshotItemContext(ctx context.Context, database *sql.DB, snapshotID, relativePath string, size int64, mtime time.Time, fileHash []byte, state, errorCode string) (string, error) {
-	var id string
-	err := database.QueryRowContext(ctx, `INSERT INTO backup_snapshot_items (backup_snapshot_id, relative_path, is_dir, size_bytes, mtime, file_sha256, state, error_code) VALUES ($1, $2, FALSE, $3, $4, $5, $6, NULLIF($7, '')) RETURNING id`, snapshotID, relativePath, size, nullableTime(mtime), fileHash, state, errorCode).Scan(&id)
-	return id, err
-}
-
-func CreateBackupSnapshotDirectoryContext(ctx context.Context, database *sql.DB, snapshotID, relativePath string, mtime time.Time) (string, error) {
-	var id string
-	err := database.QueryRowContext(ctx, `INSERT INTO backup_snapshot_items (backup_snapshot_id, relative_path, is_dir, size_bytes, mtime, state) VALUES ($1, $2, TRUE, 0, $3, 'AVAILABLE') RETURNING id`, snapshotID, relativePath, nullableTime(mtime)).Scan(&id)
-	return id, err
-}
-
-func LinkBackupSnapshotItemBlocksContext(ctx context.Context, database *sql.DB, itemID string, blockIDs []string) error {
-	tx, err := database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for ordinal, blockID := range blockIDs {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO backup_snapshot_item_blocks (backup_snapshot_item_id, ordinal, backup_block_id) VALUES ($1, $2, $3)`, itemID, ordinal, blockID); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
 type BatchSnapshotItem struct {
 	RelativePath string
 	IsDir        bool
@@ -986,13 +938,6 @@ func GetBackupSnapshotFileCatalogContext(ctx context.Context, database *sql.DB, 
 		}
 	}
 	return result, nil
-}
-
-func nullableTime(value time.Time) sql.NullTime {
-	if value.IsZero() {
-		return sql.NullTime{}
-	}
-	return sql.NullTime{Time: value, Valid: true}
 }
 
 // PublishBackupSnapshotAndFinalizeContext makes the visible snapshot and run
@@ -1215,11 +1160,6 @@ func RequestBackupRepositoryDeletionContext(ctx context.Context, database *sql.D
 		return false, err
 	}
 	return true, nil
-}
-
-// ClaimNextBackupMaintenanceContext leases one pending maintenance request.
-func ClaimNextBackupMaintenanceContext(ctx context.Context, database *sql.DB) (*BackupMaintenance, error) {
-	return ClaimNextBackupMaintenanceForWorkerContext(ctx, database, "")
 }
 
 func ClaimNextBackupMaintenanceForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*BackupMaintenance, error) {
@@ -1556,63 +1496,6 @@ const insertBackupJobQuery = `
 	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
 	RETURNING id, lock_id, repository_id, created_at, updated_at
 `
-
-func CreateBackupJobAndScheduleContext(ctx context.Context, database *sql.DB, job *BackupJob, schedule *Schedule) (string, error) {
-	if job == nil || schedule == nil {
-		return "", fmt.Errorf("backup job and schedule are required")
-	}
-	if schedule.UserID != job.UserID || (schedule.TaskType != "" && schedule.TaskType != "backup") || !schedule.NextRunAt.Valid {
-		return "", fmt.Errorf("backup schedule does not match job")
-	}
-	if job.Status == "" {
-		job.Status = "IDLE"
-	}
-	if job.DeletionState == "" {
-		job.DeletionState = "ACTIVE"
-	}
-	if job.RetentionCount == 0 {
-		job.RetentionCount = 30
-	}
-	if job.Threads == 0 {
-		job.Threads = 8
-	}
-	if !schedule.CronExpression.Valid {
-		schedule.CronExpression = sql.NullString{String: job.CronExpression, Valid: true}
-	}
-	if !schedule.CronExpression.Valid || schedule.CronExpression.String != job.CronExpression {
-		return "", fmt.Errorf("backup schedule must use the job cron expression")
-	}
-
-	tx, err := database.BeginTx(ctx, nil)
-	if err != nil {
-		return "", fmt.Errorf("begin backup job creation: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := insertBackupJob(ctx, tx, job); err != nil {
-		return "", fmt.Errorf("insert backup job: %w", err)
-	}
-	schedule.UserID = job.UserID
-	schedule.TaskType = "backup"
-	schedule.TaskID = job.ID
-	if err := insertSchedule(ctx, tx, schedule); err != nil {
-		return "", fmt.Errorf("insert backup schedule: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("commit backup job creation: %w", err)
-	}
-	return job.ID, nil
-}
-
-func insertBackupJob(ctx context.Context, database queryExecerContext, job *BackupJob) error {
-	return database.QueryRowContext(ctx, insertBackupJobQuery,
-		job.UserID, job.SourceProfileID, job.TargetProfileID, job.SourceURL, job.SourceUsername, job.SourcePasswordEncrypted,
-		job.SourceRefreshTokenEncrypted, job.SourceTokenExpiresAt, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted,
-		job.TargetURL, job.TargetUsername, job.TargetPasswordEncrypted, job.TargetRefreshTokenEncrypted, job.TargetTokenExpiresAt,
-		job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, job.SourceProvider, job.TargetProvider,
-		job.SelectedPaths, job.TargetDir, job.RepositoryRoot, job.CronExpression, job.Timezone, job.RetentionCount, job.Threads, job.Status, job.DeletionState,
-	).Scan(&job.ID, &job.LockID, &job.RepositoryID, &job.CreatedAt, &job.UpdatedAt)
-}
 
 func GetBackupJobForOwnerContext(ctx context.Context, database *sql.DB, jobID, userID string) (*BackupJob, error) {
 	job := &BackupJob{}

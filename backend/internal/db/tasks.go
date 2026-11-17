@@ -807,11 +807,6 @@ func GetMigrationErrorsContext(ctx context.Context, db *sql.DB, migrationID stri
 	return items, total, rows.Err()
 }
 
-// GetSyncErrors returns final transfer failures for the current sync job.
-func GetSyncErrors(db *sql.DB, syncJobID string, limit, offset int) ([]ErrorListItem, int, error) {
-	return GetSyncErrorsContext(context.Background(), db, syncJobID, limit, offset)
-}
-
 // GetSyncErrorsContext retrieves paginated sync errors while honoring caller cancellation.
 func GetSyncErrorsContext(ctx context.Context, db *sql.DB, syncJobID string, limit, offset int) ([]ErrorListItem, int, error) {
 	rows, err := db.QueryContext(ctx, `

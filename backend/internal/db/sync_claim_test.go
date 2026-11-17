@@ -299,7 +299,7 @@ func TestFinalizeSyncJobPass(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 
 	insertSyncClaimJob(t, database, "empty-indexing", "INDEXING")
-	finalized, err := FinalizeEmptySyncJobPass(database, "empty-indexing", 0, "SUCCESS", nil, 0, 0, 0, 0, 0)
+	finalized, err := FinalizeEmptySyncJobPassWithStates(database, "empty-indexing", 0, "SUCCESS", nil, 0, 0, 0, 0, 0, nil, nil)
 	if err != nil || !finalized || syncClaimStatus(t, database, "empty-indexing") != "IDLE" {
 		t.Fatalf("finalize empty INDEXING pass: finalized=%v, err=%v", finalized, err)
 	}
@@ -307,7 +307,7 @@ func TestFinalizeSyncJobPass(t *testing.T) {
 	for _, status := range []string{"RUNNING", "VERIFYING"} {
 		id := "finalize-" + status
 		insertSyncClaimJob(t, database, id, status)
-		finalized, err := FinalizeSyncJobPass(database, id, 0, "SUCCESS", nil, 2, 2, 1, 0, 0)
+		finalized, err := FinalizeSyncJobPassWithStates(database, id, 0, "SUCCESS", nil, 2, 2, 1, 0, 0, nil, nil)
 		if err != nil || !finalized {
 			t.Fatalf("finalize %s: finalized=%v, err=%v", status, finalized, err)
 		}
@@ -330,7 +330,7 @@ func TestFinalizeSyncJobPass(t *testing.T) {
 	for _, status := range []string{"INDEXING", "FAILED", "PAUSED", "PAUSED_CONNECTION_LOSS", "IDLE"} {
 		id := "preserve-" + status
 		insertSyncClaimJob(t, database, id, status)
-		finalized, err := FinalizeSyncJobPass(database, id, 0, "SUCCESS", nil, 2, 2, 1, 0, 0)
+		finalized, err := FinalizeSyncJobPassWithStates(database, id, 0, "SUCCESS", nil, 2, 2, 1, 0, 0, nil, nil)
 		if err != nil || finalized {
 			t.Errorf("finalize %s: finalized=%v, err=%v; want false, nil", status, finalized, err)
 		}
@@ -343,7 +343,7 @@ func TestFinalizeSyncJobPass(t *testing.T) {
 	if _, err := database.Exec(`UPDATE sync_jobs SET run_generation = 2 WHERE id = 'superseded'`); err != nil {
 		t.Fatalf("set superseded pass generation: %v", err)
 	}
-	finalized, err = FinalizeSyncJobPass(database, "superseded", 1, "SUCCESS", nil, 2, 2, 1, 0, 0)
+	finalized, err = FinalizeSyncJobPassWithStates(database, "superseded", 1, "SUCCESS", nil, 2, 2, 1, 0, 0, nil, nil)
 	if err != nil || finalized || syncClaimStatus(t, database, "superseded") != "RUNNING" {
 		t.Errorf("superseded pass finalization: finalized=%v, err=%v; want false and unchanged", finalized, err)
 	}
@@ -527,7 +527,7 @@ func TestManualSyncPauseResumeTransitions(t *testing.T) {
 	for _, status := range []string{"IDLE", "INDEXING", "RUNNING", "VERIFYING"} {
 		id := "pause-" + status
 		insertSyncClaimJob(t, database, id, status)
-		paused, err := PauseSyncJob(database, id, nil)
+		_, paused, err := PauseSyncJobAndDeactivateSchedules(context.Background(), database, id, nil)
 		if err != nil || !paused || syncClaimStatus(t, database, id) != "PAUSED" {
 			t.Errorf("pause %s: paused=%v, err=%v, status=%s", status, paused, err, syncClaimStatus(t, database, id))
 		}
@@ -536,14 +536,14 @@ func TestManualSyncPauseResumeTransitions(t *testing.T) {
 	for _, status := range []string{"PAUSED", "PAUSED_CONNECTION_LOSS", "FAILED"} {
 		id := "pause-blocked-" + status
 		insertSyncClaimJob(t, database, id, status)
-		paused, err := PauseSyncJob(database, id, nil)
+		_, paused, err := PauseSyncJobAndDeactivateSchedules(context.Background(), database, id, nil)
 		if err != nil || paused || syncClaimStatus(t, database, id) != status {
 			t.Errorf("pause %s: paused=%v, err=%v; want false and unchanged", status, paused, err)
 		}
 	}
 
 	insertSyncClaimJob(t, database, "resume-paused", "PAUSED")
-	resumed, err := ResumeSyncJob(database, "resume-paused", nil)
+	resumed, err := ResumeSyncJobAndReactivateSchedules(context.Background(), database, "resume-paused", nil, time.Now())
 	if err != nil || !resumed || syncClaimStatus(t, database, "resume-paused") != "IDLE" {
 		t.Errorf("resume PAUSED: resumed=%v, err=%v", resumed, err)
 	}
@@ -551,7 +551,7 @@ func TestManualSyncPauseResumeTransitions(t *testing.T) {
 	for _, status := range []string{"IDLE", "RUNNING", "PAUSED_CONNECTION_LOSS"} {
 		id := "resume-blocked-" + status
 		insertSyncClaimJob(t, database, id, status)
-		resumed, err := ResumeSyncJob(database, id, nil)
+		resumed, err := ResumeSyncJobAndReactivateSchedules(context.Background(), database, id, nil, time.Now())
 		if err != nil || resumed || syncClaimStatus(t, database, id) != status {
 			t.Errorf("resume %s: resumed=%v, err=%v; want false and unchanged", status, resumed, err)
 		}
