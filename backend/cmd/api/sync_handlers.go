@@ -1112,11 +1112,7 @@ func (api *syncAPI) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if job.Status == "INDEXING" || job.Status == "RUNNING" || job.Status == "VERIFYING" {
-		writeError(w, http.StatusConflict, ErrSyncInvalidState)
-		return
-	}
-
+	// The status guard is enforced by UpdateSyncJobScope under a row lock.
 	if job.SourceProvider == "immich" || job.TargetProvider == "immich" {
 		writeError(w, http.StatusBadRequest, ErrImmichSyncUnsupported)
 		return

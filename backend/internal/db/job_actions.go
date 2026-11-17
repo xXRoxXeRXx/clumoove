@@ -10,10 +10,13 @@ const (
 	JobActionPause  JobAction = "pause"
 	JobActionResume JobAction = "resume"
 	JobActionCancel JobAction = "cancel"
+	// JobActionEditScope is changing what a sync job transfers (paths, target,
+	// strategy). It is only offered while no pass is, or is about to be, active.
+	JobActionEditScope JobAction = "edit_scope"
 )
 
 // jobActionOrder fixes the order actions are listed in, so responses are stable.
-var jobActionOrder = []JobAction{JobActionStart, JobActionPause, JobActionResume, JobActionCancel}
+var jobActionOrder = []JobAction{JobActionStart, JobActionPause, JobActionResume, JobActionCancel, JobActionEditScope}
 
 // actionSources maps every user action to the statuses it may start from.
 // The same slices are bound into the SQL predicate that guards each
@@ -59,6 +62,9 @@ var syncActionSources = actionSources{
 	JobActionStart:  {"IDLE", "FAILED"},
 	JobActionPause:  {"IDLE", "INDEXING", "RUNNING", "VERIFYING"},
 	JobActionResume: {"PAUSED"},
+	// UpdateSyncJobScope binds this set into its SQL guard. PAUSED_CONNECTION_LOSS
+	// is excluded for the same reason it has no pause or resume.
+	JobActionEditScope: {"IDLE", "PAUSED", "FAILED"},
 }
 
 // backupActionSources is the backup job transition table.

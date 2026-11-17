@@ -70,7 +70,7 @@ export type JobStatus =
   | 'IDLE';
 
 /** User actions the backend allows for a job in its current status. */
-export type JobAction = 'start' | 'pause' | 'resume' | 'cancel';
+export type JobAction = 'start' | 'pause' | 'resume' | 'cancel' | 'edit_scope';
 
 export interface User {
   id?: string;

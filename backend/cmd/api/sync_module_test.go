@@ -176,6 +176,11 @@ func TestSyncModuleSetupSchedulingScopeAndTuning(t *testing.T) {
 	state.setJobStatus(jobID, "RUNNING")
 	assertAPIResponseError(t, performSyncModuleRequest(mux, http.MethodPut, "/api/sync/"+jobID+"/scope", "user-1", `{"selected_paths":["/Photos"]}`), http.StatusConflict, ErrSyncInvalidState, "scope while running")
 
+	// Only the states that advertise edit_scope may change the scope; a
+	// connection-loss pause belongs to the worker's recovery.
+	state.setJobStatus(jobID, "PAUSED_CONNECTION_LOSS")
+	assertAPIResponseError(t, performSyncModuleRequest(mux, http.MethodPut, "/api/sync/"+jobID+"/scope", "user-1", `{"selected_paths":["/Photos"]}`), http.StatusConflict, ErrSyncInvalidState, "scope during connection loss")
+
 	// 4. PUT /api/sync/{id}/threads
 	assertAPIResponseError(t, performSyncModuleRequest(mux, http.MethodPut, "/api/sync/"+jobID+"/threads", "user-1", `{"threads":0}`), http.StatusBadRequest, ErrThreadsOutOfRange, "threads too low")
 	assertAPIResponseError(t, performSyncModuleRequest(mux, http.MethodPut, "/api/sync/"+jobID+"/threads", "user-1", `{"threads":17}`), http.StatusBadRequest, ErrThreadsOutOfRange, "threads too high")

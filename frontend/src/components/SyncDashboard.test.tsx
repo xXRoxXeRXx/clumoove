@@ -377,6 +377,18 @@ describe('SyncDashboard initial snapshot ordering', () => {
       expect(controlLabels()).toEqual([]);
     });
 
+    it.each([
+      ['IDLE', ['start', 'pause', 'edit_scope'] as const, true],
+      ['PAUSED', ['resume', 'edit_scope'] as const, true],
+      ['RUNNING', ['pause'] as const, false],
+      // The status alone no longer decides: only the backend's list does.
+      ['IDLE', ['start', 'pause'] as const, false],
+    ])('offers Edit for %s only when the backend lists edit_scope (%j -> %s)', async (status, actions, shown) => {
+      await renderDetail({ ...createSyncJob('https://source.example.test'), status: status as SyncJob['status'], allowed_actions: [...actions] });
+      const editButtons = Array.from(container.querySelectorAll('button')).filter((button) => button.textContent?.trim() === i18n.t('sync.edit'));
+      expect(editButtons.length).toBe(shown ? 1 : 0);
+    });
+
     it('follows a new allowed_actions list delivered by the stream', async () => {
       const streams = new Map<string, SseHandlers>();
       vi.mocked(connectSseLoop).mockImplementation((options) => {

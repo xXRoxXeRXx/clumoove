@@ -309,15 +309,15 @@ Validation rules applied server-side:
 ## 13. Allowed Actions
 
 Migration, sync and backup list, detail and stream payloads carry `allowed_actions`: the user actions
-(`start`, `pause`, `resume`, `cancel`) the job's current status allows. The backend is the single source
+(`start`, `pause`, `resume`, `cancel`, and for sync jobs `edit_scope`) the job's current status allows. The backend is the single source
 of truth (`backend/internal/db/job_actions.go`); the same status sets are bound into the SQL guard of each
 transition, and the dashboards render their controls from this field instead of hard-coded status lists.
 
-| Kind | `start` | `pause` | `resume` | `cancel` |
-| :--- | :------ | :------ | :------- | :------- |
-| Migration | - | `RUNNING`, `INDEXING` | `PAUSED`, `PAUSED_CONNECTION_LOSS` | `PENDING`, `SCHEDULED`, `INDEXING`, `RUNNING`, `VERIFYING`, `PAUSED`, `PAUSED_CONNECTION_LOSS` |
-| Sync job | `IDLE`, `FAILED` | `IDLE`, `INDEXING`, `RUNNING`, `VERIFYING` | `PAUSED` | - |
-| Backup job | `IDLE`, `FAILED` | `IDLE`, `FAILED`, `QUEUED`, `SCANNING`, `RUNNING`, `VERIFYING` | `PAUSED` | - |
+| Kind | `start` | `pause` | `resume` | `cancel` | `edit_scope` |
+| :--- | :------ | :------ | :------- | :------- | :----------- |
+| Migration | - | `RUNNING`, `INDEXING` | `PAUSED`, `PAUSED_CONNECTION_LOSS` | `PENDING`, `SCHEDULED`, `INDEXING`, `RUNNING`, `VERIFYING`, `PAUSED`, `PAUSED_CONNECTION_LOSS` | - |
+| Sync job | `IDLE`, `FAILED` | `IDLE`, `INDEXING`, `RUNNING`, `VERIFYING` | `PAUSED` | - | `IDLE`, `PAUSED`, `FAILED` |
+| Backup job | `IDLE`, `FAILED` | `IDLE`, `FAILED`, `QUEUED`, `SCANNING`, `RUNNING`, `VERIFYING` | `PAUSED` | - | - |
 
 `PAUSED_CONNECTION_LOSS` is deliberately different per kind. A migration may be resumed by the user early,
 because its task queue and progress are preserved. A sync job in `PAUSED_CONNECTION_LOSS` has no user

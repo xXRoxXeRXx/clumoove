@@ -330,7 +330,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       <div className="ui-card p-6 space-y-6">
         <TransferDetailHeader backLabel={t('common.back')} onBack={onBack} title={t('sync.syncJobDetail')} id={job.id} actions={
           <>
-            {['IDLE', 'PAUSED', 'FAILED'].includes(job.status) && (
+            {canPerform(job, 'edit_scope') && (
               <button
                 onClick={() => setIsEditing(true)}
                 disabled={actionLoading}

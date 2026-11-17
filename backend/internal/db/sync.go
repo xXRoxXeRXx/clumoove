@@ -1361,7 +1361,7 @@ func GetUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID 
 	return tasks, rows.Err()
 }
 
-var ErrSyncInvalidState = errors.New("sync job is in an active state and cannot be modified")
+var ErrSyncInvalidState = errors.New("sync job is in a state that does not allow this change")
 
 // DeleteSyncStateForJob removes all cached sync_state entries for a sync job (used on scope changes to prevent false deletions).
 func DeleteSyncStateForJob(exec queryExecerContext, syncJobID string) error {
@@ -1385,7 +1385,7 @@ func UpdateSyncJobScope(db *sql.DB, syncJobID string, selectedPaths []string, ta
 		}
 		return err
 	}
-	if status == "RUNNING" || status == "INDEXING" || status == "VERIFYING" {
+	if !slices.Contains(syncActionSources[JobActionEditScope], status) {
 		return ErrSyncInvalidState
 	}
 

@@ -33,12 +33,12 @@ func TestAllowedMigrationActions(t *testing.T) {
 
 func TestAllowedSyncActions(t *testing.T) {
 	cases := map[string][]JobAction{
-		"IDLE":      {JobActionStart, JobActionPause},
-		"FAILED":    {JobActionStart},
+		"IDLE":      {JobActionStart, JobActionPause, JobActionEditScope},
+		"FAILED":    {JobActionStart, JobActionEditScope},
 		"INDEXING":  {JobActionPause},
 		"RUNNING":   {JobActionPause},
 		"VERIFYING": {JobActionPause},
-		"PAUSED":    {JobActionResume},
+		"PAUSED":    {JobActionResume, JobActionEditScope},
 		// Deliberate: PAUSED_CONNECTION_LOSS is owned by the worker's connection
 		// recovery, which releases the job to IDLE and makes its schedule due.
 		// A user cannot pause or resume it, and the API treats the job as an
@@ -92,7 +92,7 @@ func TestActionSourcesAgreeWithAllowedActions(t *testing.T) {
 			for _, action := range kind.allowed(status) {
 				allowed[action] = true
 			}
-			for _, action := range []JobAction{JobActionStart, JobActionPause, JobActionResume, JobActionCancel} {
+			for _, action := range jobActionOrder {
 				inSources := false
 				for _, source := range kind.sources(action) {
 					if source == status {
@@ -132,7 +132,7 @@ func TestJobJSONIncludesAllowedActions(t *testing.T) {
 	if got := decode(SyncJob{Status: "PAUSED_CONNECTION_LOSS"}); len(got) != 0 {
 		t.Errorf("sync allowed_actions = %v, want empty array", got)
 	}
-	if got := decode(SyncJob{Status: "IDLE"}); !reflect.DeepEqual(got, []string{"start", "pause"}) {
+	if got := decode(SyncJob{Status: "IDLE"}); !reflect.DeepEqual(got, []string{"start", "pause", "edit_scope"}) {
 		t.Errorf("sync allowed_actions = %v", got)
 	}
 	if got := decode(BackupJob{Status: "PAUSED"}); !reflect.DeepEqual(got, []string{"resume"}) {
