@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"sync"
 
 	"backend/internal/auth"
 	"backend/internal/config"
@@ -99,53 +98,6 @@ func newAPIGateway(cfg gatewayConfig) (*APIServer, error) {
 		trustedProxy:      cfg.TrustedProxy,
 		authStateLookup:   cfg.AuthStateLookup,
 	}, nil
-}
-
-type userStreamPool struct {
-	mu     sync.Mutex
-	active map[string]int
-	limit  int
-}
-
-func newUserStreamPool(limit int) *userStreamPool {
-	return &userStreamPool{
-		active: make(map[string]int),
-		limit:  limit,
-	}
-}
-
-func (p *userStreamPool) Acquire(userID string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.active == nil {
-		p.active = make(map[string]int)
-	}
-	if p.active[userID] >= p.limit {
-		return false
-	}
-	p.active[userID]++
-	return true
-}
-
-func (p *userStreamPool) Release(userID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.active[userID]--
-	if p.active[userID] <= 0 {
-		delete(p.active, userID)
-	}
-}
-
-func (s *APIServer) streamPool() *userStreamPool {
-	if s == nil {
-		return nil
-	}
-	s.streamMu.Lock()
-	defer s.streamMu.Unlock()
-	if s.streams == nil {
-		s.streams = newUserStreamPool(maxStreamsPerUser)
-	}
-	return s.streams
 }
 
 // Handler composes the HTTP routing mux and outer gateway middleware chain.
