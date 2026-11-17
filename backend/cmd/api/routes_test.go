@@ -345,6 +345,10 @@ func TestGatewayRouteContracts(t *testing.T) {
 	}
 }
 
+// authenticatedRegistrar is the registration shape of the per-module
+// registerRoutesWithHandler methods that the route tests exercise.
+type authenticatedRegistrar func(mux *http.ServeMux, authenticated func(http.Handler) http.Handler, overrideHandler http.HandlerFunc)
+
 // assertRoutesUseOverrideHandler checks that a module registers every route
 // behind the authenticated middleware and terminates in the override handler.
 func assertRoutesUseOverrideHandler(t *testing.T, routes []routeSpec, register authenticatedRegistrar) {

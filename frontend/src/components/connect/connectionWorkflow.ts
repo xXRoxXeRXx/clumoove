@@ -79,7 +79,7 @@ export function createConnectionDraft(): ConnectionDraft {
   };
 }
 
-const FIXED_ENDPOINT_PROVIDERS: readonly string[] = ['magentacloud', 'koofr', 'local', 'mega'];
+const FIXED_ENDPOINT_PROVIDERS: readonly ProviderId[] = ['magentacloud', 'koofr', 'local', 'mega'];
 
 function resolveUrl(draft: ConnectionDraft): string {
   const { provider } = draft;

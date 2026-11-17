@@ -133,10 +133,6 @@ type featureModule struct {
 	register func(mux *http.ServeMux, overrideHandler http.HandlerFunc)
 }
 
-// authenticatedRegistrar is the registration shape shared by every module whose
-// routes only need the authenticated middleware.
-type authenticatedRegistrar func(mux *http.ServeMux, authenticated func(http.Handler) http.Handler, overrideHandler http.HandlerFunc)
-
 // composeFeatureModule builds a module's route list exactly once and registers
 // that same list, so the contract view and the mux can never diverge.
 func composeFeatureModule(
