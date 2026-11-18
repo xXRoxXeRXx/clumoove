@@ -902,7 +902,7 @@ func (c *Coordinator) heartbeatItem(ctx context.Context, item *db.RestoreItem, d
 			return
 		case <-ticker.C:
 			heartbeatCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = c.store.HeartbeatRestoreItemContext(heartbeatCtx, item.ID, item.RestoreRunID, c.workerID, item.ClaimEpoch)
+			_ = c.store.HeartbeatRestoreItemContext(heartbeatCtx, item.Lease(), item.RestoreRunID, c.workerID)
 			cancel()
 		}
 	}

@@ -359,7 +359,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 				stale := time.Since(taskStart) > taskHeartbeatGrace &&
 					time.Now().UnixNano()-atomic.LoadInt64(&lastByteNano) > int64(taskHeartbeatByteStale)
 				if !stale {
-					owned, err := db.HeartbeatSyncTaskClaim(p.db, ctx, task.ID, task.ClaimEpoch, task.PassGeneration)
+					owned, err := db.HeartbeatSyncTaskClaim(p.db, ctx, task.Lease(), task.PassGeneration)
 					if err == nil && !owned {
 						cancel() // recovery or a new claim fenced this worker off
 						return

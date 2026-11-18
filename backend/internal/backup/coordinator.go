@@ -290,7 +290,7 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 			break
 		}
 		if time.Now().After(deadline) {
-			_ = c.store.ReleaseBackupVerifyTargetClaimContext(ctx, verifyTarget.ID, verifyTarget.ClaimEpoch)
+			_ = c.store.ReleaseBackupVerifyTargetClaimContext(ctx, verifyTarget.Lease())
 			return errVerifyMoreWork
 		}
 		cancelling, err := c.store.IsBackupMaintenanceCancellingContext(ctx, maintenance.ID)
@@ -298,12 +298,12 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 			return err
 		}
 		if cancelling {
-			_ = c.store.ReleaseBackupVerifyTargetClaimContext(ctx, verifyTarget.ID, verifyTarget.ClaimEpoch)
+			_ = c.store.ReleaseBackupVerifyTargetClaimContext(ctx, verifyTarget.Lease())
 			return nil
 		}
 		exists, size, err := target.FileExists(ctx, "files", verifyTarget.RemotePath)
 		if err != nil {
-			_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.ID, verifyTarget.ClaimEpoch)
+			_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.Lease())
 			return err
 		}
 		state := "COMPLETED"
@@ -314,17 +314,17 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 			}
 		} else if maintenance.VerifyMode.String == db.BackupVerifyFull || (maintenance.VerifyMode.String == db.BackupVerifyBudgeted && totalRead < maintenance.ByteBudget.Int64) {
 			if claimRead > 0 && claimRead+verifyTarget.SizeBytes > maxVerifyClaimBytes {
-				_ = c.store.ReleaseBackupVerifyTargetClaimContext(ctx, verifyTarget.ID, verifyTarget.ClaimEpoch)
+				_ = c.store.ReleaseBackupVerifyTargetClaimContext(ctx, verifyTarget.Lease())
 				return errVerifyMoreWork
 			}
 			if err := c.packReaderSlots.Acquire(ctx); err != nil {
-				_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.ID, verifyTarget.ClaimEpoch)
+				_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.Lease())
 				return err
 			}
 			reader, err := target.StreamDownload(ctx, "files", verifyTarget.RemotePath)
 			if err != nil {
 				c.packReaderSlots.Release()
-				_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.ID, verifyTarget.ClaimEpoch)
+				_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.Lease())
 				// A provider/network failure is retryable maintenance work, not
 				// evidence that an immutable repository pack is damaged.
 				return err
@@ -344,7 +344,7 @@ func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance 
 			c.packReaderSlots.Release()
 			if validationErr != nil {
 				if isRetryableVerifyReadError(validationErr) {
-					_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.ID, verifyTarget.ClaimEpoch)
+					_ = c.store.ReleaseBackupVerifyTargetClaimContext(context.Background(), verifyTarget.Lease())
 					return validationErr
 				}
 				state = "DAMAGED"

@@ -223,7 +223,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		// deliberately immutable: retries must continue to download it from the
 		// source while reusing this chosen target, and deferred verification must
 		// not apply TargetDir a second time.
-		if err := db.UpdateClaimedTaskResolvedTargetPath(p.db, ctx, task.ID, task.ClaimEpoch, targetPath); err != nil {
+		if err := db.UpdateClaimedTaskResolvedTargetPath(p.db, ctx, task.Lease(), targetPath); err != nil {
 			return fmt.Errorf("persist resolved target path: %w", err)
 		}
 		task.ResolvedTargetPath = targetPath
@@ -297,7 +297,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 			return fmt.Errorf("marshal immich target asset metadata: %w", err)
 		}
 		task.Metadata = metadata
-		if err := db.UpdateClaimedTaskMetadata(p.db, ctx, task.ID, task.ClaimEpoch, task.Metadata); err != nil {
+		if err := db.UpdateClaimedTaskMetadata(p.db, ctx, task.Lease(), task.Metadata); err != nil {
 			return fmt.Errorf("persist immich target asset ID: %w", err)
 		}
 	}

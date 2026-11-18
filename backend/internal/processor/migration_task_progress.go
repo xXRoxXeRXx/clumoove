@@ -57,7 +57,7 @@ func (p *Processor) startMigrationProgressReporter(ctx context.Context, cancel c
 				if stale {
 					continue
 				}
-				owned, err := db.HeartbeatTaskClaim(p.db, ctx, taskID, claimEpoch)
+				owned, err := db.HeartbeatTaskClaim(p.db, ctx, db.Lease{ID: taskID, Epoch: claimEpoch})
 				if err == nil && !owned {
 					cancel()
 					return

@@ -500,8 +500,11 @@ func SkipBlockedRestoreItemsContext(ctx context.Context, database *sql.DB) (int6
 	return result.RowsAffected()
 }
 
-func HeartbeatRestoreItemContext(ctx context.Context, database *sql.DB, itemID, runID, workerID string, claimEpoch int64) error {
-	_, err := database.ExecContext(ctx, `UPDATE restore_items SET updated_at = CURRENT_TIMESTAMP, claim_deadline = CURRENT_TIMESTAMP + INTERVAL '2 minutes' WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND worker_hash = $3 AND claim_epoch = $4`, itemID, runID, nullableStringValue(workerID), claimEpoch)
+func HeartbeatRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, workerID string) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	_, err := database.ExecContext(ctx, `UPDATE restore_items SET updated_at = CURRENT_TIMESTAMP, claim_deadline = CURRENT_TIMESTAMP + INTERVAL '2 minutes' WHERE id = $1 AND restore_run_id = $2 AND status = 'RUNNING' AND worker_hash = $3 AND claim_epoch = $4`, lease.ID, runID, nullableStringValue(workerID), lease.Epoch)
 	return err
 }
 

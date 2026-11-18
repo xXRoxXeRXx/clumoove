@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"backend/internal/db"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq" // needed for pq.NewListener
 	"github.com/redis/go-redis/v9"
@@ -789,3 +790,6 @@ func ListenForTasks(ctx context.Context, connStr string) (<-chan struct{}, error
 
 	return notifyCh, nil
 }
+
+// Lease returns the claim this payload was dequeued under, for fenced task writes.
+func (p Payload) Lease() db.Lease { return db.Lease{ID: p.TaskID, Epoch: p.ClaimEpoch} }

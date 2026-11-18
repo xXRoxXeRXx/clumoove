@@ -186,7 +186,7 @@ func TestUpdateClaimedTaskMetadataFencesClaimAndPersistsMetadata(t *testing.T) {
 			database, state := newCreateTaskTestDB(t)
 			state.execResult = driver.RowsAffected(tc.affected)
 			metadata := json.RawMessage(`{"custom_props":{"immich_asset_id":"source","immich_target_asset_id":"target"}}`)
-			err := UpdateClaimedTaskMetadata(database, context.Background(), "task-1", 7, metadata)
+			err := UpdateClaimedTaskMetadata(database, context.Background(), Lease{ID: "task-1", Epoch: 7}, metadata)
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("UpdateClaimedTaskMetadata() error = %v, want %v", err, tc.wantErr)
 			}
@@ -204,7 +204,7 @@ func TestUpdateClaimedTaskMetadataFencesClaimAndPersistsMetadata(t *testing.T) {
 
 func TestUpdateClaimedTaskResolvedTargetPathPreservesSourcePath(t *testing.T) {
 	database, state := newCreateTaskTestDB(t)
-	if err := UpdateClaimedTaskResolvedTargetPath(database, context.Background(), "task-1", 7, "/dest/a_copy1.txt"); err != nil {
+	if err := UpdateClaimedTaskResolvedTargetPath(database, context.Background(), Lease{ID: "task-1", Epoch: 7}, "/dest/a_copy1.txt"); err != nil {
 		t.Fatalf("UpdateClaimedTaskResolvedTargetPath() error = %v", err)
 	}
 	if strings.Contains(state.execQuery, "SET file_path") {

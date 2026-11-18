@@ -30,8 +30,8 @@ func DequeueRestoreItem(ctx context.Context, database *sql.DB, workerID string) 
 }
 
 // HeartbeatRestoreItem extends the claim deadline for an active restore item.
-func HeartbeatRestoreItem(ctx context.Context, database *sql.DB, itemID, runID, workerID string, claimEpoch int64) error {
-	return db.HeartbeatRestoreItemContext(ctx, database, itemID, runID, workerID, claimEpoch)
+func HeartbeatRestoreItem(ctx context.Context, database *sql.DB, lease db.Lease, runID, workerID string) error {
+	return db.HeartbeatRestoreItemContext(ctx, database, lease, runID, workerID)
 }
 
 // RecoverStaleRestoreItems resets expired running restore items back to PENDING.

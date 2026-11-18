@@ -27,7 +27,7 @@ type RestoreStore interface {
 
 	// Item execution. Item mutations carry the claim epoch that fences a lost lease.
 	ClaimNextRestoreItemForWorkerContext(ctx context.Context, workerID string) (*RestoreItem, error)
-	HeartbeatRestoreItemContext(ctx context.Context, itemID, runID, workerID string, claimEpoch int64) error
+	HeartbeatRestoreItemContext(ctx context.Context, lease Lease, runID, workerID string) error
 	RecoverStaleRestoreItemsContext(ctx context.Context) (int64, error)
 	SkipBlockedRestoreItemsContext(ctx context.Context) (int64, error)
 	ListRestoreItemBlocksContext(ctx context.Context, itemID, runID string) ([]RestoreItemBlock, error)
@@ -115,8 +115,8 @@ func (s postgresRestoreStore) ClaimNextRestoreItemForWorkerContext(ctx context.C
 	return ClaimNextRestoreItemForWorkerContext(ctx, s.db, workerID)
 }
 
-func (s postgresRestoreStore) HeartbeatRestoreItemContext(ctx context.Context, itemID, runID, workerID string, claimEpoch int64) error {
-	return HeartbeatRestoreItemContext(ctx, s.db, itemID, runID, workerID, claimEpoch)
+func (s postgresRestoreStore) HeartbeatRestoreItemContext(ctx context.Context, lease Lease, runID, workerID string) error {
+	return HeartbeatRestoreItemContext(ctx, s.db, lease, runID, workerID)
 }
 
 func (s postgresRestoreStore) RecoverStaleRestoreItemsContext(ctx context.Context) (int64, error) {

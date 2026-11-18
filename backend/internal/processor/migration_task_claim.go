@@ -29,7 +29,7 @@ func (p *Processor) claimMigrationTask(ctx context.Context, payload *queue.Paylo
 	migrationThrottler := throttler.(*throttle.MigrationThrottler)
 
 	if mig.Status == "PAUSED_CONNECTION_LOSS" || mig.Status == "PAUSED" {
-		if err := db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "PENDING"); err != nil {
+		if err := db.TransitionClaimedTask(p.db, ctx, payload.Lease(), "PENDING"); err != nil {
 			processorLogf("[Worker %s] Failed to requeue paused task %s: %v", p.workerID, payload.TaskID, err)
 		}
 		return ctx, nil, true, nil
@@ -37,19 +37,19 @@ func (p *Processor) claimMigrationTask(ctx context.Context, payload *queue.Paylo
 
 	ctx = storage.WithLocalUserScope(ctx, mig.UserID.String)
 	if mig.Status == "COMPLETED" || mig.Status == "COMPLETED_WITH_ERRORS" || mig.Status == "FAILED" {
-		if err := db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "SKIPPED"); err != nil {
+		if err := db.TransitionClaimedTask(p.db, ctx, payload.Lease(), "SKIPPED"); err != nil {
 			processorLogf("[Worker %s] Failed to skip terminal migration task %s: %v", p.workerID, payload.TaskID, err)
 		}
 		return ctx, nil, true, nil
 	}
 	if mig.Status == "CANCELLED" {
-		if err := db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "CANCELLED"); err != nil {
+		if err := db.TransitionClaimedTask(p.db, ctx, payload.Lease(), "CANCELLED"); err != nil {
 			processorLogf("[Worker %s] Failed to cancel task %s: %v", p.workerID, payload.TaskID, err)
 		}
 		return ctx, nil, true, nil
 	}
 	if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
-		if err := db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "PENDING"); err != nil {
+		if err := db.TransitionClaimedTask(p.db, ctx, payload.Lease(), "PENDING"); err != nil {
 			processorLogf("[Worker %s] Failed to requeue task %s in migration state %s: %v", p.workerID, payload.TaskID, mig.Status, err)
 		}
 		return ctx, nil, false, fmt.Errorf("migration is in state %s, task skipped for now", mig.Status)

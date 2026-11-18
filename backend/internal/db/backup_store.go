@@ -59,7 +59,7 @@ type BackupStore interface {
 	MarkBackupPackDamagedContext(ctx context.Context, jobID, packID string) error
 	SnapshotBackupVerifyTargetsContext(ctx context.Context, maintenanceID, backupJobID string) error
 	ClaimNextBackupVerifyTargetContext(ctx context.Context, maintenanceID, workerID string) (*BackupVerifyTarget, error)
-	ReleaseBackupVerifyTargetClaimContext(ctx context.Context, targetID string, claimEpoch int64) error
+	ReleaseBackupVerifyTargetClaimContext(ctx context.Context, lease Lease) error
 	CompleteBackupVerifyTargetContext(ctx context.Context, lease Lease, exists bool, expectedSize, actualSize int64) (string, error)
 	MarkBackupVerifyTargetReadContext(ctx context.Context, lease Lease, bytes int64) error
 	MarkBackupVerifyTargetDamagedContext(ctx context.Context, lease Lease) error
@@ -234,8 +234,8 @@ func (s postgresBackupStore) ClaimNextBackupVerifyTargetContext(ctx context.Cont
 	return ClaimNextBackupVerifyTargetContext(ctx, s.db, maintenanceID, workerID)
 }
 
-func (s postgresBackupStore) ReleaseBackupVerifyTargetClaimContext(ctx context.Context, targetID string, claimEpoch int64) error {
-	return ReleaseBackupVerifyTargetClaimContext(ctx, s.db, targetID, claimEpoch)
+func (s postgresBackupStore) ReleaseBackupVerifyTargetClaimContext(ctx context.Context, lease Lease) error {
+	return ReleaseBackupVerifyTargetClaimContext(ctx, s.db, lease)
 }
 
 func (s postgresBackupStore) CompleteBackupVerifyTargetContext(ctx context.Context, lease Lease, exists bool, expectedSize, actualSize int64) (string, error) {

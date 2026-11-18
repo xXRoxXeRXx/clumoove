@@ -440,8 +440,11 @@ func ClaimNextBackupVerifyTargetContext(ctx context.Context, database *sql.DB, m
 	return target, nil
 }
 
-func ReleaseBackupVerifyTargetClaimContext(ctx context.Context, database *sql.DB, targetID string, claimEpoch int64) error {
-	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET state = 'PENDING', worker_hash = NULL, claim_deadline = NULL WHERE id = $1 AND state = 'RUNNING' AND claim_epoch = $2`, targetID, claimEpoch)
+func ReleaseBackupVerifyTargetClaimContext(ctx context.Context, database *sql.DB, lease Lease) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET state = 'PENDING', worker_hash = NULL, claim_deadline = NULL WHERE id = $1 AND state = 'RUNNING' AND claim_epoch = $2`, lease.ID, lease.Epoch)
 	return err
 }
 

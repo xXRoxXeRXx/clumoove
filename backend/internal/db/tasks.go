@@ -44,6 +44,9 @@ type Task struct {
 
 // IsDirectory reports whether the task represents a directory entry rather than
 // a file transfer.
+// Lease returns the worker claim this Task was dequeued under.
+func (t *Task) Lease() Lease { return Lease{ID: t.ID, Epoch: t.ClaimEpoch} }
+
 func (t *Task) IsDirectory() bool {
 	if t == nil {
 		return false
@@ -173,8 +176,11 @@ func UpdateClaimedTaskStatus(db *sql.DB, ctx context.Context, t *Task) error {
 }
 
 // HeartbeatTaskClaim refreshes only the active fenced claim.
-func HeartbeatTaskClaim(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64) (bool, error) {
-	res, err := db.ExecContext(ctx, `UPDATE tasks SET updated_at = NOW() WHERE id = $1 AND status = 'RUNNING' AND claim_epoch = $2`, taskID, claimEpoch)
+func HeartbeatTaskClaim(db *sql.DB, ctx context.Context, lease Lease) (bool, error) {
+	if err := lease.validate(); err != nil {
+		return false, err
+	}
+	res, err := db.ExecContext(ctx, `UPDATE tasks SET updated_at = NOW() WHERE id = $1 AND status = 'RUNNING' AND claim_epoch = $2`, lease.ID, lease.Epoch)
 	if err != nil {
 		return false, err
 	}
@@ -184,8 +190,11 @@ func HeartbeatTaskClaim(db *sql.DB, ctx context.Context, taskID string, claimEpo
 
 // HeartbeatSyncTaskClaim refreshes only a claim belonging to the active sync
 // generation. A superseded worker observes false and cancels its stream.
-func HeartbeatSyncTaskClaim(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64, generation int) (bool, error) {
-	res, err := db.ExecContext(ctx, `UPDATE tasks AS t SET updated_at = NOW() WHERE t.id = $1 AND t.status = 'RUNNING' AND t.claim_epoch = $2 AND t.pass_generation = $3 AND EXISTS (SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id AND sj.run_generation = $3)`, taskID, claimEpoch, generation)
+func HeartbeatSyncTaskClaim(db *sql.DB, ctx context.Context, lease Lease, generation int) (bool, error) {
+	if err := lease.validate(); err != nil {
+		return false, err
+	}
+	res, err := db.ExecContext(ctx, `UPDATE tasks AS t SET updated_at = NOW() WHERE t.id = $1 AND t.status = 'RUNNING' AND t.claim_epoch = $2 AND t.pass_generation = $3 AND EXISTS (SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id AND sj.run_generation = $3)`, lease.ID, lease.Epoch, generation)
 	if err != nil {
 		return false, err
 	}
@@ -195,8 +204,11 @@ func HeartbeatSyncTaskClaim(db *sql.DB, ctx context.Context, taskID string, clai
 
 // TransitionClaimedTask applies an early worker transition before a Task has
 // been loaded, while still fencing it to the payload's dequeue claim.
-func TransitionClaimedTask(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64, status string) error {
-	res, err := db.ExecContext(ctx, `UPDATE tasks SET status = $1, worker_hash = NULL, updated_at = NOW() WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3`, status, taskID, claimEpoch)
+func TransitionClaimedTask(db *sql.DB, ctx context.Context, lease Lease, status string) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	res, err := db.ExecContext(ctx, `UPDATE tasks SET status = $1, worker_hash = NULL, updated_at = NOW() WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3`, status, lease.ID, lease.Epoch)
 	if err != nil {
 		return err
 	}
@@ -315,8 +327,11 @@ func MarkAllMigrationTasksVerified(db *sql.DB, ctx context.Context, migrationID 
 
 // UpdateClaimedTaskResolvedTargetPath persists the destination selected for a
 // migration task without ever changing its source-provider file_path.
-func UpdateClaimedTaskResolvedTargetPath(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64, targetPath string) error {
-	res, err := db.ExecContext(ctx, `UPDATE tasks SET resolved_target_path = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3`, targetPath, taskID, claimEpoch)
+func UpdateClaimedTaskResolvedTargetPath(db *sql.DB, ctx context.Context, lease Lease, targetPath string) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	res, err := db.ExecContext(ctx, `UPDATE tasks SET resolved_target_path = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3`, targetPath, lease.ID, lease.Epoch)
 	if err != nil {
 		return err
 	}
@@ -331,8 +346,11 @@ func UpdateClaimedTaskResolvedTargetPath(db *sql.DB, ctx context.Context, taskID
 // UpdateClaimedTaskMetadata persists task metadata only while this exact
 // worker claim remains RUNNING. It prevents a recovered worker from attaching
 // target identity to a later transfer attempt.
-func UpdateClaimedTaskMetadata(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64, metadata json.RawMessage) error {
-	res, err := db.ExecContext(ctx, `UPDATE tasks SET metadata = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3`, metadata, taskID, claimEpoch)
+func UpdateClaimedTaskMetadata(db *sql.DB, ctx context.Context, lease Lease, metadata json.RawMessage) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	res, err := db.ExecContext(ctx, `UPDATE tasks SET metadata = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3`, metadata, lease.ID, lease.Epoch)
 	if err != nil {
 		return err
 	}

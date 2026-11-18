@@ -150,7 +150,7 @@ func TestRestoreStoreForwardsClaimEpoch(t *testing.T) {
 	database, rec := openRecordingDB(t)
 	store := NewRestoreStore(database)
 
-	if err := store.HeartbeatRestoreItemContext(context.Background(), "item-1", "run-1", "worker-1", 4); err != nil {
+	if err := store.HeartbeatRestoreItemContext(context.Background(), Lease{ID: "item-1", Epoch: 4}, "run-1", "worker-1"); err != nil {
 		t.Fatalf("HeartbeatRestoreItemContext() error: %v", err)
 	}
 
