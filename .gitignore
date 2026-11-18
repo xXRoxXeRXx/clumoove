@@ -46,3 +46,6 @@ frontend/*.local
 # Logs
 *.log
 logs/
+# Installed agent skills
+.claude/skills/
+skills-lock.json
