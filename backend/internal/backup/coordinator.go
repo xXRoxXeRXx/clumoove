@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	cryptorand "crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"math/big"
@@ -1173,8 +1175,16 @@ func (c *Coordinator) backupFile(ctx context.Context, job *db.BackupJob, source 
 		if err != nil {
 			return pendingFile{}, false, err
 		}
+		var sha1Hasher hash.Hash
+		var expectedSHA1 string
+		var splitReader io.Reader = reader
+		if algo, val := storage.ParseHashString(current.Hash); algo == "SHA1" && val != "" {
+			sha1Hasher = sha1.New()
+			expectedSHA1 = val
+			splitReader = io.TeeReader(reader, sha1Hasher)
+		}
 		blockIDs := make([]string, 0)
-		fileHash, err := backuprepo.SplitBlocks(ctx, reader, func(entry backuprepo.Entry) error {
+		fileHash, err := backuprepo.SplitBlocks(ctx, splitReader, func(entry backuprepo.Entry) error {
 			hashKey := string(entry.Hash[:])
 			if blockID, found := builder.catalogBlockID(hashKey); found {
 				blockIDs = append(blockIDs, blockID)
@@ -1210,6 +1220,9 @@ func (c *Coordinator) backupFile(ctx context.Context, job *db.BackupJob, source 
 		}
 		if closeErr != nil {
 			return pendingFile{}, false, closeErr
+		}
+		if sha1Hasher != nil && !strings.EqualFold(hex.EncodeToString(sha1Hasher.Sum(nil)), expectedSHA1) {
+			return pendingFile{}, false, fmt.Errorf("backup source sha1 mismatch for %s", file.relativePath)
 		}
 		after, err := source.InspectResource(ctx, "files", file.sourcePath)
 		if err != nil {
@@ -1394,6 +1407,12 @@ func scanFiles(ctx context.Context, source sourceScanner, selected []string, exc
 		if isBackupPathWithin(excludedRoot, resource.Path) {
 			continue
 		}
+		if resource.IsPersonalVault() {
+			continue
+		}
+		if _, skip := resource.BoxSkipReason(); skip {
+			continue
+		}
 		if resource.IsDir {
 			if _, ok := seen["d:"+resource.Path]; !ok {
 				seen["d:"+resource.Path] = struct{}{}
@@ -1452,6 +1471,12 @@ func scanFiles(ctx context.Context, source sourceScanner, selected []string, exc
 				return nil, nil, runStats{}, errors.New("backup listing returned a non-child path")
 			}
 			if isBackupPathWithin(excludedRoot, child.Path) {
+				continue
+			}
+			if child.IsPersonalVault() {
+				continue
+			}
+			if _, skip := child.BoxSkipReason(); skip {
 				continue
 			}
 			if child.IsDir {
