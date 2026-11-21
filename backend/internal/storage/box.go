@@ -180,18 +180,54 @@ func (p *BoxProvider) doWithClient(ctx context.Context, client *http.Client, req
 }
 
 func boxAPIError(op string, statusCode int) error {
+	return boxAPIErrorWithCode(op, statusCode, "")
+}
+
+func boxAPIErrorWithCode(op string, statusCode int, code string) error {
+	prefix := "box " + op
+	if code != "" {
+		prefix = fmt.Sprintf("box %s (%s)", op, code)
+	}
 	switch statusCode {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("box %s: %w", op, ErrAuth)
+		return fmt.Errorf("%s: %w", prefix, ErrAuth)
 	case http.StatusForbidden:
-		return fmt.Errorf("box %s: %w", op, ErrPermission)
+		return fmt.Errorf("%s: %w", prefix, ErrPermission)
 	case http.StatusNotFound:
-		return fmt.Errorf("box %s: %w", op, ErrNotFound)
+		return fmt.Errorf("%s: %w", prefix, ErrNotFound)
 	case http.StatusConflict:
-		return fmt.Errorf("box %s: %w", op, ErrManagerConflict)
+		return fmt.Errorf("%s: %w", prefix, ErrManagerConflict)
 	default:
-		return fmt.Errorf("box %s failed with status %d", op, statusCode)
+		return fmt.Errorf("%s failed with status %d", prefix, statusCode)
 	}
+}
+
+func boxResponseError(op string, resp *http.Response) error {
+	var code string
+	if resp.Body != nil {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body); err == nil {
+			if isSafeBoxErrorCode(body.Code) {
+				code = body.Code
+			}
+		}
+	}
+	return boxAPIErrorWithCode(op, resp.StatusCode, code)
+}
+
+func isSafeBoxErrorCode(code string) bool {
+	if code == "" || len(code) > 64 {
+		return false
+	}
+	for i := 0; i < len(code); i++ {
+		c := code[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *BoxProvider) Connect(ctx context.Context) (bool, error) {
@@ -286,10 +322,32 @@ func boxItemModTime(item boxItem) time.Time {
 	return parseBoxTime(item.ModifiedAt)
 }
 
+func boxNonTransferableKind(item boxItem) string {
+	switch item.Type {
+	case "web_link":
+		return "web_link"
+	case "file":
+		lowerName := strings.ToLower(item.Name)
+		switch {
+		case strings.HasSuffix(lowerName, ".boxnote"):
+			return "box_note"
+		case strings.HasSuffix(lowerName, ".boxcanvas"):
+			return "box_canvas"
+		}
+	}
+	return ""
+}
+
 func boxCloudResource(item boxItem, fullPath string) CloudResource {
 	hash := ""
 	if item.SHA1 != "" {
 		hash = "SHA1:" + strings.ToLower(item.SHA1)
+	}
+	var metadata FileMetadata
+	if kind := boxNonTransferableKind(item); kind != "" {
+		metadata.CustomProps = map[string]string{
+			"box_non_transferable_kind": kind,
+		}
 	}
 	return CloudResource{
 		Path:         fullPath,
@@ -298,6 +356,7 @@ func boxCloudResource(item boxItem, fullPath string) CloudResource {
 		IsDir:        item.Type == "folder",
 		Hash:         hash,
 		LastModified: boxItemModTime(item),
+		Metadata:     metadata,
 	}
 }
 
@@ -313,7 +372,7 @@ func (p *BoxProvider) doJSON(ctx context.Context, method, rawURL string, body io
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return boxAPIError(op, resp.StatusCode)
+		return boxResponseError(op, resp)
 	}
 	if dst == nil {
 		return nil
@@ -485,6 +544,9 @@ func (p *BoxProvider) resolveFileID(ctx context.Context, filePath string) (strin
 	if item.Type == "folder" {
 		return "", fmt.Errorf("box path %q is a folder: %w", canonicalPath, ErrNotFound)
 	}
+	if reason, skip := boxCloudResource(item, canonicalPath).BoxSkipReason(); skip {
+		return "", fmt.Errorf("box path %q (%s): %w", canonicalPath, reason, ErrPermanentTransfer)
+	}
 	if item.Type != "file" {
 		return "", fmt.Errorf("box path %q has non-file type %q: %w", canonicalPath, item.Type, ErrPermanentTransfer)
 	}
@@ -573,8 +635,9 @@ func (p *BoxProvider) streamDownloadByID(ctx context.Context, fileID string) (io
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		err := boxResponseError("download", resp)
 		resp.Body.Close()
-		return nil, boxAPIError("download", resp.StatusCode)
+		return nil, err
 	}
 	return resp.Body, nil
 }
@@ -608,8 +671,9 @@ func (p *BoxProvider) StreamDownloadRange(ctx context.Context, resourceType, fil
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
+		err := boxResponseError("range download", resp)
 		resp.Body.Close()
-		return nil, boxAPIError("range download", resp.StatusCode)
+		return nil, err
 	}
 	return ValidateHTTPRangeResponse(resp, offset, length)
 }

@@ -109,15 +109,46 @@ func TestBulkCreateMigrationTasksWhileIndexingPersistsSourceHash(t *testing.T) {
 	if !created {
 		t.Fatal("BulkCreateMigrationTasksWhileIndexing() created = false, want true")
 	}
-	const wantInsert = "INSERT INTO tasks (migration_id, resource_type, file_path, file_size, source_hash, status, metadata)"
+	const wantInsert = "INSERT INTO tasks (migration_id, resource_type, file_path, file_size, source_hash, status, metadata, error_message)"
 	if normalized := strings.Join(strings.Fields(state.execQuery), " "); !strings.Contains(normalized, wantInsert) {
 		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() INSERT columns = %q, want ordered source_hash column", normalized)
 	}
-	if len(state.execArgs) != 7 {
-		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() argument count = %d, want 7", len(state.execArgs))
+	if len(state.execArgs) != 8 {
+		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() argument count = %d, want 8", len(state.execArgs))
 	}
 	if got := state.execArgs[4].Value; got != task.SourceHash.String {
 		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() source_hash argument = %#v, want %#v", got, task.SourceHash.String)
+	}
+}
+
+func TestBulkCreateMigrationTasksWhileIndexingPersistsErrorMessage(t *testing.T) {
+	database, state := newCreateTaskTestDB(t)
+	task := &Task{
+		MigrationID:  "migration-4",
+		ResourceType: "files",
+		FilePath:     "/Docs/Meeting.boxnote",
+		FileSize:     0,
+		Status:       "SKIPPED",
+		ErrorMessage: sql.NullString{String: "Box Notes (.boxnote) cannot be migrated through the API", Valid: true},
+		Metadata:     json.RawMessage(`{}`),
+	}
+
+	created, err := BulkCreateMigrationTasksWhileIndexing(context.Background(), database, task.MigrationID, []*Task{task})
+	if err != nil {
+		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() error = %v", err)
+	}
+	if !created {
+		t.Fatal("BulkCreateMigrationTasksWhileIndexing() created = false, want true")
+	}
+	const wantInsert = "INSERT INTO tasks (migration_id, resource_type, file_path, file_size, source_hash, status, metadata, error_message)"
+	if normalized := strings.Join(strings.Fields(state.execQuery), " "); !strings.Contains(normalized, wantInsert) {
+		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() INSERT columns = %q, want error_message column", normalized)
+	}
+	if len(state.execArgs) != 8 {
+		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() argument count = %d, want 8", len(state.execArgs))
+	}
+	if got := state.execArgs[7].Value; got != task.ErrorMessage.String {
+		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() error_message argument = %#v, want %#v", got, task.ErrorMessage.String)
 	}
 }
 
