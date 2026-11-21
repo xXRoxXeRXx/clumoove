@@ -151,10 +151,13 @@ func TestExecuteSyncTransferRecordsTargetStreamHash(t *testing.T) {
 		{"hidrive target records HIDRIVE", "nextcloud", "hidrive", "HIDRIVE:" + hidriveHash(data)},
 		{"dropbox source keeps its own algorithm", "dropbox", "dropbox", "DROPBOX:" + dropboxHash(data)},
 		{"box target records SHA1", "nextcloud", "box", fmt.Sprintf("SHA1:%x", sha1.Sum(data))},
+		{"s3 to box records SHA1", "s3", "box", fmt.Sprintf("SHA1:%x", sha1.Sum(data))},
 		{"dropbox to box records SHA1", "dropbox", "box", fmt.Sprintf("SHA1:%x", sha1.Sum(data))},
 		{"google to box records SHA1", "google", "box", fmt.Sprintf("SHA1:%x", sha1.Sum(data))},
 		{"onedrive to box records SHA1", "onedrive", "box", fmt.Sprintf("SHA1:%x", sha1.Sum(data))},
 		{"box source to nextcloud records SHA1", "box", "nextcloud", fmt.Sprintf("SHA1:%x", sha1.Sum(data))},
+		{"box source to google records MD5", "box", "google", fmt.Sprintf("MD5:%x", md5.Sum(data))},
+		{"box source to s3 records SHA256", "box", "s3", fmt.Sprintf("SHA256:%x", sha256.Sum256(data))},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -203,6 +206,7 @@ func TestExecuteSyncTransferForwardsSourceChecksum(t *testing.T) {
 		wantChecksum string
 	}{
 		{"parsed source hash is forwarded", "nextcloud", "SHA1:ABCDEF", "SHA1:abcdef"},
+		{"box SHA1 source hash is forwarded", "box", "SHA1:ABCDEF", "SHA1:abcdef"},
 		{"webdav source hash is ignored", "webdav", "SHA1:abcdef", ""},
 		{"hidrive native hash is ignored", "hidrive", "HIDRIVE:abcdef", ""},
 		{"no source hash forwards nothing", "nextcloud", "", ""},
