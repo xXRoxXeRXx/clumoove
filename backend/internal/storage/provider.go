@@ -146,6 +146,16 @@ func (r CloudResource) BoxSkipReason() (string, bool) {
 	}
 }
 
+// NonTransferableReason reports whether a resource cannot be transferred by
+// background API jobs (OneDrive Personal Vault or proprietary Box items) and
+// returns a user-visible skip reason when true.
+func (r CloudResource) NonTransferableReason() (string, bool) {
+	if r.IsPersonalVault() {
+		return "OneDrive Personal Vault cannot be migrated through the API", true
+	}
+	return r.BoxSkipReason()
+}
+
 type FileInfo struct {
 	Path    string    `json:"path"`
 	Size    int64     `json:"size"`

@@ -126,8 +126,6 @@ func transferSourceHasher(provider, sourceHash string) (string, string, hash.Has
 		algo = "MD5"
 	case "onedrive":
 		algo = "QUICKXOR"
-	case "box":
-		algo = "SHA1"
 	}
 	switch algo {
 	case "MD5":
@@ -155,8 +153,6 @@ func transferTargetHasher(provider string) (string, hash.Hash) {
 		return "HIDRIVE", storage.NewHiDriveHasher()
 	case "onedrive":
 		return "QUICKXOR", storage.NewQuickXorHasher()
-	case "box":
-		return "SHA1", sha1.New()
 	default:
 		return "SHA1", sha1.New()
 	}

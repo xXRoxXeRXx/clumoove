@@ -46,3 +46,18 @@ func TestIsConnectionFailure(t *testing.T) {
 		t.Fatal("permission errors must not reset a healthy provider session")
 	}
 }
+
+func TestCloudResourceNonTransferableReason(t *testing.T) {
+	vault := CloudResource{Metadata: FileMetadata{CustomProps: map[string]string{"onedrive_special_folder": "vault"}}}
+	if reason, skip := vault.NonTransferableReason(); !skip || reason == "" {
+		t.Fatalf("vault.NonTransferableReason() = (%q, %v), want non-empty reason and true", reason, skip)
+	}
+	boxNote := CloudResource{Metadata: FileMetadata{CustomProps: map[string]string{"box_non_transferable_kind": "box_note"}}}
+	if reason, skip := boxNote.NonTransferableReason(); !skip || reason == "" {
+		t.Fatalf("boxNote.NonTransferableReason() = (%q, %v), want non-empty reason and true", reason, skip)
+	}
+	regular := CloudResource{Name: "doc.pdf"}
+	if reason, skip := regular.NonTransferableReason(); skip || reason != "" {
+		t.Fatalf("regular.NonTransferableReason() = (%q, %v), want (\"\", false)", reason, skip)
+	}
+}

@@ -155,9 +155,32 @@ func (s *boxTestServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusFound)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/content":
 		s.handleUpload(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/2.0/files/"):
+		fileID := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
+		s.handleDeleteFile(w, fileID)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (s *boxTestServer) handleDeleteFile(w http.ResponseWriter, fileID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.items[fileID]
+	if !ok || item.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	children := s.children[item.ParentID]
+	filtered := make([]string, 0, len(children))
+	for _, cid := range children {
+		if cid != fileID {
+			filtered = append(filtered, cid)
+		}
+	}
+	s.children[item.ParentID] = filtered
+	delete(s.items, fileID)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *boxTestServer) handleGetItem(w http.ResponseWriter, id, wantType string) {
@@ -376,6 +399,8 @@ type inMemoryBoxBackupStore struct {
 	packs       map[string]db.BackupPack
 	blocks      map[string]string
 	checkedPack []string
+	reclaimable []db.BackupPack
+	deletedPack []string
 	nextSeq     int
 }
 
@@ -504,6 +529,24 @@ func (s *inMemoryBoxBackupStore) FailBackupRunContext(_ context.Context, _ strin
 	s.run.State = "FAILED"
 	s.run.ErrorCode = sql.NullString{String: errorCode, Valid: true}
 	return true, nil
+}
+func (s *inMemoryBoxBackupStore) ExpireBackupSnapshotsContext(context.Context, string, int) error {
+	return nil
+}
+func (s *inMemoryBoxBackupStore) ListBackupReclaimablePacksContext(context.Context, string, int) ([]db.BackupPack, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]db.BackupPack(nil), s.reclaimable...), nil
+}
+func (s *inMemoryBoxBackupStore) MarkBackupPackDeletedContext(_ context.Context, _ string, packID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deletedPack = append(s.deletedPack, packID)
+	delete(s.packs, packID)
+	return nil
+}
+func (s *inMemoryBoxBackupStore) FindBackupCompactionCandidateContext(context.Context, string) (*db.BackupPack, error) {
+	return nil, nil
 }
 func (s *inMemoryBoxBackupStore) listVisibleSnapshots() []*db.BackupSnapshot {
 	s.mu.Lock()
@@ -685,5 +728,34 @@ func TestBackupFromBoxVerifiesSHA1AndSkipsNonTransferableItems(t *testing.T) {
 	}
 	if badRun.State != "FAILED" {
 		t.Fatalf("badRun.State = %q, want FAILED when Box source SHA-1 mismatches download bytes", badRun.State)
+	}
+}
+
+func TestBackupIntoBoxRetentionDeletesExpiredPacks(t *testing.T) {
+	boxSrv := newBoxTestServer("box-retention-token")
+	defer boxSrv.close()
+	backupsID := boxSrv.addFolder("0", "backups")
+	clumooveID := boxSrv.addFolder(backupsID, ".clumoove-backup")
+	repoDirID := boxSrv.addFolder(clumooveID, "repo-ret")
+	packsID := boxSrv.addFolder(repoDirID, "packs")
+	boxSrv.addFile(packsID, "expired.pack", []byte("stale-pack-bytes"), "2026-01-01T00:00:00Z")
+
+	boxTarget := boxSrv.newProvider(t)
+	defer boxTarget.Close()
+
+	packPath := "/backups/.clumoove-backup/repo-ret/packs/expired.pack"
+	job := &db.BackupJob{ID: "bjob-ret", RetentionCount: 1}
+	store := newInMemoryBoxBackupStore(job, &db.BackupRun{ID: "brun-ret"})
+	store.reclaimable = []db.BackupPack{{ID: "pack-expired", RemotePath: packPath}}
+
+	coord := &Coordinator{store: store}
+	if err := coord.applyRetention(context.Background(), job, boxTarget); err != nil {
+		t.Fatalf("applyRetention(Box): %v", err)
+	}
+	if exists, _, err := boxTarget.FileExists(context.Background(), "files", packPath); err != nil || exists {
+		t.Fatalf("expired pack FileExists = (%v, %v), want (false, nil)", exists, err)
+	}
+	if len(store.deletedPack) != 1 || store.deletedPack[0] != "pack-expired" {
+		t.Fatalf("deletedPack = %+v, want [pack-expired]", store.deletedPack)
 	}
 }

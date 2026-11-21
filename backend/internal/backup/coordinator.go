@@ -1407,10 +1407,7 @@ func scanFiles(ctx context.Context, source sourceScanner, selected []string, exc
 		if isBackupPathWithin(excludedRoot, resource.Path) {
 			continue
 		}
-		if resource.IsPersonalVault() {
-			continue
-		}
-		if _, skip := resource.BoxSkipReason(); skip {
+		if _, skip := resource.NonTransferableReason(); skip {
 			continue
 		}
 		if resource.IsDir {
@@ -1473,10 +1470,7 @@ func scanFiles(ctx context.Context, source sourceScanner, selected []string, exc
 			if isBackupPathWithin(excludedRoot, child.Path) {
 				continue
 			}
-			if child.IsPersonalVault() {
-				continue
-			}
-			if _, skip := child.BoxSkipReason(); skip {
+			if _, skip := child.NonTransferableReason(); skip {
 				continue
 			}
 			if child.IsDir {

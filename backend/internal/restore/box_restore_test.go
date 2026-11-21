@@ -146,6 +146,9 @@ func (s *boxRestoreFakeServer) handleAPI(w http.ResponseWriter, r *http.Request)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/files/"):
 		fileID := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
 		s.handleGetItem(w, fileID, "file")
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/2.0/files/"):
+		fileID := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
+		s.handleDeleteFile(w, fileID)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/content":
 		s.handleUpload(w, r, "")
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
@@ -161,6 +164,26 @@ func (s *boxRestoreFakeServer) reportedSHA1(item boxRestoreItemRecord) string {
 		return strings.Repeat("0", 40)
 	}
 	return item.SHA1
+}
+
+func (s *boxRestoreFakeServer) handleDeleteFile(w http.ResponseWriter, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.items[id]
+	if !ok || item.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	children := s.children[item.ParentID]
+	filtered := make([]string, 0, len(children))
+	for _, cid := range children {
+		if cid != id {
+			filtered = append(filtered, cid)
+		}
+	}
+	s.children[item.ParentID] = filtered
+	delete(s.items, id)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *boxRestoreFakeServer) handleGetItem(w http.ResponseWriter, id, wantType string) {
@@ -459,6 +482,12 @@ func (s *inMemoryBoxRestoreStore) CompleteRestoreItemContext(_ context.Context, 
 	s.verification = verificationKind
 	return true, nil
 }
+func (s *inMemoryBoxRestoreStore) CompleteRestoreDirectoryContext(_ context.Context, _ db.Lease, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.completed = true
+	return nil
+}
 func (s *inMemoryBoxRestoreStore) WarnRestoreItemContext(_ context.Context, _ db.Lease, _ string, code string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -694,5 +723,37 @@ func TestRestoreIntoBoxOverwriteExistingFile(t *testing.T) {
 	got, ok := targetSrv.getFileContent(existingFileID)
 	if !ok || !bytes.Equal(got, newPayload) {
 		t.Fatalf("existing file ID %s content = (%q, %v), want %q", existingFileID, got, ok, newPayload)
+	}
+}
+
+func TestRestoreIntoBoxDirectoryOverwriteDeletesBlockingFile(t *testing.T) {
+	targetSrv := newBoxRestoreFakeServer("box-target-token")
+	defer targetSrv.close()
+
+	restoredID := targetSrv.addFolder("0", "restored")
+	targetSrv.addFile(restoredID, "docs", []byte("blocking-file"))
+
+	boxTarget := targetSrv.newProvider(t)
+	defer boxTarget.Close()
+
+	store := &inMemoryBoxRestoreStore{}
+	coord := &Coordinator{store: store}
+	item := &db.RestoreItem{
+		ID:           "ritem-dir-1",
+		RestoreRunID: "rrun-dir-1",
+		IsDir:        true,
+		TargetPath:   "/restored/docs",
+		ClaimEpoch:   1,
+	}
+
+	if err := coord.restoreDirectory(context.Background(), boxTarget, item, "OVERWRITE"); err != nil {
+		t.Fatalf("restoreDirectory(OVERWRITE blocking file): %v", err)
+	}
+	if !store.completed {
+		t.Fatal("restoreDirectory did not mark directory item completed")
+	}
+	res, err := boxTarget.InspectResource(context.Background(), "files", "/restored/docs")
+	if err != nil || !res.IsDir {
+		t.Fatalf("InspectResource(/restored/docs) = (%+v, %v), want IsDir=true", res, err)
 	}
 }
