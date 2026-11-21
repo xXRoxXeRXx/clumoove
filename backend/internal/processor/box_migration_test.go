@@ -27,6 +27,7 @@ import (
 	"backend/internal/indexer"
 	"backend/internal/queue"
 	"backend/internal/storage"
+	"backend/internal/throttle"
 )
 
 type boxSHA1TargetProvider struct {
@@ -1048,10 +1049,19 @@ type boxFullFakeServer struct {
 	children        map[string][]string
 	sessions        map[string]*boxFakeSession
 	abortedSessions []string
+	requests        []string
 	uploadPosts     int
 	partSize        int64
 	faultHook       func(r *http.Request) (status int, retryAfter, body string)
 	nextID          int
+}
+
+type boxFakeFileVersion struct {
+	Size              int64
+	SHA1              string
+	Content           []byte
+	ModifiedAt        string
+	ContentModifiedAt string
 }
 
 type boxFakeItem struct {
@@ -1064,10 +1074,12 @@ type boxFakeItem struct {
 	Content           []byte
 	ModifiedAt        string
 	ContentModifiedAt string
+	Versions          []boxFakeFileVersion
 }
 
 type boxFakeSession struct {
 	ID       string
+	FileID   string
 	FolderID string
 	FileName string
 	FileSize int64
@@ -1112,6 +1124,8 @@ func (s *boxFullFakeServer) addFolder(parentID, name string) string {
 
 func (s *boxFullFakeServer) addFile(parentID, name string, content []byte, mtime string) string {
 	sum := sha1.Sum(content)
+	sha1Hex := hex.EncodeToString(sum[:])
+	copied := append([]byte(nil), content...)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.nextID++
@@ -1121,22 +1135,47 @@ func (s *boxFullFakeServer) addFile(parentID, name string, content []byte, mtime
 		Type:              "file",
 		Name:              name,
 		ParentID:          parentID,
-		Size:              int64(len(content)),
-		SHA1:              hex.EncodeToString(sum[:]),
-		Content:           append([]byte(nil), content...),
+		Size:              int64(len(copied)),
+		SHA1:              sha1Hex,
+		Content:           copied,
 		ModifiedAt:        "2026-01-01T00:00:00Z",
 		ContentModifiedAt: mtime,
+		Versions: []boxFakeFileVersion{{
+			Size:              int64(len(copied)),
+			SHA1:              sha1Hex,
+			Content:           append([]byte(nil), copied...),
+			ModifiedAt:        "2026-01-01T00:00:00Z",
+			ContentModifiedAt: mtime,
+		}},
 	}
 	s.children[parentID] = append(s.children[parentID], id)
 	return id
 }
 
 func (s *boxFullFakeServer) handle(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/dl/") {
+		if r.Header.Get("Authorization") != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/dl/")
+		s.mu.Lock()
+		it, ok := s.items[id]
+		s.mu.Unlock()
+		if !ok || it.Type != "file" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(it.Content)
+		return
+	}
 	if r.Header.Get("Authorization") != "Bearer "+s.token {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	s.mu.Lock()
+	s.requests = append(s.requests, r.Method+" "+r.URL.RequestURI())
 	if r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/content" {
 		s.uploadPosts++
 	}
@@ -1161,10 +1200,20 @@ func (s *boxFullFakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		s.handleList(w, folderID)
 	case r.Method == http.MethodPost && r.URL.Path == "/2.0/folders":
 		s.handleCreateFolder(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
+		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/2.0/files/"), "/content")
+		w.Header().Set("Location", s.server.URL+"/dl/"+fileID)
+		w.WriteHeader(http.StatusFound)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/content":
 		s.handleSingleUpload(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
+		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/2.0/files/"), "/content")
+		s.handleSingleUploadVersion(w, r, fileID)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/upload_sessions":
 		s.handleCreateSession(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/") && strings.HasSuffix(r.URL.Path, "/upload_sessions"):
+		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/2.0/files/"), "/upload_sessions")
+		s.handleCreateNewVersionSession(w, r, fileID)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/upload_sessions/") && strings.HasSuffix(r.URL.Path, "/commit"):
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/2.0/files/upload_sessions/"), "/commit")
 		s.handleCommitSession(w, r, id)
@@ -1239,11 +1288,11 @@ func (s *boxFullFakeServer) handleCreateFolder(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(map[string]any{"id": it.ID, "type": it.Type, "name": it.Name})
 }
 
-func (s *boxFullFakeServer) handleSingleUpload(w http.ResponseWriter, r *http.Request) {
+func (s *boxFullFakeServer) parseSingleMultipart(w http.ResponseWriter, r *http.Request) (name, parentID, modAt, sha1Hex string, data []byte, ok bool) {
 	mr, err := r.MultipartReader()
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		return
+		return "", "", "", "", nil, false
 	}
 	var attr struct {
 		Name   string `json:"name"`
@@ -1252,7 +1301,6 @@ func (s *boxFullFakeServer) handleSingleUpload(w http.ResponseWriter, r *http.Re
 		} `json:"parent"`
 		ContentModifiedAt string `json:"content_modified_at"`
 	}
-	var data []byte
 	gotAttr := false
 	for {
 		part, err := mr.NextPart()
@@ -1261,47 +1309,100 @@ func (s *boxFullFakeServer) handleSingleUpload(w http.ResponseWriter, r *http.Re
 		}
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			return
+			return "", "", "", "", nil, false
 		}
 		switch part.FormName() {
 		case "attributes":
 			if err := json.NewDecoder(part).Decode(&attr); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
-				return
+				return "", "", "", "", nil, false
 			}
 			gotAttr = true
 		case "file":
 			if !gotAttr {
 				w.WriteHeader(http.StatusBadRequest)
-				return
+				return "", "", "", "", nil, false
 			}
 			data, _ = io.ReadAll(part)
 		}
 		part.Close()
 	}
 	sum := sha1.Sum(data)
-	sha1Hex := hex.EncodeToString(sum[:])
+	sha1Hex = hex.EncodeToString(sum[:])
 	if md5Hdr := r.Header.Get("content-md5"); md5Hdr != "" && !strings.EqualFold(md5Hdr, sha1Hex) {
 		w.WriteHeader(http.StatusBadRequest)
+		return "", "", "", "", nil, false
+	}
+	return attr.Name, attr.Parent.ID, attr.ContentModifiedAt, sha1Hex, data, true
+}
+
+func (s *boxFullFakeServer) handleSingleUpload(w http.ResponseWriter, r *http.Request) {
+	name, parentID, modAt, sha1Hex, data, ok := s.parseSingleMultipart(w, r)
+	if !ok {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, cid := range s.children[attr.Parent.ID] {
-		if strings.EqualFold(s.items[cid].Name, attr.Name) {
+	for _, cid := range s.children[parentID] {
+		ex := s.items[cid]
+		if strings.EqualFold(ex.Name, name) {
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"type": "error", "status": 409, "code": "item_name_in_use",
+				"context_info": map[string]any{"conflicts": map[string]any{"type": ex.Type, "id": ex.ID, "name": ex.Name}},
+			})
 			return
 		}
 	}
 	s.nextID++
 	id := strconv.Itoa(s.nextID)
+	copied := append([]byte(nil), data...)
 	it := boxFakeItem{
-		ID: id, Type: "file", Name: attr.Name, ParentID: attr.Parent.ID,
-		Size: int64(len(data)), SHA1: sha1Hex, Content: data,
-		ModifiedAt: "2026-02-01T00:00:00Z", ContentModifiedAt: attr.ContentModifiedAt,
+		ID: id, Type: "file", Name: name, ParentID: parentID,
+		Size: int64(len(copied)), SHA1: sha1Hex, Content: copied,
+		ModifiedAt: "2026-02-01T00:00:00Z", ContentModifiedAt: modAt,
+		Versions: []boxFakeFileVersion{{
+			Size: int64(len(copied)), SHA1: sha1Hex, Content: append([]byte(nil), copied...),
+			ModifiedAt: "2026-02-01T00:00:00Z", ContentModifiedAt: modAt,
+		}},
 	}
 	s.items[id] = it
-	s.children[attr.Parent.ID] = append(s.children[attr.Parent.ID], id)
+	s.children[parentID] = append(s.children[parentID], id)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"total_count": 1,
+		"entries":     []map[string]any{{"id": it.ID, "type": "file", "name": it.Name, "size": it.Size, "sha1": it.SHA1}},
+	})
+}
+
+func (s *boxFullFakeServer) handleSingleUploadVersion(w http.ResponseWriter, r *http.Request, fileID string) {
+	name, _, modAt, sha1Hex, data, ok := s.parseSingleMultipart(w, r)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, exists := s.items[fileID]
+	if !exists || it.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	copied := append([]byte(nil), data...)
+	if name != "" {
+		it.Name = name
+	}
+	it.Size = int64(len(copied))
+	it.SHA1 = sha1Hex
+	it.Content = copied
+	it.ModifiedAt = "2026-02-02T00:00:00Z"
+	it.ContentModifiedAt = modAt
+	it.Versions = append(it.Versions, boxFakeFileVersion{
+		Size: int64(len(copied)), SHA1: sha1Hex, Content: append([]byte(nil), copied...),
+		ModifiedAt: "2026-02-02T00:00:00Z", ContentModifiedAt: modAt,
+	})
+	s.items[fileID] = it
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1322,10 +1423,49 @@ func (s *boxFullFakeServer) handleCreateSession(w http.ResponseWriter, r *http.R
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, cid := range s.children[body.FolderID] {
+		ex := s.items[cid]
+		if strings.EqualFold(ex.Name, body.FileName) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"type": "error", "status": 409, "code": "item_name_in_use",
+				"context_info": map[string]any{"conflicts": map[string]any{"type": ex.Type, "id": ex.ID, "name": ex.Name}},
+			})
+			return
+		}
+	}
+	s.createSessionLocked(w, "", body.FolderID, body.FileName, body.FileSize)
+}
+
+func (s *boxFullFakeServer) handleCreateNewVersionSession(w http.ResponseWriter, r *http.Request, fileID string) {
+	var body struct {
+		FileName string `json:"file_name"`
+		FileSize int64  `json:"file_size"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, exists := s.items[fileID]
+	if !exists || it.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	name := body.FileName
+	if name == "" {
+		name = it.Name
+	}
+	s.createSessionLocked(w, fileID, it.ParentID, name, body.FileSize)
+}
+
+func (s *boxFullFakeServer) createSessionLocked(w http.ResponseWriter, fileID, folderID, fileName string, fileSize int64) {
 	s.nextID++
 	sid := "sess-" + strconv.Itoa(s.nextID)
 	s.sessions[sid] = &boxFakeSession{
-		ID: sid, FolderID: body.FolderID, FileName: body.FileName, FileSize: body.FileSize, PartSize: s.partSize, Parts: make(map[int64][]byte),
+		ID: sid, FileID: fileID, FolderID: folderID, FileName: fileName, FileSize: fileSize, PartSize: s.partSize, Parts: make(map[int64][]byte),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -1393,16 +1533,39 @@ func (s *boxFullFakeServer) handleCommitSession(w http.ResponseWriter, r *http.R
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	s.nextID++
-	id := strconv.Itoa(s.nextID)
 	sha1Hex := hex.EncodeToString(sum[:])
-	it := boxFakeItem{
-		ID: id, Type: "file", Name: sess.FileName, ParentID: sess.FolderID,
-		Size: sess.FileSize, SHA1: sha1Hex, Content: assembled,
-		ModifiedAt: "2026-02-01T00:00:00Z", ContentModifiedAt: body.Attributes.ContentModifiedAt,
+	copied := append([]byte(nil), assembled...)
+	ver := boxFakeFileVersion{
+		Size: sess.FileSize, SHA1: sha1Hex, Content: append([]byte(nil), copied...),
+		ModifiedAt: "2026-02-02T00:00:00Z", ContentModifiedAt: body.Attributes.ContentModifiedAt,
 	}
-	s.items[id] = it
-	s.children[sess.FolderID] = append(s.children[sess.FolderID], id)
+	var it boxFakeItem
+	if sess.FileID != "" {
+		existing, exists := s.items[sess.FileID]
+		if !exists || existing.Type != "file" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		existing.Size = sess.FileSize
+		existing.SHA1 = sha1Hex
+		existing.Content = copied
+		existing.ModifiedAt = "2026-02-02T00:00:00Z"
+		existing.ContentModifiedAt = body.Attributes.ContentModifiedAt
+		existing.Versions = append(existing.Versions, ver)
+		s.items[sess.FileID] = existing
+		it = existing
+	} else {
+		s.nextID++
+		id := strconv.Itoa(s.nextID)
+		it = boxFakeItem{
+			ID: id, Type: "file", Name: sess.FileName, ParentID: sess.FolderID,
+			Size: sess.FileSize, SHA1: sha1Hex, Content: copied,
+			ModifiedAt: "2026-02-01T00:00:00Z", ContentModifiedAt: body.Attributes.ContentModifiedAt,
+			Versions: []boxFakeFileVersion{ver},
+		}
+		s.items[id] = it
+		s.children[sess.FolderID] = append(s.children[sess.FolderID], id)
+	}
 	delete(s.sessions, sid)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -1715,4 +1878,340 @@ func TestMigrationIntoBoxUpload429And5xxNotRetriedInternally(t *testing.T) {
 	if posts != 1 {
 		t.Fatalf("single upload POSTs = %d, want 1 (no internal retry)", posts)
 	}
+}
+
+func assertNoBoxTempStaging(t *testing.T, srv *boxFullFakeServer) {
+	t.Helper()
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	for _, it := range srv.items {
+		if strings.HasSuffix(it.Name, ".tmp") || strings.Contains(it.Name, ".bak-") {
+			t.Fatalf("unexpected temp/backup item staged on Box: %+v", it)
+		}
+	}
+	for _, r := range srv.requests {
+		if strings.Contains(r, ".tmp") || strings.Contains(r, ".bak-") {
+			t.Fatalf("unexpected temp/backup request sent to Box: %s", r)
+		}
+	}
+}
+
+func TestMigrationIntoBoxOverwriteSingleAndChunked(t *testing.T) {
+	srv := newBoxFullFakeServer("box-target-token")
+	defer srv.close()
+
+	docsID := srv.addFolder("0", "Docs")
+	v1Single := []byte("single-v1-original")
+	v1SingleSum := sha1.Sum(v1Single)
+	v1SingleHex := hex.EncodeToString(v1SingleSum[:])
+	singleID := srv.addFile(docsID, "report.txt", v1Single, "2024-01-01T00:00:00Z")
+
+	backupsID := srv.addFolder("0", "Backups")
+	v1Chunked := bytes.Repeat([]byte("A"), 50*1024*1024+1)
+	v1ChunkedSum := sha1.Sum(v1Chunked)
+	v1ChunkedHex := hex.EncodeToString(v1ChunkedSum[:])
+	chunkedID := srv.addFile(backupsID, "big.bin", v1Chunked, "2024-01-01T00:00:00Z")
+
+	boxTarget := srv.newProvider(t)
+	defer boxTarget.Close()
+	if boxTarget.SupportsAtomicRename() {
+		t.Fatal("BoxProvider.SupportsAtomicRename() = true, want false")
+	}
+
+	fakeDB := sql.OpenDB(boxNoopSQLConnector{})
+	defer fakeDB.Close()
+	proc, err := NewProcessor(fakeDB, nil, Config{
+		WorkerID:      "w-box-overwrite",
+		SecretKey:     "test-secret",
+		MaxThreads:    1,
+		ProviderSlots: make(chan struct{}, 1),
+	})
+	if err != nil {
+		t.Fatalf("NewProcessor: %v", err)
+	}
+	ctx := context.Background()
+
+	// 1. Single-request OVERWRITE: failure leaves v1 untouched, success creates v2.
+	v2Single := []byte("single-v2-replacement-content")
+	v2SingleSum := sha1.Sum(v2Single)
+	v2SingleHex := hex.EncodeToString(v2SingleSum[:])
+	v2SingleSHA1 := "SHA1:" + v2SingleHex
+	v2SingleMtime := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+
+	src := &boxMigrationStubSource{
+		files: map[string]storage.CloudResource{
+			"/Docs/report.txt": {Path: "/Docs/report.txt", Name: "report.txt", Size: int64(len(v2Single)), Hash: v2SingleSHA1, LastModified: v2SingleMtime},
+		},
+		data: map[string][]byte{"/Docs/report.txt": v2Single},
+	}
+
+	mig := &db.Migration{ID: "mig-ow-single", SourceProvider: "nextcloud", TargetProvider: "box", TargetDir: "/", ConflictStrategy: "OVERWRITE"}
+
+	srv.faultHook = func(r *http.Request) (int, string, string) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/"+singleID+"/content" {
+			return http.StatusServiceUnavailable, "", `{"type":"error","status":503}`
+		}
+		return 0, "", ""
+	}
+	failSingleTask := &db.Task{
+		ID: "task-ow-single-fail", MigrationID: mig.ID, ResourceType: "files",
+		FilePath: "/Docs/report.txt", FileSize: int64(len(v2Single)),
+		SourceHash: sql.NullString{String: v2SingleSHA1, Valid: true}, ClaimEpoch: 1,
+	}
+	if err := proc.executeMigrationTransfer(ctx, func() {}, mig, failSingleTask, src, boxTarget, nil); err == nil {
+		t.Fatal("expected single OVERWRITE failure when Box returns 503")
+	}
+	srv.mu.Lock()
+	srv.faultHook = nil
+	singleItemAfterFail := srv.items[singleID]
+	srv.mu.Unlock()
+	if len(singleItemAfterFail.Versions) != 1 || singleItemAfterFail.SHA1 != v1SingleHex || !bytes.Equal(singleItemAfterFail.Content, v1Single) {
+		t.Fatalf("failed single OVERWRITE modified v1: versions=%d sha1=%s", len(singleItemAfterFail.Versions), singleItemAfterFail.SHA1)
+	}
+
+	singleTask := &db.Task{
+		ID: "task-ow-single-ok", MigrationID: mig.ID, ResourceType: "files",
+		FilePath: "/Docs/report.txt", FileSize: int64(len(v2Single)),
+		SourceHash: sql.NullString{String: v2SingleSHA1, Valid: true}, ClaimEpoch: 1,
+	}
+	if err := proc.executeMigrationTransfer(ctx, func() {}, mig, singleTask, src, boxTarget, nil); err != nil {
+		t.Fatalf("executeMigrationTransfer(single OVERWRITE): %v", err)
+	}
+	if singleTask.Status != "COMPLETED" || !singleTask.ChecksumVerified {
+		t.Fatalf("singleTask = (status=%q, verified=%v), want (COMPLETED, true)", singleTask.Status, singleTask.ChecksumVerified)
+	}
+
+	srv.mu.Lock()
+	singleItem := srv.items[singleID]
+	srv.mu.Unlock()
+	if len(singleItem.Versions) != 2 || singleItem.SHA1 != v2SingleHex || !bytes.Equal(singleItem.Content, v2Single) {
+		t.Fatalf("single OVERWRITE versions=%d sha1=%s, want 2 and %s", len(singleItem.Versions), singleItem.SHA1, v2SingleHex)
+	}
+	inspectedSingle, err := boxTarget.InspectResource(ctx, "files", "/Docs/report.txt")
+	if err != nil || inspectedSingle.Hash != v2SingleSHA1 || !inspectedSingle.LastModified.Equal(v2SingleMtime) {
+		t.Fatalf("InspectResource(report.txt) = (%+v, %v), want hash=%s mtime=%v", inspectedSingle, err, v2SingleSHA1, v2SingleMtime)
+	}
+
+	// 2. Chunked OVERWRITE (> 50 MiB): failure aborts session and leaves v1 intact, retry creates v2.
+	v2Chunked := bytes.Repeat([]byte("B"), 50*1024*1024+1)
+	v2ChunkedSum := sha1.Sum(v2Chunked)
+	v2ChunkedHex := hex.EncodeToString(v2ChunkedSum[:])
+	v2ChunkedSHA1 := "SHA1:" + v2ChunkedHex
+	v2ChunkedMtime := time.Date(2026, 6, 2, 11, 0, 0, 0, time.UTC)
+
+	src.files["/Backups/big.bin"] = storage.CloudResource{
+		Path: "/Backups/big.bin", Name: "big.bin", Size: int64(len(v2Chunked)), Hash: v2ChunkedSHA1, LastModified: v2ChunkedMtime,
+	}
+	src.data["/Backups/big.bin"] = v2Chunked
+
+	var putCalls int
+	srv.faultHook = func(r *http.Request) (int, string, string) {
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/2.0/files/upload_sessions/") {
+			putCalls++
+			if putCalls >= 2 {
+				return http.StatusServiceUnavailable, "", `{"type":"error","status":503}`
+			}
+		}
+		return 0, "", ""
+	}
+	chunkedTask := &db.Task{
+		ID: "task-ow-chunked-1", MigrationID: mig.ID, ResourceType: "files",
+		FilePath: "/Backups/big.bin", FileSize: int64(len(v2Chunked)),
+		SourceHash: sql.NullString{String: v2ChunkedSHA1, Valid: true}, ClaimEpoch: 1,
+	}
+	if err := proc.executeMigrationTransfer(ctx, func() {}, mig, chunkedTask, src, boxTarget, nil); err == nil {
+		t.Fatal("expected chunked OVERWRITE failure on part 2")
+	}
+
+	srv.mu.Lock()
+	srv.faultHook = nil
+	abortedCount := len(srv.abortedSessions)
+	activeCount := len(srv.sessions)
+	chunkedAfterFail := srv.items[chunkedID]
+	srv.mu.Unlock()
+	if abortedCount != 1 || activeCount != 0 {
+		t.Fatalf("after failed chunked OVERWRITE: aborted=%d active=%d, want (1, 0)", abortedCount, activeCount)
+	}
+	if len(chunkedAfterFail.Versions) != 1 || chunkedAfterFail.SHA1 != v1ChunkedHex || !bytes.Equal(chunkedAfterFail.Content, v1Chunked) {
+		t.Fatalf("failed chunked OVERWRITE modified v1: versions=%d sha1=%s", len(chunkedAfterFail.Versions), chunkedAfterFail.SHA1)
+	}
+
+	chunkedTask.ClaimEpoch = 2
+	if err := proc.executeMigrationTransfer(ctx, func() {}, mig, chunkedTask, src, boxTarget, nil); err != nil {
+		t.Fatalf("retry executeMigrationTransfer(chunked OVERWRITE): %v", err)
+	}
+	if chunkedTask.Status != "COMPLETED" || !chunkedTask.ChecksumVerified {
+		t.Fatalf("chunkedTask = (status=%q, verified=%v), want (COMPLETED, true)", chunkedTask.Status, chunkedTask.ChecksumVerified)
+	}
+
+	srv.mu.Lock()
+	chunkedItem := srv.items[chunkedID]
+	srv.mu.Unlock()
+	if len(chunkedItem.Versions) != 2 || chunkedItem.SHA1 != v2ChunkedHex || !bytes.Equal(chunkedItem.Content, v2Chunked) {
+		t.Fatalf("chunked OVERWRITE versions=%d sha1=%s, want 2 and %s", len(chunkedItem.Versions), chunkedItem.SHA1, v2ChunkedHex)
+	}
+	inspectedChunked, err := boxTarget.InspectResource(ctx, "files", "/Backups/big.bin")
+	if err != nil || inspectedChunked.Hash != v2ChunkedSHA1 || !inspectedChunked.LastModified.Equal(v2ChunkedMtime) {
+		t.Fatalf("InspectResource(big.bin) = (%+v, %v), want hash=%s mtime=%v", inspectedChunked, err, v2ChunkedSHA1, v2ChunkedMtime)
+	}
+
+	assertNoBoxTempStaging(t, srv)
+}
+
+func TestExecuteSyncTransferIntoBoxOverwriteSingleAndChunked(t *testing.T) {
+	srv := newBoxFullFakeServer("box-sync-token")
+	defer srv.close()
+
+	syncDirID := srv.addFolder("0", "Sync")
+	v1Single := []byte("sync-single-v1")
+	v1SingleSum := sha1.Sum(v1Single)
+	v1SingleHex := hex.EncodeToString(v1SingleSum[:])
+	singleID := srv.addFile(syncDirID, "notes.txt", v1Single, "2024-02-01T00:00:00Z")
+
+	v1Chunked := bytes.Repeat([]byte("S"), 50*1024*1024+1)
+	v1ChunkedSum := sha1.Sum(v1Chunked)
+	v1ChunkedHex := hex.EncodeToString(v1ChunkedSum[:])
+	chunkedID := srv.addFile(syncDirID, "bundle.bin", v1Chunked, "2024-02-01T00:00:00Z")
+
+	boxTarget := srv.newProvider(t)
+	defer boxTarget.Close()
+	if boxTarget.SupportsAtomicRename() {
+		t.Fatal("BoxProvider.SupportsAtomicRename() = true, want false")
+	}
+
+	ctx := context.Background()
+
+	// 1. Single sync overwrite: failure keeps v1, success creates v2 and sets verified SHA-1.
+	v2Single := []byte("sync-single-v2-updated")
+	v2SingleSum := sha1.Sum(v2Single)
+	v2SingleHex := hex.EncodeToString(v2SingleSum[:])
+	v2SingleSHA1 := "SHA1:" + v2SingleHex
+	v2SingleMtime := time.Date(2026, 9, 1, 8, 30, 0, 0, time.UTC)
+
+	src := &boxMigrationStubSource{
+		files: map[string]storage.CloudResource{
+			"/Sync/notes.txt": {Path: "/Sync/notes.txt", Name: "notes.txt", Size: int64(len(v2Single)), Hash: v2SingleSHA1, LastModified: v2SingleMtime},
+		},
+		data: map[string][]byte{"/Sync/notes.txt": v2Single},
+	}
+
+	srv.faultHook = func(r *http.Request) (int, string, string) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/"+singleID+"/content" {
+			return http.StatusServiceUnavailable, "", `{"type":"error","status":503}`
+		}
+		return 0, "", ""
+	}
+	failTask := &db.Task{ID: "sync-single-fail", ResourceType: "files", FilePath: "/Sync/notes.txt", FileSize: int64(len(v2Single))}
+	if err := executeSyncTransfer(ctx, syncTransfer{
+		Task: failTask, Source: src, Target: boxTarget,
+		SourceProvider: "nextcloud", TargetProvider: "box",
+		SourcePath: "/Sync/notes.txt", TargetPath: "/Sync/notes.txt",
+		Throttler: throttle.NewMigrationThrottler(0), Progress: make(chan int64, 64),
+	}); err == nil {
+		t.Fatal("expected sync single overwrite failure on 503")
+	}
+	srv.mu.Lock()
+	srv.faultHook = nil
+	singleAfterFail := srv.items[singleID]
+	srv.mu.Unlock()
+	if len(singleAfterFail.Versions) != 1 || singleAfterFail.SHA1 != v1SingleHex {
+		t.Fatalf("failed sync single overwrite mutated v1: versions=%d sha1=%s", len(singleAfterFail.Versions), singleAfterFail.SHA1)
+	}
+
+	okTask := &db.Task{
+		ID: "sync-single-ok", ResourceType: "files", FilePath: "/Sync/notes.txt",
+		FileSize: int64(len(v2Single)), SourceHash: sql.NullString{String: v2SingleSHA1, Valid: true},
+	}
+	if err := executeSyncTransfer(ctx, syncTransfer{
+		Task: okTask, Source: src, Target: boxTarget,
+		SourceProvider: "nextcloud", TargetProvider: "box",
+		SourcePath: "/Sync/notes.txt", TargetPath: "/Sync/notes.txt",
+		Throttler: throttle.NewMigrationThrottler(0), Progress: make(chan int64, 64),
+	}); err != nil {
+		t.Fatalf("executeSyncTransfer(single Box overwrite): %v", err)
+	}
+	if !okTask.ChecksumVerified || okTask.TargetHash.String != v2SingleSHA1 {
+		t.Fatalf("okTask verification = (%v, %q), want (true, %q)", okTask.ChecksumVerified, okTask.TargetHash.String, v2SingleSHA1)
+	}
+	dlSingle, err := boxTarget.StreamDownload(ctx, "files", "/Sync/notes.txt")
+	if err != nil {
+		t.Fatalf("StreamDownload(/Sync/notes.txt): %v", err)
+	}
+	gotSingle, _ := io.ReadAll(dlSingle)
+	dlSingle.Close()
+	if !bytes.Equal(gotSingle, v2Single) {
+		t.Fatalf("downloaded single sync content = %q, want %q", gotSingle, v2Single)
+	}
+
+	// 2. Chunked sync overwrite (> 50 MiB): failure aborts and keeps v1, retry creates v2.
+	v2Chunked := bytes.Repeat([]byte("T"), 50*1024*1024+1)
+	v2ChunkedSum := sha1.Sum(v2Chunked)
+	v2ChunkedHex := hex.EncodeToString(v2ChunkedSum[:])
+	v2ChunkedSHA1 := "SHA1:" + v2ChunkedHex
+	v2ChunkedMtime := time.Date(2026, 9, 2, 9, 45, 0, 0, time.UTC)
+
+	src.files["/Sync/bundle.bin"] = storage.CloudResource{
+		Path: "/Sync/bundle.bin", Name: "bundle.bin", Size: int64(len(v2Chunked)), Hash: v2ChunkedSHA1, LastModified: v2ChunkedMtime,
+	}
+	src.data["/Sync/bundle.bin"] = v2Chunked
+
+	var syncPutCalls int
+	srv.faultHook = func(r *http.Request) (int, string, string) {
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/2.0/files/upload_sessions/") {
+			syncPutCalls++
+			if syncPutCalls >= 2 {
+				return http.StatusServiceUnavailable, "", `{"type":"error","status":503}`
+			}
+		}
+		return 0, "", ""
+	}
+	chunkedSyncTask := &db.Task{
+		ID: "sync-chunked-1", ResourceType: "files", FilePath: "/Sync/bundle.bin",
+		FileSize: int64(len(v2Chunked)), SourceHash: sql.NullString{String: v2ChunkedSHA1, Valid: true},
+	}
+	if err := executeSyncTransfer(ctx, syncTransfer{
+		Task: chunkedSyncTask, Source: src, Target: boxTarget,
+		SourceProvider: "nextcloud", TargetProvider: "box",
+		SourcePath: "/Sync/bundle.bin", TargetPath: "/Sync/bundle.bin",
+		Throttler: throttle.NewMigrationThrottler(0), Progress: make(chan int64, 64),
+	}); err == nil {
+		t.Fatal("expected sync chunked overwrite failure on part 2")
+	}
+
+	srv.mu.Lock()
+	srv.faultHook = nil
+	abortedCount := len(srv.abortedSessions)
+	activeCount := len(srv.sessions)
+	chunkedAfterFail := srv.items[chunkedID]
+	srv.mu.Unlock()
+	if abortedCount != 1 || activeCount != 0 {
+		t.Fatalf("after failed sync chunked overwrite: aborted=%d active=%d, want (1, 0)", abortedCount, activeCount)
+	}
+	if len(chunkedAfterFail.Versions) != 1 || chunkedAfterFail.SHA1 != v1ChunkedHex {
+		t.Fatalf("failed sync chunked overwrite mutated v1: versions=%d sha1=%s", len(chunkedAfterFail.Versions), chunkedAfterFail.SHA1)
+	}
+
+	if err := executeSyncTransfer(ctx, syncTransfer{
+		Task: chunkedSyncTask, Source: src, Target: boxTarget,
+		SourceProvider: "nextcloud", TargetProvider: "box",
+		SourcePath: "/Sync/bundle.bin", TargetPath: "/Sync/bundle.bin",
+		Throttler: throttle.NewMigrationThrottler(0), Progress: make(chan int64, 64),
+	}); err != nil {
+		t.Fatalf("retry executeSyncTransfer(chunked Box overwrite): %v", err)
+	}
+	if !chunkedSyncTask.ChecksumVerified || chunkedSyncTask.TargetHash.String != v2ChunkedSHA1 {
+		t.Fatalf("chunkedSyncTask verification = (%v, %q), want (true, %q)", chunkedSyncTask.ChecksumVerified, chunkedSyncTask.TargetHash.String, v2ChunkedSHA1)
+	}
+	srv.mu.Lock()
+	chunkedItem := srv.items[chunkedID]
+	srv.mu.Unlock()
+	if len(chunkedItem.Versions) != 2 || chunkedItem.SHA1 != v2ChunkedHex {
+		t.Fatalf("chunked sync overwrite versions=%d sha1=%s, want 2 and %s", len(chunkedItem.Versions), chunkedItem.SHA1, v2ChunkedHex)
+	}
+	inspected, err := boxTarget.InspectResource(ctx, "files", "/Sync/bundle.bin")
+	if err != nil || !inspected.LastModified.Equal(v2ChunkedMtime) {
+		t.Fatalf("InspectResource(/Sync/bundle.bin) = (%+v, %v), want mtime=%v", inspected, err, v2ChunkedMtime)
+	}
+
+	assertNoBoxTempStaging(t, srv)
 }

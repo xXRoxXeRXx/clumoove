@@ -272,7 +272,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		SourcePath:       task.FilePath,
 		TargetPath:       uploadPath,
 		VerificationPath: targetPath,
-		UploadOptions:    storage.UploadOptions{Metadata: transferMeta},
+		UploadOptions:    storage.UploadOptions{Metadata: transferMeta, Overwrite: mig.ConflictStrategy == "OVERWRITE"},
 		FileSize:         task.FileSize,
 		SourceHash:       task.SourceHash.String,
 		Throttler:        migrationThrottler,

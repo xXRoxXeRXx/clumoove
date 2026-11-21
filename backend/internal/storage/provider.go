@@ -184,8 +184,9 @@ type UploadReceipt struct {
 
 // UploadOptions supplies explicit transfer-specific inputs for an upload.
 type UploadOptions struct {
-	Metadata FileMetadata
-	Checksum string
+	Metadata  FileMetadata
+	Checksum  string
+	Overwrite bool
 }
 
 // UploadResult carries provider-created outputs from a single upload.
