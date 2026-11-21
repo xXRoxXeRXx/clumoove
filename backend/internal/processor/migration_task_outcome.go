@@ -65,7 +65,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		backoff := retryDelay(procErr, task.Attempts)
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{Time: time.Now().Add(backoff), Valid: true}
-		if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 0, 1, 0); err != nil {
+		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
 			processorLogf("[Worker %s] Failed to record retry state for task %s: %v", p.workerID, task.ID, err)
 			return
 		}
@@ -75,7 +75,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 
 	task.Status = "FAILED"
 	task.NextRetryAt = sql.NullTime{}
-	if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+	if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, 0, 0, 1, 0); err != nil {
 		processorLogf("[Worker %s] Failed to record terminal failure for task %s: %v", p.workerID, task.ID, err)
 	}
 	p.clearConnLossTask(task.ID)

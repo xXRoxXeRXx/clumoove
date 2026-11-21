@@ -85,6 +85,13 @@ func TestSanitizeFilename_ForbiddenChars(t *testing.T) {
 			reason:   "forbidden_char",
 		},
 		{
+			name:     "Box slash and backslash",
+			input:    `folder\report/final.txt`,
+			provider: "box",
+			expected: "folder_report_final.txt",
+			reason:   "forbidden_char",
+		},
+		{
 			name:     "Seafile emoji",
 			input:    "🚀 Internal Projects & Campaign Planning",
 			provider: "seafile",
@@ -316,6 +323,9 @@ func TestIsCaseInsensitive(t *testing.T) {
 	if !IsCaseInsensitive("koofr") {
 		t.Error("koofr should be case-insensitive")
 	}
+	if !IsCaseInsensitive("box") {
+		t.Error("box should be case-insensitive")
+	}
 	if IsCaseInsensitive("nextcloud") {
 		t.Error("nextcloud should be case-sensitive")
 	}
@@ -345,6 +355,10 @@ func TestGetForbiddenChars(t *testing.T) {
 	koofrChars := GetForbiddenChars("koofr")
 	if len(koofrChars) != 2 || koofrChars[0] != '\\' || koofrChars[1] != '/' {
 		t.Errorf("expected [\\\\ /] for koofr, got %v", koofrChars)
+	}
+	boxChars := GetForbiddenChars("box")
+	if len(boxChars) != 2 || boxChars[0] != '\\' || boxChars[1] != '/' {
+		t.Errorf("expected [\\\\ /] for box, got %v", boxChars)
 	}
 
 	s3Chars := GetForbiddenChars("s3")
@@ -385,6 +399,44 @@ func TestSanitizeErrorRedactsCredentialsWithoutCorruptingOtherParameters(t *test
 		if got := SanitizeError(test.input); got != test.want {
 			t.Errorf("SanitizeError(%q) = %q, want %q", test.input, got, test.want)
 		}
+	}
+}
+
+func TestSanitizeFilename_BoxRules(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		expected string
+		changed  bool
+		reason   string
+	}{
+		{name: "dot reserved", input: ".", expected: "_.", changed: true, reason: "reserved_name"},
+		{name: "dotdot reserved", input: "..", expected: "_..", changed: true, reason: "reserved_name"},
+		{name: "trailing space trimmed", input: "report.pdf ", expected: "report.pdf", changed: true, reason: "trailing_chars"},
+		{name: "leading and trailing spaces trimmed", input: "  report.pdf  ", expected: "report.pdf", changed: true, reason: "trailing_chars"},
+		{name: "spaced dot trimmed then reserved", input: " . ", expected: "_.", changed: true, reason: "reserved_name"},
+		{name: "only spaces becomes unnamed_file", input: "   ", expected: "unnamed_file", changed: true, reason: "empty_after_sanitize"},
+		{name: "trailing dot allowed on box", input: "report.pdf.", expected: "report.pdf.", changed: false},
+		{name: "windows reserved allowed on box", input: "CON.txt", expected: "CON.txt", changed: false},
+		{name: "normal name unchanged", input: "Quarterly Report (Q1).pdf", expected: "Quarterly Report (Q1).pdf", changed: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := SanitizeFilename(tc.input, "box")
+			if res.SanitizedName != tc.expected || res.Changed != tc.changed {
+				t.Fatalf("SanitizeFilename(%q, box) = %+v, want name=%q changed=%v", tc.input, res, tc.expected, tc.changed)
+			}
+			if tc.reason != "" && !containsReason(res.Reasons, tc.reason) {
+				t.Fatalf("expected reason %q in %v", tc.reason, res.Reasons)
+			}
+		})
+	}
+
+	longName := strings.Repeat("a", 252) + ".pdf"
+	longRes := SanitizeFilename(longName, "box")
+	if utf8.RuneCountInString(longRes.SanitizedName) != 255 || !strings.HasSuffix(longRes.SanitizedName, ".pdf") || !longRes.Changed {
+		t.Fatalf("Box 255-char truncation = %+v", longRes)
 	}
 }
 

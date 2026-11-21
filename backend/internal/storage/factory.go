@@ -598,6 +598,17 @@ var providerCatalogueEntries = []providerRegistration{
 			return NewMegaProvider(username, password, opts.MegaSession), nil
 		},
 	},
+	{
+		Type:                   "box",
+		SupportedResourceTypes: map[string]bool{"files": true},
+		SupportsAtomicRename:   false,
+		VerificationMode:       VerificationCryptographicHash,
+		ManagerCapabilities:    ManagerCapabilities{Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictRename: true, Thumbnails: true},
+		ManagerRootNativeID:    "0",
+		Construct: func(_ context.Context, _, _, password string) (StorageProvider, error) {
+			return NewBoxProvider(password)
+		},
+	},
 }
 
 // NewManagerRenamer selects a provider's dedicated manager implementation
@@ -617,6 +628,13 @@ func NewManagerMover(providerType string, provider ManagerProvider) (ManagerMove
 // providers that have no portable server-side copy operation.
 func NewManagerCopier(providerType string, provider ManagerProvider) (ManagerCopier, bool) {
 	return defaultProviderCatalogue.newManagerCopier(providerType, provider)
+}
+
+// ManagerUsesImmutableParent reports whether providerType uses immutable
+// parent IDs for manager items instead of deriving parent folders from display paths.
+func ManagerUsesImmutableParent(providerType string) bool {
+	entry, ok := defaultProviderCatalogue.lookup(providerType)
+	return ok && !entry.ManagerPathMutation && entry.ManagerRootNativeID != ""
 }
 
 // ManagerCapabilitiesFor returns static capabilities after applying runtime

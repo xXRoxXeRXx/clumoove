@@ -127,7 +127,7 @@ export function OAuthFields({
           className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider flex items-center justify-center gap-2"
         >
           <RefreshCw className="w-4 h-4" />
-          {t('connect.oauthConnect', { provider: t(`connect.providerName.${provider}`) })}
+          {t('connect.oauthConnect', { provider: t(`connect.providerName.${provider}`, { defaultValue: provider }) })}
         </button>
       )}
       {editing && !oauthRefreshToken && (

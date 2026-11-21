@@ -176,6 +176,11 @@ func TestGetUserInfoProviders(t *testing.T) {
 			_, _ = io.WriteString(w, `{"account":"ada","alias":"Ada HiDrive"}`)
 		case "/onedrive":
 			_, _ = io.WriteString(w, `{"displayName":"Ada OneDrive"}`)
+		case "/box":
+			if r.Method != http.MethodGet {
+				recordIssue("Box request method = %s, want GET", r.Method)
+			}
+			_, _ = io.WriteString(w, `{"id":"11446498","type":"user","name":"Ada Box","login":"ada@example.test"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -186,12 +191,14 @@ func TestGetUserInfoProviders(t *testing.T) {
 		"google":   {UserInfoURL: server.URL + "/google"},
 		"hidrive":  {UserInfoURL: server.URL + "/hidrive"},
 		"onedrive": {UserInfoURL: server.URL + "/onedrive"},
+		"box":      {UserInfoURL: server.URL + "/box"},
 	})
 	for provider, want := range map[string]string{
 		"dropbox":  "Ada Dropbox",
 		"google":   "Ada Google",
 		"hidrive":  "Ada HiDrive",
 		"onedrive": "Ada OneDrive",
+		"box":      "Ada Box",
 	} {
 		got, err := client.getUserInfo(context.Background(), provider, "access-token")
 		if err != nil || got != want {
@@ -215,13 +222,78 @@ func TestDecodeOAuthResponseLimit(t *testing.T) {
 }
 
 func TestIsProvider(t *testing.T) {
-	for _, provider := range []string{"dropbox", "google", "onedrive", "hidrive"} {
+	for _, provider := range []string{"dropbox", "google", "onedrive", "hidrive", "box"} {
 		if !IsProvider(provider) {
 			t.Errorf("IsProvider(%q) = false, want true", provider)
 		}
 	}
 	if IsProvider("nextcloud") {
 		t.Error("IsProvider(nextcloud) = true, want false")
+	}
+}
+
+func TestBoxOAuthFlow(t *testing.T) {
+	configureOAuthTestCredentials(t, "box")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/2.0/users/me" {
+			if r.Header.Get("Authorization") != "Bearer box-access" {
+				t.Errorf("Authorization = %q, want Bearer box-access", r.Header.Get("Authorization"))
+			}
+			_, _ = io.WriteString(w, `{"id":"11446498","type":"user","name":"","login":"ada@box.example"}`)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if r.PostForm.Get("grant_type") == "authorization_code" {
+			_, _ = io.WriteString(w, `{"access_token":"box-access","refresh_token":"box-refresh-1","expires_in":3600}`)
+			return
+		}
+		if r.PostForm.Get("grant_type") == "refresh_token" && r.PostForm.Get("refresh_token") == "box-refresh-1" {
+			_, _ = io.WriteString(w, `{"access_token":"box-access-2","refresh_token":"box-refresh-2","expires_in":3600}`)
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+	}))
+	defer server.Close()
+
+	// Verify production Box providerConfig endpoints and omitted scopes.
+	prodAuthURL, err := GetAuthURL("box", "https://clumoove.example/api/oauth/callback", "csrf-state")
+	if err != nil {
+		t.Fatalf("GetAuthURL(box): %v", err)
+	}
+	pu, err := url.Parse(prodAuthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pu.Scheme != "https" || pu.Host != "account.box.com" || pu.Path != "/api/oauth2/authorize" {
+		t.Fatalf("unexpected Box auth URL base: %s", prodAuthURL)
+	}
+	if pu.Query().Get("scope") != "" {
+		t.Fatalf("Box auth URL unexpectedly sent scope %q", pu.Query().Get("scope"))
+	}
+
+	client := newOAuthClient(server.Client(), map[string]ProviderConfig{
+		"box": {
+			AuthURL:     server.URL + "/api/oauth2/authorize",
+			TokenURL:    server.URL + "/oauth2/token",
+			UserInfoURL: server.URL + "/2.0/users/me",
+		},
+	})
+
+	token, err := client.exchangeCode(context.Background(), "box", "auth-code", "https://clumoove.example/api/oauth/callback")
+	if err != nil || token.AccessToken != "box-access" || token.RefreshToken != "box-refresh-1" {
+		t.Fatalf("exchangeCode(box) = %#v, %v", token, err)
+	}
+	refreshed, err := client.refreshToken(context.Background(), "box", "box-refresh-1")
+	if err != nil || refreshed.AccessToken != "box-access-2" || refreshed.RefreshToken != "box-refresh-2" {
+		t.Fatalf("refreshToken(box) = %#v, %v", refreshed, err)
+	}
+	user, err := client.getUserInfo(context.Background(), "box", "box-access")
+	if err != nil || user != "ada@box.example" {
+		t.Fatalf("getUserInfo(box) fallback = %q, %v; want ada@box.example", user, err)
 	}
 }
 

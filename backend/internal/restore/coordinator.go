@@ -4,9 +4,11 @@ package restore
 
 import (
 	"context"
+	"crypto/sha1"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -799,6 +801,7 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 	}
 	reader, writer := io.Pipe()
 	reconstructed := make(chan error, 1)
+	var reconstructedSHA1 []byte
 	go func() {
 		var openRange RangeOpener
 		if rangeDownloader, ok := repositoryProvider.(storage.RangeDownloader); ok {
@@ -810,7 +813,8 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 				return &throttledReadCloser{ReadCloser: reader, reader: throttle.NewThrottledReader(ctx, reader, throttler)}, nil
 			}
 		}
-		err := ReconstructFileWithRanges(ctx, writer, recipes, item.SizeBytes, expected, openRange, func(ctx context.Context, packPath string) (io.ReadCloser, error) {
+		sha1Hasher := sha1.New()
+		err := ReconstructFileWithRanges(ctx, io.MultiWriter(writer, sha1Hasher), recipes, item.SizeBytes, expected, openRange, func(ctx context.Context, packPath string) (io.ReadCloser, error) {
 			if err := c.packReaders.Acquire(ctx); err != nil {
 				return nil, err
 			}
@@ -821,10 +825,30 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 			}
 			return &limitedReadCloser{ReadCloser: &throttledReadCloser{ReadCloser: reader, reader: throttle.NewThrottledReader(ctx, reader, throttler)}, release: c.packReaders.Release}, nil
 		})
-		reconstructed <- err
+		reconstructedSHA1 = sha1Hasher.Sum(nil)
 		_ = writer.CloseWithError(err)
+		reconstructed <- err
 	}()
-	uploadErr := targetProvider.StreamUpload(ctx, "files", uploadPath, throttle.NewUploadThrottledReader(ctx, reader, throttler), item.SizeBytes)
+	throttledUpload := throttle.NewUploadThrottledReader(ctx, reader, throttler)
+	var uploadErr error
+	if !targetProvider.SupportsAtomicRename() {
+		if uploader, ok := targetProvider.(storage.TransferUploader); ok {
+			var opts storage.UploadOptions
+			opts.Overwrite = overwriteExisting
+			if item.SourceMTime.Valid {
+				opts.Metadata.ModifiedTime = item.SourceMTime.Time
+			}
+			if item.SizeBytes > storage.DefaultChunkedUploadThreshold {
+				_, uploadErr = uploader.StreamUploadChunkedWithOptions(ctx, "files", uploadPath, throttledUpload, item.SizeBytes, nil, opts)
+			} else {
+				_, uploadErr = uploader.StreamUploadWithOptions(ctx, "files", uploadPath, throttledUpload, item.SizeBytes, opts)
+			}
+		} else {
+			uploadErr = targetProvider.StreamUpload(ctx, "files", uploadPath, throttledUpload, item.SizeBytes)
+		}
+	} else {
+		uploadErr = targetProvider.StreamUpload(ctx, "files", uploadPath, throttledUpload, item.SizeBytes)
+	}
 	reader.Close()
 	if reconstructionErr := <-reconstructed; reconstructionErr != nil {
 		if targetProvider.SupportsAtomicRename() {
@@ -855,10 +879,16 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 		}
 		if err == nil && targetHash != "" {
 			algorithm, actual := storage.ParseHashString(targetHash)
-			if algorithm == "SHA256" && actual != fmt.Sprintf("%x", expected) {
-				return errors.New("restore target hash verification failed")
-			}
-			if algorithm == "SHA256" {
+			switch algorithm {
+			case "SHA256":
+				if !strings.EqualFold(actual, fmt.Sprintf("%x", expected)) {
+					return errors.New("restore target hash verification failed")
+				}
+				verificationKind = "HASH_VERIFIED"
+			case "SHA1":
+				if !strings.EqualFold(actual, hex.EncodeToString(reconstructedSHA1)) {
+					return errors.New("restore target hash verification failed")
+				}
 				verificationKind = "HASH_VERIFIED"
 			}
 		}

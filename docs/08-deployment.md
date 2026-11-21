@@ -47,9 +47,11 @@ Downloads and raw uploads are streamed without API buffering. The frontend nginx
 | `LOCAL_STORAGE_ROOT` | Internal container path for local filesystem storage profiles (e.g. `/clumoove`). | `/clumoove` |
 | `LOCAL_STORAGE_HOST_PATH` | Host path mounted to `LOCAL_STORAGE_ROOT` in docker-compose. | `./local-storage` |
 
-> **OAuth providers** (Google, OneDrive, Dropbox, HiDrive) are configured by an administrator under **Administration → System**, not via environment variables. No `*_CLIENT_ID` / `*_CLIENT_SECRET` variables are read. The OAuth redirect URI is always `<scheme>://<host>/api/oauth/callback` and is shown read-only in the admin UI.
+> **OAuth providers** (Google, OneDrive, Dropbox, HiDrive, Box) are configured by an administrator under **Administration → System**, not via environment variables. No `*_CLIENT_ID` / `*_CLIENT_SECRET` variables are read. The OAuth redirect URI is always `<scheme>://<host>/api/oauth/callback` and is shown read-only in the admin UI.
 
 For OneDrive, register a confidential Microsoft application restricted to **personal Microsoft accounts**. Add the exact callback URL shown in the admin UI (**Administration → System**, auto-derived from the server host as `<scheme>://<host>/api/oauth/callback`) as a web redirect URI. Configure delegated `openid`, `profile`, `offline_access`, `User.Read`, and `Files.ReadWrite` permissions; no tenant-wide permission or admin consent is required.
+
+For Box, register a Custom App with User Authentication (OAuth 2.0) in the Box Developer Console, add `<scheme>://<host>/api/oauth/callback` as the redirect URI, and grant the required read/write file and folder scopes. Clumoove omits the `scope` parameter during authorization so Box applies the scopes configured on the app.
 
 SMTP is configured by an administrator in **Administration → System → Email server**. The configuration, including its password, is encrypted with `ENCRYPTION_SECRET_KEY` in PostgreSQL; no `SMTP_*` environment variables are used.
 

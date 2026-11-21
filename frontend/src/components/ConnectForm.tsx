@@ -16,6 +16,7 @@ import { ProfileSelect } from './connect/ProfileSelect';
 import { SaveProfileRow } from './connect/SaveProfileRow';
 import { ProviderSelector } from './connect/ProviderSelector';
 import { FixedCredentialsFields } from './connect/FixedCredentialsFields';
+import { OAuthConnectFields } from './connect/OAuthConnectFields';
 import type { FtpTlsMode } from '../utils/providerUrls';
 import {
   createConnectionWorkflow,
@@ -361,6 +362,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 	...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
 	...(oauthProviders.onedrive ? [{ id: 'onedrive' as const, name: 'OneDrive' }] : []),
     ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
+    ...(oauthProviders.box ? [{ id: 'box' as const, name: 'Box' }] : []),
     ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : [])
   ], [localStorageEnabled, oauthProviders]);
 
@@ -862,37 +864,16 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : sourceProvider === 'magentacloud' || sourceProvider === 'koofr' ? (
                 <FixedCredentialsFields provider={sourceProvider} editing={false} username={sourceUser} password={sourcePass} onUsernameChange={setSourceUser} onPasswordChange={setSourcePass} usernameId={`source-${sourceProvider}-username`} passwordId={`source-${sourceProvider}-password`} usernameName="source_username" passwordName="source_password" inputClassName={formInputClass} labelClassName="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2" fieldClassName="space-y-1" />
               ) : (
-                <div className="py-2 space-y-1">
-                  <p className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    {sourceProvider === 'google' ? t('connect.googleConnect') : sourceProvider === 'onedrive' ? t('connect.onedriveConnect') : sourceProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
-                  </p>
-                   {sourcePass ? (
-                    <div className="ui-alert ui-alert-success p-4 flex items-center justify-between">
-                      <div className="truncate pr-2">
-                        <p className="font-bold text-[9px] uppercase tracking-wider text-[var(--color-success-text)] font-mono">{t('connect.connectedAs')}</p>
-                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{sourceOAuthUser || (sourceProvider === 'google' ? t('connect.googleAccount') : sourceProvider === 'onedrive' ? t('connect.onedriveAccount') : sourceProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
-                      </div>
-                       <button
-                        type="button"
-                        onClick={() => {
-                          setSourcePass('');
-                          setSourceOAuthUser('');
-                        }}
-                        className="ui-button-secondary px-3 py-1.5 text-[10px] font-mono font-bold cursor-pointer"
-                      >
-                         {t('connect.disconnect')}
-                       </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => startOAuth(sourceProvider, 'source')}
-                      className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider hover:opacity-90 flex items-center justify-center gap-2"
-                    >
-                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: sourceProvider === 'google' ? 'Google' : sourceProvider === 'onedrive' ? 'OneDrive' : sourceProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
-                    </button>
-                  )}
-                </div>
+                <OAuthConnectFields
+                  provider={sourceProvider}
+                  oauthUser={sourceOAuthUser}
+                  connected={Boolean(sourcePass)}
+                  onConnect={() => startOAuth(sourceProvider, 'source')}
+                  onDisconnect={() => {
+                    setSourcePass('');
+                    setSourceOAuthUser('');
+                  }}
+                />
               )}
               </>
               )}
@@ -1377,37 +1358,16 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : targetProvider === 'magentacloud' || targetProvider === 'koofr' ? (
                 <FixedCredentialsFields provider={targetProvider} editing={false} username={targetUser} password={targetPass} onUsernameChange={setTargetUser} onPasswordChange={setTargetPass} usernameId={`target-${targetProvider}-username`} passwordId={`target-${targetProvider}-password`} usernameName="target_username" passwordName="target_password" inputClassName={formInputClass} labelClassName="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2" fieldClassName="space-y-1" />
               ) : (
-                <div className="py-2 space-y-1">
-                  <p className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    {targetProvider === 'google' ? t('connect.googleConnect') : targetProvider === 'onedrive' ? t('connect.onedriveConnect') : targetProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
-                  </p>
-                  {targetPass ? (
-                    <div className="ui-alert ui-alert-success p-4 flex items-center justify-between">
-                      <div className="truncate pr-2">
-                        <p className="font-bold text-[9px] uppercase tracking-wider text-[var(--color-success-text)] font-mono">{t('connect.connectedAs')}</p>
-                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{targetOAuthUser || (targetProvider === 'google' ? t('connect.googleAccount') : targetProvider === 'onedrive' ? t('connect.onedriveAccount') : targetProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTargetPass('');
-                          setTargetOAuthUser('');
-                        }}
-                        className="ui-button-secondary px-3 py-1.5 text-[10px] font-mono font-bold cursor-pointer"
-                      >
-                         {t('connect.disconnect')}
-                       </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => startOAuth(targetProvider, 'target')}
-                      className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider hover:opacity-90 flex items-center justify-center gap-2"
-                    >
-                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: targetProvider === 'google' ? 'Google' : targetProvider === 'onedrive' ? 'OneDrive' : targetProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
-                    </button>
-                  )}
-                </div>
+                <OAuthConnectFields
+                  provider={targetProvider}
+                  oauthUser={targetOAuthUser}
+                  connected={Boolean(targetPass)}
+                  onConnect={() => startOAuth(targetProvider, 'target')}
+                  onDisconnect={() => {
+                    setTargetPass('');
+                    setTargetOAuthUser('');
+                  }}
+                />
               )}
               </>
               )}

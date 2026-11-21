@@ -387,9 +387,10 @@ func (api *fileAPI) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if operation == "rename" {
-		if resolved.profile.Provider == "google" {
-			// Google rename requests without an explicit parent retain the source's
-			// immutable parent instead of deriving it from a display path.
+		if storage.ManagerUsesImmutableParent(resolved.profile.Provider) {
+			// ID-based providers retain the source's immutable parent on rename
+			// requests without an explicit parent instead of deriving it from
+			// a display path.
 			if request.DestinationParentRef == "" {
 				destination = storage.ManagerLocator{}
 			}
@@ -1185,6 +1186,18 @@ func (api *fileAPI) writeFileProfileError(w http.ResponseWriter, err error) {
 }
 
 func (api *fileAPI) writeFileProviderError(w http.ResponseWriter, err error) {
+	var retryAfterErr *storage.RetryAfterError
+	if errors.As(err, &retryAfterErr) {
+		if retryAfterErr.After > 0 {
+			secs := int((retryAfterErr.After + time.Second - 1) / time.Second)
+			if secs < 1 {
+				secs = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(secs))
+		}
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
 	switch {
 	case errors.Is(err, storage.ErrManagerDirectoryChanged):
 		writeConflictError(w, ErrFilesDirectoryChanged)

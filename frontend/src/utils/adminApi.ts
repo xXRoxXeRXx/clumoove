@@ -119,7 +119,7 @@ export interface InstanceSMTPUpdate {
 }
 
 export interface InstanceOAuthProvider {
-  provider: 'google' | 'onedrive' | 'dropbox' | 'hidrive';
+  provider: 'google' | 'onedrive' | 'dropbox' | 'hidrive' | 'box';
   configured: boolean;
   client_id: string;
   client_secret_set: boolean;

@@ -44,7 +44,7 @@ func executeSyncTransfer(ctx context.Context, tr syncTransfer) error {
 		uploadPath = tgtPath + ".tmp"
 	}
 
-	var uploadOpts storage.UploadOptions
+	uploadOpts := storage.UploadOptions{Overwrite: true}
 	if srcRes, err := tr.Source.InspectResource(ctx, task.ResourceType, tr.SourcePath); err == nil && !srcRes.LastModified.IsZero() {
 		uploadOpts.Metadata = storage.FileMetadata{ModifiedTime: srcRes.LastModified}
 	}

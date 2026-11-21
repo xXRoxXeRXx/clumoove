@@ -141,11 +141,14 @@
     "wizardStepTarget": "Schritt 2 von 3: Ziel festlegen",
     "connectionsBadge": "Verbindungen",
     "oauthConnect": "Mit {{provider}} verbinden",
+    "oauthConnection": "{{provider}} Verbindung",
+    "oauthAccount": "{{provider}}-Konto",
     "providerName": {
       "google": "Google",
       "onedrive": "OneDrive",
       "dropbox": "Dropbox",
-      "hidrive": "HiDrive"
+      "hidrive": "HiDrive",
+      "box": "Box"
     },
     "connectedAs": "Verbunden als",
     "disconnect": "Trennen",
@@ -190,11 +193,13 @@
     "onedriveConnect": "OneDrive Verbindung",
     "dropboxConnect": "Dropbox Verbindung",
     "hidriveConnect": "HiDrive Verbindung",
+    "boxConnect": "Box Verbindung",
     "googleAccount": "Google-Konto",
 
     "onedriveAccount": "OneDrive-Konto",
     "dropboxAccount": "Dropbox-Konto",
     "hidriveAccount": "HiDrive-Konto",
+    "boxAccount": "Box-Konto",
     "submit": "Verbindung prüfen",
     "sshKeyPem": "Sicherheitsschlüssel (Schlüsseldatei)",
     "testing": "Verbindung wird geprüft...",
@@ -952,7 +957,8 @@
           "google": "Google",
           "onedrive": "OneDrive",
           "dropbox": "Dropbox",
-          "hidrive": "HiDrive"
+          "hidrive": "HiDrive",
+          "box": "Box"
         }
       }
     },

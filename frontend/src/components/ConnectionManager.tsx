@@ -165,9 +165,10 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
 	...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
 	...(oauthProviders.onedrive ? [{ id: 'onedrive' as const, name: 'OneDrive' }] : []),
       ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
+      ...(oauthProviders.box ? [{ id: 'box' as const, name: 'Box' }] : []),
       ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : []),
     ],
-	[localStorageEnabled, oauthProviders.dropbox, oauthProviders.google, oauthProviders.onedrive, oauthProviders.hidrive]
+	[localStorageEnabled, oauthProviders.dropbox, oauthProviders.google, oauthProviders.onedrive, oauthProviders.hidrive, oauthProviders.box]
   );
 
   return (

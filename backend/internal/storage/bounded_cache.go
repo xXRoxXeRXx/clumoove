@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"strings"
 	"sync"
 )
 
@@ -45,6 +46,46 @@ func (c *boundedStringCache) Set(key, value string) {
 		c.m = make(map[string]string, 1024)
 	}
 	c.m[key] = value
+}
+
+// InvalidateValueAndDescendants removes every cached path whose mapped value
+// equals val, along with any descendant keys beneath those paths.
+func (c *boundedStringCache) InvalidateValueAndDescendants(val string) {
+	if c == nil || val == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var prefixes []string
+	for k, v := range c.m {
+		if v == val {
+			prefixes = append(prefixes, k)
+			delete(c.m, k)
+		}
+	}
+	for _, prefix := range prefixes {
+		c.deleteDescendantsLocked(prefix)
+	}
+}
+
+// InvalidatePrefix removes prefix and any descendant keys beneath it.
+func (c *boundedStringCache) InvalidatePrefix(prefix string) {
+	if c == nil || prefix == "" || prefix == "/" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, prefix)
+	c.deleteDescendantsLocked(prefix)
+}
+
+func (c *boundedStringCache) deleteDescendantsLocked(prefix string) {
+	sub := prefix + "/"
+	for k := range c.m {
+		if strings.HasPrefix(k, sub) {
+			delete(c.m, k)
+		}
+	}
 }
 
 func newBoundedDirCache(maxCap int) *boundedDirCache {

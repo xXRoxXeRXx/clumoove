@@ -59,6 +59,12 @@ var providerConfigs = map[string]ProviderConfig{
 		UserInfoURL: "https://api.hidrive.strato.com/2.1/user/me?fields=account,alias",
 		Scopes:      []string{"admin,rw"},
 	},
+	// Box omits scope so Box uses all scopes configured in the Box Developer Console.
+	"box": {
+		AuthURL:     "https://account.box.com/api/oauth2/authorize",
+		TokenURL:    "https://api.box.com/oauth2/token",
+		UserInfoURL: "https://api.box.com/2.0/users/me",
+	},
 }
 
 type userAgentTransport struct {
@@ -113,6 +119,7 @@ var providerNames = map[string]struct{}{
 	"google":   {},
 	"onedrive": {},
 	"hidrive":  {},
+	"box":      {},
 }
 
 // IsProvider reports whether provider uses the shared OAuth credential lifecycle.
@@ -351,6 +358,38 @@ func (c *oauthClient) getUserInfo(ctx context.Context, provider, token string) (
 			}
 		}
 		return "OneDrive User", nil
+	case "box":
+		req, err := http.NewRequestWithContext(ctx, "GET", config.UserInfoURL, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("failed to fetch box user info: status %d", resp.StatusCode)
+		}
+
+		var info struct {
+			Name  string `json:"name"`
+			Login string `json:"login"`
+		}
+		if err := decodeOAuthResponse(resp.Body, &info); err != nil {
+			return "", err
+		}
+
+		if info.Name != "" {
+			return info.Name, nil
+		}
+		if info.Login != "" {
+			return info.Login, nil
+		}
+		return "Box User", nil
 	default:
 		return "OAuth User", nil
 	}

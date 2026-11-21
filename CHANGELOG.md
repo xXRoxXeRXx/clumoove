@@ -5,6 +5,15 @@ All notable changes to Clumoove will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Box Storage Provider (`box`)**:
+  - Added Box as the 18th storage provider across migrations, sync jobs, backup/restore, and the Cloud File Manager using the Box Content API v2.
+  - Integrated Box OAuth2 (`account.box.com` / `api.box.com`) with administrator-managed client credentials, single-use rotating refresh-token locking, and UI connection/re-authorization support.
+  - Implemented SHA-1 (`SHA1:<hex>`) cryptographic integrity verification, a `50,000,000`-byte (50 MB) single-request vs. chunked upload-session switch, and non-atomic `OVERWRITE` via new-version uploads (`SupportsAtomicRename() == false`).
+  - Added ranged pack downloads (`RangeDownloader`), SSRF-checked download redirects with `Authorization` header stripping, filename sanitization (case-insensitive, `/`, `\`, spaces, `.`/`..`, max 255 chars), `.boxnote`/`.boxcanvas`/`web_link` index-time skips, permanent failure on download-blocked (HTTP 403) files, native server-side copy/move/rename/delete, and thumbnail retrieval with `202 Accepted` / `Retry-After` (`429`) handling.
+
 ## [0.19.0] - 2026-09-16
 
 ### Added

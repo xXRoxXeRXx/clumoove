@@ -127,6 +127,46 @@ func (r CloudResource) IsPersonalVault() bool {
 	return r.Metadata.CustomProps != nil && r.Metadata.CustomProps["onedrive_special_folder"] == "vault"
 }
 
+const (
+	// DefaultChunkedUploadThreshold is the 50 MiB file size cutoff shared by
+	// migration, restore, and file-manager chunked transfer paths.
+	DefaultChunkedUploadThreshold int64 = 50 * 1024 * 1024
+
+	boxNonTransferablePropKey = "box_non_transferable_kind"
+	boxNonTransferableNote    = "box_note"
+	boxNonTransferableCanvas  = "box_canvas"
+	boxNonTransferableWebLink = "web_link"
+)
+
+// BoxSkipReason reports whether a Box resource is a non-file or proprietary
+// format item (Box Note, Box Canvas, or web link) that cannot be transferred
+// as a file, returning a user-visible skip reason when true.
+func (r CloudResource) BoxSkipReason() (string, bool) {
+	if r.Metadata.CustomProps == nil {
+		return "", false
+	}
+	switch r.Metadata.CustomProps[boxNonTransferablePropKey] {
+	case boxNonTransferableNote:
+		return "Box Notes (.boxnote) cannot be migrated through the API", true
+	case boxNonTransferableCanvas:
+		return "Box Canvas files (.boxcanvas) cannot be migrated through the API", true
+	case boxNonTransferableWebLink:
+		return "Box web links cannot be migrated through the API", true
+	default:
+		return "", false
+	}
+}
+
+// NonTransferableReason reports whether a resource cannot be transferred by
+// background API jobs (OneDrive Personal Vault or proprietary Box items) and
+// returns a user-visible skip reason when true.
+func (r CloudResource) NonTransferableReason() (string, bool) {
+	if r.IsPersonalVault() {
+		return "OneDrive Personal Vault cannot be migrated through the API", true
+	}
+	return r.BoxSkipReason()
+}
+
 type FileInfo struct {
 	Path    string    `json:"path"`
 	Size    int64     `json:"size"`
@@ -165,8 +205,9 @@ type UploadReceipt struct {
 
 // UploadOptions supplies explicit transfer-specific inputs for an upload.
 type UploadOptions struct {
-	Metadata FileMetadata
-	Checksum string
+	Metadata  FileMetadata
+	Checksum  string
+	Overwrite bool
 }
 
 // UploadResult carries provider-created outputs from a single upload.

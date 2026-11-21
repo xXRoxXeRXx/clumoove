@@ -49,12 +49,15 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 	if task.ResourceType != "files" && storage.IsSystemOrAppGeneratedPath(task.FilePath) {
 		return p.skipMigrationTask(ctx, task, "Skipped read-only system or app-generated collection (SKIP)")
 	}
-	// Existing jobs may have been indexed before Personal Vault exclusion was
-	// introduced. When Graph still exposes its metadata, turn such a task into
-	// a deliberate skip instead of retrying an interactive-only vault download.
-	if mig.SourceProvider == "onedrive" && task.ResourceType == "files" {
-		if resource, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr == nil && resource.IsPersonalVault() {
-			return p.skipMigrationTask(ctx, task, "OneDrive Personal Vault cannot be migrated through the API")
+	// Existing jobs may have been indexed before non-transferable item exclusion
+	// was introduced, or queued manually. Inspect once and reuse LastModified.
+	var inspectedSource *storage.CloudResource
+	if task.ResourceType == "files" && (mig.SourceProvider == "onedrive" || mig.SourceProvider == "box") {
+		if resource, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr == nil {
+			inspectedSource = &resource
+			if reason, skip := resource.NonTransferableReason(); skip {
+				return p.skipMigrationTask(ctx, task, reason)
+			}
 		}
 	}
 
@@ -249,7 +252,9 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		_ = json.Unmarshal(task.Metadata, &transferMeta)
 	}
 	if transferMeta.ModifiedTime.IsZero() {
-		if srcInfo, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr != nil {
+		if inspectedSource != nil {
+			transferMeta.ModifiedTime = inspectedSource.LastModified
+		} else if srcInfo, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr != nil {
 			processorLogf("Warning: could not fetch source mtime for %s: %v (timestamp may be inaccurate)", task.FilePath, inspectErr)
 		} else {
 			transferMeta.ModifiedTime = srcInfo.LastModified
@@ -265,7 +270,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		SourcePath:       task.FilePath,
 		TargetPath:       uploadPath,
 		VerificationPath: targetPath,
-		UploadOptions:    storage.UploadOptions{Metadata: transferMeta},
+		UploadOptions:    storage.UploadOptions{Metadata: transferMeta, Overwrite: mig.ConflictStrategy == "OVERWRITE"},
 		FileSize:         task.FileSize,
 		SourceHash:       task.SourceHash.String,
 		Throttler:        migrationThrottler,
