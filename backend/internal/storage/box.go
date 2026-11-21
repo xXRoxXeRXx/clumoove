@@ -1,11 +1,16 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"path"
@@ -15,13 +20,17 @@ import (
 )
 
 const (
-	defaultBoxAPIBase    = "https://api.box.com/2.0"
-	defaultBoxUploadBase = "https://upload.box.com/api/2.0"
-	boxRootFolderID      = "0"
-	boxListPageLimit     = 1000
-	boxMaxRetries        = 3
-	boxItemFields        = "id,type,name,size,sha1,modified_at,content_modified_at,permissions,url"
-	maxBoxJSONBodyBytes  = 16 << 20
+	defaultBoxAPIBase       = "https://api.box.com/2.0"
+	defaultBoxUploadBase    = "https://upload.box.com/api/2.0"
+	boxRootFolderID         = "0"
+	boxListPageLimit        = 1000
+	boxMaxRetries           = 3
+	boxMaxCommitPolls       = 10
+	boxItemFields           = "id,type,name,size,sha1,modified_at,content_modified_at,permissions,url"
+	maxBoxJSONBodyBytes     = 16 << 20
+	boxMaxPartSizeBytes     = 256 << 20
+	boxDirectUploadMaxBytes = int64(50_000_000)
+	boxEmptySHA1Hex         = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
 )
 
 // BoxProvider accesses a Box account via the Box Content API v2.
@@ -35,8 +44,9 @@ type BoxProvider struct {
 }
 
 var (
-	_ StorageProvider = (*BoxProvider)(nil)
-	_ RangeDownloader = (*BoxProvider)(nil)
+	_ StorageProvider  = (*BoxProvider)(nil)
+	_ RangeDownloader  = (*BoxProvider)(nil)
+	_ TransferUploader = (*BoxProvider)(nil)
 )
 
 // NewBoxProvider constructs a BoxProvider using the given OAuth2 access token.
@@ -181,6 +191,8 @@ func (p *BoxProvider) doWithClient(ctx context.Context, client *http.Client, req
 
 func boxAPIError(op string, statusCode int) error {
 	switch statusCode {
+	case http.StatusBadRequest:
+		return fmt.Errorf("box %s rejected with HTTP 400: %w", op, ErrPermanentTransfer)
 	case http.StatusUnauthorized:
 		return fmt.Errorf("box %s: %w", op, ErrAuth)
 	case http.StatusForbidden:
@@ -190,7 +202,7 @@ func boxAPIError(op string, statusCode int) error {
 	case http.StatusConflict:
 		return fmt.Errorf("box %s: %w", op, ErrManagerConflict)
 	default:
-		return fmt.Errorf("box %s failed with status %d", op, statusCode)
+		return fmt.Errorf("box %s failed with HTTP %d", op, statusCode)
 	}
 }
 
@@ -614,16 +626,631 @@ func (p *BoxProvider) StreamDownloadRange(ctx context.Context, resourceType, fil
 	return ValidateHTTPRangeResponse(resp, offset, length)
 }
 
+type boxUploadAttributes struct {
+	Name              string           `json:"name"`
+	Parent            *boxUploadParent `json:"parent,omitempty"`
+	ContentModifiedAt string           `json:"content_modified_at,omitempty"`
+}
+
+type boxUploadParent struct {
+	ID string `json:"id"`
+}
+
+type boxUploadResponse struct {
+	Entries []boxItem `json:"entries"`
+}
+
+func parseBoxSHA1Checksum(checksum string) (string, bool) {
+	algo, val := ParseHashString(checksum)
+	if algo != "SHA1" || len(val) != 40 {
+		return "", false
+	}
+	if _, err := hex.DecodeString(val); err != nil {
+		return "", false
+	}
+	return val, true
+}
+
+func boxUploadParentAndName(filePath string) (string, string, string, error) {
+	cleanPath, err := boxCleanPath(filePath)
+	if err != nil {
+		return "", "", "", err
+	}
+	if cleanPath == "/" {
+		return "", "", "", fmt.Errorf("box upload target cannot be root: %w", ErrPermanentTransfer)
+	}
+	return cleanPath, path.Dir(cleanPath), path.Base(cleanPath), nil
+}
+
 func (p *BoxProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
-	return fmt.Errorf("box upload not implemented: %w", ErrPermanentTransfer)
+	_, err := p.StreamUploadWithOptions(ctx, resourceType, filePath, stream, size, UploadOptions{})
+	return err
+}
+
+func (p *BoxProvider) StreamUploadWithOptions(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, opts UploadOptions) (UploadResult, error) {
+	if resourceType != "files" {
+		return UploadResult{}, ErrUnsupportedResourceType
+	}
+	cleanPath, parentPath, fileName, err := boxUploadParentAndName(filePath)
+	if err != nil {
+		return UploadResult{}, err
+	}
+	if size > boxDirectUploadMaxBytes {
+		return p.StreamUploadChunkedWithOptions(ctx, resourceType, cleanPath, stream, size, nil, opts)
+	}
+	if err := p.CreateParentDirectories(ctx, resourceType, cleanPath); err != nil {
+		return UploadResult{}, err
+	}
+	parentID, err := p.resolveFolderID(ctx, parentPath)
+	if err != nil {
+		return UploadResult{}, err
+	}
+
+	attrs := boxUploadAttributes{
+		Name:   fileName,
+		Parent: &boxUploadParent{ID: parentID},
+	}
+	if !opts.Metadata.ModifiedTime.IsZero() {
+		attrs.ContentModifiedAt = opts.Metadata.ModifiedTime.UTC().Format(time.RFC3339)
+	}
+	attrBytes, err := json.Marshal(attrs)
+	if err != nil {
+		return UploadResult{}, err
+	}
+
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	contentType := mw.FormDataContentType()
+
+	errCh := make(chan error, 1)
+	go func() {
+		var writeErr error
+		defer func() {
+			if writeErr != nil {
+				_ = pw.CloseWithError(writeErr)
+			} else {
+				_ = pw.Close()
+			}
+			errCh <- writeErr
+		}()
+
+		if err := mw.WriteField("attributes", string(attrBytes)); err != nil {
+			writeErr = err
+			return
+		}
+		part, err := mw.CreateFormFile("file", fileName)
+		if err != nil {
+			writeErr = err
+			return
+		}
+		n, err := io.Copy(part, stream)
+		if err != nil {
+			writeErr = err
+			return
+		}
+		if size >= 0 && n != size {
+			writeErr = fmt.Errorf("box upload stream size mismatch: got %d bytes, expected %d: %w", n, size, io.ErrUnexpectedEOF)
+			return
+		}
+		if err := mw.Close(); err != nil {
+			writeErr = err
+			return
+		}
+	}()
+
+	endpoint := p.uploadBase + "/files/content"
+	req, err := p.newRequest(ctx, http.MethodPost, endpoint, pr)
+	if err != nil {
+		_ = pr.Close()
+		<-errCh
+		return UploadResult{}, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	if sha1Hex, ok := parseBoxSHA1Checksum(opts.Checksum); ok {
+		req.Header.Set("content-md5", sha1Hex)
+	} else if size == 0 && opts.Checksum == "" {
+		req.Header.Set("content-md5", boxEmptySHA1Hex)
+	}
+
+	resp, doErr := p.do(ctx, req)
+	if doErr != nil {
+		_ = pr.Close()
+		if writeErr := <-errCh; writeErr != nil {
+			return UploadResult{}, writeErr
+		}
+		return UploadResult{}, doErr
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_ = pr.Close()
+		<-errCh
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return UploadResult{}, boxResponseError("upload", resp)
+	}
+
+	var uploaded boxUploadResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBoxJSONBodyBytes)).Decode(&uploaded); err != nil {
+		<-errCh
+		return UploadResult{}, fmt.Errorf("decode box upload response: %w", err)
+	}
+	if writeErr := <-errCh; writeErr != nil {
+		return UploadResult{}, writeErr
+	}
+	if len(uploaded.Entries) == 0 || uploaded.Entries[0].ID == "" {
+		return UploadResult{}, fmt.Errorf("box upload response missing file entry")
+	}
+	return UploadResult{Receipt: UploadReceipt{TargetResourceID: uploaded.Entries[0].ID}}, nil
 }
 
 func (p *BoxProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
-	return fmt.Errorf("box chunked upload not implemented: %w", ErrPermanentTransfer)
+	_, err := p.StreamUploadChunkedWithOptions(ctx, resourceType, filePath, stream, size, progressChan, UploadOptions{})
+	return err
+}
+
+type boxUploadSession struct {
+	ID               string `json:"id"`
+	PartSize         int64  `json:"part_size"`
+	TotalParts       int    `json:"total_parts"`
+	SessionEndpoints struct {
+		UploadPart string `json:"upload_part"`
+		Commit     string `json:"commit"`
+		Abort      string `json:"abort"`
+	} `json:"session_endpoints"`
+}
+
+type boxUploadPart struct {
+	PartID string `json:"part_id"`
+	Offset int64  `json:"offset"`
+	Size   int64  `json:"size"`
+	SHA1   string `json:"sha1"`
+}
+
+type boxCommitAttributes struct {
+	ContentModifiedAt string `json:"content_modified_at,omitempty"`
+}
+
+func (p *BoxProvider) validateSessionEndpoint(ctx context.Context, rawURL string) error {
+	if isBoxLocalTestingURL(p.uploadBase) && isBoxLocalTestingURL(rawURL) {
+		return nil
+	}
+	u, err := parseEgressURL(rawURL)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(u.Scheme, "https") {
+		return fmt.Errorf("box upload session endpoint scheme %q rejected: HTTPS required", u.Scheme)
+	}
+	return validateEgressURLContext(ctx, rawURL)
+}
+
+func (p *BoxProvider) StreamUploadChunkedWithOptions(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64, opts UploadOptions) (UploadResult, error) {
+	if resourceType != "files" {
+		return UploadResult{}, ErrUnsupportedResourceType
+	}
+	cleanPath, parentPath, fileName, err := boxUploadParentAndName(filePath)
+	if err != nil {
+		return UploadResult{}, err
+	}
+	if size < 0 {
+		return UploadResult{}, fmt.Errorf("box chunked upload requires non-negative size, got %d: %w", size, ErrPermanentTransfer)
+	}
+	if size == 0 {
+		return p.StreamUploadWithOptions(ctx, resourceType, cleanPath, &ProgressReader{Reader: stream, ProgressChan: progressChan}, 0, opts)
+	}
+	if err := p.CreateParentDirectories(ctx, resourceType, cleanPath); err != nil {
+		return UploadResult{}, err
+	}
+	parentID, err := p.resolveFolderID(ctx, parentPath)
+	if err != nil {
+		return UploadResult{}, err
+	}
+
+	session, err := p.createUploadSession(ctx, parentID, fileName, size)
+	if err != nil {
+		return UploadResult{}, err
+	}
+
+	uploadPartURL := session.SessionEndpoints.UploadPart
+	if uploadPartURL == "" {
+		uploadPartURL = p.uploadBase + "/files/upload_sessions/" + url.PathEscape(session.ID)
+	}
+	commitURL := session.SessionEndpoints.Commit
+	if commitURL == "" {
+		commitURL = p.uploadBase + "/files/upload_sessions/" + url.PathEscape(session.ID) + "/commit"
+	}
+	abortURL := session.SessionEndpoints.Abort
+	if abortURL == "" {
+		abortURL = p.uploadBase + "/files/upload_sessions/" + url.PathEscape(session.ID)
+	}
+
+	for _, ep := range []string{uploadPartURL, commitURL, abortURL} {
+		if err := p.validateSessionEndpoint(ctx, ep); err != nil {
+			return UploadResult{}, err
+		}
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			p.abortUploadSession(ctx, abortURL)
+		}
+	}()
+
+	bufLen := session.PartSize
+	if size < bufLen {
+		bufLen = size
+	}
+	buf := make([]byte, bufLen)
+	fileHasher := sha1.New()
+	parts := make([]boxUploadPart, 0, (size+session.PartSize-1)/session.PartSize)
+
+	var offset int64
+	for offset < size {
+		remaining := size - offset
+		wantLen := session.PartSize
+		if remaining < wantLen {
+			wantLen = remaining
+		}
+		if _, err := io.ReadFull(stream, buf[:wantLen]); err != nil {
+			return UploadResult{}, fmt.Errorf("read box upload part at offset %d: %w", offset, err)
+		}
+
+		partData := buf[:wantLen]
+		partSum := sha1.Sum(partData)
+		_, _ = fileHasher.Write(partData)
+
+		partResp, err := p.uploadSessionPart(ctx, uploadPartURL, partData, offset, size, partSum[:])
+		if err != nil {
+			return UploadResult{}, err
+		}
+		parts = append(parts, partResp)
+		offset += wantLen
+
+		if progressChan != nil {
+			select {
+			case progressChan <- wantLen:
+			default:
+			}
+		}
+	}
+
+	wholeSum := fileHasher.Sum(nil)
+	if expectedHex, ok := parseBoxSHA1Checksum(opts.Checksum); ok {
+		gotHex := hex.EncodeToString(wholeSum)
+		if gotHex != expectedHex {
+			return UploadResult{}, fmt.Errorf("box chunked upload sha1 mismatch: got %s, expected %s", gotHex, expectedHex)
+		}
+	}
+
+	result, err := p.commitUploadSession(ctx, commitURL, parts, wholeSum, opts.Metadata)
+	if err != nil {
+		return UploadResult{}, err
+	}
+	committed = true
+	return result, nil
+}
+
+func (p *BoxProvider) createUploadSession(ctx context.Context, folderID, fileName string, size int64) (boxUploadSession, error) {
+	body, err := json.Marshal(struct {
+		FolderID string `json:"folder_id"`
+		FileName string `json:"file_name"`
+		FileSize int64  `json:"file_size"`
+	}{
+		FolderID: folderID,
+		FileName: fileName,
+		FileSize: size,
+	})
+	if err != nil {
+		return boxUploadSession{}, err
+	}
+	req, err := p.newRequest(ctx, http.MethodPost, p.uploadBase+"/files/upload_sessions", bytes.NewReader(body))
+	if err != nil {
+		return boxUploadSession{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.do(ctx, req)
+	if err != nil {
+		return boxUploadSession{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return boxUploadSession{}, boxResponseError("create upload session", resp)
+	}
+
+	var session boxUploadSession
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBoxJSONBodyBytes)).Decode(&session); err != nil {
+		return boxUploadSession{}, fmt.Errorf("decode box upload session: %w", err)
+	}
+	if session.ID == "" || session.PartSize <= 0 || session.PartSize > boxMaxPartSizeBytes {
+		return boxUploadSession{}, fmt.Errorf("box upload session returned invalid id or part_size (%d)", session.PartSize)
+	}
+	return session, nil
+}
+
+func (p *BoxProvider) uploadSessionPart(ctx context.Context, uploadPartURL string, data []byte, offset, total int64, partSHA1 []byte) (boxUploadPart, error) {
+	req, err := p.newRequest(ctx, http.MethodPut, uploadPartURL, bytes.NewReader(data))
+	if err != nil {
+		return boxUploadPart{}, err
+	}
+	req.ContentLength = int64(len(data))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+int64(len(data))-1, total))
+	req.Header.Set("Digest", "sha="+base64.StdEncoding.EncodeToString(partSHA1))
+
+	resp, err := p.do(ctx, req)
+	if err != nil {
+		return boxUploadPart{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return boxUploadPart{}, boxResponseError("upload session part", resp)
+	}
+
+	var partWrapper struct {
+		Part boxUploadPart `json:"part"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBoxJSONBodyBytes)).Decode(&partWrapper); err != nil {
+		return boxUploadPart{}, fmt.Errorf("decode box upload part response: %w", err)
+	}
+	if partWrapper.Part.PartID == "" {
+		return boxUploadPart{}, fmt.Errorf("box upload part response missing part_id")
+	}
+	return partWrapper.Part, nil
+}
+
+func (p *BoxProvider) commitUploadSession(ctx context.Context, commitURL string, parts []boxUploadPart, wholeSHA1 []byte, meta FileMetadata) (UploadResult, error) {
+	payload := struct {
+		Parts      []boxUploadPart      `json:"parts"`
+		Attributes *boxCommitAttributes `json:"attributes,omitempty"`
+	}{
+		Parts: parts,
+	}
+	if !meta.ModifiedTime.IsZero() {
+		payload.Attributes = &boxCommitAttributes{
+			ContentModifiedAt: meta.ModifiedTime.UTC().Format(time.RFC3339),
+		}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return UploadResult{}, err
+	}
+	digestHeader := "sha=" + base64.StdEncoding.EncodeToString(wholeSHA1)
+
+	for poll := 0; poll < boxMaxCommitPolls; poll++ {
+		req, err := p.newRequest(ctx, http.MethodPost, commitURL, bytes.NewReader(body))
+		if err != nil {
+			return UploadResult{}, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Digest", digestHeader)
+
+		resp, err := p.do(ctx, req)
+		if err != nil {
+			return UploadResult{}, err
+		}
+
+		if resp.StatusCode == http.StatusAccepted {
+			retryAfter := resp.Header.Get("Retry-After")
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+
+			delay := parseBoxRetryAfterDuration(retryAfter)
+			if strings.TrimSpace(retryAfter) == "" {
+				delay = time.Second
+			}
+			if err := boxWait(ctx, delay); err != nil {
+				return UploadResult{}, err
+			}
+			continue
+		}
+
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			return UploadResult{}, boxResponseError("commit upload session", resp)
+		}
+
+		var uploaded boxUploadResponse
+		if err := json.NewDecoder(io.LimitReader(resp.Body, maxBoxJSONBodyBytes)).Decode(&uploaded); err != nil {
+			return UploadResult{}, fmt.Errorf("decode box commit response: %w", err)
+		}
+		if len(uploaded.Entries) == 0 || uploaded.Entries[0].ID == "" {
+			return UploadResult{}, fmt.Errorf("box commit response missing file entry")
+		}
+		return UploadResult{Receipt: UploadReceipt{TargetResourceID: uploaded.Entries[0].ID}}, nil
+	}
+	return UploadResult{}, fmt.Errorf("box upload commit remained 202 Accepted after %d polls", boxMaxCommitPolls)
+}
+
+func (p *BoxProvider) abortUploadSession(ctx context.Context, abortURL string) {
+	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+
+	req, err := p.newRequest(abortCtx, http.MethodDelete, abortURL, nil)
+	if err != nil {
+		return
+	}
+	resp, err := p.do(abortCtx, req)
+	if err != nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
 }
 
 func (p *BoxProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
-	return fmt.Errorf("box mkdir not implemented: %w", ErrPermanentTransfer)
+	if resourceType != "files" {
+		return ErrUnsupportedResourceType
+	}
+	cleanDir, err := boxCleanPath(dirPath)
+	if err != nil {
+		return err
+	}
+	if cleanDir == "/" {
+		return nil
+	}
+
+	cache := p.ensurePathCache()
+	parts := strings.Split(strings.Trim(cleanDir, "/"), "/")
+	currentID := boxRootFolderID
+	currentPath := "/"
+	startIdx := 0
+
+	// Reuse the deepest cached ancestor to avoid redundant folder creations.
+	for i := len(parts) - 1; i >= 0; i-- {
+		prefix := "/" + strings.Join(parts[:i+1], "/")
+		if id, ok := cache.Get(strings.ToLower(prefix)); ok && id != "" {
+			currentID = id
+			currentPath = prefix
+			startIdx = i + 1
+			break
+		}
+	}
+
+	for _, seg := range parts[startIdx:] {
+		created, err := p.createFolderInParent(ctx, currentID, seg)
+		if err != nil {
+			return err
+		}
+		currentID = created.ID
+		currentPath = boxChildPath(currentPath, created.Name)
+		cache.Set(strings.ToLower(currentPath), currentID)
+	}
+	return nil
+}
+
+func (p *BoxProvider) createFolderInParent(ctx context.Context, parentID, name string) (boxItem, error) {
+	payload, err := json.Marshal(struct {
+		Name   string `json:"name"`
+		Parent struct {
+			ID string `json:"id"`
+		} `json:"parent"`
+	}{
+		Name: name,
+		Parent: struct {
+			ID string `json:"id"`
+		}{ID: parentID},
+	})
+	if err != nil {
+		return boxItem{}, err
+	}
+
+	req, err := p.newRequest(ctx, http.MethodPost, p.apiBase+"/folders", bytes.NewReader(payload))
+	if err != nil {
+		return boxItem{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.do(ctx, req)
+	if err != nil {
+		return boxItem{}, err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBoxJSONBodyBytes))
+	if err != nil {
+		return boxItem{}, fmt.Errorf("read box create folder response: %w", err)
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var created boxItem
+		if err := json.Unmarshal(bodyBytes, &created); err != nil {
+			return boxItem{}, fmt.Errorf("decode box create folder response: %w", err)
+		}
+		if created.ID == "" {
+			return boxItem{}, fmt.Errorf("box create folder response missing id")
+		}
+		if created.Name == "" {
+			created.Name = name
+		}
+		return created, nil
+	}
+
+	if resp.StatusCode == http.StatusConflict {
+		_, conflict := parseBoxConflict(bodyBytes)
+		if conflict == nil {
+			existing, lookupErr := p.findChildByName(ctx, parentID, name)
+			if lookupErr != nil {
+				return boxItem{}, boxAPIError("create folder", http.StatusConflict)
+			}
+			conflict = &existing
+		}
+		if conflict.Type != "folder" {
+			return boxItem{}, fmt.Errorf("box path %q conflicts with %s: %w", name, conflict.Type, ErrManagerConflict)
+		}
+		if conflict.ID == "" {
+			return boxItem{}, boxAPIError("create folder", http.StatusConflict)
+		}
+		if conflict.Name == "" {
+			conflict.Name = name
+		}
+		return *conflict, nil
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return boxItem{}, boxResponseError("create folder", resp)
+	}
+	return boxItem{}, boxAPIError("create folder", resp.StatusCode)
+}
+
+func parseBoxConflict(body []byte) (string, *boxItem) {
+	var errResp struct {
+		Code        string `json:"code"`
+		ContextInfo struct {
+			Conflicts json.RawMessage `json:"conflicts"`
+		} `json:"context_info"`
+	}
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		return "", nil
+	}
+	raw := bytes.TrimSpace(errResp.ContextInfo.Conflicts)
+	if len(raw) == 0 || string(raw) == "null" {
+		return errResp.Code, nil
+	}
+	if raw[0] == '[' {
+		var items []boxItem
+		if err := json.Unmarshal(raw, &items); err == nil && len(items) > 0 {
+			return errResp.Code, &items[0]
+		}
+		return errResp.Code, nil
+	}
+	var item boxItem
+	if err := json.Unmarshal(raw, &item); err == nil && item.ID != "" {
+		return errResp.Code, &item
+	}
+	return errResp.Code, nil
+}
+
+func parseBoxRetryAfterDuration(raw string) time.Duration {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed != "" {
+		if secs, err := strconv.Atoi(trimmed); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+		if retryAt, err := http.ParseTime(trimmed); err == nil {
+			if delay := time.Until(retryAt); delay > 0 {
+				return delay
+			}
+			return 0
+		}
+	}
+	return time.Second
+}
+
+func boxResponseError(op string, resp *http.Response) error {
+	if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("box %s: %w", op, &RetryAfterError{After: parseBoxRetryAfterDuration(resp.Header.Get("Retry-After"))})
+	}
+	if resp == nil {
+		return fmt.Errorf("box %s failed: nil response", op)
+	}
+	return boxAPIError(op, resp.StatusCode)
 }
 
 func (p *BoxProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
@@ -657,5 +1284,15 @@ func (p *BoxProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 }
 
 func (p *BoxProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
-	return fmt.Errorf("box create parent directories not implemented: %w", ErrPermanentTransfer)
+	if resourceType != "files" {
+		return ErrUnsupportedResourceType
+	}
+	cleanPath, err := boxCleanPath(filePath)
+	if err != nil {
+		return err
+	}
+	if cleanPath == "/" {
+		return nil
+	}
+	return p.CreateDirectory(ctx, resourceType, path.Dir(cleanPath))
 }
