@@ -698,9 +698,25 @@ func (p *BoxProvider) StreamUploadWithOptions(ctx context.Context, resourceType,
 		return UploadResult{}, err
 	}
 
+	var targetFileID string
+	if opts.Overwrite {
+		existing, findErr := p.findChildByName(ctx, parentID, fileName)
+		if findErr != nil && !errors.Is(findErr, ErrNotFound) {
+			return UploadResult{}, findErr
+		}
+		if findErr == nil {
+			if existing.Type != "file" {
+				return UploadResult{}, fmt.Errorf("box upload target %q conflicts with %s: %w", cleanPath, existing.Type, ErrManagerConflict)
+			}
+			targetFileID = existing.ID
+		}
+	}
+
 	attrs := boxUploadAttributes{
-		Name:   fileName,
-		Parent: &boxUploadParent{ID: parentID},
+		Name: fileName,
+	}
+	if targetFileID == "" {
+		attrs.Parent = &boxUploadParent{ID: parentID}
 	}
 	if !opts.Metadata.ModifiedTime.IsZero() {
 		attrs.ContentModifiedAt = opts.Metadata.ModifiedTime.UTC().Format(time.RFC3339)
@@ -751,6 +767,9 @@ func (p *BoxProvider) StreamUploadWithOptions(ctx context.Context, resourceType,
 	}()
 
 	endpoint := p.uploadBase + "/files/content"
+	if targetFileID != "" {
+		endpoint = p.uploadBase + "/files/" + url.PathEscape(targetFileID) + "/content"
+	}
 	req, err := p.newRequest(ctx, http.MethodPost, endpoint, pr)
 	if err != nil {
 		_ = pr.Close()
@@ -858,7 +877,7 @@ func (p *BoxProvider) StreamUploadChunkedWithOptions(ctx context.Context, resour
 		return UploadResult{}, err
 	}
 
-	session, err := p.createUploadSession(ctx, parentID, fileName, size)
+	session, err := p.createUploadSession(ctx, parentID, fileName, size, opts.Overwrite)
 	if err != nil {
 		return UploadResult{}, err
 	}
@@ -943,7 +962,7 @@ func (p *BoxProvider) StreamUploadChunkedWithOptions(ctx context.Context, resour
 	return result, nil
 }
 
-func (p *BoxProvider) createUploadSession(ctx context.Context, folderID, fileName string, size int64) (boxUploadSession, error) {
+func (p *BoxProvider) createUploadSession(ctx context.Context, folderID, fileName string, size int64, overwrite bool) (boxUploadSession, error) {
 	body, err := json.Marshal(struct {
 		FolderID string `json:"folder_id"`
 		FileName string `json:"file_name"`
@@ -956,31 +975,74 @@ func (p *BoxProvider) createUploadSession(ctx context.Context, folderID, fileNam
 	if err != nil {
 		return boxUploadSession{}, err
 	}
-	req, err := p.newRequest(ctx, http.MethodPost, p.uploadBase+"/files/upload_sessions", bytes.NewReader(body))
+	session, conflictBody, statusCode, err := p.postUploadSession(ctx, p.uploadBase+"/files/upload_sessions", body, "create upload session")
+	if err == nil {
+		return session, nil
+	}
+	if statusCode != http.StatusConflict || !overwrite {
+		return boxUploadSession{}, err
+	}
+
+	_, conflict := parseBoxConflict(conflictBody)
+	if conflict == nil || conflict.ID == "" {
+		existing, findErr := p.findChildByName(ctx, folderID, fileName)
+		if findErr != nil {
+			return boxUploadSession{}, findErr
+		}
+		conflict = &existing
+	}
+	if conflict.Type != "file" {
+		return boxUploadSession{}, fmt.Errorf("box upload target %q conflicts with %s: %w", fileName, conflict.Type, ErrManagerConflict)
+	}
+	return p.createNewVersionUploadSession(ctx, conflict.ID, fileName, size)
+}
+
+func (p *BoxProvider) createNewVersionUploadSession(ctx context.Context, fileID, fileName string, size int64) (boxUploadSession, error) {
+	body, err := json.Marshal(struct {
+		FileName string `json:"file_name"`
+		FileSize int64  `json:"file_size"`
+	}{
+		FileName: fileName,
+		FileSize: size,
+	})
 	if err != nil {
 		return boxUploadSession{}, err
+	}
+	endpoint := p.uploadBase + "/files/" + url.PathEscape(fileID) + "/upload_sessions"
+	session, _, _, err := p.postUploadSession(ctx, endpoint, body, "create new version upload session")
+	return session, err
+}
+
+func (p *BoxProvider) postUploadSession(ctx context.Context, endpoint string, body []byte, op string) (boxUploadSession, []byte, int, error) {
+	req, err := p.newRequest(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return boxUploadSession{}, nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.do(ctx, req)
 	if err != nil {
-		return boxUploadSession{}, err
+		return boxUploadSession{}, nil, 0, err
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBoxJSONBodyBytes))
+	if readErr != nil {
+		return boxUploadSession{}, nil, resp.StatusCode, fmt.Errorf("read box %s response: %w", op, readErr)
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return boxUploadSession{}, boxResponseError("create upload session", resp)
+		return boxUploadSession{}, bodyBytes, resp.StatusCode, boxResponseError(op, resp)
 	}
 
 	var session boxUploadSession
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBoxJSONBodyBytes)).Decode(&session); err != nil {
-		return boxUploadSession{}, fmt.Errorf("decode box upload session: %w", err)
+	if err := json.Unmarshal(bodyBytes, &session); err != nil {
+		return boxUploadSession{}, nil, resp.StatusCode, fmt.Errorf("decode box %s: %w", op, err)
 	}
 	if session.ID == "" || session.PartSize <= 0 || session.PartSize > boxMaxPartSizeBytes {
-		return boxUploadSession{}, fmt.Errorf("box upload session returned invalid id or part_size (%d)", session.PartSize)
+		return boxUploadSession{}, nil, resp.StatusCode, fmt.Errorf("box upload session returned invalid id or part_size (%d)", session.PartSize)
 	}
-	return session, nil
+	return session, nil, resp.StatusCode, nil
 }
 
 func (p *BoxProvider) uploadSessionPart(ctx context.Context, uploadPartURL string, data []byte, offset, total int64, partSHA1 []byte) (boxUploadPart, error) {
