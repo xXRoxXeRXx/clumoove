@@ -15,23 +15,25 @@ import (
 )
 
 const (
-	defaultBoxAPIBase    = "https://api.box.com/2.0"
-	defaultBoxUploadBase = "https://upload.box.com/api/2.0"
-	boxRootFolderID      = "0"
-	boxListPageLimit     = 1000
-	boxMaxRetries        = 3
-	boxItemFields        = "id,type,name,size,sha1,modified_at,content_modified_at,permissions,url"
-	maxBoxJSONBodyBytes  = 16 << 20
+	defaultBoxAPIBase          = "https://api.box.com/2.0"
+	defaultBoxUploadBase       = "https://upload.box.com/api/2.0"
+	boxRootFolderID            = "0"
+	boxListPageLimit           = 1000
+	boxMaxRetries              = 3
+	boxDefaultThumbnailMaxWait = 3 * time.Second
+	boxItemFields              = "id,type,name,size,sha1,modified_at,content_modified_at,permissions,url"
+	maxBoxJSONBodyBytes        = 16 << 20
 )
 
 // BoxProvider accesses a Box account via the Box Content API v2.
 type BoxProvider struct {
 	catalogueTraits
-	accessToken string
-	apiBase     string
-	uploadBase  string
-	httpClient  *http.Client
-	pathCache   *boundedStringCache
+	accessToken      string
+	apiBase          string
+	uploadBase       string
+	httpClient       *http.Client
+	pathCache        *boundedStringCache
+	thumbnailMaxWait time.Duration
 }
 
 var (
@@ -113,18 +115,26 @@ func (p *BoxProvider) newRequest(ctx context.Context, method, rawURL string, bod
 	return req, nil
 }
 
-func boxRetryDelay(retryAfter string, attempt int) time.Duration {
+func parseBoxRetryAfter(retryAfter string) (time.Duration, bool) {
 	trimmed := strings.TrimSpace(retryAfter)
-	if trimmed != "" {
-		if secs, err := strconv.Atoi(trimmed); err == nil && secs >= 0 {
-			return time.Duration(secs) * time.Second
+	if trimmed == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(trimmed); err == nil && secs >= 0 {
+		return time.Duration(secs) * time.Second, true
+	}
+	if retryAt, err := http.ParseTime(trimmed); err == nil {
+		if delay := time.Until(retryAt); delay > 0 {
+			return delay, true
 		}
-		if retryAt, err := http.ParseTime(trimmed); err == nil {
-			if delay := time.Until(retryAt); delay > 0 {
-				return delay
-			}
-			return 0
-		}
+		return 0, true
+	}
+	return 0, false
+}
+
+func boxRetryDelay(retryAfter string, attempt int) time.Duration {
+	if delay, ok := parseBoxRetryAfter(retryAfter); ok {
+		return delay
 	}
 	return 200 * time.Millisecond * (1 << attempt)
 }
@@ -187,6 +197,8 @@ func boxAPIError(op string, statusCode int) error {
 		return fmt.Errorf("box %s: %w", op, ErrPermission)
 	case http.StatusNotFound:
 		return fmt.Errorf("box %s: %w", op, ErrNotFound)
+	case http.StatusUnsupportedMediaType:
+		return fmt.Errorf("box %s: %w", op, ErrUnsupportedMedia)
 	case http.StatusConflict:
 		return fmt.Errorf("box %s: %w", op, ErrManagerConflict)
 	default:

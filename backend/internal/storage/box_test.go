@@ -29,11 +29,16 @@ type fakeBoxItem struct {
 	ContentModifiedAt string
 	URL               string
 	DownloadBlocked   bool
+	UnsupportedMedia  bool
+	Thumbnail         []byte
+	ThumbnailType     string
+	ThumbnailRedirect bool
 }
 
 type fakeBoxFault struct {
 	status     int
 	retryAfter string
+	location   string
 	body       string
 }
 
@@ -51,6 +56,7 @@ type fakeBoxServer struct {
 	downloadRanges      []string
 	redirectOverride    string
 	rangeResponder      func(w http.ResponseWriter, r *http.Request, item fakeBoxItem)
+	trapHit             bool
 	nextID              int
 	maxPageSize         int
 }
@@ -164,6 +170,9 @@ func (f *fakeBoxServer) handle(w http.ResponseWriter, r *http.Request) {
 		if fault.retryAfter != "" {
 			w.Header().Set("Retry-After", fault.retryAfter)
 		}
+		if fault.location != "" {
+			w.Header().Set("Location", fault.location)
+		}
 		w.WriteHeader(fault.status)
 		if fault.body != "" {
 			_, _ = w.Write([]byte(fault.body))
@@ -188,9 +197,19 @@ func (f *fakeBoxServer) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/folders/"):
 		folderID := strings.TrimPrefix(r.URL.Path, "/2.0/folders/")
 		f.handleGetItem(w, folderID, "folder")
+	case r.Method == http.MethodGet && r.URL.Path == "/trap-placeholder":
+		f.mu.Lock()
+		f.trapHit = true
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
 		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/2.0/files/"), "/content")
 		f.handleDownloadRedirect(w, r, fileID)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/files/") &&
+		(strings.HasSuffix(r.URL.Path, "/thumbnail.png") || strings.HasSuffix(r.URL.Path, "/thumbnail.jpg")):
+		trimmed := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
+		fileID := strings.SplitN(trimmed, "/", 2)[0]
+		f.handleThumbnail(w, r, fileID)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/files/"):
 		fileID := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
 		f.handleGetItem(w, fileID, "file")
@@ -222,8 +241,50 @@ func (f *fakeBoxServer) handleDownloadRedirect(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusFound)
 }
 
+func (f *fakeBoxServer) handleThumbnail(w http.ResponseWriter, r *http.Request, id string) {
+	f.mu.Lock()
+	item, ok := f.items[id]
+	redirectOverride := f.redirectOverride
+	f.mu.Unlock()
+	if !ok || item.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+	if item.UnsupportedMedia {
+		w.WriteHeader(http.StatusUnsupportedMediaType)
+		_, _ = w.Write([]byte(`{"type":"error","status":415,"code":"unsupported_media_type"}`))
+		return
+	}
+	if item.ThumbnailRedirect || redirectOverride != "" {
+		target := f.downloadServer.URL + "/thumb/" + id
+		if redirectOverride != "" {
+			target = redirectOverride
+		}
+		w.Header().Set("Location", target)
+		w.WriteHeader(http.StatusFound)
+		return
+	}
+	thumb := item.Thumbnail
+	if len(thumb) == 0 {
+		thumb = []byte("fake-box-thumb")
+	}
+	cType := item.ThumbnailType
+	if cType == "" {
+		if strings.HasSuffix(r.URL.Path, ".jpg") {
+			cType = "image/jpeg"
+		} else {
+			cType = "image/png"
+		}
+	}
+	w.Header().Set("Content-Type", cType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(thumb)
+}
+
 func (f *fakeBoxServer) handleDownload(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/dl/")
+	isThumb := strings.HasPrefix(r.URL.Path, "/thumb/")
+	id := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/dl/"), "/thumb/")
 	f.mu.Lock()
 	f.downloadAuthHeaders = append(f.downloadAuthHeaders, r.Header.Get("Authorization"))
 	f.downloadRanges = append(f.downloadRanges, r.Header.Get("Range"))
@@ -238,6 +299,21 @@ func (f *fakeBoxServer) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok || item.Type != "file" {
 		http.NotFound(w, r)
+		return
+	}
+	if isThumb {
+		cType := item.ThumbnailType
+		if cType == "" {
+			cType = "image/png"
+		}
+		thumb := item.Thumbnail
+		if len(thumb) == 0 {
+			thumb = []byte("fake-redirect-thumb")
+		}
+		w.Header().Set("Content-Type", cType)
+		w.Header().Set("Content-Length", strconv.Itoa(len(thumb)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(thumb)
 		return
 	}
 	if responder != nil && r.Header.Get("Range") != "" {
