@@ -176,4 +176,66 @@ describe('FileThumbnail component', () => {
     expect(container.querySelector('svg')).not.toBeNull();
     expect(container.querySelector('img')).toBeNull();
   });
+
+  it('fetches thumbnail for video files when thumbnails are enabled', async () => {
+    const mockBlob = new Blob(['video-thumb'], { type: 'image/png' });
+    const spy = vi.spyOn(filesApi, 'getFileThumbnailResult').mockResolvedValue({
+      blob: mockBlob,
+      status: 200,
+    });
+
+    const videoEntry: filesApi.FileEntry = {
+      ref: 'ref-video-1',
+      name: 'clip.mp4',
+      display_path: '/clip.mp4',
+      kind: 'file',
+      size: 4096,
+      mime_type: 'video/mp4',
+      allowed_actions: ['download'],
+    };
+
+    act(() => {
+      root.render(
+        <FileThumbnail
+          request={{ apiUrl: 'https://api.example.test', token: 'test-token', profileId: 'p1' }}
+          entry={videoEntry}
+          thumbnailsEnabled={true}
+          size="sm"
+        />
+      );
+    });
+    await flushAsync();
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('img')).not.toBeNull();
+  });
+
+  it('skips thumbnail requests and renders FileIcon for unsupported file types', async () => {
+    const spy = vi.spyOn(filesApi, 'getFileThumbnailResult');
+    const textEntry: filesApi.FileEntry = {
+      ref: 'ref-doc-1',
+      name: 'notes.txt',
+      display_path: '/notes.txt',
+      kind: 'file',
+      size: 128,
+      mime_type: 'text/plain',
+      allowed_actions: ['download'],
+    };
+
+    act(() => {
+      root.render(
+        <FileThumbnail
+          request={{ apiUrl: 'https://api.example.test', token: 'test-token', profileId: 'p1' }}
+          entry={textEntry}
+          thumbnailsEnabled={true}
+          size="sm"
+        />
+      );
+    });
+    await flushAsync();
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(container.querySelector('svg')).not.toBeNull();
+    expect(container.querySelector('img')).toBeNull();
+  });
 });

@@ -457,6 +457,13 @@ func TestFileModuleHTTPWorkflowsAndErrorSemantics(t *testing.T) {
 	provider.thumbnailErr = storage.ErrUnsupportedMedia
 	recThumbUnsupported := doReq(http.MethodPost, "/api/files/profiles/p-nc/thumbnail", "user-1", `{"ref":"`+photoRef+`"}`, nil)
 	assertAPIResponseError(t, recThumbUnsupported, http.StatusUnsupportedMediaType, ErrFilesUnsupportedOperation, "thumbnail unsupported media")
+	provider.thumbnailErr = &storage.RetryAfterError{After: 2500 * time.Millisecond}
+	recThumbRetry := doReq(http.MethodPost, "/api/files/profiles/p-nc/thumbnail", "user-1", `{"ref":"`+photoRef+`"}`, nil)
+	assertAPIResponseError(t, recThumbRetry, http.StatusTooManyRequests, ErrRateLimited, "thumbnail retry after")
+	if got := recThumbRetry.Header().Get("Retry-After"); got != "3" {
+		t.Fatalf("thumbnail Retry-After header = %q, want %q", got, "3")
+	}
+	provider.thumbnailErr = nil
 
 	// 7. Single & batch mutations + typed error mapping.
 	recCopy := doReq(http.MethodPost, "/api/files/profiles/p-nc/entries:copy", "user-1", `{"ref":"`+alphaRef+`","destination_parent_ref":"`+docsRef+`"}`, nil)

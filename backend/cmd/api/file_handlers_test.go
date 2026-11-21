@@ -644,6 +644,11 @@ func TestFileProviderErrorMapping(t *testing.T) {
 			wantCode:   ErrFilesInvalidRef,
 		},
 		{
+			err:        &storage.RetryAfterError{After: 2500 * time.Millisecond},
+			wantStatus: http.StatusTooManyRequests,
+			wantCode:   ErrRateLimited,
+		},
+		{
 			err:        errors.New("network disconnect"),
 			wantStatus: http.StatusBadGateway,
 			wantCode:   ErrFilesProviderUnavailable,
