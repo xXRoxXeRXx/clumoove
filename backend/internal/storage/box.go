@@ -27,7 +27,7 @@ const (
 	boxMaxRetries              = 3
 	boxMaxCommitPolls          = 10
 	boxDefaultThumbnailMaxWait = 3 * time.Second
-	boxItemFields              = "id,type,name,size,sha1,modified_at,content_modified_at,permissions,url"
+	boxItemFields              = "id,type,name,size,sha1,modified_at,content_modified_at,permissions,url,parent"
 	maxBoxJSONBodyBytes        = 16 << 20
 	boxMaxPartSizeBytes        = 256 << 20
 	boxDirectUploadMaxBytes    = int64(50_000_000)
@@ -242,6 +242,12 @@ type boxPermissions struct {
 	CanDownload bool `json:"can_download"`
 }
 
+type boxItemRef struct {
+	ID   string `json:"id"`
+	Type string `json:"type,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
 type boxItem struct {
 	ID                string          `json:"id"`
 	Type              string          `json:"type"`
@@ -252,6 +258,7 @@ type boxItem struct {
 	ContentModifiedAt string          `json:"content_modified_at"`
 	URL               string          `json:"url"`
 	Permissions       *boxPermissions `json:"permissions,omitempty"`
+	Parent            *boxItemRef     `json:"parent,omitempty"`
 }
 
 type boxFolderItemsPage struct {
@@ -697,10 +704,18 @@ func (p *BoxProvider) StreamUploadWithOptions(ctx context.Context, resourceType,
 	if err != nil {
 		return UploadResult{}, err
 	}
+	return p.uploadDirectByID(ctx, parentID, "", fileName, stream, size, opts)
+}
 
+func (p *BoxProvider) uploadDirectByID(ctx context.Context, parentID, existingFileID, fileName string, stream io.Reader, size int64, opts UploadOptions) (UploadResult, error) {
 	attrs := boxUploadAttributes{
-		Name:   fileName,
-		Parent: &boxUploadParent{ID: parentID},
+		Name: fileName,
+	}
+	endpoint := p.uploadBase + "/files/content"
+	if existingFileID != "" {
+		endpoint = p.uploadBase + "/files/" + url.PathEscape(existingFileID) + "/content"
+	} else {
+		attrs.Parent = &boxUploadParent{ID: parentID}
 	}
 	if !opts.Metadata.ModifiedTime.IsZero() {
 		attrs.ContentModifiedAt = opts.Metadata.ModifiedTime.UTC().Format(time.RFC3339)
@@ -750,7 +765,6 @@ func (p *BoxProvider) StreamUploadWithOptions(ctx context.Context, resourceType,
 		}
 	}()
 
-	endpoint := p.uploadBase + "/files/content"
 	req, err := p.newRequest(ctx, http.MethodPost, endpoint, pr)
 	if err != nil {
 		_ = pr.Close()
@@ -857,8 +871,18 @@ func (p *BoxProvider) StreamUploadChunkedWithOptions(ctx context.Context, resour
 	if err != nil {
 		return UploadResult{}, err
 	}
+	return p.uploadChunkedByID(ctx, parentID, "", fileName, stream, size, progressChan, opts)
+}
 
-	session, err := p.createUploadSession(ctx, parentID, fileName, size)
+func (p *BoxProvider) uploadChunkedByID(ctx context.Context, parentID, existingFileID, fileName string, stream io.Reader, size int64, progressChan chan<- int64, opts UploadOptions) (UploadResult, error) {
+	if size < 0 {
+		return UploadResult{}, fmt.Errorf("box chunked upload requires non-negative size, got %d: %w", size, ErrPermanentTransfer)
+	}
+	if size == 0 {
+		return p.uploadDirectByID(ctx, parentID, existingFileID, fileName, &ProgressReader{Reader: stream, ProgressChan: progressChan}, 0, opts)
+	}
+
+	session, err := p.createUploadSessionForTarget(ctx, parentID, existingFileID, fileName, size)
 	if err != nil {
 		return UploadResult{}, err
 	}
@@ -943,20 +967,36 @@ func (p *BoxProvider) StreamUploadChunkedWithOptions(ctx context.Context, resour
 	return result, nil
 }
 
-func (p *BoxProvider) createUploadSession(ctx context.Context, folderID, fileName string, size int64) (boxUploadSession, error) {
-	body, err := json.Marshal(struct {
-		FolderID string `json:"folder_id"`
-		FileName string `json:"file_name"`
-		FileSize int64  `json:"file_size"`
-	}{
-		FolderID: folderID,
-		FileName: fileName,
-		FileSize: size,
-	})
+func (p *BoxProvider) createUploadSessionForTarget(ctx context.Context, folderID, existingFileID, fileName string, size int64) (boxUploadSession, error) {
+	var (
+		body     []byte
+		err      error
+		endpoint = p.uploadBase + "/files/upload_sessions"
+	)
+	if existingFileID != "" {
+		endpoint = p.uploadBase + "/files/" + url.PathEscape(existingFileID) + "/upload_sessions"
+		body, err = json.Marshal(struct {
+			FileName string `json:"file_name,omitempty"`
+			FileSize int64  `json:"file_size"`
+		}{
+			FileName: fileName,
+			FileSize: size,
+		})
+	} else {
+		body, err = json.Marshal(struct {
+			FolderID string `json:"folder_id"`
+			FileName string `json:"file_name"`
+			FileSize int64  `json:"file_size"`
+		}{
+			FolderID: folderID,
+			FileName: fileName,
+			FileSize: size,
+		})
+	}
 	if err != nil {
 		return boxUploadSession{}, err
 	}
-	req, err := p.newRequest(ctx, http.MethodPost, p.uploadBase+"/files/upload_sessions", bytes.NewReader(body))
+	req, err := p.newRequest(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return boxUploadSession{}, err
 	}
@@ -1138,6 +1178,10 @@ func (p *BoxProvider) CreateDirectory(ctx context.Context, resourceType, dirPath
 }
 
 func (p *BoxProvider) createFolderInParent(ctx context.Context, parentID, name string) (boxItem, error) {
+	return p.createFolderInParentWithConflict(ctx, parentID, name, true)
+}
+
+func (p *BoxProvider) createFolderInParentWithConflict(ctx context.Context, parentID, name string, reuseExistingFolder bool) (boxItem, error) {
 	payload, err := json.Marshal(struct {
 		Name   string `json:"name"`
 		Parent struct {
@@ -1185,6 +1229,9 @@ func (p *BoxProvider) createFolderInParent(ctx context.Context, parentID, name s
 	}
 
 	if resp.StatusCode == http.StatusConflict {
+		if !reuseExistingFolder {
+			return boxItem{}, boxAPIError("create folder", http.StatusConflict)
+		}
 		_, conflict := parseBoxConflict(bodyBytes)
 		if conflict == nil {
 			existing, lookupErr := p.findChildByName(ctx, parentID, name)

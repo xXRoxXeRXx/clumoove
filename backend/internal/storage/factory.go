@@ -603,7 +603,7 @@ var providerCatalogueEntries = []providerRegistration{
 		SupportedResourceTypes: map[string]bool{"files": true},
 		SupportsAtomicRename:   false,
 		VerificationMode:       VerificationCryptographicHash,
-		ManagerCapabilities:    ManagerCapabilities{Browse: true, NativePagination: true, Download: true, Thumbnails: true},
+		ManagerCapabilities:    ManagerCapabilities{Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictRename: true, Thumbnails: true},
 		ManagerRootNativeID:    "0",
 		Construct: func(_ context.Context, _, _, password string) (StorageProvider, error) {
 			return NewBoxProvider(password)
