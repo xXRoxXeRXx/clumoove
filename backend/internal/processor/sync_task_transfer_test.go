@@ -233,6 +233,9 @@ func TestExecuteSyncTransferForwardsSourceModifiedTimeToUpload(t *testing.T) {
 	if len(target.uploadOpts) != 1 || !target.uploadOpts[0].Metadata.ModifiedTime.Equal(modified) {
 		t.Fatalf("upload options = %+v, want the source modification time", target.uploadOpts)
 	}
+	if !target.uploadOpts[0].Overwrite {
+		t.Fatalf("sync upload options Overwrite = false, want true")
+	}
 }
 
 func TestExecuteSyncTransferHashVerificationDeferredForCryptographicTargets(t *testing.T) {
