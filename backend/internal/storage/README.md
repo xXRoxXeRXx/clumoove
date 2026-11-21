@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `backend/internal/storage` package defines focused workflow interfaces and a composed `StorageProvider` registration contract and contains concrete client implementations for all supported storage backends (Nextcloud, OpenCloud, WebDAV, Dropbox, Google Drive, OneDrive, HiDrive, SMB, S3, SFTP, FTPS, MagentaCLOUD, Koofr, Local, Immich, Seafile, and MEGA). Koofr uses only the public fixed endpoint, its primary mount, and an email/application-password credential pair; it is files-only, case-insensitive, and provides MD5 hashes for verification.
+The `backend/internal/storage` package defines focused workflow interfaces and a composed `StorageProvider` registration contract and contains concrete client implementations for all supported storage backends (Nextcloud, OpenCloud, WebDAV, Dropbox, Google Drive, OneDrive, HiDrive, SMB, S3, SFTP, FTPS, MagentaCLOUD, Koofr, Local, Immich, Seafile, MEGA, and Box). Koofr uses only the public fixed endpoint, its primary mount, and an email/application-password credential pair; it is files-only, case-insensitive, and provides MD5 hashes for verification.
 
 ---
 

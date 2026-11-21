@@ -242,7 +242,7 @@ This table is a singleton (`id = 1`) managed only through the administrator SMTP
 ### `instance_oauth_providers`
 | Column | Type | Notes |
 | :----- | :--- | :---- |
-| `provider` | VARCHAR(32) PK | one of `google`, `onedrive`, `dropbox`, `hidrive` (whitelist enforced in Go, not by a CHECK) |
+| `provider` | VARCHAR(32) PK | one of `google`, `onedrive`, `dropbox`, `hidrive`, `box` (whitelist enforced in Go, not by a CHECK) |
 | `client_id` | TEXT NOT NULL | |
 | `client_secret_encrypted` | TEXT NOT NULL | AES-GCM encrypted; never returned to the client |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
