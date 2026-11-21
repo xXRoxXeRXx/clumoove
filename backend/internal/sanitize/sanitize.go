@@ -48,6 +48,7 @@ var providerForbiddenChars = map[string][]rune{
 	"seafile":      {'/'},
 	"mega":         {'/'},
 	"koofr":        {'\\', '/'},
+	"box":          {'\\', '/'},
 }
 
 var providerMaxLength = map[string]int{
@@ -62,6 +63,7 @@ var providerMaxLength = map[string]int{
 	"sftp":         255,
 	"seafile":      255,
 	"mega":         255, // MEGA limits each path segment to 255 Unicode runes.
+	"box":          255,
 	"s3":           1024,
 }
 
@@ -95,6 +97,7 @@ var caseInsensitiveProviders = map[string]bool{
 	"smb":      true,
 	"onedrive": true,
 	"koofr":    true,
+	"box":      true,
 }
 
 func IsCaseInsensitive(provider string) bool {
@@ -158,6 +161,20 @@ func SanitizeFilename(name string, targetProvider string) SanitizeResult {
 			result.SanitizedName = sanitized
 			result.Changed = true
 			result.Reasons = append(result.Reasons, "trailing_chars")
+		}
+	}
+
+	if targetProvider == "box" {
+		trimmed := strings.Trim(result.SanitizedName, " ")
+		if trimmed != result.SanitizedName {
+			result.SanitizedName = trimmed
+			result.Changed = true
+			result.Reasons = append(result.Reasons, "trailing_chars")
+		}
+		if result.SanitizedName == "." || result.SanitizedName == ".." {
+			result.SanitizedName = "_" + result.SanitizedName
+			result.Changed = true
+			result.Reasons = append(result.Reasons, "reserved_name")
 		}
 	}
 

@@ -363,6 +363,50 @@ func TestAdminMutationsWriteExpectedAuditEntries(t *testing.T) {
 			details: map[string]interface{}{"action": "delete"},
 		})
 	})
+
+	t.Run("instance OAuth put get and delete for box", func(t *testing.T) {
+		h.audits = nil
+		rec := h.do(h.api.handleAdminPutOAuth, http.MethodPut, "/api/admin/settings/oauth/box", `{"client_id":"box-id","client_secret":"box-secret"}`, actor, "ADMIN", map[string]string{"provider": "box"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("put status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+
+		stored, err := db.GetInstanceOAuthProvider(h.database, "box")
+		if err != nil {
+			t.Fatalf("GetInstanceOAuthProvider(box): %v", err)
+		}
+		if stored.ClientSecretEnc == "" || stored.ClientSecretEnc == "box-secret" {
+			t.Fatalf("Box client secret was not encrypted in DB: %q", stored.ClientSecretEnc)
+		}
+
+		rec = h.do(h.api.handleAdminGetOAuth, http.MethodGet, "/api/admin/settings/oauth", "", actor, "ADMIN", nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Providers []instanceOAuthProviderView `json:"providers"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		var foundBox bool
+		for _, p := range body.Providers {
+			if p.Provider == "box" {
+				foundBox = true
+				if !p.Configured || p.ClientID != "box-id" || !p.ClientSecretSet {
+					t.Fatalf("unexpected box OAuth view: %+v", p)
+				}
+			}
+		}
+		if !foundBox {
+			t.Fatalf("box missing from GET /api/admin/settings/oauth providers: %+v", body.Providers)
+		}
+
+		rec = h.do(h.api.handleAdminDeleteOAuth, http.MethodDelete, "/api/admin/settings/oauth/box", "", actor, "ADMIN", map[string]string{"provider": "box"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("delete status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 // TestGatewayAdministrationPersistsAuditEntries verifies the production wiring:

@@ -362,6 +362,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 	...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
 	...(oauthProviders.onedrive ? [{ id: 'onedrive' as const, name: 'OneDrive' }] : []),
     ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
+    ...(oauthProviders.box ? [{ id: 'box' as const, name: 'Box' }] : []),
     ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : [])
   ], [localStorageEnabled, oauthProviders]);
 

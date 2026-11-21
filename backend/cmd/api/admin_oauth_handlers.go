@@ -12,7 +12,7 @@ import (
 )
 
 // The fixed provider order returned by GET /api/admin/settings/oauth.
-var oauthProviderOrder = []string{"google", "onedrive", "dropbox", "hidrive"}
+var oauthProviderOrder = []string{"google", "onedrive", "dropbox", "hidrive", "box"}
 
 type instanceOAuthRequest struct {
 	ClientID     string `json:"client_id"`
