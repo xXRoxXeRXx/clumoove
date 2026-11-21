@@ -740,7 +740,7 @@ func bulkCreateMigrationTasksWhileIndexing(ctx context.Context, db *sql.DB, migr
 			end = len(tasks)
 		}
 		batch := tasks[start:end]
-		const paramsPerRow = 6
+		const paramsPerRow = 7
 		args := make([]interface{}, 0, 2+len(batch)*paramsPerRow)
 		args = append(args, migrationID)
 		if fenced {
@@ -752,16 +752,16 @@ func bulkCreateMigrationTasksWhileIndexing(ctx context.Context, db *sql.DB, migr
 			if fenced {
 				base++
 			}
-			args = append(args, t.ResourceType, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.Metadata)
-			valuesClauses = append(valuesClauses, fmt.Sprintf("($%d,$%d,$%d::bigint,$%d,$%d,$%d::jsonb)", base, base+1, base+2, base+3, base+4, base+5))
+			args = append(args, t.ResourceType, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.Metadata, t.ErrorMessage)
+			valuesClauses = append(valuesClauses, fmt.Sprintf("($%d,$%d,$%d::bigint,$%d,$%d,$%d::jsonb,$%d::text)", base, base+1, base+2, base+3, base+4, base+5, base+6))
 		}
 		claim := "WHERE EXISTS (SELECT 1 FROM migrations WHERE id = $1 AND status = 'INDEXING')"
 		if fenced {
 			claim = "WHERE EXISTS (SELECT 1 FROM migrations WHERE id = $1 AND status = 'INDEXING' AND discovery_generation = $2)"
 		}
-		query := `INSERT INTO tasks (migration_id, resource_type, file_path, file_size, source_hash, status, metadata)
-			SELECT $1, v.resource_type, v.file_path, v.file_size, v.source_hash, v.status, v.metadata
-			FROM (VALUES ` + strings.Join(valuesClauses, ",") + `) AS v(resource_type, file_path, file_size, source_hash, status, metadata)
+		query := `INSERT INTO tasks (migration_id, resource_type, file_path, file_size, source_hash, status, metadata, error_message)
+			SELECT $1, v.resource_type, v.file_path, v.file_size, v.source_hash, v.status, v.metadata, v.error_message
+			FROM (VALUES ` + strings.Join(valuesClauses, ",") + `) AS v(resource_type, file_path, file_size, source_hash, status, metadata, error_message)
 			` + claim
 		res, err := tx.ExecContext(dbCtx, query, args...)
 		if err != nil {

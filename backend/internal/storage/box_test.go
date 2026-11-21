@@ -31,6 +31,7 @@ type fakeBoxItem struct {
 	ContentModifiedAt string
 	URL               string
 	DownloadBlocked   bool
+	BlockedCode       string
 	UnsupportedMedia  bool
 	Thumbnail         []byte
 	ThumbnailType     string
@@ -170,6 +171,25 @@ func (f *fakeBoxServer) addFileContent(parentID, id, name string, content []byte
 	return id
 }
 
+func (f *fakeBoxServer) addWebLink(parentID, id, name, rawURL string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id == "" {
+		f.nextID++
+		id = strconv.Itoa(f.nextID)
+	}
+	f.items[id] = fakeBoxItem{
+		ID:         id,
+		Type:       "web_link",
+		Name:       name,
+		ParentID:   parentID,
+		URL:        rawURL,
+		ModifiedAt: "2026-01-16T12:00:00Z",
+	}
+	f.children[parentID] = append(f.children[parentID], id)
+	return id
+}
+
 func (f *fakeBoxServer) enqueueFaults(faults ...fakeBoxFault) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -279,8 +299,12 @@ func (f *fakeBoxServer) handleDownloadRedirect(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if item.DownloadBlocked {
+		code := item.BlockedCode
+		if code == "" {
+			code = "forbidden_by_policy"
+		}
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"type":"error","status":403,"code":"forbidden_by_policy"}`))
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"type":"error","status":403,"code":%q}`, code)))
 		return
 	}
 	target := f.downloadServer.URL + "/dl/" + id
@@ -1021,6 +1045,88 @@ func TestBoxVerificationModeAndTestProviderGuard(t *testing.T) {
 
 	if _, err := p.StreamDownload(context.Background(), "files", "/Docs/blocked.pdf"); !errors.Is(err, ErrPermission) {
 		t.Fatalf("StreamDownload(blocked) = %v, want ErrPermission", err)
+	}
+}
+
+func TestBoxProviderMarksNonTransferableItemsAndMapsBlockedDownloads(t *testing.T) {
+	srv := newFakeBoxServer("valid-token")
+	defer srv.close()
+
+	p := srv.provider()
+	defer p.Close()
+
+	docsID := srv.addFolder("0", "10", "Docs")
+	srv.addFileContent(docsID, "11", "Meeting.BoxNote", []byte(`{"doc":"note"}`))
+	srv.addFileContent(docsID, "12", "Diagram.boxcanvas", []byte(`{"canvas":1}`))
+	srv.addWebLink(docsID, "13", "Portal", "https://example.test/portal")
+	srv.addFileContent(docsID, "14", "report.txt", []byte("plain"))
+	blockedID := srv.addFileContent(docsID, "15", "blocked.pdf", []byte("secret"))
+	srv.mu.Lock()
+	it := srv.items[blockedID]
+	it.DownloadBlocked = true
+	srv.items[blockedID] = it
+	srv.mu.Unlock()
+
+	ctx := context.Background()
+	listed, err := p.GetDirectoryListing(ctx, "files", "/Docs")
+	if err != nil {
+		t.Fatalf("GetDirectoryListing(/Docs): %v", err)
+	}
+	byName := make(map[string]CloudResource, len(listed))
+	for _, res := range listed {
+		byName[res.Name] = res
+	}
+
+	for _, name := range []string{"Meeting.BoxNote", "Diagram.boxcanvas", "Portal"} {
+		res, ok := byName[name]
+		if !ok {
+			t.Fatalf("missing %s from listing", name)
+		}
+		reason, skip := res.BoxSkipReason()
+		if !skip || reason == "" {
+			t.Fatalf("listing %s: BoxSkipReason() = (%q, %v), want non-empty reason and true", name, reason, skip)
+		}
+		inspected, err := p.InspectResource(ctx, "files", "/Docs/"+name)
+		if err != nil {
+			t.Fatalf("InspectResource(%s): %v", name, err)
+		}
+		insReason, insSkip := inspected.BoxSkipReason()
+		if !insSkip || insReason != reason {
+			t.Fatalf("InspectResource(%s).BoxSkipReason() = (%q, %v), want (%q, true)", name, insReason, insSkip, reason)
+		}
+		if _, err := p.StreamDownload(ctx, "files", "/Docs/"+name); !errors.Is(err, ErrPermanentTransfer) {
+			t.Fatalf("StreamDownload(%s) = %v, want ErrPermanentTransfer", name, err)
+		}
+	}
+
+	for _, name := range []string{"report.txt", "blocked.pdf"} {
+		res, ok := byName[name]
+		if !ok {
+			t.Fatalf("missing %s from listing", name)
+		}
+		if reason, skip := res.BoxSkipReason(); skip || reason != "" {
+			t.Fatalf("listing %s: BoxSkipReason() = (%q, %v), want (\"\", false)", name, reason, skip)
+		}
+	}
+
+	_, err = p.StreamDownload(ctx, "files", "/Docs/blocked.pdf")
+	if !errors.Is(err, ErrPermission) || !errors.Is(err, ErrPermanentTransfer) {
+		t.Fatalf("StreamDownload(blocked.pdf) = %v, want ErrPermission wrapping ErrPermanentTransfer", err)
+	}
+	if !strings.Contains(err.Error(), "forbidden_by_policy") {
+		t.Fatalf("StreamDownload(blocked.pdf) error = %q, want Box error code forbidden_by_policy", err.Error())
+	}
+
+	deniedID := srv.addFileContent(docsID, "16", "denied.pdf", []byte("denied"))
+	srv.mu.Lock()
+	denied := srv.items[deniedID]
+	denied.DownloadBlocked = true
+	denied.BlockedCode = "access_denied_insufficient_permissions"
+	srv.items[deniedID] = denied
+	srv.mu.Unlock()
+	_, err = p.StreamDownload(ctx, "files", "/Docs/denied.pdf")
+	if !errors.Is(err, ErrPermission) || !errors.Is(err, ErrPermanentTransfer) || !strings.Contains(err.Error(), "access_denied_insufficient_permissions") {
+		t.Fatalf("StreamDownload(denied.pdf) = %v, want ErrPermission with access_denied_insufficient_permissions", err)
 	}
 }
 

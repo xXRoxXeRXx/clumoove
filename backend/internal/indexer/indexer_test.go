@@ -2,15 +2,22 @@ package indexer
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
@@ -498,11 +505,19 @@ var (
 	batchTestStates     = make(map[string]*batchDBState)
 )
 
+type recordedBatchTask struct {
+	FilePath     string
+	FileSize     int64
+	Status       string
+	ErrorMessage string
+}
+
 type batchDBState struct {
 	failInsert     bool
 	claimLost      bool
 	execs, commits int
 	taskPaths      []string
+	tasks          []recordedBatchTask
 }
 
 func newBatchTestDB(t *testing.T, failInsert bool) (*sql.DB, *batchDBState) {
@@ -560,12 +575,29 @@ func (c batchTestConn) ExecContext(ctx context.Context, query string, args []dri
 	if c.state.claimLost {
 		return driver.RowsAffected(0), nil
 	}
-	for i := 2; i < len(args); i += 6 {
+	for i := 2; i < len(args); i += 7 {
 		filePath, ok := args[i].Value.(string)
 		if !ok {
 			return nil, fmt.Errorf("task path argument %d = %T, want string", i, args[i].Value)
 		}
 		c.state.taskPaths = append(c.state.taskPaths, filePath)
+		rec := recordedBatchTask{FilePath: filePath}
+		if i+1 < len(args) {
+			if sz, ok := args[i+1].Value.(int64); ok {
+				rec.FileSize = sz
+			}
+		}
+		if i+3 < len(args) {
+			if st, ok := args[i+3].Value.(string); ok {
+				rec.Status = st
+			}
+		}
+		if i+5 < len(args) {
+			if msg, ok := args[i+5].Value.(string); ok {
+				rec.ErrorMessage = msg
+			}
+		}
+		c.state.tasks = append(c.state.tasks, rec)
 	}
 	// Each VALUES row ends with "),(" except for the final row.
 	return driver.RowsAffected(int64(strings.Count(query, "),(") + 1)), nil
@@ -678,5 +710,270 @@ func TestIndexFolderAcceptsListingOnlySource(t *testing.T) {
 	}
 	if files != 1 || dirs != 0 || bytes != 19 {
 		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want files:1 dirs:0 bytes:19", files, dirs, bytes)
+	}
+}
+
+func newFakeBoxIndexerServer(t *testing.T, token string) *httptest.Server {
+	t.Helper()
+	normalBody := []byte("hello box")
+	normalSum := sha1.Sum(normalBody)
+	normalSHA1 := hex.EncodeToString(normalSum[:])
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/2.0/users/me":
+			_, _ = w.Write([]byte(`{"id":"1","type":"user","name":"Box User","login":"box@example.test"}`))
+		case "/2.0/folders/0/items":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"entries": []map[string]any{
+					{"id": "10", "type": "folder", "name": "Docs", "modified_at": "2026-01-15T10:00:00Z"},
+				},
+			})
+		case "/2.0/folders/10/items":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"entries": []map[string]any{
+					{"id": "11", "type": "file", "name": "Meeting.boxnote", "size": 128, "sha1": "", "modified_at": "2026-01-16T10:00:00Z"},
+					{"id": "12", "type": "file", "name": "Board.boxcanvas", "size": 256, "sha1": "", "modified_at": "2026-01-16T10:00:00Z"},
+					{"id": "13", "type": "web_link", "name": "Portal", "size": 0, "url": "https://example.test/portal", "modified_at": "2026-01-16T10:00:00Z"},
+					{"id": "14", "type": "file", "name": "normal.txt", "size": len(normalBody), "sha1": normalSHA1, "modified_at": "2026-01-16T10:00:00Z"},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestIndexFolderRecordsBoxNonTransferableItemsAsSkippedWithReason(t *testing.T) {
+	srv := newFakeBoxIndexerServer(t, "box-token")
+	boxClient, err := storage.NewBoxTestProvider("box-token", srv.URL+"/2.0", srv.URL+"/api/2.0", srv.Client())
+	if err != nil {
+		t.Fatalf("NewBoxTestProvider: %v", err)
+	}
+	defer boxClient.Close()
+
+	database, state := newBatchTestDB(t, false)
+	files, dirs, bytes := 0, 0, int64(0)
+	var indexErrors []db.IndexingErrorInput
+	err = indexFolder(context.Background(), database, boxClient, "files", "/Docs", "mig-box-1", "box", "nextcloud", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+	if err != nil {
+		t.Fatalf("indexFolder() error = %v", err)
+	}
+	if len(indexErrors) != 0 {
+		t.Fatalf("indexErrors = %#v, want none during parent traversal", indexErrors)
+	}
+	if files != 4 || dirs != 0 || bytes != int64(len("hello box")) {
+		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want files:4 dirs:0 bytes:%d", files, dirs, bytes, len("hello box"))
+	}
+
+	byPath := make(map[string]recordedBatchTask, len(state.tasks))
+	for _, task := range state.tasks {
+		byPath[task.FilePath] = task
+	}
+	for _, skippedPath := range []string{"/Docs/Meeting.boxnote", "/Docs/Board.boxcanvas", "/Docs/Portal"} {
+		task, ok := byPath[skippedPath]
+		if !ok {
+			t.Fatalf("missing task for %s", skippedPath)
+		}
+		if task.Status != "SKIPPED" {
+			t.Fatalf("%s status = %q, want SKIPPED", skippedPath, task.Status)
+		}
+		if strings.TrimSpace(task.ErrorMessage) == "" {
+			t.Fatalf("%s error_message is empty, want visible skip reason", skippedPath)
+		}
+	}
+	normal, ok := byPath["/Docs/normal.txt"]
+	if !ok || normal.Status != "PENDING" || normal.FileSize != int64(len("hello box")) {
+		t.Fatalf("normal.txt task = %+v, want PENDING with size %d", normal, len("hello box"))
+	}
+}
+
+type explicitSkipDBState struct {
+	mu             sync.Mutex
+	encryptedPass  string
+	selectedPaths  []string
+	indexingErrors []string
+	migrationState string
+	migrationErr   string
+}
+
+var (
+	explicitSkipDriverOnce sync.Once
+	explicitSkipStatesMu   sync.Mutex
+	explicitSkipStates     = make(map[string]*explicitSkipDBState)
+)
+
+func newExplicitSkipTestDB(t *testing.T, state *explicitSkipDBState) *sql.DB {
+	t.Helper()
+	explicitSkipDriverOnce.Do(func() { sql.Register("indexer-explicit-skip-test", explicitSkipDriver{}) })
+	dsn := t.Name()
+	explicitSkipStatesMu.Lock()
+	explicitSkipStates[dsn] = state
+	explicitSkipStatesMu.Unlock()
+	database, err := sql.Open("indexer-explicit-skip-test", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		database.Close()
+		explicitSkipStatesMu.Lock()
+		delete(explicitSkipStates, dsn)
+		explicitSkipStatesMu.Unlock()
+	})
+	return database
+}
+
+type explicitSkipDriver struct{}
+
+func (explicitSkipDriver) Open(dsn string) (driver.Conn, error) {
+	explicitSkipStatesMu.Lock()
+	state := explicitSkipStates[dsn]
+	explicitSkipStatesMu.Unlock()
+	if state == nil {
+		return nil, errors.New("missing explicit skip test state")
+	}
+	return explicitSkipConn{state: state}, nil
+}
+
+type explicitSkipConn struct{ state *explicitSkipDBState }
+
+func (explicitSkipConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("not implemented") }
+func (explicitSkipConn) Close() error                        { return nil }
+func (explicitSkipConn) Begin() (driver.Tx, error)           { return explicitSkipTx{}, nil }
+func (explicitSkipConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	return explicitSkipTx{}, nil
+}
+
+func (c explicitSkipConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	switch {
+	case strings.Contains(query, "INSERT INTO indexing_errors"):
+		for i := 2; i < len(args); i += 4 {
+			p, _ := args[i].Value.(string)
+			msg, _ := args[i+1].Value.(string)
+			c.state.indexingErrors = append(c.state.indexingErrors, p+":"+msg)
+		}
+		return driver.RowsAffected(int64(len(args) / 4)), nil
+	case strings.Contains(query, "SET status = 'FAILED'"):
+		c.state.migrationState = "FAILED"
+		if len(args) > 0 {
+			if msg, ok := args[0].Value.(string); ok {
+				c.state.migrationErr = msg
+			}
+		}
+		return driver.RowsAffected(1), nil
+	default:
+		return driver.RowsAffected(1), nil
+	}
+}
+
+func (c explicitSkipConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	switch {
+	case strings.Contains(query, "SELECT id, user_id"):
+		now := time.Now()
+		pathsJSON, _ := json.Marshal(c.state.selectedPaths)
+		return &explicitSkipRows{
+			cols: []string{
+				"id", "user_id", "source_profile_id", "target_profile_id", "source_url", "source_username", "source_password_encrypted", "source_provider",
+				"source_refresh_token_encrypted", "source_token_expires_at", "source_mega_session_id_encrypted", "source_mega_master_key_encrypted",
+				"target_url", "target_username", "target_password_encrypted", "target_provider",
+				"target_refresh_token_encrypted", "target_token_expires_at", "target_mega_session_id_encrypted", "target_mega_master_key_encrypted",
+				"status", "conflict_strategy", "total_files", "total_bytes", "processed_files",
+				"processed_bytes", "live_bytes", "verified_files", "skipped_files", "failed_files", "error_message",
+				"discovery_complete", "discovery_generation", "indexing_lease_until",
+				"created_at", "updated_at", "target_dir", "threads", "bandwidth_limit_mbps",
+				"picker_session_id", "selected_paths", "selected_calendars", "selected_contacts",
+			},
+			rows: [][]driver.Value{{
+				"mig-box-explicit", "user-1", nil, nil, "https://api.box.com", "box@example.test", c.state.encryptedPass, "box",
+				nil, nil, "", "",
+				"https://nc.example.test", "u", c.state.encryptedPass, "nextcloud",
+				nil, nil, "", "",
+				"INDEXING", "SKIP", int64(0), int64(0), int64(0),
+				int64(0), int64(0), int64(0), int64(0), int64(0), nil,
+				false, int64(1), nil,
+				now, now, "/dest", int64(4), int64(0),
+				"", pathsJSON, []byte("[]"), []byte("[]"),
+			}},
+		}, nil
+	case strings.Contains(query, "UPDATE migrations SET indexing_lease_until"):
+		return &explicitSkipRows{cols: []string{"ok"}, rows: [][]driver.Value{{int64(1)}}}, nil
+	case strings.Contains(query, "SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM tasks"):
+		return &explicitSkipRows{cols: []string{"count", "sum"}, rows: [][]driver.Value{{int64(0), int64(0)}}}, nil
+	case strings.Contains(query, "SELECT user_id FROM migrations"):
+		return &explicitSkipRows{cols: []string{"user_id"}, rows: [][]driver.Value{{"user-1"}}}, nil
+	case strings.Contains(query, "INSERT INTO tasks"):
+		now := time.Now()
+		return &explicitSkipRows{cols: []string{"id", "created_at", "updated_at"}, rows: [][]driver.Value{{"task-1", now, now}}}, nil
+	default:
+		return &explicitSkipRows{cols: []string{"c1", "c2", "c3"}}, nil
+	}
+}
+
+type explicitSkipTx struct{}
+
+func (explicitSkipTx) Commit() error   { return nil }
+func (explicitSkipTx) Rollback() error { return nil }
+
+type explicitSkipRows struct {
+	cols []string
+	rows [][]driver.Value
+	idx  int
+}
+
+func (r *explicitSkipRows) Columns() []string { return r.cols }
+func (r *explicitSkipRows) Close() error      { return nil }
+func (r *explicitSkipRows) Next(dest []driver.Value) error {
+	if r.idx >= len(r.rows) {
+		return io.EOF
+	}
+	copy(dest, r.rows[r.idx])
+	r.idx++
+	return nil
+}
+
+func TestIndexerStartExplicitBoxSkippedItemRecordsIndexingError(t *testing.T) {
+	srv := newFakeBoxIndexerServer(t, "box-token")
+	const secretKey = "01234567890123456789012345678901"
+	encryptedPass, err := crypto.EncryptWithDomain("box-token", secretKey, crypto.ConnectionCredentialDomain(true))
+	if err != nil {
+		t.Fatalf("EncryptWithDomain: %v", err)
+	}
+
+	for _, selectedPath := range []string{"/Docs/Meeting.boxnote", "/Docs/Board.boxcanvas", "/Docs/Portal"} {
+		t.Run(selectedPath, func(t *testing.T) {
+			state := &explicitSkipDBState{
+				encryptedPass: encryptedPass,
+				selectedPaths: []string{selectedPath},
+			}
+			database := newExplicitSkipTestDB(t, state)
+			idx, err := NewIndexer(database, secretKey, nil, time.Minute)
+			if err != nil {
+				t.Fatalf("NewIndexer: %v", err)
+			}
+			idx.SetSourceFactory(func(_ context.Context, _, _, _, password string, _ ...storage.ProviderOption) (IndexSource, error) {
+				return storage.NewBoxTestProvider(password, srv.URL+"/2.0", srv.URL+"/api/2.0", srv.Client())
+			})
+
+			idx.Start(context.Background(), "mig-box-explicit")
+
+			state.mu.Lock()
+			defer state.mu.Unlock()
+			if len(state.indexingErrors) != 1 || !strings.HasPrefix(state.indexingErrors[0], selectedPath+":") {
+				t.Fatalf("indexingErrors = %v, want clear indexing error for %s", state.indexingErrors, selectedPath)
+			}
+			if state.migrationState != "FAILED" {
+				t.Fatalf("migrationState = %q, want FAILED when only a skipped item was selected", state.migrationState)
+			}
+		})
 	}
 }
