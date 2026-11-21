@@ -334,4 +334,118 @@ describe('BackupSnapshotBrowser', () => {
 
     expect(apiFetch).toHaveBeenCalledWith('http://localhost:8080/api/restore/runs/run-done/report', expect.anything());
   });
+
+  it('includes box as a direct restore target and shows the refresh-token field when selected', async () => {
+    let previewPayload: Record<string, unknown> | null = null;
+    vi.mocked(apiJson).mockImplementation(async (url: string, options?: RequestInit) => {
+      if (url.endsWith('/snapshots')) {
+        return jsonResult(mockSnapshots);
+      }
+      if (url.endsWith('/verify') || url.endsWith('/restore')) {
+        return jsonResult([]);
+      }
+      if (url.includes('/items')) {
+        return jsonResult(mockSnapshotItems);
+      }
+      if (url.endsWith('/profiles')) {
+        return jsonResult({ profiles: [] });
+      }
+      if (url.includes('/restore/previews') && options?.method === 'POST') {
+        previewPayload = JSON.parse(String(options.body));
+        return jsonResult({ id: 'prev-box' });
+      }
+      if (url.endsWith('/restore/previews/prev-box')) {
+        return jsonResult({
+          id: 'prev-box',
+          status: 'READY',
+          total_files: 1,
+          total_directories: 0,
+          total_bytes: 1024,
+          existing_file_conflicts: 0,
+          mergeable_directories: 0,
+          type_conflicts: 0,
+          unavailable_items: 0,
+          expected_skips: 0,
+          expected_renames: 0,
+          metadata_warnings: 0,
+          conflict_examples: [],
+        });
+      }
+      return jsonResult(null);
+    });
+
+    await act(async () => {
+      root.render(
+        <BackupSnapshotBrowser
+          apiUrl="http://localhost:8080"
+          token="test-token"
+          jobID="job-1"
+          onBack={vi.fn()}
+        />
+      );
+    });
+
+    const snapshotBtn = container.querySelector('button.ui-button-secondary span strong')?.closest('button') as HTMLButtonElement;
+    await act(async () => {
+      snapshotBtn.click();
+    });
+
+    const checkbox = container.querySelector('input[type="checkbox"][aria-label="file.txt"]') as HTMLInputElement;
+    await act(async () => {
+      checkbox.click();
+    });
+
+    const restoreBtn = container.querySelector('button.ui-button-primary') as HTMLButtonElement;
+    await act(async () => {
+      restoreBtn.click();
+    });
+
+    const directRadio = Array.from(container.querySelectorAll('label')).find((l) => l.textContent?.includes('Enter credentials'))?.querySelector('input[type="radio"]') as HTMLInputElement;
+    expect(directRadio).not.toBeUndefined();
+    await act(async () => {
+      directRadio.click();
+    });
+
+    const providerLabel = Array.from(container.querySelectorAll('label')).find((l) => l.textContent === 'Provider');
+    const providerSelect = container.querySelector(`#${providerLabel?.getAttribute('for')}`) as HTMLSelectElement;
+    expect(providerSelect).not.toBeNull();
+    const providerValues = Array.from(providerSelect.options).map((o) => o.value);
+    expect(providerValues).toContain('box');
+
+    await act(async () => {
+      providerSelect.value = 'box';
+      providerSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const refreshLabel = Array.from(container.querySelectorAll('label')).find((l) => l.textContent === 'OAuth refresh token');
+    expect(refreshLabel).not.toBeUndefined();
+    const refreshInput = container.querySelector(`#${refreshLabel?.getAttribute('for')}`) as HTMLInputElement;
+    expect(refreshInput).not.toBeNull();
+
+    const passwordLabel = Array.from(container.querySelectorAll('label')).find((l) => l.textContent === 'Password or access token');
+    const passwordInput = container.querySelector(`#${passwordLabel?.getAttribute('for')}`) as HTMLInputElement;
+
+    const setReactInputValue = (input: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    await act(async () => {
+      setReactInputValue(passwordInput, 'box-access-token');
+      setReactInputValue(refreshInput, 'box-refresh-token');
+    });
+
+    const previewBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Create preview'));
+    await act(async () => {
+      previewBtn?.click();
+    });
+
+    expect(previewPayload).toMatchObject({
+      target_provider: 'box',
+      target_password: 'box-access-token',
+      target_refresh_token: 'box-refresh-token',
+    });
+  });
 });
