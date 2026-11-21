@@ -795,10 +795,7 @@ func (e *Engine) listFiles(
 			continue
 		}
 
-		if res.IsPersonalVault() {
-			continue
-		}
-		if _, skip := res.BoxSkipReason(); skip {
+		if _, skip := res.NonTransferableReason(); skip {
 			continue
 		}
 
@@ -862,10 +859,7 @@ func (e *Engine) listFiles(
 				continue
 			}
 			for _, file := range result.files {
-				if file.IsPersonalVault() {
-					continue
-				}
-				if _, skip := file.BoxSkipReason(); skip {
+				if _, skip := file.NonTransferableReason(); skip {
 					continue
 				}
 				cpath := cleanRelPath(file.Path)

@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -178,12 +179,24 @@ func (s *boxSyncFakeServer) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/folders/"):
 		folderID := strings.TrimPrefix(r.URL.Path, "/2.0/folders/")
 		s.handleGetFolder(w, folderID)
+	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/2.0/folders/"):
+		folderID := strings.TrimPrefix(r.URL.Path, "/2.0/folders/")
+		s.handleUpdateItem(w, r, folderID, "folder")
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/2.0/folders/"):
+		folderID := strings.TrimPrefix(r.URL.Path, "/2.0/folders/")
+		s.handleDeleteFolder(w, r, folderID)
 	case r.Method == http.MethodPost && r.URL.Path == "/2.0/folders":
 		s.handleCreateFolder(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
 		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/2.0/files/"), "/content")
 		w.Header().Set("Location", s.server.URL+"/dl/"+fileID)
 		w.WriteHeader(http.StatusFound)
+	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/2.0/files/"):
+		fileID := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
+		s.handleUpdateItem(w, r, fileID, "file")
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/2.0/files/"):
+		fileID := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
+		s.handleDeleteFile(w, fileID)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/content":
 		s.handleSingleUpload(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
@@ -757,6 +770,268 @@ func TestBoxBidirectionalSyncPassesWithSHA1(t *testing.T) {
 	pass4Files, pass4Dirs := runPass()
 	if len(pass4Files) != 0 || len(pass4Dirs) != 0 {
 		t.Fatalf("pass 4 unchanged tree created tasks: files=%+v dirs=%+v", pass4Files, pass4Dirs)
+	}
+}
+
+func (s *boxSyncFakeServer) removeChildLocked(parentID, id string) {
+	children := s.children[parentID]
+	filtered := make([]string, 0, len(children))
+	for _, cid := range children {
+		if cid != id {
+			filtered = append(filtered, cid)
+		}
+	}
+	s.children[parentID] = filtered
+}
+
+func (s *boxSyncFakeServer) deleteFolderTreeLocked(id string) {
+	for _, cid := range append([]string(nil), s.children[id]...) {
+		if child, ok := s.items[cid]; ok && child.Type == "folder" {
+			s.deleteFolderTreeLocked(cid)
+		} else {
+			delete(s.items, cid)
+		}
+	}
+	delete(s.children, id)
+	delete(s.items, id)
+}
+
+func (s *boxSyncFakeServer) handleUpdateItem(w http.ResponseWriter, r *http.Request, id, wantType string) {
+	var body struct {
+		Name   string `json:"name"`
+		Parent *struct {
+			ID string `json:"id"`
+		} `json:"parent"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, ok := s.items[id]
+	if !ok || it.Type != wantType {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	newParentID := it.ParentID
+	if body.Parent != nil && body.Parent.ID != "" {
+		newParentID = body.Parent.ID
+	}
+	newName := it.Name
+	if body.Name != "" {
+		newName = body.Name
+	}
+	for _, cid := range s.children[newParentID] {
+		if cid != id && strings.EqualFold(s.items[cid].Name, newName) {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+	}
+	if newParentID != it.ParentID {
+		s.removeChildLocked(it.ParentID, id)
+		s.children[newParentID] = append(s.children[newParentID], id)
+		it.ParentID = newParentID
+	}
+	it.Name = newName
+	s.items[id] = it
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"id": it.ID, "type": it.Type, "name": it.Name})
+}
+
+func (s *boxSyncFakeServer) handleDeleteFile(w http.ResponseWriter, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, ok := s.items[id]
+	if !ok || it.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	s.removeChildLocked(it.ParentID, id)
+	delete(s.items, id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *boxSyncFakeServer) handleDeleteFolder(w http.ResponseWriter, r *http.Request, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, ok := s.items[id]
+	if !ok || it.Type != "folder" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if r.URL.Query().Get("recursive") != "true" && len(s.children[id]) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	s.removeChildLocked(it.ParentID, id)
+	s.deleteFolderTreeLocked(id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (p *peerSyncEndpoint) removeFile(filePath string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.files, cleanRelPath(filePath))
+}
+
+func (p *peerSyncEndpoint) removeDir(dirPath string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.dirs, cleanRelPath(dirPath))
+}
+
+func (p *peerSyncEndpoint) DeleteFile(_ context.Context, _ string, filePath string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	clean := cleanRelPath(filePath)
+	delete(p.files, clean)
+	delete(p.dirs, clean)
+	return nil
+}
+
+func TestBoxSyncDeletionConflictCopyAndEmptyDirCleanup(t *testing.T) {
+	ctx := context.Background()
+	srv := newBoxSyncFakeServer("box-sync-token")
+	defer srv.close()
+
+	docsID := srv.addFolder("0", "Docs")
+	oldEmptyID := srv.addFolder(docsID, "OldEmptyDir")
+	toDeleteID := srv.addFile(docsID, "to-delete.txt", []byte("delete-me"), "2026-03-01T00:00:00Z")
+	conflictID := srv.addFile(docsID, "conflict.txt", []byte("shared-base"), "2026-03-01T00:00:00Z")
+	goneInDirID := srv.addFile(oldEmptyID, "gone.txt", []byte("gone"), "2026-03-01T00:00:00Z")
+	_ = toDeleteID
+	_ = goneInDirID
+
+	peer := newPeerSyncEndpoint()
+	baseMtime := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	peer.putFile("/Docs/to-delete.txt", []byte("delete-me"), baseMtime)
+	peer.putFile("/Docs/conflict.txt", []byte("shared-base"), baseMtime)
+	peer.putFile("/Docs/OldEmptyDir/gone.txt", []byte("gone"), baseMtime)
+
+	boxClient := srv.newProvider(t)
+	defer boxClient.Close()
+
+	engine := NewEngine(nil, nil, "secret")
+	sourceMap, sourceDirMap, sourceDirETags, srcErrs, err := engine.listFiles(ctx, peer, []string{"/"}, nil, nil)
+	if err != nil || len(srcErrs) != 0 {
+		t.Fatalf("initial peer scan failed: errs=%+v err=%v", srcErrs, err)
+	}
+	targetMap, targetDirMap, targetDirETags, tgtErrs, err := engine.listFiles(ctx, boxClient, []string{"/"}, nil, nil)
+	if err != nil || len(tgtErrs) != 0 {
+		t.Fatalf("initial box scan failed: errs=%+v err=%v", tgtErrs, err)
+	}
+
+	upserts, _ := syncStateChanges("sync-box-del", sourceMap, targetMap, nil, nil,
+		sourceDirETags, targetDirETags, sourceDirMap, targetDirMap, nil, nil, nil)
+	prevSource := make(map[string]db.SyncState)
+	prevTarget := make(map[string]db.SyncState)
+	prevSourceDirs := make(map[string]bool)
+	prevTargetDirs := make(map[string]bool)
+	for _, s := range upserts {
+		if s.Size == -1 {
+			if s.Side == "source" {
+				prevSourceDirs[s.RelPath] = true
+			} else {
+				prevTargetDirs[s.RelPath] = true
+			}
+			continue
+		}
+		if s.Side == "source" {
+			prevSource[s.RelPath] = *s
+		} else {
+			prevTarget[s.RelPath] = *s
+		}
+	}
+
+	// Mutate both sides: delete /Docs/to-delete.txt and /Docs/OldEmptyDir/gone.txt on Peer,
+	// and modify /Docs/conflict.txt on both Peer and Box to trigger conflict_copy + upload.
+	peer.removeFile("/Docs/to-delete.txt")
+	peer.removeFile("/Docs/OldEmptyDir/gone.txt")
+	peer.removeDir("/Docs/OldEmptyDir")
+	peer.putFile("/Docs/conflict.txt", []byte("peer-winner"), time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC))
+	srv.updateFile(conflictID, []byte("box-loser-for-conflict-copy"), "2026-03-02T01:00:00Z")
+
+	sourceMap2, sourceDirMap2, _, srcErrs2, err := engine.listFiles(ctx, peer, []string{"/"}, nil, nil)
+	if err != nil || len(srcErrs2) != 0 {
+		t.Fatalf("pass 2 peer scan failed: errs=%+v err=%v", srcErrs2, err)
+	}
+	targetMap2, targetDirMap2, _, tgtErrs2, err := engine.listFiles(ctx, boxClient, []string{"/"}, nil, nil)
+	if err != nil || len(tgtErrs2) != 0 {
+		t.Fatalf("pass 2 box scan failed: errs=%+v err=%v", tgtErrs2, err)
+	}
+
+	renameTasks, fileTasks := calculateFileDelta("sync-box-del", "two_way", "RENAME", true, sourceMap2, targetMap2, prevSource, prevTarget)
+	_, cleanupCandidates := calculateDirectoryDelta("two_way", true, sourceDirMap2, targetDirMap2, prevSourceDirs, prevTargetDirs)
+
+	const conflictCopyPath = "/Docs/conflict.conflict-20260302010000.txt"
+	var sawDelete, sawConflictCopy, sawUpload bool
+	for _, tc := range renameTasks {
+		if tc.action == "conflict_copy" {
+			if err := boxClient.RenameFile(ctx, "files", tc.filePath, conflictCopyPath); err != nil {
+				t.Fatalf("RenameFile(%s -> %s): %v", tc.filePath, conflictCopyPath, err)
+			}
+			sawConflictCopy = true
+		}
+	}
+	for _, tc := range fileTasks {
+		switch tc.action {
+		case "delete":
+			if tc.side != "target" {
+				t.Fatalf("unexpected delete side %q for %s", tc.side, tc.filePath)
+			}
+			if err := boxClient.DeleteFile(ctx, "files", tc.filePath); err != nil {
+				t.Fatalf("DeleteFile(%s): %v", tc.filePath, err)
+			}
+			sawDelete = true
+		case "upload":
+			if tc.filePath == "/Docs/conflict.txt" {
+				f := peer.files[tc.filePath]
+				sum := sha1.Sum(f.data)
+				if _, err := boxClient.StreamUploadWithOptions(ctx, "files", tc.filePath, bytes.NewReader(f.data), int64(len(f.data)), storage.UploadOptions{
+					Metadata: storage.FileMetadata{ModifiedTime: f.mtime},
+					Checksum: "SHA1:" + hex.EncodeToString(sum[:]),
+				}); err != nil {
+					t.Fatalf("upload winner %s: %v", tc.filePath, err)
+				}
+				sawUpload = true
+			}
+		}
+	}
+	if !sawDelete || !sawConflictCopy || !sawUpload {
+		t.Fatalf("expected delete=%v conflict_copy=%v upload=%v, got tasks=%+v", sawDelete, sawConflictCopy, sawUpload, fileTasks)
+	}
+
+	removed := cleanupEmptyDirectories(ctx, "/", peer, boxClient, cleanupCandidates)
+	if len(removed) != 1 || removed[0].relPath != "/Docs/OldEmptyDir" || removed[0].side != "target" {
+		t.Fatalf("cleanupEmptyDirectories = %+v, want [{/Docs/OldEmptyDir target}]", removed)
+	}
+
+	if exists, _, err := boxClient.FileExists(ctx, "files", "/Docs/to-delete.txt"); err != nil || exists {
+		t.Fatalf("deleted file still exists on Box: (%v, %v)", exists, err)
+	}
+	if _, err := boxClient.InspectResource(ctx, "files", "/Docs/OldEmptyDir"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("cleaned empty dir still exists on Box: err=%v, want ErrNotFound", err)
+	}
+
+	copyRC, err := boxClient.StreamDownload(ctx, "files", conflictCopyPath)
+	if err != nil {
+		t.Fatalf("StreamDownload(%s): %v", conflictCopyPath, err)
+	}
+	copyBytes, _ := io.ReadAll(copyRC)
+	copyRC.Close()
+	if string(copyBytes) != "box-loser-for-conflict-copy" {
+		t.Fatalf("conflict copy content = %q, want %q", copyBytes, "box-loser-for-conflict-copy")
+	}
+
+	winnerRC, err := boxClient.StreamDownload(ctx, "files", "/Docs/conflict.txt")
+	if err != nil {
+		t.Fatalf("StreamDownload(/Docs/conflict.txt): %v", err)
+	}
+	winnerBytes, _ := io.ReadAll(winnerRC)
+	winnerRC.Close()
+	if string(winnerBytes) != "peer-winner" {
+		t.Fatalf("winner content = %q, want %q", winnerBytes, "peer-winner")
 	}
 }
 

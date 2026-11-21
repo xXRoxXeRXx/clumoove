@@ -231,7 +231,11 @@ func boxResponseError(op string, resp *http.Response) error {
 		return fmt.Errorf("box %s failed: nil response", op)
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return fmt.Errorf("box %s: %w", op, &RetryAfterError{After: parseBoxRetryAfterDuration(resp.Header.Get("Retry-After"))})
+		after, ok := parseBoxRetryAfter(resp.Header.Get("Retry-After"))
+		if !ok {
+			after = time.Second
+		}
+		return fmt.Errorf("box %s: %w", op, &RetryAfterError{After: after})
 	}
 	var code string
 	if resp.Body != nil {
@@ -480,32 +484,27 @@ func (p *BoxProvider) findChildByName(ctx context.Context, parentID, name string
 	return *match, nil
 }
 
+func (p *BoxProvider) deepestCachedAncestor(cleanDirPath string) (currentID, currentPath string, remaining []string) {
+	cache := p.ensurePathCache()
+	parts := strings.Split(strings.Trim(cleanDirPath, "/"), "/")
+	// Walk from the deepest cached ancestor to minimize folder API calls.
+	for i := len(parts) - 1; i >= 0; i-- {
+		prefix := "/" + strings.Join(parts[:i+1], "/")
+		if id, ok := cache.Get(strings.ToLower(prefix)); ok && id != "" {
+			return id, prefix, parts[i+1:]
+		}
+	}
+	return boxRootFolderID, "/", parts
+}
+
 func (p *BoxProvider) resolveFolderID(ctx context.Context, cleanDirPath string) (string, error) {
 	if cleanDirPath == "/" {
 		return boxRootFolderID, nil
 	}
 	cache := p.ensurePathCache()
-	if id, ok := cache.Get(strings.ToLower(cleanDirPath)); ok && id != "" {
-		return id, nil
-	}
+	currentID, currentPath, remaining := p.deepestCachedAncestor(cleanDirPath)
 
-	parts := strings.Split(strings.Trim(cleanDirPath, "/"), "/")
-	currentID := boxRootFolderID
-	currentPath := "/"
-	startIdx := 0
-
-	// Walk from the deepest cached ancestor to minimize folder item lookups.
-	for i := len(parts) - 1; i >= 0; i-- {
-		prefix := "/" + strings.Join(parts[:i+1], "/")
-		if id, ok := cache.Get(strings.ToLower(prefix)); ok && id != "" {
-			currentID = id
-			currentPath = prefix
-			startIdx = i + 1
-			break
-		}
-	}
-
-	for _, seg := range parts[startIdx:] {
+	for _, seg := range remaining {
 		child, err := p.findChildByName(ctx, currentID, seg)
 		if err != nil {
 			return "", err
@@ -1211,8 +1210,8 @@ func (p *BoxProvider) commitUploadSession(ctx context.Context, commitURL string,
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
 
-			delay := parseBoxRetryAfterDuration(retryAfter)
-			if strings.TrimSpace(retryAfter) == "" {
+			delay, ok := parseBoxRetryAfter(retryAfter)
+			if !ok {
 				delay = time.Second
 			}
 			if err := boxWait(ctx, delay); err != nil {
@@ -1268,23 +1267,9 @@ func (p *BoxProvider) CreateDirectory(ctx context.Context, resourceType, dirPath
 	}
 
 	cache := p.ensurePathCache()
-	parts := strings.Split(strings.Trim(cleanDir, "/"), "/")
-	currentID := boxRootFolderID
-	currentPath := "/"
-	startIdx := 0
+	currentID, currentPath, remaining := p.deepestCachedAncestor(cleanDir)
 
-	// Reuse the deepest cached ancestor to avoid redundant folder creations.
-	for i := len(parts) - 1; i >= 0; i-- {
-		prefix := "/" + strings.Join(parts[:i+1], "/")
-		if id, ok := cache.Get(strings.ToLower(prefix)); ok && id != "" {
-			currentID = id
-			currentPath = prefix
-			startIdx = i + 1
-			break
-		}
-	}
-
-	for _, seg := range parts[startIdx:] {
+	for _, seg := range remaining {
 		created, err := p.createFolderInParent(ctx, currentID, seg)
 		if err != nil {
 			return err
@@ -1405,28 +1390,87 @@ func parseBoxConflict(body []byte) (string, *boxItem) {
 	return errResp.Code, nil
 }
 
-func parseBoxRetryAfterDuration(raw string) time.Duration {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed != "" {
-		if secs, err := strconv.Atoi(trimmed); err == nil && secs >= 0 {
-			return time.Duration(secs) * time.Second
-		}
-		if retryAt, err := http.ParseTime(trimmed); err == nil {
-			if delay := time.Until(retryAt); delay > 0 {
-				return delay
-			}
-			return 0
+func (p *BoxProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	if resourceType != "files" {
+		return ErrUnsupportedResourceType
+	}
+	if p == nil {
+		return ErrNotConnected
+	}
+	cleanOld, err := boxCleanPath(oldPath)
+	if err != nil {
+		return err
+	}
+	cleanNew, err := boxCleanPath(newPath)
+	if err != nil {
+		return err
+	}
+	if cleanOld == "/" || cleanNew == "/" {
+		return fmt.Errorf("box rename root path not allowed: %w", ErrPathEscapesRoot)
+	}
+
+	item, canonicalOld, err := p.resolvePathItem(ctx, cleanOld)
+	if err != nil {
+		return err
+	}
+	if item.Type != "file" && item.Type != "folder" {
+		return fmt.Errorf("box rename unsupported item type %q: %w", item.Type, ErrPermanentTransfer)
+	}
+	if cleanOld == cleanNew {
+		return nil
+	}
+
+	newParentPath := path.Dir(cleanNew)
+	if newParentPath != "/" {
+		if err := p.CreateDirectory(ctx, resourceType, newParentPath); err != nil {
+			return err
 		}
 	}
-	return time.Second
-}
+	destParentID, err := p.resolveFolderID(ctx, newParentPath)
+	if err != nil {
+		return err
+	}
 
-func (p *BoxProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
-	return fmt.Errorf("box rename not implemented: %w", ErrPermanentTransfer)
+	if err := p.updateBoxItem(ctx, item.Type, item.ID, path.Base(cleanNew), destParentID); err != nil {
+		return err
+	}
+	if item.Type == "folder" {
+		p.invalidateFolderCache(item.ID, canonicalOld)
+		p.invalidateFolderCache(item.ID, cleanNew)
+	}
+	return nil
 }
 
 func (p *BoxProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
-	return fmt.Errorf("box delete not implemented: %w", ErrPermanentTransfer)
+	if resourceType != "files" {
+		return ErrUnsupportedResourceType
+	}
+	if p == nil {
+		return ErrNotConnected
+	}
+	cleanPath, err := boxCleanPath(filePath)
+	if err != nil {
+		return err
+	}
+	if cleanPath == "/" {
+		return fmt.Errorf("box delete root path not allowed: %w", ErrPathEscapesRoot)
+	}
+	item, canonicalPath, err := p.resolvePathItem(ctx, cleanPath)
+	if err != nil {
+		return err
+	}
+	switch item.Type {
+	case "file":
+		return p.deleteBoxFileByID(ctx, item.ID)
+	case "folder":
+		if err := p.deleteBoxFolderByID(ctx, item.ID, true); err != nil {
+			return err
+		}
+		p.invalidateFolderCache(item.ID, canonicalPath)
+		return nil
+	default:
+		return fmt.Errorf("box delete unsupported item type %q: %w", item.Type, ErrPermanentTransfer)
+	}
 }
 
 func (p *BoxProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {

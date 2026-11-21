@@ -213,16 +213,9 @@ func (p *BoxProvider) UploadManager(ctx context.Context, parent ManagerLocator, 
 		}
 	case ManagerConflictRename:
 		if conflict != nil {
-			found := ""
-			for suffix := 1; suffix <= 100; suffix++ {
-				candidate := managerRenamedName(name, suffix)
-				if _, used := existingNames[strings.ToLower(candidate)]; !used {
-					found = candidate
-					break
-				}
-			}
-			if found == "" {
-				return ManagerUploadResult{}, ErrManagerConflict
+			found, renameErr := boxNextUniqueName(name, existingNames)
+			if renameErr != nil {
+				return ManagerUploadResult{}, renameErr
 			}
 			finalName = found
 			status = "renamed"
@@ -547,13 +540,11 @@ func boxManagerResolveConflict(name string, sourceIsDir bool, children []boxItem
 	case ManagerConflictSkip:
 		return name, "skipped", nil, nil
 	case ManagerConflictRename:
-		for suffix := 1; suffix <= 100; suffix++ {
-			candidate := managerRenamedName(name, suffix)
-			if _, used := existingNames[strings.ToLower(candidate)]; !used {
-				return candidate, "renamed_on_conflict", nil, nil
-			}
+		candidate, renameErr := boxNextUniqueName(name, existingNames)
+		if renameErr != nil {
+			return "", "", nil, renameErr
 		}
-		return "", "", nil, ErrManagerConflict
+		return candidate, "renamed_on_conflict", nil, nil
 	case ManagerConflictOverwrite:
 		if sourceIsDir || conflict.Type != "file" {
 			return "", "", nil, ErrManagerConflict
@@ -562,6 +553,16 @@ func boxManagerResolveConflict(name string, sourceIsDir bool, children []boxItem
 	default:
 		return "", "", nil, ErrManagerConflict
 	}
+}
+
+func boxNextUniqueName(name string, existingNames map[string]struct{}) (string, error) {
+	for suffix := 1; suffix <= 100; suffix++ {
+		candidate := managerRenamedName(name, suffix)
+		if _, used := existingNames[strings.ToLower(candidate)]; !used {
+			return candidate, nil
+		}
+	}
+	return "", ErrManagerConflict
 }
 
 func (p *BoxProvider) deleteBoxFileByID(ctx context.Context, fileID string) error {

@@ -2749,3 +2749,166 @@ func TestBoxStreamUploadChunkedOverwriteCreatesNewVersionAndAbortsOnFailure(t *t
 		t.Fatalf("huge.bin after overwrite: versions=%d sha1=%s, want 2 and %s", hugeVersions, hugeStoredHash, hugeHex)
 	}
 }
+
+func TestBoxDeleteFile(t *testing.T) {
+	srv := newFakeBoxServer("valid-token")
+	defer srv.close()
+
+	docsID := srv.addFolder("0", "200", "Docs")
+	subID := srv.addFolder(docsID, "201", "Sub")
+	srv.addFileContent(docsID, "301", "report.txt", []byte("report"))
+	srv.addFileContent(subID, "302", "nested.txt", []byte("nested"))
+	srv.addWebLink(docsID, "401", "Portal.weblink", "https://example.test")
+
+	p := srv.provider()
+	defer p.Close()
+	ctx := context.Background()
+
+	// Validation & root guards.
+	if err := p.DeleteFile(ctx, "calendars", "/Docs/report.txt"); !errors.Is(err, ErrUnsupportedResourceType) {
+		t.Fatalf("DeleteFile(calendars) = %v, want ErrUnsupportedResourceType", err)
+	}
+	if err := p.DeleteFile(ctx, "files", "/Docs/../secret.txt"); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Fatalf("DeleteFile(traversal) = %v, want ErrPathEscapesRoot", err)
+	}
+	if err := p.DeleteFile(ctx, "files", "/"); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Fatalf("DeleteFile(/) = %v, want ErrPathEscapesRoot", err)
+	}
+	if err := p.DeleteFile(ctx, "files", "/Docs/missing.txt"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("DeleteFile(missing) = %v, want ErrNotFound", err)
+	}
+	if err := p.DeleteFile(ctx, "files", "/Docs/Portal.weblink"); !errors.Is(err, ErrPermanentTransfer) {
+		t.Fatalf("DeleteFile(web_link) = %v, want ErrPermanentTransfer", err)
+	}
+
+	// File deletion.
+	if err := p.DeleteFile(ctx, "files", "/Docs/report.txt"); err != nil {
+		t.Fatalf("DeleteFile(file): %v", err)
+	}
+	if exists, _, err := p.FileExists(ctx, "files", "/Docs/report.txt"); err != nil || exists {
+		t.Fatalf("FileExists after DeleteFile(file) = (%v, %v), want (false, nil)", exists, err)
+	}
+
+	// Warm pathCache for /Docs/Sub before recursive folder deletion, then verify cache invalidation.
+	if _, err := p.InspectResource(ctx, "files", "/Docs/Sub/nested.txt"); err != nil {
+		t.Fatalf("InspectResource(/Docs/Sub/nested.txt): %v", err)
+	}
+	if err := p.DeleteFile(ctx, "files", "/Docs/Sub"); err != nil {
+		t.Fatalf("DeleteFile(folder): %v", err)
+	}
+	if _, err := p.InspectResource(ctx, "files", "/Docs/Sub"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InspectResource(deleted folder) = %v, want ErrNotFound", err)
+	}
+	if _, err := p.InspectResource(ctx, "files", "/Docs/Sub/nested.txt"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InspectResource(deleted nested file) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestBoxRenameFile(t *testing.T) {
+	srv := newFakeBoxServer("valid-token")
+	defer srv.close()
+
+	docsID := srv.addFolder("0", "200", "Docs")
+	projectsID := srv.addFolder("0", "201", "Projects")
+	subID := srv.addFolder(projectsID, "202", "Sub")
+	childID := srv.addFolder(subID, "203", "Child")
+	payload := []byte("rename-test-content")
+	fileID := srv.addFileContent(docsID, "301", "old.txt", payload)
+	srv.addFileContent(childID, "302", "leaf.txt", []byte("leaf"))
+	srv.addWebLink(docsID, "401", "Portal.weblink", "https://example.test")
+
+	p := srv.provider()
+	defer p.Close()
+	ctx := context.Background()
+
+	// Validation & root guards.
+	if err := p.RenameFile(ctx, "calendars", "/Docs/old.txt", "/Docs/new.txt"); !errors.Is(err, ErrUnsupportedResourceType) {
+		t.Fatalf("RenameFile(calendars) = %v, want ErrUnsupportedResourceType", err)
+	}
+	if err := p.RenameFile(ctx, "files", "/Docs/../secret.txt", "/Docs/new.txt"); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Fatalf("RenameFile(old traversal) = %v, want ErrPathEscapesRoot", err)
+	}
+	if err := p.RenameFile(ctx, "files", "/Docs/old.txt", "/Docs/../secret.txt"); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Fatalf("RenameFile(new traversal) = %v, want ErrPathEscapesRoot", err)
+	}
+	if err := p.RenameFile(ctx, "files", "/", "/Docs/root"); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Fatalf("RenameFile(root oldPath) = %v, want ErrPathEscapesRoot", err)
+	}
+	if err := p.RenameFile(ctx, "files", "/Docs/old.txt", "/"); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Fatalf("RenameFile(root newPath) = %v, want ErrPathEscapesRoot", err)
+	}
+	if err := p.RenameFile(ctx, "files", "/Docs/missing.txt", "/Docs/other.txt"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RenameFile(missing) = %v, want ErrNotFound", err)
+	}
+	if err := p.RenameFile(ctx, "files", "/Docs/missing.txt", "/Docs/missing.txt"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RenameFile(missing noop) = %v, want ErrNotFound", err)
+	}
+	if err := p.RenameFile(ctx, "files", "/Docs/Portal.weblink", "/Docs/Portal2.weblink"); !errors.Is(err, ErrPermanentTransfer) {
+		t.Fatalf("RenameFile(web_link) = %v, want ErrPermanentTransfer", err)
+	}
+
+	// Same-path no-op succeeds without issuing PUT.
+	beforeReqs := len(srv.requests)
+	if err := p.RenameFile(ctx, "files", "/Docs/old.txt", "/Docs/old.txt"); err != nil {
+		t.Fatalf("RenameFile(noop): %v", err)
+	}
+	srv.mu.Lock()
+	for _, reqLine := range srv.requests[beforeReqs:] {
+		if strings.HasPrefix(reqLine, "PUT ") {
+			srv.mu.Unlock()
+			t.Fatalf("RenameFile(noop) issued unexpected PUT request: %s", reqLine)
+		}
+	}
+	srv.mu.Unlock()
+
+	// Same-folder file rename.
+	if err := p.RenameFile(ctx, "files", "/Docs/old.txt", "/Docs/new.txt"); err != nil {
+		t.Fatalf("RenameFile(same-folder): %v", err)
+	}
+	if exists, _, _ := p.FileExists(ctx, "files", "/Docs/old.txt"); exists {
+		t.Fatal("old path still exists after same-folder rename")
+	}
+	if exists, size, err := p.FileExists(ctx, "files", "/Docs/new.txt"); err != nil || !exists || size != int64(len(payload)) {
+		t.Fatalf("FileExists(/Docs/new.txt) = (%v, %d, %v), want (true, %d, nil)", exists, size, err, len(payload))
+	}
+
+	// Cross-folder move into auto-created parent directories preserves file ID and content.
+	if err := p.RenameFile(ctx, "files", "/Docs/new.txt", "/Archive/2026/moved.txt"); err != nil {
+		t.Fatalf("RenameFile(cross-folder): %v", err)
+	}
+	if exists, _, _ := p.FileExists(ctx, "files", "/Docs/new.txt"); exists {
+		t.Fatal("previous path still exists after cross-folder move")
+	}
+	dl, err := p.StreamDownload(ctx, "files", "/Archive/2026/moved.txt")
+	if err != nil {
+		t.Fatalf("StreamDownload(/Archive/2026/moved.txt): %v", err)
+	}
+	gotBytes, _ := io.ReadAll(dl)
+	dl.Close()
+	if !bytes.Equal(gotBytes, payload) {
+		t.Fatalf("moved content = %q, want %q", gotBytes, payload)
+	}
+	srv.mu.Lock()
+	movedItem := srv.items[fileID]
+	srv.mu.Unlock()
+	if movedItem.Name != "moved.txt" {
+		t.Fatalf("moved item name = %q, want moved.txt", movedItem.Name)
+	}
+
+	// Warm pathCache for /Projects/Sub/Child, then rename/move folder and verify cache invalidation.
+	if _, err := p.InspectResource(ctx, "files", "/Projects/Sub/Child/leaf.txt"); err != nil {
+		t.Fatalf("InspectResource(/Projects/Sub/Child/leaf.txt): %v", err)
+	}
+	if err := p.RenameFile(ctx, "files", "/Projects/Sub", "/Archive/RenamedSub"); err != nil {
+		t.Fatalf("RenameFile(folder move+rename): %v", err)
+	}
+	if _, err := p.InspectResource(ctx, "files", "/Projects/Sub"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InspectResource(old folder path) = %v, want ErrNotFound", err)
+	}
+	if _, err := p.InspectResource(ctx, "files", "/Projects/Sub/Child"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InspectResource(old child folder path) = %v, want ErrNotFound", err)
+	}
+	if res, err := p.InspectResource(ctx, "files", "/Archive/RenamedSub/Child/leaf.txt"); err != nil || res.Size != 4 {
+		t.Fatalf("InspectResource(new child file path) = (%+v, %v), want size=4", res, err)
+	}
+}
