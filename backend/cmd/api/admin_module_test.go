@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"backend/internal/auth"
+	"backend/internal/oauth"
 )
 
 func TestAdminModuleRegistersRoutesWithExpectedAccessControls(t *testing.T) {
@@ -74,5 +75,20 @@ func TestAdminModuleHandlersRejectNonAdminClaimsWithoutTouchingDependencies(t *t
 				assertAPIResponseError(t, rec, http.StatusForbidden, ErrAdminOnly, name+" "+spec.pattern)
 			}
 		})
+	}
+}
+
+func TestAdminOAuthProviderOrderIncludesBox(t *testing.T) {
+	want := []string{"google", "onedrive", "dropbox", "hidrive", "box"}
+	if len(oauthProviderOrder) != len(want) {
+		t.Fatalf("oauthProviderOrder = %v, want %v", oauthProviderOrder, want)
+	}
+	for i, provider := range want {
+		if oauthProviderOrder[i] != provider {
+			t.Fatalf("oauthProviderOrder[%d] = %q, want %q", i, oauthProviderOrder[i], provider)
+		}
+		if !oauth.IsProvider(provider) {
+			t.Fatalf("oauth.IsProvider(%q) = false, want true", provider)
+		}
 	}
 }

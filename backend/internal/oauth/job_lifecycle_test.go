@@ -88,7 +88,7 @@ func TestJobTokenStateRoleIsolation(t *testing.T) {
 	syncJob := &db.SyncJob{
 		ID:                          "sync-1",
 		SourceProvider:              "dropbox",
-		TargetProvider:              "box",
+		TargetProvider:              "webdav",
 		SourcePasswordEncrypted:     "sync-src-access-old",
 		SourceRefreshTokenEncrypted: sql.NullString{String: "sync-src-refresh-old", Valid: true},
 		TargetPasswordEncrypted:     "sync-tgt-access-old",
@@ -115,7 +115,7 @@ func TestJobTokenStateRoleIsolation(t *testing.T) {
 			name:     "sync",
 			state:    &syncJobTokenState{job: syncJob},
 			wantSrcP: "dropbox",
-			wantTgtP: "box",
+			wantTgtP: "webdav",
 			origSrcA: "sync-src-access-old",
 			origTgtA: "sync-tgt-access-old",
 		},
