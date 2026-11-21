@@ -22,7 +22,7 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 
 ## Features
 
-- **Seventeen storage providers** as any source/target combination: Nextcloud, OpenCloud, Seafile, MagentaCLOUD, Koofr, generic WebDAV, Dropbox, Google Drive, Microsoft OneDrive, Strato HiDrive, S3-compatible, SMB/CIFS, SFTP, FTPS, Local server sandbox, Mega (files-only), and Immich (files-only one-time migrations).
+- **Eighteen storage providers** as any source/target combination: Nextcloud, OpenCloud, Seafile, MagentaCLOUD, Koofr, generic WebDAV, Dropbox, Google Drive, Microsoft OneDrive, Strato HiDrive, Box, S3-compatible, SMB/CIFS, SFTP, FTPS, Local server sandbox, Mega (files-only), and Immich (files-only one-time migrations).
 - **Sync Engine, Migration Engine & Backup Engine** — full support for one-shot/scheduled migrations, recurring one-way and two-way folder synchronizations, and point-in-time snapshot backups with block deduplication and two-phase restore.
 - **Connection Profiles** — save and reuse encrypted source/target connection profiles across migrations, sync jobs, and backup repositories.
 - **Cloud File Manager** — browse saved connection profiles and stream ticketed downloads, capability-gated uploads, directory creation, and thumbnails without exposing remote paths or credentials in URLs.
@@ -49,7 +49,7 @@ durable, multi-user jobs.
 | **Durable execution** | A PostgreSQL task queue persists individual transfer tasks, progress, errors, schedules, and reports. Multiple workers can claim work atomically; liveness, retry, orphan recovery, and connection-loss recovery are built in. | Commands and RC jobs run in a process. The RC documentation describes finished asynchronous jobs as retained for 60 seconds; longer-running automation is normally composed around rclone. |
 | **Scheduling and operations** | Deferred and recurring migrations, interval-based syncs, and cron-scheduled backups are first-class persisted jobs, with overlap protection, distributed schedule locks, live authenticated progress, downloadable CSV reports, and durable completion notifications. | rclone supports the transfer commands and `bisync`; its `bisync` guide recommends configuring cron for recurring runs. |
 | **Migration & Backup semantics** | Purpose-built conflict choices (`SKIP`, `OVERWRITE`, `RENAME`), pre-transfer inventory, case-collision handling, selected-path workflows, provider-aware three-way hash checks, deduplicated snapshot repositories, and two-phase restore previews. | Flexible commands and flags support copy, sync, bisync, checksums, filters, metadata, and backend-specific behaviour; verification depends on command options and the capabilities shared by the chosen backends. |
-| **Supported data** | Seventeen selected source/target providers, with files plus calendars and contacts for Nextcloud and Google Drive, and an Immich-specific files migration flow. | Far broader storage-backend coverage, primarily exposed through its unified file/object interface. |
+| **Supported data** | Eighteen selected source/target providers, with files plus calendars and contacts for Nextcloud and Google Drive, and an Immich-specific files migration flow. | Far broader storage-backend coverage, primarily exposed through its unified file/object interface. |
 
 This comparison describes product scope rather than claiming that rclone lacks a GUI, API, checksums, or bidirectional
 sync. Consult the [rclone usage documentation](https://rclone.org/docs/), [GUI documentation](https://rclone.org/gui/),
@@ -70,6 +70,7 @@ sync. Consult the [rclone usage documentation](https://rclone.org/docs/), [GUI d
 | **Google Drive** | Google Drive API v3 | OAuth2 | Files, calendars, contacts |
 | **Microsoft OneDrive** | Microsoft Graph API | OAuth2 | Files |
 | **Strato HiDrive** | REST API v2.1 | OAuth2 | Files |
+| **Box** | Box Content API v2 | OAuth2 | Files |
 | **S3-compatible** | S3 (Wasabi, MinIO, B2…) | Access / secret key | Files |
 | **SMB / CIFS** | SMB2/SMB3 | User / password | Files |
 | **SFTP** | SSH SFTP | User / password (or key) | Files |
@@ -157,7 +158,7 @@ Key environment variables (full list in [`docs/08-deployment.md`](./docs/08-depl
 | `MAX_THREADS` | Global max parallelism per worker process. Code default: `16`; Docker Compose production: `50`; Docker Compose development: `16`. |
 | `TRUSTED_PROXY` | Set to `1`/`true` behind a trusted reverse proxy that strips client-supplied `X-Forwarded-*` headers; required for correct client-IP accounting and the proxy-derived OAuth callback host/scheme. |
 
-> **OAuth providers** (Google, OneDrive, Dropbox, HiDrive) are configured by an administrator under **Administration → System**, not via environment variables. The OAuth redirect URI is always `<scheme>://<host>/api/oauth/callback` and is shown read-only in the admin UI.
+> **OAuth providers** (Google, OneDrive, Dropbox, HiDrive, Box) are configured by an administrator under **Administration → System**, not via environment variables. The OAuth redirect URI is always `<scheme>://<host>/api/oauth/callback` and is shown read-only in the admin UI.
 
 ## Development
 

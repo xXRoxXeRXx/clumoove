@@ -243,8 +243,8 @@ The server computes a versioned SHA-256 restore configuration fingerprint from t
 | `PUT` | `/admin/settings/smtp` | admin | Create or update the instance SMTP configuration. Password may be omitted after initial setup; only `tls` and `starttls` are accepted. |
 | `POST` | `/admin/settings/smtp/test` | admin | Send a localized test email to the authenticated administrator. |
 | `DELETE` | `/admin/settings/smtp` | admin | Remove the instance SMTP configuration. |
-| `GET` | `/admin/settings/oauth` | admin | List all four OAuth providers with `configured`/`client_id`/`client_secret_set` and the read-only `redirect_uri`. |
-| `PUT` | `/admin/settings/oauth/{provider}` | admin | Create or update the client credentials for one provider (`google`, `onedrive`, `dropbox`, `hidrive`). `client_secret` may be omitted to keep the existing secret. |
+| `GET` | `/admin/settings/oauth` | admin | List all five OAuth providers with `configured`/`client_id`/`client_secret_set` and the read-only `redirect_uri`. |
+| `PUT` | `/admin/settings/oauth/{provider}` | admin | Create or update the client credentials for one provider (`google`, `onedrive`, `dropbox`, `hidrive`, `box`). `client_secret` may be omitted to keep the existing secret. |
 | `DELETE` | `/admin/settings/oauth/{provider}` | admin | Remove the stored credentials for one provider. |
 | `GET` | `/audit/log` | admin | Paginated/filtered audit log. |
 
@@ -256,7 +256,7 @@ If a user suspension commits but a Redis sync-cancellation event cannot be publi
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
-| `GET` | `/oauth/auth` | public | Begin OAuth2 flow (Dropbox/Google/OneDrive/HiDrive); redirects to provider. |
+| `GET` | `/oauth/auth` | public | Begin OAuth2 flow (Dropbox/Google/OneDrive/HiDrive/Box); redirects to provider. |
 | `GET` | `/oauth/callback` | public | Provider callback; sets tokens, posts result to opener via `postMessage`. |
 
 ---
@@ -293,8 +293,8 @@ If a user suspension commits but a Redis sync-cancellation event cannot be publi
 Validation rules applied server-side:
 - At least one of `paths`/`calendars`/`contacts` required.
 - Provider values must be in the whitelist (`nextcloud`, `opencloud`, `webdav`, `dropbox`, `google`, `onedrive`, `hidrive`, `smb`, `s3`,
-   `sftp`, `ftp`, `magentacloud`, `koofr`, `local`, `immich`, `seafile`, `mega`).
-- `ftp`, `magentacloud`, `koofr`, `onedrive`, `hidrive`, `local`, `seafile`, `immich`, and `mega` are files-only (reject calendars/contacts on source or target).
+   `sftp`, `ftp`, `magentacloud`, `koofr`, `local`, `immich`, `seafile`, `mega`, `box`).
+- `ftp`, `magentacloud`, `koofr`, `onedrive`, `hidrive`, `local`, `seafile`, `immich`, `mega`, and `box` are files-only (reject calendars/contacts on source or target).
 - `ftp` accepts only `ftp://host:21?tls=explicit` for explicit FTPS or `ftps://host:990` for implicit FTPS. Plain FTP,
   URL userinfo, certificate-validation bypasses, and custom CAs are not supported. Credentials belong in the encrypted
   username/password request fields, not the URL.

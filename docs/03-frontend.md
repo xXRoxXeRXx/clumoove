@@ -219,7 +219,7 @@ Interactive requirements:
 
 The **Administration → System** tab uses a two-column `md:grid-cols-2` layout: the left column holds the
 general settings (registration toggle) and the email-server card; the right column holds the read-only OAuth
-callback-URL card and one card per OAuth provider (Google, OneDrive, Dropbox, HiDrive). All cards reuse the
+callback-URL card and one card per OAuth provider (Google, OneDrive, Dropbox, HiDrive, Box). All cards reuse the
 shared `SectionCard` component; the email-server card renders its form in a single column because it occupies
 half the width.
 

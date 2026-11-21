@@ -80,7 +80,7 @@ stateDiagram-v2
 1. **Registration & Login** — User registers (`POST /api/auth/register`) and authenticates
    (`POST /api/auth/login`). They receive a short-lived JWT (HS256, issuer `clumoove-api`) and a
    longer-lived refresh token in an HTTP-only cookie. Optional TOTP 2FA can be enabled. For OAuth
-   providers (Dropbox, Google, OneDrive, HiDrive) a separate flow via `GET /api/oauth/auth` and `/oauth/callback` exists.
+   providers (Dropbox, Google, OneDrive, HiDrive, Box) a separate flow via `GET /api/oauth/auth` and `/oauth/callback` exists.
 2. **Connection test** — The user enters source/target credentials; the API performs a connection test
    via the provider client (`POST /api/migration/connect`). For OAuth providers the stored token is used.
 3. **File browser** — Before indexing, the user can explore source (`POST /api/migration/browse`) and

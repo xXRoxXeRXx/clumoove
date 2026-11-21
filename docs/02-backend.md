@@ -71,7 +71,7 @@ Responsibilities:
 | `internal/indexer` | BFS indexing of source paths/calendars/contacts → `PENDING` tasks. |
 | `internal/megasecret` | Encryption and lifecycle helpers for reusable MEGA session material. |
 | `internal/notify` | Validation and delivery for email, Gotify, ntfy, Telegram, and Discord notification channels. |
-| `internal/oauth` | OAuth2 token refresh for Dropbox/Google/OneDrive/HiDrive; `Configure`/`NewDBLoader` installs a DB-backed credential loader with a 30s ciphertext cache; secrets are decrypted only at token-request time. |
+| `internal/oauth` | OAuth2 token refresh for Dropbox/Google/OneDrive/HiDrive/Box; `Configure`/`NewDBLoader` installs a DB-backed credential loader with a 30s ciphertext cache; secrets are decrypted only at token-request time. |
 | `internal/observability` | Structured JSON logging, request IDs, and privacy-preserving redaction. |
 | `internal/processor` | Transfer execution loop, conflict resolution, inline hash verification, throttling, and cancellation/bandwidth controls. |
 | `internal/queue` | PostgreSQL dequeue (`DequeueSQL`), Redis locks, Pub/Sub for cancel/bandwidth, liveness tracking. |

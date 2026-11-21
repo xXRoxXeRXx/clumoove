@@ -38,7 +38,7 @@ Run by the worker runtime (`cmd/worker/runtime.go`, `runWorker`) alongside `Proc
   - Supports `METADATA`, `BUDGETED` (64 MiB–1 TiB), or `FULL` checks with pack pins and live SSE progress.
 
 ## Daemon Processes in API
-- **OAuth Token Rotation (`oauthRotationDaemon`)**: Rotates Dropbox, Google, OneDrive, and HiDrive refresh tokens for active migrations, sync jobs, and restore runs before expiry. (Backup runs coordinate refresh separately).
+- **OAuth Token Rotation (`oauthRotationDaemon`)**: Rotates Dropbox, Google, OneDrive, HiDrive, and Box refresh tokens for active migrations, sync jobs, and restore runs before expiry. (Backup runs coordinate refresh separately).
 - **Garbage Collector (`migrationGarbageCollector`)**: Runs hourly; deletes terminal migrations and cascaded task histories after 30 days. Stops cleanly with API context.
 
 ## Public Website & Frontend Deployment

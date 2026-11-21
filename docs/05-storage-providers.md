@@ -28,7 +28,7 @@ type StorageProvider interface {
 > this method alongside the others.
 >
 > - Return `true` only when the provider can atomically promote a staged `<path>.tmp` upload to `<path>`.
-> - Return `false` when that promotion is not atomic (including S3, Seafile, and Koofr) or unsupported (Immich).
+> - Return `false` when that promotion is not atomic (including S3, Seafile, Koofr, and Box) or unsupported (Immich).
 >   The processor then uploads directly to the final path. `false` does not imply that the provider lacks
 >   every rename or delete operation.
 
@@ -86,6 +86,7 @@ time, description, tags, etc.) after a successful upload.
 | `immich` | `immich.go` | Immich stable v2 API | server URL + API key in encrypted password field | files only, one-time migrations |
 | `seafile` | `seafile.go` | Seafile Web API v2.1 | server URL + user/pass (or Personal Access Token) | files only |
 | `mega` | `mega.go` | MEGA Cloud Drive API over HTTPS | email/password; encrypted reusable session | files only |
+| `box` | `box.go` | Box Content API v2 | OAuth2 (single-use rotating refresh tokens) | files only |
 
 SMB clients require SMB message signing, so an SMB server that cannot negotiate signing is rejected. The
 current `go-smb2` API enables SMB3 encryption when the server or mounted share requires it, but does not expose
@@ -103,6 +104,7 @@ For Seafile username/password connections, workers share an in-memory account-to
 | Koofr | `cryptographic_hash` | API `hash`, normalized as `MD5:<lowercase-hex>` |
 | OneDrive | `cryptographic_hash` | QuickXor |
 | HiDrive | `cryptographic_hash` | HiDrive `chash` |
+| Box | `cryptographic_hash` | SHA-1 (`SHA1:<lowercase-hex>`) |
 | Local | `cryptographic_hash` | SHA-1 |
 | Seafile | `size_only` | Its API exposes Seafile object IDs, not a comparable SHA-1 hash of the complete file content |
 | Nextcloud, OpenCloud, MagentaCLOUD, WebDAV | `size_only` | ETags are not integrity evidence (OpenCloud parses dynamic `oc:checksums` header when provided) |
@@ -112,6 +114,13 @@ For Seafile username/password connections, workers share an in-memory account-to
 | MEGA | `size_only` | No comparable target-hash API |
 
 Koofr uses only `https://app.koofr.net`; self-hosted, white-label, compatible-service endpoints, and mount selection are intentionally unsupported. `Connect` resolves the account's primary mount. It rejects redirects, streams multipart uploads without disk buffering, treats names case-insensitively, sanitizes slash and backslash in target names, and uploads directly to the final name for `OVERWRITE` because move is not documented as atomic.
+
+Box (`box`) is a files-only OAuth2 provider (`account.box.com` / `api.box.com` / `upload.box.com`) using administrator-managed client credentials and single-use rotating refresh tokens serialized via compare-and-swap rotation locks. Its key behaviors are:
+- **Verification & Hashing:** Exposes native file SHA-1 hashes normalized to `SHA1:<lowercase-hex>` (`cryptographic_hash`).
+- **Uploads & Non-Atomic Overwrite (`SupportsAtomicRename() == false`):** Files up to `50,000,000` bytes (50 MB) use single-request multipart uploads (`attributes` before `file`, `content-md5` header carrying the 40-hex SHA-1); files larger than 50 MB use Box chunked upload sessions (`Digest: sha=<base64-sha1>`). On `OVERWRITE`, Box uploads a new version directly to the existing file ID (`POST /files/{id}/content` or `POST /files/{id}/upload_sessions`), leaving the previous version intact if the upload fails.
+- **Skipped & Restricted Items:** Box Notes (`.boxnote`), Box Canvas (`.boxcanvas`), and `web_link` items are flagged with skip reasons during indexing and skipped rather than transferred. Files blocked from download by Box policy (HTTP `403`) fail permanently without retry.
+- **Naming & Sanitization:** Folder listings are case-insensitive; target names sanitize `/` and `\`, trim leading/trailing spaces, prefix `.` and `..`, and enforce a 255-character limit.
+- **Downloads & Thumbnails:** Download `302` redirects to `dl.boxcloud.com` are SSRF-validated and strip the `Authorization` header. The Cloud File Manager uses native folder/file IDs (root `"0"`) with marker pagination, native server-side copy, and `.png`/`.jpg` thumbnails (mapping `202 Accepted` / `Retry-After` to HTTP `429`).
 
 Immich provider constraints: Immich is strictly a files-only, one-time migration target or source. It cannot be used as a sync source or target, nor as a backup source/target or restore destination.
 
@@ -178,7 +187,7 @@ is intentionally unsupported because data channels are pinned to the validated c
 
 ## 3. Range-Read & Pack Retrieval Requirements (Backup & Restore)
 
-Storage providers serving as backup targets (where pack files `.clumoove-backup/<repo-id>/packs/*.pack` are stored) must support efficient reading of stored pack blocks. Providers that implement `storage.RangeDownloader` fetch individual 4 MiB blocks directly without downloading the entire 64 MiB pack. The current implementations are S3, WebDAV (including Nextcloud and OpenCloud), HiDrive, Dropbox, Google, Koofr, Local, OneDrive, Seafile, SFTP, and SMB. Providers without `RangeDownloader` use bounded in-memory pack readers (`MAX_RESTORE_PACK_READERS`) to cache and slice blocks locally during restore runs.
+Storage providers serving as backup targets (where pack files `.clumoove-backup/<repo-id>/packs/*.pack` are stored) must support efficient reading of stored pack blocks. Providers that implement `storage.RangeDownloader` fetch individual 4 MiB blocks directly without downloading the entire 64 MiB pack. The current implementations are S3, WebDAV (including Nextcloud and OpenCloud), HiDrive, Dropbox, Google, Box, Koofr, Local, OneDrive, Seafile, SFTP, and SMB. Providers without `RangeDownloader` use bounded in-memory pack readers (`MAX_RESTORE_PACK_READERS`) to cache and slice blocks locally during restore runs.
 
 ---
 

@@ -3,15 +3,15 @@
 ## Core Interface Requirements
 All storage sources and targets must implement `StorageProvider` in `backend/internal/storage/provider.go` and be registered in `factory.go`. The interface requires:
 
-- `SupportsAtomicRename() bool`: Return `true` only if the target supports atomic promotion from `<path>.tmp` to `<path>`. Return `false` for non-atomic targets (e.g. S3, Seafile, Koofr, Immich), which stream directly to the final path.
+- `SupportsAtomicRename() bool`: Return `true` only if the target supports atomic promotion from `<path>.tmp` to `<path>`. Return `false` for non-atomic targets (e.g. S3, Seafile, Koofr, Immich, Box), which stream directly to the final path.
 - `VerificationMode() VerificationMode`:
   - `cryptographic_hash`: Use only when comparable cryptographic hashes are available (e.g., SHA-1, MD5, SHA-256, QuickXor, HiDrive chash).
   - `size_only`: Mandatory for ETag-only, hashless, or non-comparable providers (Nextcloud, WebDAV, MagentaCLOUD, Seafile, FTP, MEGA). Skips `GetFileHash` and verifies existence and size.
   - Immich uses target asset ID + Base64 SHA-1 (`SHA1:<hex>`) with asset-ID size fallback.
 
 ## Provider Whitelist
-Only accept these 17 explicitly whitelisted providers:
-`nextcloud`, `opencloud`, `webdav`, `dropbox`, `google`, `onedrive`, `hidrive`, `smb`, `s3`, `sftp`, `ftp`, `magentacloud`, `koofr`, `local`, `immich`, `seafile`, `mega`.
+Only accept these 18 explicitly whitelisted providers:
+`nextcloud`, `opencloud`, `webdav`, `dropbox`, `google`, `onedrive`, `hidrive`, `smb`, `s3`, `sftp`, `ftp`, `magentacloud`, `koofr`, `local`, `immich`, `seafile`, `mega`, `box`.
 
 Never pass unvalidated provider strings to `storage.NewProvider`.
 
@@ -26,6 +26,7 @@ Never pass unvalidated provider strings to `storage.NewProvider`.
 | **FTP / FTPS** | Files-only FTPS (`ftp://host:21?tls=explicit` or `ftps://host:990`). Rejects plain unencrypted FTP and URL userinfo. Standard CA verification with SNI. Egress-dialed control/data connections; EPSV preferred, PASV uses control host IP with announced port. `size_only` verification. |
 | **SMB** | Requires message signing. Uses SMB3 encryption if server requires it. Recommended only on trusted networks unless encryption is enforced. |
 | **OneDrive** | Microsoft Graph personal accounts only. Supports files and shared-folder shortcuts via remote drive/item resolution. Skips Personal Vault (`specialFolder` facet). Calendars/contacts/SharePoint unsupported. Verification: Graph `QuickXor` hash when present. |
+| **Box** | Files-only Box Content API v2 over OAuth2 (single-use rotating refresh tokens; admin-managed client credentials). `SupportsAtomicRename() == false`: `OVERWRITE` uploads a new version directly to the existing file ID. `cryptographic_hash` verification (`SHA1:<hex>`). Direct upload up to 50,000,000 bytes (50 MB); chunked upload sessions above 50 MB. Skips `.boxnote`, `.boxcanvas`, and `web_link` items; download-restricted files (HTTP 403) fail permanently. Case-insensitive; sanitizes `/` and `\`, trims spaces, prefixes `.`/`..`. Implements `RangeDownloader` and strips `Authorization` on SSRF-validated download redirects. |
 | **SFTP** | URL must include trusted `host_key` SHA-256 fingerprint; SSH handshake rejects all others. 15 s socket timeout; cancellation terminates SSH client. |
 | **Local** | Zero credentials. Unix only: sandboxed within `LOCAL_STORAGE_ROOT/users/<user-id>` using root-anchored `openat`/`O_NOFOLLOW` traversal to prevent symlink races. Windows mutations unavailable. Files only; requires validated user ID. Only visible in UI if `LOCAL_STORAGE_ROOT` is configured. |
 | **Immich** | URL + API key in encrypted password field. Files-only one-time migrations (no sync, backup, or restore). Virtual `/Timeline` and `/Albums` browsing. Native duplicate `SKIP`. Target directory maps to a single album (no nested folders). No atomic rename (`false`). |
