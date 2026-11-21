@@ -2912,3 +2912,31 @@ func TestBoxRenameFile(t *testing.T) {
 		t.Fatalf("InspectResource(new child file path) = (%+v, %v), want size=4", res, err)
 	}
 }
+
+func TestBoxSurfacesLongRetryAfterToQueue(t *testing.T) {
+	srv := newFakeBoxServer("valid-token")
+	defer srv.close()
+
+	srv.enqueueFaults(fakeBoxFault{
+		status:     http.StatusTooManyRequests,
+		retryAfter: "3600",
+		body:       `{"type":"error","status":429,"code":"rate_limit_exceeded"}`,
+	})
+
+	p := srv.provider()
+	defer p.Close()
+
+	start := time.Now()
+	_, err := p.Connect(context.Background())
+	elapsed := time.Since(start)
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("Connect slept inline for %v on Retry-After: 3600; want immediate RetryAfterError", elapsed)
+	}
+	var retryErr *RetryAfterError
+	if !errors.As(err, &retryErr) || retryErr.After != time.Hour {
+		t.Fatalf("Connect error = %v, want *RetryAfterError(1h)", err)
+	}
+	if got := srv.requestCount(); got != 1 {
+		t.Fatalf("requestCount = %d, want 1 (long Retry-After surfaced without inline retry)", got)
+	}
+}

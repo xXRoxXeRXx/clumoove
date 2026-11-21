@@ -127,6 +127,17 @@ func (r CloudResource) IsPersonalVault() bool {
 	return r.Metadata.CustomProps != nil && r.Metadata.CustomProps["onedrive_special_folder"] == "vault"
 }
 
+const (
+	// DefaultChunkedUploadThreshold is the 50 MiB file size cutoff shared by
+	// migration, restore, and file-manager chunked transfer paths.
+	DefaultChunkedUploadThreshold int64 = 50 * 1024 * 1024
+
+	boxNonTransferablePropKey = "box_non_transferable_kind"
+	boxNonTransferableNote    = "box_note"
+	boxNonTransferableCanvas  = "box_canvas"
+	boxNonTransferableWebLink = "web_link"
+)
+
 // BoxSkipReason reports whether a Box resource is a non-file or proprietary
 // format item (Box Note, Box Canvas, or web link) that cannot be transferred
 // as a file, returning a user-visible skip reason when true.
@@ -134,12 +145,12 @@ func (r CloudResource) BoxSkipReason() (string, bool) {
 	if r.Metadata.CustomProps == nil {
 		return "", false
 	}
-	switch r.Metadata.CustomProps["box_non_transferable_kind"] {
-	case "box_note":
+	switch r.Metadata.CustomProps[boxNonTransferablePropKey] {
+	case boxNonTransferableNote:
 		return "Box Notes (.boxnote) cannot be migrated through the API", true
-	case "box_canvas":
+	case boxNonTransferableCanvas:
 		return "Box Canvas files (.boxcanvas) cannot be migrated through the API", true
-	case "web_link":
+	case boxNonTransferableWebLink:
 		return "Box web links cannot be migrated through the API", true
 	default:
 		return "", false

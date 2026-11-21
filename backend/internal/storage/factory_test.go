@@ -427,7 +427,7 @@ func TestManagerMutationCapabilityRouting(t *testing.T) {
 		capabilities := ManagerCapabilitiesFor(providerType)
 		if capabilities.Rename || capabilities.Move || capabilities.Copy {
 			entry, ok := defaultProviderCatalogue.lookup(providerType)
-			if !ok || (providerType != "google" && providerType != "box" && !entry.ManagerPathMutation) {
+			if !ok || (!entry.ManagerPathMutation && entry.ManagerRootNativeID == "") {
 				t.Errorf("%s advertises manager mutations without a path or dedicated route", providerType)
 			}
 		}

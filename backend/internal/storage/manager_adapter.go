@@ -20,7 +20,7 @@ import (
 const (
 	defaultManagerPageSize   = 100
 	managerMaxDirectoryItems = 10000
-	managerChunkedThreshold  = 50 * 1024 * 1024
+	managerChunkedThreshold  = DefaultChunkedUploadThreshold
 	managerCleanupTimeout    = 15 * time.Second
 )
 

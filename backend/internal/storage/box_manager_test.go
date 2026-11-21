@@ -917,3 +917,71 @@ func TestBoxFileManagerDelete(t *testing.T) {
 		t.Fatalf("ResolveManagerPath(/Docs/Nested) = (%+v, fallback=%v, err=%v), want new ID != %q", recreatedLoc, fallback, err, nestedID)
 	}
 }
+
+func TestBoxFileManagerOverwriteFailurePreservesOriginal(t *testing.T) {
+	srv := newFakeBoxServer("valid-token")
+	defer srv.close()
+
+	srcID := srv.addFolder("0", "10", "Source")
+	dstID := srv.addFolder("0", "20", "Target")
+	srcFileID := srv.addFileContent(srcID, "11", "new.txt", []byte("new-payload"))
+	dstFileID := srv.addFileContent(dstID, "21", "target.txt", []byte("original-payload"))
+
+	p := srv.provider()
+	defer p.Close()
+	fm, err := NewFileManager("box", p)
+	if err != nil {
+		t.Fatalf("NewFileManager(box): %v", err)
+	}
+	ctx := context.Background()
+
+	// 1. Copy overwrite fails during POST /copy -> original file stays untouched.
+	srv.mu.Lock()
+	srv.faultHook = func(r *http.Request) *fakeBoxFault {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/copy") {
+			return &fakeBoxFault{status: http.StatusForbidden, body: `{"type":"error","status":403,"code":"forbidden_by_policy"}`}
+		}
+		return nil
+	}
+	srv.mu.Unlock()
+
+	if _, err := fm.CopyManagerItem(ctx, ManagerLocator{NativeID: srcFileID}, ManagerLocator{NativeID: dstID}, "target.txt", ManagerMutationOptions{ConflictStrategy: ManagerConflictOverwrite}); err == nil {
+		t.Fatal("expected CopyManagerItem(OVERWRITE) error when copy fails")
+	}
+	dlAfterCopyFail, err := fm.DownloadManager(ctx, ManagerLocator{NativeID: dstFileID})
+	if err != nil {
+		t.Fatalf("original file missing after failed copy overwrite: %v", err)
+	}
+	gotCopyBytes, _ := io.ReadAll(dlAfterCopyFail.Stream)
+	dlAfterCopyFail.Stream.Close()
+	if string(gotCopyBytes) != "original-payload" {
+		t.Fatalf("original file content after failed copy = %q, want original-payload", gotCopyBytes)
+	}
+
+	// 2. Move overwrite fails on moving source (second PUT) -> backup is rolled back cleanly.
+	srv.mu.Lock()
+	srv.faultHook = func(r *http.Request) *fakeBoxFault {
+		if r.Method == http.MethodPut && r.URL.Path == "/2.0/files/"+srcFileID {
+			return &fakeBoxFault{status: http.StatusForbidden, body: `{"type":"error","status":403,"code":"forbidden_by_policy"}`}
+		}
+		return nil
+	}
+	srv.mu.Unlock()
+
+	if _, err := fm.MoveManagerItem(ctx, ManagerLocator{NativeID: srcFileID}, ManagerLocator{NativeID: dstID}, "target.txt", ManagerMutationOptions{ConflictStrategy: ManagerConflictOverwrite}); err == nil {
+		t.Fatal("expected MoveManagerItem(OVERWRITE) error when move fails")
+	}
+	srv.mu.Lock()
+	srv.faultHook = nil
+	srv.mu.Unlock()
+
+	dlAfterMoveFail, err := p.StreamDownload(ctx, "files", "/Target/target.txt")
+	if err != nil {
+		t.Fatalf("StreamDownload(/Target/target.txt) after failed move overwrite: %v", err)
+	}
+	gotMoveBytes, _ := io.ReadAll(dlAfterMoveFail)
+	dlAfterMoveFail.Close()
+	if string(gotMoveBytes) != "original-payload" {
+		t.Fatalf("original file content after failed move = %q, want original-payload", gotMoveBytes)
+	}
+}

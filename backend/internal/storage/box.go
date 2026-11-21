@@ -25,6 +25,7 @@ const (
 	boxRootFolderID            = "0"
 	boxListPageLimit           = 1000
 	boxMaxRetries              = 3
+	boxMaxInlineRetryWait      = 10 * time.Second
 	boxMaxCommitPolls          = 10
 	boxDefaultThumbnailMaxWait = 3 * time.Second
 	boxItemFields              = "id,type,name,size,sha1,modified_at,content_modified_at,permissions,url,parent"
@@ -142,11 +143,11 @@ func parseBoxRetryAfter(retryAfter string) (time.Duration, bool) {
 	return 0, false
 }
 
-func boxRetryDelay(retryAfter string, attempt int) time.Duration {
+func boxRetryWait(retryAfter string, attempt int) (time.Duration, bool) {
 	if delay, ok := parseBoxRetryAfter(retryAfter); ok {
-		return delay
+		return delay, true
 	}
-	return 200 * time.Millisecond * (1 << attempt)
+	return 200 * time.Millisecond * (1 << attempt), false
 }
 
 func boxWait(ctx context.Context, delay time.Duration) error {
@@ -189,10 +190,16 @@ func (p *BoxProvider) doWithClient(ctx context.Context, client *http.Client, req
 			return resp, nil
 		}
 		retryAfter := resp.Header.Get("Retry-After")
+		delay, explicit := boxRetryWait(retryAfter, attempt)
+		if explicit && delay > boxMaxInlineRetryWait {
+			// Hand long server-requested backoffs back to the queue instead of
+			// sleeping inline on a worker goroutine.
+			return resp, nil
+		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		resp.Body.Close()
 
-		if err := boxWait(ctx, boxRetryDelay(retryAfter, attempt)); err != nil {
+		if err := boxWait(ctx, delay); err != nil {
 			return nil, err
 		}
 	}
@@ -281,7 +288,7 @@ func (p *BoxProvider) Connect(ctx context.Context) (bool, error) {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return true, nil
 	}
-	return false, boxAPIError("connect", resp.StatusCode)
+	return false, boxResponseError("connect", resp)
 }
 
 type boxPermissions struct {
@@ -366,14 +373,14 @@ func boxItemModTime(item boxItem) time.Time {
 func boxNonTransferableKind(item boxItem) string {
 	switch item.Type {
 	case "web_link":
-		return "web_link"
+		return boxNonTransferableWebLink
 	case "file":
 		lowerName := strings.ToLower(item.Name)
 		switch {
 		case strings.HasSuffix(lowerName, ".boxnote"):
-			return "box_note"
+			return boxNonTransferableNote
 		case strings.HasSuffix(lowerName, ".boxcanvas"):
-			return "box_canvas"
+			return boxNonTransferableCanvas
 		}
 	}
 	return ""
@@ -387,7 +394,7 @@ func boxCloudResource(item boxItem, fullPath string) CloudResource {
 	var metadata FileMetadata
 	if kind := boxNonTransferableKind(item); kind != "" {
 		metadata.CustomProps = map[string]string{
-			"box_non_transferable_kind": kind,
+			boxNonTransferablePropKey: kind,
 		}
 	}
 	return CloudResource{
@@ -1213,6 +1220,9 @@ func (p *BoxProvider) commitUploadSession(ctx context.Context, commitURL string,
 			delay, ok := parseBoxRetryAfter(retryAfter)
 			if !ok {
 				delay = time.Second
+			}
+			if delay > boxMaxInlineRetryWait {
+				return UploadResult{}, fmt.Errorf("box commit upload session: %w", &RetryAfterError{After: delay})
 			}
 			if err := boxWait(ctx, delay); err != nil {
 				return UploadResult{}, err

@@ -833,13 +833,12 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 	var uploadErr error
 	if !targetProvider.SupportsAtomicRename() {
 		if uploader, ok := targetProvider.(storage.TransferUploader); ok {
-			const restoreChunkedThreshold = 50 * 1024 * 1024
 			var opts storage.UploadOptions
 			opts.Overwrite = overwriteExisting
 			if item.SourceMTime.Valid {
 				opts.Metadata.ModifiedTime = item.SourceMTime.Time
 			}
-			if item.SizeBytes > restoreChunkedThreshold {
+			if item.SizeBytes > storage.DefaultChunkedUploadThreshold {
 				_, uploadErr = uploader.StreamUploadChunkedWithOptions(ctx, "files", uploadPath, throttledUpload, item.SizeBytes, nil, opts)
 			} else {
 				_, uploadErr = uploader.StreamUploadWithOptions(ctx, "files", uploadPath, throttledUpload, item.SizeBytes, opts)

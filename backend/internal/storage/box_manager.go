@@ -297,15 +297,13 @@ func (p *BoxProvider) CopyManagerItem(ctx context.Context, locator, destination 
 		if conflict.ID == source.ID {
 			return ManagerMutationResult{}, ErrManagerNoop
 		}
-		if err := p.deleteBoxFileByID(ctx, conflict.ID); err != nil {
+		if err := p.copyOverwritePreservingOriginal(ctx, source, destinationID, finalName, conflict); err != nil {
 			return ManagerMutationResult{}, err
 		}
-	}
-	if err := p.copyBoxItem(ctx, source.Type, source.ID, finalName, destinationID); err != nil {
-		return ManagerMutationResult{}, err
-	}
-	if conflict != nil {
 		return ManagerMutationResult{Status: "overwritten", FinalName: finalName, Native: true}, nil
+	}
+	if _, err := p.copyBoxItem(ctx, source.Type, source.ID, finalName, destinationID); err != nil {
+		return ManagerMutationResult{}, err
 	}
 	if resultStatus == "renamed_on_conflict" {
 		return ManagerMutationResult{Status: "renamed_on_conflict", FinalName: finalName, Native: true}, nil
@@ -430,11 +428,10 @@ func (p *BoxProvider) mutateManagerItem(ctx context.Context, locator, destinatio
 	}
 
 	if conflict != nil {
-		if err := p.deleteBoxFileByID(ctx, conflict.ID); err != nil {
+		if err := p.moveOverwritePreservingOriginal(ctx, source, destinationID, finalName, conflict); err != nil {
 			return ManagerMutationResult{}, err
 		}
-	}
-	if err := p.updateBoxItem(ctx, source.Type, source.ID, finalName, destinationID); err != nil {
+	} else if err := p.updateBoxItem(ctx, source.Type, source.ID, finalName, destinationID); err != nil {
 		return ManagerMutationResult{}, err
 	}
 	if source.Type == "folder" {
@@ -565,17 +562,72 @@ func boxNextUniqueName(name string, existingNames map[string]struct{}) (string, 
 	return "", ErrManagerConflict
 }
 
+func (p *BoxProvider) copyOverwritePreservingOriginal(ctx context.Context, source boxItem, destinationID, finalName string, conflict *boxItem) error {
+	tempCopyName := boxOverwriteTempName("copy", finalName, conflict.ID)
+	copied, err := p.copyBoxItem(ctx, source.Type, source.ID, tempCopyName, destinationID)
+	if err != nil {
+		return err
+	}
+	backupName := boxOverwriteTempName("backup", finalName, conflict.ID)
+	if err := p.updateBoxItem(ctx, "file", conflict.ID, backupName, destinationID); err != nil {
+		p.bestEffortDeleteBoxFile(ctx, copied.ID)
+		return err
+	}
+	if err := p.updateBoxItem(ctx, "file", copied.ID, finalName, destinationID); err != nil {
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		_ = p.updateBoxItem(rollbackCtx, "file", conflict.ID, finalName, destinationID)
+		cancel()
+		p.bestEffortDeleteBoxFile(ctx, copied.ID)
+		return err
+	}
+	return p.deleteBoxFileByID(ctx, conflict.ID)
+}
+
+func (p *BoxProvider) moveOverwritePreservingOriginal(ctx context.Context, source boxItem, destinationID, finalName string, conflict *boxItem) error {
+	backupName := boxOverwriteTempName("backup", finalName, conflict.ID)
+	if err := p.updateBoxItem(ctx, "file", conflict.ID, backupName, destinationID); err != nil {
+		return err
+	}
+	if err := p.updateBoxItem(ctx, source.Type, source.ID, finalName, destinationID); err != nil {
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		_ = p.updateBoxItem(rollbackCtx, "file", conflict.ID, finalName, destinationID)
+		cancel()
+		return err
+	}
+	return p.deleteBoxFileByID(ctx, conflict.ID)
+}
+
+func (p *BoxProvider) bestEffortDeleteBoxFile(ctx context.Context, fileID string) {
+	if fileID == "" {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	_ = p.deleteBoxFileByID(cleanupCtx, fileID)
+}
+
+func boxOverwriteTempName(kind, base, id string) string {
+	suffix := fmt.Sprintf(".clumoove-%s-%s-%s", kind, id, base)
+	runes := []rune(suffix)
+	if len(runes) > 255 {
+		return string(runes[:255])
+	}
+	return suffix
+}
+
 func (p *BoxProvider) deleteBoxFileByID(ctx context.Context, fileID string) error {
 	endpoint := p.apiBase + "/files/" + url.PathEscape(fileID)
 	return p.doJSON(ctx, http.MethodDelete, endpoint, nil, nil, "delete file")
 }
 
 func (p *BoxProvider) updateBoxItem(ctx context.Context, itemType, id, name, parentID string) error {
-	return p.mutateBoxItemPayload(ctx, http.MethodPut, boxItemResourcePath(itemType, id), name, parentID, "update "+itemType)
+	return p.mutateBoxItemPayload(ctx, http.MethodPut, boxItemResourcePath(itemType, id), name, parentID, nil, "update "+itemType)
 }
 
-func (p *BoxProvider) copyBoxItem(ctx context.Context, itemType, id, name, parentID string) error {
-	return p.mutateBoxItemPayload(ctx, http.MethodPost, boxItemResourcePath(itemType, id)+"/copy", name, parentID, "copy "+itemType)
+func (p *BoxProvider) copyBoxItem(ctx context.Context, itemType, id, name, parentID string) (boxItem, error) {
+	var copied boxItem
+	err := p.mutateBoxItemPayload(ctx, http.MethodPost, boxItemResourcePath(itemType, id)+"/copy", name, parentID, &copied, "copy "+itemType)
+	return copied, err
 }
 
 func boxItemResourcePath(itemType, id string) string {
@@ -586,7 +638,7 @@ func boxItemResourcePath(itemType, id string) string {
 	return "/" + resource + "/" + url.PathEscape(id)
 }
 
-func (p *BoxProvider) mutateBoxItemPayload(ctx context.Context, method, relPath, name, parentID, op string) error {
+func (p *BoxProvider) mutateBoxItemPayload(ctx context.Context, method, relPath, name, parentID string, dst any, op string) error {
 	payload, err := json.Marshal(struct {
 		Name   string          `json:"name"`
 		Parent boxUploadParent `json:"parent"`
@@ -597,12 +649,12 @@ func (p *BoxProvider) mutateBoxItemPayload(ctx context.Context, method, relPath,
 	if err != nil {
 		return err
 	}
-	return p.doJSON(ctx, method, p.apiBase+relPath, bytes.NewReader(payload), nil, op)
+	return p.doJSON(ctx, method, p.apiBase+relPath, bytes.NewReader(payload), dst, op)
 }
 
 func (p *BoxProvider) invalidateFolderCache(folderID, knownPath string) {
 	cache := p.ensurePathCache()
-	cache.InvalidateValue(folderID)
+	cache.InvalidateValueAndDescendants(folderID)
 	if knownPath != "" {
 		if clean, err := boxCleanPath(knownPath); err == nil && clean != "/" {
 			cache.InvalidatePrefix(strings.ToLower(clean))

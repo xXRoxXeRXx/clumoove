@@ -630,6 +630,13 @@ func NewManagerCopier(providerType string, provider ManagerProvider) (ManagerCop
 	return defaultProviderCatalogue.newManagerCopier(providerType, provider)
 }
 
+// ManagerUsesImmutableParent reports whether providerType uses immutable
+// parent IDs for manager items instead of deriving parent folders from display paths.
+func ManagerUsesImmutableParent(providerType string) bool {
+	entry, ok := defaultProviderCatalogue.lookup(providerType)
+	return ok && !entry.ManagerPathMutation && entry.ManagerRootNativeID != ""
+}
+
 // ManagerCapabilitiesFor returns static capabilities after applying runtime
 // platform restrictions. It returns false for unknown providers.
 func ManagerCapabilitiesFor(providerType string) ManagerCapabilities {

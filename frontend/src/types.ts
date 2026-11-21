@@ -33,6 +33,26 @@ export type ProviderId = Provider;
 
 export const OAUTH_PROVIDERS = ['dropbox', 'google', 'onedrive', 'hidrive', 'box'] as const satisfies readonly Provider[];
 
+export const RESTORE_TARGET_PROVIDERS = [
+  'nextcloud',
+  'opencloud',
+  'webdav',
+  'dropbox',
+  'google',
+  'onedrive',
+  'hidrive',
+  'box',
+  's3',
+  'smb',
+  'sftp',
+  'ftp',
+  'magentacloud',
+  'koofr',
+  'seafile',
+  'mega',
+  'local',
+] as const satisfies readonly Exclude<Provider, 'immich'>[];
+
 export function isOAuthProvider(provider: string): provider is (typeof OAUTH_PROVIDERS)[number] {
   return (OAUTH_PROVIDERS as readonly string[]).includes(provider);
 }

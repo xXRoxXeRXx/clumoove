@@ -240,11 +240,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			logger.Debug("indexing_path_inspection_skipped", slog.String("path", p), observability.ErrorAttr(err, true), slog.String("error_kind", observability.ErrorKind(err)))
 			continue
 		}
-		if res.IsPersonalVault() {
-			indexErrors = append(indexErrors, db.IndexingErrorInput{Path: p, ResourceType: "files", ErrorMessage: "OneDrive Personal Vault cannot be migrated through the API"})
-			continue
-		}
-		if reason, skip := res.BoxSkipReason(); skip {
+		if reason, skip := res.NonTransferableReason(); skip {
 			indexErrors = append(indexErrors, db.IndexingErrorInput{Path: p, ResourceType: "files", ErrorMessage: reason})
 			continue
 		}

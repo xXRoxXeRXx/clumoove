@@ -48,9 +48,9 @@ func (c *boundedStringCache) Set(key, value string) {
 	c.m[key] = value
 }
 
-// InvalidateValue removes every cached path whose mapped value equals val,
-// along with any descendant keys beneath those paths.
-func (c *boundedStringCache) InvalidateValue(val string) {
+// InvalidateValueAndDescendants removes every cached path whose mapped value
+// equals val, along with any descendant keys beneath those paths.
+func (c *boundedStringCache) InvalidateValueAndDescendants(val string) {
 	if c == nil || val == "" {
 		return
 	}

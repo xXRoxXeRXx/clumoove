@@ -2270,3 +2270,76 @@ func TestExecuteSyncTransferFromBoxToOtherProvider(t *testing.T) {
 		t.Fatalf("uploadOpts[0].Metadata.ModifiedTime = %v, want %v", target.uploadOpts[0].Metadata.ModifiedTime, wantMtime)
 	}
 }
+
+func TestHandleTaskFailureProgressCounting(t *testing.T) {
+	state := &boxMigTestState{
+		migID:  "mig-failure-counting",
+		status: "RUNNING",
+		tasks: []*boxMigTestTask{
+			{
+				id:           "task-retry",
+				migrationID:  "mig-failure-counting",
+				resourceType: "files",
+				filePath:     "/retry.txt",
+				fileSize:     100,
+				status:       "RUNNING",
+				claimEpoch:   1,
+			},
+			{
+				id:           "task-perm",
+				migrationID:  "mig-failure-counting",
+				resourceType: "files",
+				filePath:     "/perm.txt",
+				fileSize:     100,
+				status:       "RUNNING",
+				claimEpoch:   1,
+			},
+		},
+	}
+	database := newBoxMigTestDB(t, state)
+	proc, err := NewProcessor(database, nil, Config{
+		WorkerID:      "failure-worker",
+		SecretKey:     "01234567890123456789012345678901",
+		MaxThreads:    1,
+		ProviderSlots: make(chan struct{}, 1),
+	})
+	if err != nil {
+		t.Fatalf("NewProcessor: %v", err)
+	}
+
+	// Retryable failure must schedule retry without advancing processed/failed counters.
+	proc.handleTaskFailure(context.Background(), &queue.Payload{
+		TaskID:      "task-retry",
+		MigrationID: state.migID,
+		ClaimEpoch:  1,
+	}, errors.New("transient backend error"))
+
+	state.mu.Lock()
+	retryTask := state.tasks[0]
+	if retryTask.status != "FAILED" || retryTask.attempts != 1 || !retryTask.hasNextRetry {
+		state.mu.Unlock()
+		t.Fatalf("retryable task = %+v, want FAILED with attempts=1 and next_retry_at", retryTask)
+	}
+	if state.processedFiles != 0 || state.failedFiles != 0 {
+		state.mu.Unlock()
+		t.Fatalf("counters after retryable failure = (processed=%d, failed=%d), want (0, 0)", state.processedFiles, state.failedFiles)
+	}
+	state.mu.Unlock()
+
+	// Permanent failure must commit terminal failure counters without scheduling retry.
+	proc.handleTaskFailure(context.Background(), &queue.Payload{
+		TaskID:      "task-perm",
+		MigrationID: state.migID,
+		ClaimEpoch:  1,
+	}, fmt.Errorf("blocked: %w", storage.ErrPermanentTransfer))
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	permTask := state.tasks[1]
+	if permTask.status != "FAILED" || permTask.attempts != 1 || permTask.hasNextRetry {
+		t.Fatalf("permanent task = %+v, want FAILED with attempts=1 and nil next_retry_at", permTask)
+	}
+	if state.processedFiles != 1 || state.failedFiles != 1 {
+		t.Fatalf("counters after permanent failure = (processed=%d, failed=%d), want (1, 1)", state.processedFiles, state.failedFiles)
+	}
+}

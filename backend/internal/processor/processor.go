@@ -439,7 +439,7 @@ var taskHeartbeatByteStale = 2 * time.Minute
 // chunkedUploadThreshold is the file size (50 MiB) above which transfers use
 // chunked upload. Kept as a single source of truth so the download/upload
 // timeout policy below stays in sync with the chunking decision.
-const chunkedUploadThreshold int64 = 50 * 1024 * 1024
+const chunkedUploadThreshold int64 = storage.DefaultChunkedUploadThreshold
 
 // transferTimeoutBase / transferTimeoutPerChunk scale the per-request timeout by
 // file size: every 50 MiB of content adds one minute, capped at 12h. Applied
