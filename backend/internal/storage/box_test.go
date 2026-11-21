@@ -270,9 +270,18 @@ func (f *fakeBoxServer) handle(w http.ResponseWriter, r *http.Request) {
 		f.handleListFolderItems(w, r, folderID)
 	case r.Method == http.MethodPost && r.URL.Path == "/2.0/folders":
 		f.handleCreateFolder(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/2.0/folders/") && strings.HasSuffix(r.URL.Path, "/copy"):
+		folderID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/2.0/folders/"), "/copy")
+		f.handleCopyItem(w, r, folderID, "folder")
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/folders/"):
 		folderID := strings.TrimPrefix(r.URL.Path, "/2.0/folders/")
 		f.handleGetItem(w, folderID, "folder")
+	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/2.0/folders/"):
+		folderID := strings.TrimPrefix(r.URL.Path, "/2.0/folders/")
+		f.handleUpdateItem(w, r, folderID, "folder")
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/2.0/folders/"):
+		folderID := strings.TrimPrefix(r.URL.Path, "/2.0/folders/")
+		f.handleDeleteFolder(w, r, folderID)
 	case r.Method == http.MethodGet && r.URL.Path == "/trap-placeholder":
 		f.mu.Lock()
 		f.trapHit = true
@@ -286,9 +295,18 @@ func (f *fakeBoxServer) handle(w http.ResponseWriter, r *http.Request) {
 		trimmed := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
 		fileID := strings.SplitN(trimmed, "/", 2)[0]
 		f.handleThumbnail(w, r, fileID)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/2.0/files/") && strings.HasSuffix(r.URL.Path, "/copy"):
+		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/2.0/files/"), "/copy")
+		f.handleCopyItem(w, r, fileID, "file")
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/files/"):
 		fileID := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
 		f.handleGetItem(w, fileID, "file")
+	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/2.0/files/"):
+		fileID := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
+		f.handleUpdateItem(w, r, fileID, "file")
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/2.0/files/"):
+		fileID := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
+		f.handleDeleteFile(w, fileID)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/content":
 		f.handleSingleUpload(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
@@ -460,8 +478,7 @@ func (f *fakeBoxServer) handleGetItem(w http.ResponseWriter, id, wantType string
 		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	payload := map[string]any{
 		"id":                  item.ID,
 		"type":                item.Type,
 		"name":                item.Name,
@@ -469,7 +486,284 @@ func (f *fakeBoxServer) handleGetItem(w http.ResponseWriter, id, wantType string
 		"sha1":                item.SHA1,
 		"modified_at":         item.ModifiedAt,
 		"content_modified_at": item.ContentModifiedAt,
+	}
+	if item.ParentID != "" {
+		payload["parent"] = map[string]any{"id": item.ParentID, "type": "folder"}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (f *fakeBoxServer) handleUpdateItem(w http.ResponseWriter, r *http.Request, id, wantType string) {
+	if id == "0" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"bad_request"}`))
+		return
+	}
+	var reqBody struct {
+		Name   string `json:"name"`
+		Parent *struct {
+			ID string `json:"id"`
+		} `json:"parent"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	item, ok := f.items[id]
+	if !ok || item.Type != wantType {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+	newParentID := item.ParentID
+	if reqBody.Parent != nil && reqBody.Parent.ID != "" {
+		newParentID = reqBody.Parent.ID
+	}
+	newName := item.Name
+	if reqBody.Name != "" {
+		newName = reqBody.Name
+	}
+
+	parent, parentOK := f.items[newParentID]
+	if !parentOK || parent.Type != "folder" {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+	if wantType == "folder" {
+		cur := newParentID
+		for depth := 0; cur != "" && cur != "0" && depth < 100; depth++ {
+			if cur == id {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"cannot_move_folder_into_itself"}`))
+				return
+			}
+			cur = f.items[cur].ParentID
+		}
+	}
+
+	for _, cid := range f.children[newParentID] {
+		if cid == id {
+			continue
+		}
+		existing := f.items[cid]
+		if strings.EqualFold(existing.Name, newName) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"type":   "error",
+				"status": 409,
+				"code":   "item_name_in_use",
+				"context_info": map[string]any{
+					"conflicts": map[string]any{
+						"type": existing.Type,
+						"id":   existing.ID,
+						"name": existing.Name,
+					},
+				},
+			})
+			return
+		}
+	}
+
+	if newParentID != item.ParentID {
+		oldChildren := f.children[item.ParentID]
+		filtered := make([]string, 0, len(oldChildren))
+		for _, cid := range oldChildren {
+			if cid != id {
+				filtered = append(filtered, cid)
+			}
+		}
+		f.children[item.ParentID] = filtered
+		f.children[newParentID] = append(f.children[newParentID], id)
+		item.ParentID = newParentID
+	}
+	item.Name = newName
+	item.ModifiedAt = "2026-02-06T10:00:00Z"
+	f.items[id] = item
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"id":          item.ID,
+		"type":        item.Type,
+		"name":        item.Name,
+		"size":        item.Size,
+		"sha1":        item.SHA1,
+		"modified_at": item.ModifiedAt,
+		"parent":      map[string]any{"id": item.ParentID, "type": "folder"},
 	})
+}
+
+func (f *fakeBoxServer) handleDeleteFile(w http.ResponseWriter, id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	item, ok := f.items[id]
+	if !ok || item.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+	f.removeChildLocked(item.ParentID, id)
+	delete(f.items, id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (f *fakeBoxServer) handleDeleteFolder(w http.ResponseWriter, r *http.Request, id string) {
+	if id == "0" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"bad_request"}`))
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	item, ok := f.items[id]
+	if !ok || item.Type != "folder" {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+	recursive := r.URL.Query().Get("recursive") == "true"
+	if !recursive && len(f.children[id]) > 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"folder_not_empty"}`))
+		return
+	}
+	f.removeChildLocked(item.ParentID, id)
+	f.deleteFolderTreeLocked(id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (f *fakeBoxServer) deleteFolderTreeLocked(id string) {
+	for _, cid := range append([]string(nil), f.children[id]...) {
+		if child, ok := f.items[cid]; ok && child.Type == "folder" {
+			f.deleteFolderTreeLocked(cid)
+		} else {
+			delete(f.items, cid)
+		}
+	}
+	delete(f.children, id)
+	delete(f.items, id)
+}
+
+func (f *fakeBoxServer) removeChildLocked(parentID, id string) {
+	children := f.children[parentID]
+	filtered := make([]string, 0, len(children))
+	for _, cid := range children {
+		if cid != id {
+			filtered = append(filtered, cid)
+		}
+	}
+	f.children[parentID] = filtered
+}
+
+func (f *fakeBoxServer) handleCopyItem(w http.ResponseWriter, r *http.Request, id, wantType string) {
+	if id == "0" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"bad_request"}`))
+		return
+	}
+	var reqBody struct {
+		Name   string `json:"name"`
+		Parent struct {
+			ID string `json:"id"`
+		} `json:"parent"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil || reqBody.Parent.ID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"bad_request"}`))
+		return
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	source, ok := f.items[id]
+	if !ok || source.Type != wantType {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+	destParent, parentOK := f.items[reqBody.Parent.ID]
+	if !parentOK || destParent.Type != "folder" {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+	if wantType == "folder" {
+		cur := reqBody.Parent.ID
+		for depth := 0; cur != "" && cur != "0" && depth < 100; depth++ {
+			if cur == id {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"cannot_move_folder_into_itself"}`))
+				return
+			}
+			cur = f.items[cur].ParentID
+		}
+	}
+
+	newName := source.Name
+	if reqBody.Name != "" {
+		newName = reqBody.Name
+	}
+	for _, cid := range f.children[reqBody.Parent.ID] {
+		existing := f.items[cid]
+		if strings.EqualFold(existing.Name, newName) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"type":   "error",
+				"status": 409,
+				"code":   "item_name_in_use",
+				"context_info": map[string]any{
+					"conflicts": map[string]any{
+						"type": existing.Type,
+						"id":   existing.ID,
+						"name": existing.Name,
+					},
+				},
+			})
+			return
+		}
+	}
+
+	copied := f.cloneItemLocked(source, reqBody.Parent.ID, newName)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"id":          copied.ID,
+		"type":        copied.Type,
+		"name":        copied.Name,
+		"size":        copied.Size,
+		"sha1":        copied.SHA1,
+		"modified_at": copied.ModifiedAt,
+		"parent":      map[string]any{"id": copied.ParentID, "type": "folder"},
+	})
+}
+
+func (f *fakeBoxServer) cloneItemLocked(src fakeBoxItem, newParentID, newName string) fakeBoxItem {
+	f.nextID++
+	newID := strconv.Itoa(f.nextID)
+	clone := src
+	clone.ID = newID
+	clone.ParentID = newParentID
+	clone.Name = newName
+	clone.Content = append([]byte(nil), src.Content...)
+	f.items[newID] = clone
+	f.children[newParentID] = append(f.children[newParentID], newID)
+	if src.Type == "folder" {
+		origChildren := append([]string(nil), f.children[src.ID]...)
+		for _, cid := range origChildren {
+			child := f.items[cid]
+			f.cloneItemLocked(child, newID, child.Name)
+		}
+	}
+	return clone
 }
 
 func (f *fakeBoxServer) handleListFolderItems(w http.ResponseWriter, r *http.Request, folderID string) {
@@ -1638,7 +1932,7 @@ func (f *fakeBoxServer) handleCreateUploadSession(w http.ResponseWriter, r *http
 		FileName string `json:"file_name"`
 		FileSize int64  `json:"file_size"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil || reqBody.FolderID == "" || reqBody.FileName == "" || reqBody.FileSize <= 0 {
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil || reqBody.FileSize <= 0 || reqBody.FolderID == "" || reqBody.FileName == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"bad_request"}`))
 		return
