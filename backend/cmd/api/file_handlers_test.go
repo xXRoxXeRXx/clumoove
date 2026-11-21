@@ -1128,3 +1128,92 @@ func TestFileHandlersUseStorageManagerAdapter(t *testing.T) {
 		t.Fatalf("immich batch move status = %d, body = %s, want 501 %s", recBatchMoveUnsupported.Code, recBatchMoveUnsupported.Body.String(), ErrFilesUnsupportedOperation)
 	}
 }
+
+func TestHandleFileEntryRenameForBoxUsesNativeIDParent(t *testing.T) {
+	const key = "01234567890123456789012345678901"
+	password, err := crypto.EncryptWithDomain("box-access-token", key, crypto.DomainOAuthAccessToken)
+	if err != nil {
+		t.Fatalf("encrypt password: %v", err)
+	}
+	boxRow := profileTestRow("p-box", "u1", "box", "", "box@example.test", password)
+	boxRow[8] = time.Now().UTC().Add(time.Hour)
+	database, _ := newBackupProfileConnectionTestDB(t, map[string][]driver.Value{
+		"p-box": boxRow,
+	})
+
+	boxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/2.0/users/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "u1", "type": "user", "name": "Ada", "login": "box@example.test"})
+		case r.Method == http.MethodGet && r.URL.Path == "/2.0/files/file-20":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "file-20", "type": "file", "name": "old.txt",
+				"parent": map[string]any{"id": "folder-10", "type": "folder"},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/2.0/folders/folder-10":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "folder-10", "type": "folder", "name": "Docs",
+				"parent": map[string]any{"id": "0", "type": "folder"},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/2.0/folders/folder-10/items":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"entries":     []map[string]any{{"id": "file-20", "type": "file", "name": "old.txt"}},
+				"next_marker": "",
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/2.0/files/file-20":
+			var body struct {
+				Name   string `json:"name"`
+				Parent struct {
+					ID string `json:"id"`
+				} `json:"parent"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode PUT body: %v", err)
+			}
+			if body.Name != "new.txt" || body.Parent.ID != "folder-10" {
+				t.Fatalf("PUT /files/file-20 body = %+v, want name=new.txt parent=folder-10", body)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "file-20", "type": "file", "name": body.Name,
+				"parent": map[string]any{"id": "folder-10", "type": "folder"},
+			})
+		default:
+			t.Fatalf("unexpected Box API request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer boxSrv.Close()
+
+	server := &APIServer{
+		db:            database,
+		rateLimiter:   allowAllFileRateLimiter{},
+		encryptionKey: key,
+		providerFactory: func(_ context.Context, _ string, _ string, _ string, token string, _ ...storage.ProviderOption) (profileProvider, error) {
+			return storage.NewBoxTestProvider(token, boxSrv.URL+"/2.0", boxSrv.URL+"/api/2.0", boxSrv.Client())
+		},
+	}
+
+	sourceRef, err := sealFileReference(fileReference{
+		UserID:       "u1",
+		ProfileID:    "p-box",
+		ResourceType: "files",
+		Kind:         "file",
+		Name:         "old.txt",
+		Locator:      storage.ManagerLocator{NativeID: "file-20", Path: "/Docs/old.txt"},
+	}, key)
+	if err != nil {
+		t.Fatalf("sealFileReference: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p-box/entries:rename", strings.NewReader(`{"ref":"`+sourceRef+`","new_name":"new.txt"}`))
+	req.SetPathValue("profileID", "p-box")
+	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
+	rec := httptest.NewRecorder()
+
+	server.files().handleFileEntryRename(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleFileEntryRename(box) status = %d, body = %s, want 200", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"name":"new.txt"`) || !strings.Contains(rec.Body.String(), `"status":"renamed"`) {
+		t.Fatalf("unexpected rename response body = %s", rec.Body.String())
+	}
+}

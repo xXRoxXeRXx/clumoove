@@ -27,7 +27,7 @@ const (
 	boxMaxRetries              = 3
 	boxMaxCommitPolls          = 10
 	boxDefaultThumbnailMaxWait = 3 * time.Second
-	boxItemFields              = "id,type,name,size,sha1,modified_at,content_modified_at,permissions,url"
+	boxItemFields              = "id,type,name,size,sha1,modified_at,content_modified_at,permissions,url,parent"
 	maxBoxJSONBodyBytes        = 16 << 20
 	boxMaxPartSizeBytes        = 256 << 20
 	boxDirectUploadMaxBytes    = int64(50_000_000)
@@ -284,6 +284,12 @@ type boxPermissions struct {
 	CanDownload bool `json:"can_download"`
 }
 
+type boxItemRef struct {
+	ID   string `json:"id"`
+	Type string `json:"type,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
 type boxItem struct {
 	ID                string          `json:"id"`
 	Type              string          `json:"type"`
@@ -294,6 +300,7 @@ type boxItem struct {
 	ContentModifiedAt string          `json:"content_modified_at"`
 	URL               string          `json:"url"`
 	Permissions       *boxPermissions `json:"permissions,omitempty"`
+	Parent            *boxItemRef     `json:"parent,omitempty"`
 }
 
 type boxFolderItemsPage struct {
@@ -781,11 +788,17 @@ func (p *BoxProvider) StreamUploadWithOptions(ctx context.Context, resourceType,
 			targetFileID = existing.ID
 		}
 	}
+	return p.uploadDirectByID(ctx, parentID, targetFileID, fileName, stream, size, opts)
+}
 
+func (p *BoxProvider) uploadDirectByID(ctx context.Context, parentID, existingFileID, fileName string, stream io.Reader, size int64, opts UploadOptions) (UploadResult, error) {
 	attrs := boxUploadAttributes{
 		Name: fileName,
 	}
-	if targetFileID == "" {
+	endpoint := p.uploadBase + "/files/content"
+	if existingFileID != "" {
+		endpoint = p.uploadBase + "/files/" + url.PathEscape(existingFileID) + "/content"
+	} else {
 		attrs.Parent = &boxUploadParent{ID: parentID}
 	}
 	if !opts.Metadata.ModifiedTime.IsZero() {
@@ -836,10 +849,6 @@ func (p *BoxProvider) StreamUploadWithOptions(ctx context.Context, resourceType,
 		}
 	}()
 
-	endpoint := p.uploadBase + "/files/content"
-	if targetFileID != "" {
-		endpoint = p.uploadBase + "/files/" + url.PathEscape(targetFileID) + "/content"
-	}
 	req, err := p.newRequest(ctx, http.MethodPost, endpoint, pr)
 	if err != nil {
 		_ = pr.Close()
@@ -946,8 +955,26 @@ func (p *BoxProvider) StreamUploadChunkedWithOptions(ctx context.Context, resour
 	if err != nil {
 		return UploadResult{}, err
 	}
+	return p.uploadChunkedByID(ctx, parentID, "", fileName, stream, size, progressChan, opts)
+}
 
-	session, err := p.createUploadSession(ctx, parentID, fileName, size, opts.Overwrite)
+func (p *BoxProvider) uploadChunkedByID(ctx context.Context, parentID, existingFileID, fileName string, stream io.Reader, size int64, progressChan chan<- int64, opts UploadOptions) (UploadResult, error) {
+	if size < 0 {
+		return UploadResult{}, fmt.Errorf("box chunked upload requires non-negative size, got %d: %w", size, ErrPermanentTransfer)
+	}
+	if size == 0 {
+		return p.uploadDirectByID(ctx, parentID, existingFileID, fileName, &ProgressReader{Reader: stream, ProgressChan: progressChan}, 0, opts)
+	}
+
+	var (
+		session boxUploadSession
+		err     error
+	)
+	if existingFileID != "" {
+		session, err = p.createNewVersionUploadSession(ctx, existingFileID, fileName, size)
+	} else {
+		session, err = p.createUploadSession(ctx, parentID, fileName, size, opts.Overwrite)
+	}
 	if err != nil {
 		return UploadResult{}, err
 	}
@@ -1270,6 +1297,10 @@ func (p *BoxProvider) CreateDirectory(ctx context.Context, resourceType, dirPath
 }
 
 func (p *BoxProvider) createFolderInParent(ctx context.Context, parentID, name string) (boxItem, error) {
+	return p.createFolderInParentWithConflict(ctx, parentID, name, true)
+}
+
+func (p *BoxProvider) createFolderInParentWithConflict(ctx context.Context, parentID, name string, reuseExistingFolder bool) (boxItem, error) {
 	payload, err := json.Marshal(struct {
 		Name   string `json:"name"`
 		Parent struct {
@@ -1317,6 +1348,9 @@ func (p *BoxProvider) createFolderInParent(ctx context.Context, parentID, name s
 	}
 
 	if resp.StatusCode == http.StatusConflict {
+		if !reuseExistingFolder {
+			return boxItem{}, boxAPIError("create folder", http.StatusConflict)
+		}
 		_, conflict := parseBoxConflict(bodyBytes)
 		if conflict == nil {
 			existing, lookupErr := p.findChildByName(ctx, parentID, name)

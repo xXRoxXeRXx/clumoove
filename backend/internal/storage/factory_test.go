@@ -333,8 +333,13 @@ func TestImmichManagerCapabilities(t *testing.T) {
 
 func TestBoxManagerCapabilities(t *testing.T) {
 	capabilities := ManagerCapabilitiesFor("box")
-	if !capabilities.Browse || !capabilities.NativePagination || !capabilities.Download || !capabilities.Thumbnails {
-		t.Fatalf("Box manager capabilities = %#v, want browse, native pagination, download, and thumbnails", capabilities)
+	if !capabilities.Browse || !capabilities.NativePagination || !capabilities.Download ||
+		!capabilities.Upload || !capabilities.Mkdir || !capabilities.Rename ||
+		!capabilities.Move || !capabilities.Copy || !capabilities.NativeCopy ||
+		!capabilities.DeleteFile || !capabilities.DeleteEmptyDirectory || !capabilities.DeleteRecursiveDirectory ||
+		!capabilities.ConflictSkip || !capabilities.ConflictOverwrite || !capabilities.ConflictRename ||
+		!capabilities.Thumbnails || capabilities.ConflictOverwriteAtomic {
+		t.Fatalf("Box manager capabilities = %#v, want full mutation set without atomic overwrite", capabilities)
 	}
 }
 
@@ -422,7 +427,7 @@ func TestManagerMutationCapabilityRouting(t *testing.T) {
 		capabilities := ManagerCapabilitiesFor(providerType)
 		if capabilities.Rename || capabilities.Move || capabilities.Copy {
 			entry, ok := defaultProviderCatalogue.lookup(providerType)
-			if !ok || (providerType != "google" && !entry.ManagerPathMutation) {
+			if !ok || (providerType != "google" && providerType != "box" && !entry.ManagerPathMutation) {
 				t.Errorf("%s advertises manager mutations without a path or dedicated route", providerType)
 			}
 		}

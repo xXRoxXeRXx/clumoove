@@ -387,9 +387,10 @@ func (api *fileAPI) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if operation == "rename" {
-		if resolved.profile.Provider == "google" {
-			// Google rename requests without an explicit parent retain the source's
-			// immutable parent instead of deriving it from a display path.
+		if resolved.profile.Provider == "google" || resolved.profile.Provider == "box" {
+			// ID-based providers retain the source's immutable parent on rename
+			// requests without an explicit parent instead of deriving it from
+			// a display path.
 			if request.DestinationParentRef == "" {
 				destination = storage.ManagerLocator{}
 			}
