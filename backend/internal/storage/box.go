@@ -200,22 +200,64 @@ func (p *BoxProvider) doWithClient(ctx context.Context, client *http.Client, req
 }
 
 func boxAPIError(op string, statusCode int) error {
+	return boxAPIErrorWithCode(op, statusCode, "")
+}
+
+func boxAPIErrorWithCode(op string, statusCode int, code string) error {
+	prefix := "box " + op
+	if code != "" {
+		prefix = fmt.Sprintf("box %s (%s)", op, code)
+	}
 	switch statusCode {
 	case http.StatusBadRequest:
-		return fmt.Errorf("box %s rejected with HTTP 400: %w", op, ErrPermanentTransfer)
+		return fmt.Errorf("%s rejected with HTTP 400: %w", prefix, ErrPermanentTransfer)
 	case http.StatusUnauthorized:
-		return fmt.Errorf("box %s: %w", op, ErrAuth)
+		return fmt.Errorf("%s: %w", prefix, ErrAuth)
 	case http.StatusForbidden:
-		return fmt.Errorf("box %s: %w", op, ErrPermission)
+		return fmt.Errorf("%s: %w", prefix, ErrPermission)
 	case http.StatusNotFound:
-		return fmt.Errorf("box %s: %w", op, ErrNotFound)
+		return fmt.Errorf("%s: %w", prefix, ErrNotFound)
 	case http.StatusUnsupportedMediaType:
-		return fmt.Errorf("box %s: %w", op, ErrUnsupportedMedia)
+		return fmt.Errorf("%s: %w", prefix, ErrUnsupportedMedia)
 	case http.StatusConflict:
-		return fmt.Errorf("box %s: %w", op, ErrManagerConflict)
+		return fmt.Errorf("%s: %w", prefix, ErrManagerConflict)
 	default:
-		return fmt.Errorf("box %s failed with HTTP %d", op, statusCode)
+		return fmt.Errorf("%s failed with HTTP %d", prefix, statusCode)
 	}
+}
+
+func boxResponseError(op string, resp *http.Response) error {
+	if resp == nil {
+		return fmt.Errorf("box %s failed: nil response", op)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("box %s: %w", op, &RetryAfterError{After: parseBoxRetryAfterDuration(resp.Header.Get("Retry-After"))})
+	}
+	var code string
+	if resp.Body != nil {
+		var body struct {
+			Code string `json:"code"`
+		}
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body); err == nil {
+			if isSafeBoxErrorCode(body.Code) {
+				code = body.Code
+			}
+		}
+	}
+	return boxAPIErrorWithCode(op, resp.StatusCode, code)
+}
+
+func isSafeBoxErrorCode(code string) bool {
+	if code == "" || len(code) > 64 {
+		return false
+	}
+	for i := 0; i < len(code); i++ {
+		c := code[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *BoxProvider) Connect(ctx context.Context) (bool, error) {
@@ -317,10 +359,32 @@ func boxItemModTime(item boxItem) time.Time {
 	return parseBoxTime(item.ModifiedAt)
 }
 
+func boxNonTransferableKind(item boxItem) string {
+	switch item.Type {
+	case "web_link":
+		return "web_link"
+	case "file":
+		lowerName := strings.ToLower(item.Name)
+		switch {
+		case strings.HasSuffix(lowerName, ".boxnote"):
+			return "box_note"
+		case strings.HasSuffix(lowerName, ".boxcanvas"):
+			return "box_canvas"
+		}
+	}
+	return ""
+}
+
 func boxCloudResource(item boxItem, fullPath string) CloudResource {
 	hash := ""
 	if item.SHA1 != "" {
 		hash = "SHA1:" + strings.ToLower(item.SHA1)
+	}
+	var metadata FileMetadata
+	if kind := boxNonTransferableKind(item); kind != "" {
+		metadata.CustomProps = map[string]string{
+			"box_non_transferable_kind": kind,
+		}
 	}
 	return CloudResource{
 		Path:         fullPath,
@@ -329,6 +393,7 @@ func boxCloudResource(item boxItem, fullPath string) CloudResource {
 		IsDir:        item.Type == "folder",
 		Hash:         hash,
 		LastModified: boxItemModTime(item),
+		Metadata:     metadata,
 	}
 }
 
@@ -344,7 +409,7 @@ func (p *BoxProvider) doJSON(ctx context.Context, method, rawURL string, body io
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return boxAPIError(op, resp.StatusCode)
+		return boxResponseError(op, resp)
 	}
 	if dst == nil {
 		return nil
@@ -516,6 +581,9 @@ func (p *BoxProvider) resolveFileID(ctx context.Context, filePath string) (strin
 	if item.Type == "folder" {
 		return "", fmt.Errorf("box path %q is a folder: %w", canonicalPath, ErrNotFound)
 	}
+	if reason, skip := boxCloudResource(item, canonicalPath).BoxSkipReason(); skip {
+		return "", fmt.Errorf("box path %q (%s): %w", canonicalPath, reason, ErrPermanentTransfer)
+	}
 	if item.Type != "file" {
 		return "", fmt.Errorf("box path %q has non-file type %q: %w", canonicalPath, item.Type, ErrPermanentTransfer)
 	}
@@ -604,8 +672,9 @@ func (p *BoxProvider) streamDownloadByID(ctx context.Context, fileID string) (io
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		err := boxResponseError("download", resp)
 		resp.Body.Close()
-		return nil, boxAPIError("download", resp.StatusCode)
+		return nil, err
 	}
 	return resp.Body, nil
 }
@@ -639,8 +708,9 @@ func (p *BoxProvider) StreamDownloadRange(ctx context.Context, resourceType, fil
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
+		err := boxResponseError("range download", resp)
 		resp.Body.Close()
-		return nil, boxAPIError("range download", resp.StatusCode)
+		return nil, err
 	}
 	return ValidateHTTPRangeResponse(resp, offset, length)
 }
@@ -704,7 +774,21 @@ func (p *BoxProvider) StreamUploadWithOptions(ctx context.Context, resourceType,
 	if err != nil {
 		return UploadResult{}, err
 	}
-	return p.uploadDirectByID(ctx, parentID, "", fileName, stream, size, opts)
+
+	var targetFileID string
+	if opts.Overwrite {
+		existing, findErr := p.findChildByName(ctx, parentID, fileName)
+		if findErr != nil && !errors.Is(findErr, ErrNotFound) {
+			return UploadResult{}, findErr
+		}
+		if findErr == nil {
+			if existing.Type != "file" {
+				return UploadResult{}, fmt.Errorf("box upload target %q conflicts with %s: %w", cleanPath, existing.Type, ErrManagerConflict)
+			}
+			targetFileID = existing.ID
+		}
+	}
+	return p.uploadDirectByID(ctx, parentID, targetFileID, fileName, stream, size, opts)
 }
 
 func (p *BoxProvider) uploadDirectByID(ctx context.Context, parentID, existingFileID, fileName string, stream io.Reader, size int64, opts UploadOptions) (UploadResult, error) {
@@ -882,7 +966,15 @@ func (p *BoxProvider) uploadChunkedByID(ctx context.Context, parentID, existingF
 		return p.uploadDirectByID(ctx, parentID, existingFileID, fileName, &ProgressReader{Reader: stream, ProgressChan: progressChan}, 0, opts)
 	}
 
-	session, err := p.createUploadSessionForTarget(ctx, parentID, existingFileID, fileName, size)
+	var (
+		session boxUploadSession
+		err     error
+	)
+	if existingFileID != "" {
+		session, err = p.createNewVersionUploadSession(ctx, existingFileID, fileName, size)
+	} else {
+		session, err = p.createUploadSession(ctx, parentID, fileName, size, opts.Overwrite)
+	}
 	if err != nil {
 		return UploadResult{}, err
 	}
@@ -967,60 +1059,87 @@ func (p *BoxProvider) uploadChunkedByID(ctx context.Context, parentID, existingF
 	return result, nil
 }
 
-func (p *BoxProvider) createUploadSessionForTarget(ctx context.Context, folderID, existingFileID, fileName string, size int64) (boxUploadSession, error) {
-	var (
-		body     []byte
-		err      error
-		endpoint = p.uploadBase + "/files/upload_sessions"
-	)
-	if existingFileID != "" {
-		endpoint = p.uploadBase + "/files/" + url.PathEscape(existingFileID) + "/upload_sessions"
-		body, err = json.Marshal(struct {
-			FileName string `json:"file_name,omitempty"`
-			FileSize int64  `json:"file_size"`
-		}{
-			FileName: fileName,
-			FileSize: size,
-		})
-	} else {
-		body, err = json.Marshal(struct {
-			FolderID string `json:"folder_id"`
-			FileName string `json:"file_name"`
-			FileSize int64  `json:"file_size"`
-		}{
-			FolderID: folderID,
-			FileName: fileName,
-			FileSize: size,
-		})
-	}
+func (p *BoxProvider) createUploadSession(ctx context.Context, folderID, fileName string, size int64, overwrite bool) (boxUploadSession, error) {
+	body, err := json.Marshal(struct {
+		FolderID string `json:"folder_id"`
+		FileName string `json:"file_name"`
+		FileSize int64  `json:"file_size"`
+	}{
+		FolderID: folderID,
+		FileName: fileName,
+		FileSize: size,
+	})
 	if err != nil {
 		return boxUploadSession{}, err
 	}
+	session, conflictBody, statusCode, err := p.postUploadSession(ctx, p.uploadBase+"/files/upload_sessions", body, "create upload session")
+	if err == nil {
+		return session, nil
+	}
+	if statusCode != http.StatusConflict || !overwrite {
+		return boxUploadSession{}, err
+	}
+
+	_, conflict := parseBoxConflict(conflictBody)
+	if conflict == nil || conflict.ID == "" {
+		existing, findErr := p.findChildByName(ctx, folderID, fileName)
+		if findErr != nil {
+			return boxUploadSession{}, findErr
+		}
+		conflict = &existing
+	}
+	if conflict.Type != "file" {
+		return boxUploadSession{}, fmt.Errorf("box upload target %q conflicts with %s: %w", fileName, conflict.Type, ErrManagerConflict)
+	}
+	return p.createNewVersionUploadSession(ctx, conflict.ID, fileName, size)
+}
+
+func (p *BoxProvider) createNewVersionUploadSession(ctx context.Context, fileID, fileName string, size int64) (boxUploadSession, error) {
+	body, err := json.Marshal(struct {
+		FileName string `json:"file_name"`
+		FileSize int64  `json:"file_size"`
+	}{
+		FileName: fileName,
+		FileSize: size,
+	})
+	if err != nil {
+		return boxUploadSession{}, err
+	}
+	endpoint := p.uploadBase + "/files/" + url.PathEscape(fileID) + "/upload_sessions"
+	session, _, _, err := p.postUploadSession(ctx, endpoint, body, "create new version upload session")
+	return session, err
+}
+
+func (p *BoxProvider) postUploadSession(ctx context.Context, endpoint string, body []byte, op string) (boxUploadSession, []byte, int, error) {
 	req, err := p.newRequest(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return boxUploadSession{}, err
+		return boxUploadSession{}, nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.do(ctx, req)
 	if err != nil {
-		return boxUploadSession{}, err
+		return boxUploadSession{}, nil, 0, err
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBoxJSONBodyBytes))
+	if readErr != nil {
+		return boxUploadSession{}, nil, resp.StatusCode, fmt.Errorf("read box %s response: %w", op, readErr)
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return boxUploadSession{}, boxResponseError("create upload session", resp)
+		return boxUploadSession{}, bodyBytes, resp.StatusCode, boxResponseError(op, resp)
 	}
 
 	var session boxUploadSession
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBoxJSONBodyBytes)).Decode(&session); err != nil {
-		return boxUploadSession{}, fmt.Errorf("decode box upload session: %w", err)
+	if err := json.Unmarshal(bodyBytes, &session); err != nil {
+		return boxUploadSession{}, nil, resp.StatusCode, fmt.Errorf("decode box %s: %w", op, err)
 	}
 	if session.ID == "" || session.PartSize <= 0 || session.PartSize > boxMaxPartSizeBytes {
-		return boxUploadSession{}, fmt.Errorf("box upload session returned invalid id or part_size (%d)", session.PartSize)
+		return boxUploadSession{}, nil, resp.StatusCode, fmt.Errorf("box upload session returned invalid id or part_size (%d)", session.PartSize)
 	}
-	return session, nil
+	return session, nil, resp.StatusCode, nil
 }
 
 func (p *BoxProvider) uploadSessionPart(ctx context.Context, uploadPartURL string, data []byte, offset, total int64, partSHA1 []byte) (boxUploadPart, error) {
@@ -1300,16 +1419,6 @@ func parseBoxRetryAfterDuration(raw string) time.Duration {
 		}
 	}
 	return time.Second
-}
-
-func boxResponseError(op string, resp *http.Response) error {
-	if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
-		return fmt.Errorf("box %s: %w", op, &RetryAfterError{After: parseBoxRetryAfterDuration(resp.Header.Get("Retry-After"))})
-	}
-	if resp == nil {
-		return fmt.Errorf("box %s failed: nil response", op)
-	}
-	return boxAPIError(op, resp.StatusCode)
 }
 
 func (p *BoxProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {

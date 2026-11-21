@@ -18,11 +18,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/indexer"
+	"backend/internal/queue"
 	"backend/internal/storage"
+	"backend/internal/throttle"
 )
 
 type boxSHA1TargetProvider struct {
@@ -73,6 +78,30 @@ func (t *boxSHA1TargetProvider) GetFileHash(_ context.Context, _, filePath strin
 func (t *boxSHA1TargetProvider) VerificationMode() storage.VerificationMode {
 	return storage.VerificationCryptographicHash
 }
+
+func (t *boxSHA1TargetProvider) Connect(context.Context) (bool, error) { return true, nil }
+func (t *boxSHA1TargetProvider) Close() error                       { return nil }
+func (t *boxSHA1TargetProvider) GetDirectoryListing(context.Context, string, string) ([]storage.CloudResource, error) {
+	return nil, nil
+}
+func (t *boxSHA1TargetProvider) CreateDirectory(context.Context, string, string) error { return nil }
+func (t *boxSHA1TargetProvider) CreateParentDirectories(context.Context, string, string) error {
+	return nil
+}
+func (t *boxSHA1TargetProvider) DeleteFile(_ context.Context, _, filePath string) error {
+	delete(t.files, filePath)
+	return nil
+}
+func (t *boxSHA1TargetProvider) RenameFile(_ context.Context, _, oldPath, newPath string) error {
+	data, ok := t.files[oldPath]
+	if !ok {
+		return storage.ErrNotFound
+	}
+	delete(t.files, oldPath)
+	t.files[newPath] = data
+	return nil
+}
+func (t *boxSHA1TargetProvider) SupportsAtomicRename() bool { return true }
 
 func TestBoxMigrationToSHA1TargetEndToEnd(t *testing.T) {
 	const boxToken = "box-e2e-token"
@@ -262,6 +291,713 @@ func TestBoxMigrationToSHA1TargetEndToEnd(t *testing.T) {
 	}
 }
 
+type boxMigTestTask struct {
+	id           string
+	migrationID  string
+	resourceType string
+	filePath     string
+	fileSize     int64
+	sourceHash   string
+	workerHash   string
+	targetHash   string
+	verified     bool
+	status       string
+	attempts     int64
+	errorMessage string
+	hasNextRetry bool
+	claimEpoch   int64
+	metadata     []byte
+}
+
+type boxMigTestState struct {
+	mu                  sync.Mutex
+	migID               string
+	status              string
+	selectedPaths       []string
+	encryptedPass       string
+	encryptedTargetPass string
+	totalFiles          int64
+	totalBytes     int64
+	processedFiles int64
+	processedBytes int64
+	liveBytes      int64
+	verifiedFiles  int64
+	skippedFiles   int64
+	failedFiles    int64
+	tasks          []*boxMigTestTask
+	indexingErrors []db.ErrorListItem
+	nextTaskSeq    int
+}
+
+var (
+	boxMigDriverOnce sync.Once
+	boxMigDriverSeq  atomic.Uint64
+	boxMigStatesMu   sync.Mutex
+	boxMigStates     = make(map[string]*boxMigTestState)
+)
+
+func newBoxMigTestDB(t *testing.T, state *boxMigTestState) *sql.DB {
+	t.Helper()
+	boxMigDriverOnce.Do(func() { sql.Register("box-migration-e2e-test", boxMigDriver{}) })
+	dsn := fmt.Sprintf("box-mig-%d", boxMigDriverSeq.Add(1))
+	boxMigStatesMu.Lock()
+	boxMigStates[dsn] = state
+	boxMigStatesMu.Unlock()
+	database, err := sql.Open("box-migration-e2e-test", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		database.Close()
+		boxMigStatesMu.Lock()
+		delete(boxMigStates, dsn)
+		boxMigStatesMu.Unlock()
+	})
+	return database
+}
+
+type boxMigDriver struct{}
+
+func (boxMigDriver) Open(dsn string) (driver.Conn, error) {
+	boxMigStatesMu.Lock()
+	state := boxMigStates[dsn]
+	boxMigStatesMu.Unlock()
+	if state == nil {
+		return nil, errors.New("missing box migration test state")
+	}
+	return boxMigConn{state: state}, nil
+}
+
+type boxMigConn struct{ state *boxMigTestState }
+
+func (boxMigConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("not implemented") }
+func (boxMigConn) Close() error                        { return nil }
+func (boxMigConn) Begin() (driver.Tx, error)           { return boxMigTx{}, nil }
+func (boxMigConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	return boxMigTx{}, nil
+}
+
+func (c boxMigConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	switch {
+	case strings.Contains(query, "INSERT INTO tasks") && strings.Contains(query, "FROM (VALUES"):
+		count := 0
+		for i := 2; i < len(args); i += 7 {
+			c.state.nextTaskSeq++
+			resType, _ := args[i].Value.(string)
+			filePath, _ := args[i+1].Value.(string)
+			fileSize, _ := args[i+2].Value.(int64)
+			srcHash, _ := args[i+3].Value.(string)
+			status, _ := args[i+4].Value.(string)
+			meta, _ := args[i+5].Value.([]byte)
+			errMsg, _ := args[i+6].Value.(string)
+			c.state.tasks = append(c.state.tasks, &boxMigTestTask{
+				id:           fmt.Sprintf("task-%d", c.state.nextTaskSeq),
+				migrationID:  c.state.migID,
+				resourceType: resType,
+				filePath:     filePath,
+				fileSize:     fileSize,
+				sourceHash:   srcHash,
+				status:       status,
+				errorMessage: errMsg,
+				claimEpoch:   1,
+				metadata:     meta,
+			})
+			count++
+		}
+		return driver.RowsAffected(int64(count)), nil
+	case strings.Contains(query, "INSERT INTO indexing_errors"):
+		for i := 2; i < len(args); i += 4 {
+			resType, _ := args[i-1].Value.(string)
+			p, _ := args[i].Value.(string)
+			msg, _ := args[i+1].Value.(string)
+			c.state.indexingErrors = append(c.state.indexingErrors, db.ErrorListItem{
+				ID:           fmt.Sprintf("idx-err-%d", len(c.state.indexingErrors)+1),
+				Kind:         "indexing",
+				ResourceType: resType,
+				Path:         p,
+				Status:       "INDEXING",
+				ErrorMessage: msg,
+			})
+		}
+		return driver.RowsAffected(int64(len(args) / 4)), nil
+	case strings.Contains(query, "UPDATE migrations SET total_files ="):
+		c.state.totalFiles, _ = args[0].Value.(int64)
+		c.state.totalBytes, _ = args[1].Value.(int64)
+		return driver.RowsAffected(1), nil
+	case strings.Contains(query, "SET status = 'RUNNING'") && strings.Contains(query, "discovery_complete = TRUE"):
+		c.state.status = "RUNNING"
+		return driver.RowsAffected(1), nil
+	case strings.Contains(query, "WITH task_stats AS"):
+		var done, skip, fail int64
+		var doneBytes int64
+		for _, t := range c.state.tasks {
+			switch t.status {
+			case "COMPLETED":
+				done++
+				doneBytes += t.fileSize
+			case "SKIPPED":
+				skip++
+			case "FAILED":
+				fail++
+			}
+		}
+		c.state.processedFiles = done + skip + fail
+		c.state.processedBytes = doneBytes
+		c.state.liveBytes = doneBytes
+		c.state.skippedFiles = skip
+		c.state.failedFiles = fail
+		return driver.RowsAffected(1), nil
+	case strings.Contains(query, "UPDATE tasks SET status = $1, attempts = $2"):
+		status, _ := args[0].Value.(string)
+		attempts, _ := args[1].Value.(int64)
+		errMsg, _ := args[2].Value.(string)
+		_, hasNextRetry := args[3].Value.(time.Time)
+		workerHash, _ := args[4].Value.(string)
+		srcHash, _ := args[5].Value.(string)
+		tgtHash, _ := args[6].Value.(string)
+		verified, _ := args[7].Value.(bool)
+		taskID, _ := args[8].Value.(string)
+		for _, t := range c.state.tasks {
+			if t.id == taskID && t.status == "RUNNING" {
+				t.status = status
+				t.attempts = attempts
+				t.errorMessage = errMsg
+				t.hasNextRetry = hasNextRetry
+				t.workerHash = workerHash
+				t.sourceHash = srcHash
+				t.targetHash = tgtHash
+				t.verified = verified
+				return driver.RowsAffected(1), nil
+			}
+		}
+		return driver.RowsAffected(0), nil
+	case strings.Contains(query, "UPDATE tasks") && strings.Contains(query, "SET status = $1, attempts = $2"):
+		status, _ := args[0].Value.(string)
+		attempts, _ := args[1].Value.(int64)
+		errMsg, _ := args[2].Value.(string)
+		_, hasNextRetry := args[3].Value.(time.Time)
+		taskID, _ := args[8].Value.(string)
+		for _, t := range c.state.tasks {
+			if t.id == taskID && t.status == "RUNNING" {
+				t.status = status
+				t.attempts = attempts
+				t.errorMessage = errMsg
+				t.hasNextRetry = hasNextRetry
+				return driver.RowsAffected(1), nil
+			}
+		}
+		return driver.RowsAffected(0), nil
+	case strings.Contains(query, "UPDATE migrations SET processed_files = processed_files +"):
+		filesDelta, _ := args[0].Value.(int64)
+		bytesDelta, _ := args[1].Value.(int64)
+		verifiedDelta, _ := args[3].Value.(int64)
+		skippedDelta, _ := args[4].Value.(int64)
+		failedDelta, _ := args[5].Value.(int64)
+		c.state.processedFiles += filesDelta
+		c.state.processedBytes += bytesDelta
+		c.state.verifiedFiles += verifiedDelta
+		c.state.skippedFiles += skippedDelta
+		c.state.failedFiles += failedDelta
+		return driver.RowsAffected(1), nil
+	default:
+		return driver.RowsAffected(1), nil
+	}
+}
+
+func (c boxMigConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	switch {
+	case strings.Contains(query, "SELECT id, user_id"):
+		now := time.Now()
+		pathsJSON, _ := json.Marshal(c.state.selectedPaths)
+		return &boxMigRows{
+			cols: []string{
+				"id", "user_id", "source_profile_id", "target_profile_id", "source_url", "source_username", "source_password_encrypted", "source_provider",
+				"source_refresh_token_encrypted", "source_token_expires_at", "source_mega_session_id_encrypted", "source_mega_master_key_encrypted",
+				"target_url", "target_username", "target_password_encrypted", "target_provider",
+				"target_refresh_token_encrypted", "target_token_expires_at", "target_mega_session_id_encrypted", "target_mega_master_key_encrypted",
+				"status", "conflict_strategy", "total_files", "total_bytes", "processed_files",
+				"processed_bytes", "live_bytes", "verified_files", "skipped_files", "failed_files", "error_message",
+				"discovery_complete", "discovery_generation", "indexing_lease_until",
+				"created_at", "updated_at", "target_dir", "threads", "bandwidth_limit_mbps",
+				"picker_session_id", "selected_paths", "selected_calendars", "selected_contacts",
+			},
+			rows: [][]driver.Value{{
+				c.state.migID, "user-1", nil, nil, "https://api.box.com", "box@example.test", c.state.encryptedPass, "box",
+				nil, nil, "", "",
+				"https://nc.example.test", "u", c.state.encryptedTargetPass, "nextcloud",
+				nil, nil, "", "",
+				c.state.status, "SKIP", c.state.totalFiles, c.state.totalBytes, c.state.processedFiles,
+				c.state.processedBytes, c.state.liveBytes, c.state.verifiedFiles, c.state.skippedFiles, c.state.failedFiles, nil,
+				false, int64(1), nil,
+				now, now, "/migrated", int64(4), int64(0),
+				"", pathsJSON, []byte("[]"), []byte("[]"),
+			}},
+		}, nil
+	case strings.Contains(query, "UPDATE migrations SET indexing_lease_until"):
+		return &boxMigRows{cols: []string{"ok"}, rows: [][]driver.Value{{int64(1)}}}, nil
+	case strings.Contains(query, "SELECT resource_type, file_path"):
+		return &boxMigRows{cols: []string{"resource_type", "file_path", "action"}}, nil
+	case strings.Contains(query, "SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM tasks"):
+		var sum int64
+		for _, t := range c.state.tasks {
+			sum += t.fileSize
+		}
+		return &boxMigRows{cols: []string{"count", "sum"}, rows: [][]driver.Value{{int64(len(c.state.tasks)), sum}}}, nil
+	case strings.Contains(query, "INSERT INTO tasks"):
+		c.state.nextTaskSeq++
+		resType, _ := args[1].Value.(string)
+		filePath, _ := args[2].Value.(string)
+		fileSize, _ := args[3].Value.(int64)
+		status, _ := args[4].Value.(string)
+		meta, _ := args[5].Value.([]byte)
+		srcHash, _ := args[6].Value.(string)
+		c.state.tasks = append(c.state.tasks, &boxMigTestTask{
+			id:           fmt.Sprintf("task-%d", c.state.nextTaskSeq),
+			migrationID:  c.state.migID,
+			resourceType: resType,
+			filePath:     filePath,
+			fileSize:     fileSize,
+			sourceHash:   srcHash,
+			status:       status,
+			claimEpoch:   1,
+			metadata:     meta,
+		})
+		now := time.Now()
+		return &boxMigRows{cols: []string{"id", "created_at", "updated_at"}, rows: [][]driver.Value{{fmt.Sprintf("task-%d", c.state.nextTaskSeq), now, now}}}, nil
+	case strings.Contains(query, "SELECT status FROM migrations WHERE id ="):
+		return &boxMigRows{cols: []string{"status"}, rows: [][]driver.Value{{c.state.status}}}, nil
+	case strings.Contains(query, "FROM tasks WHERE id ="):
+		taskID, _ := args[0].Value.(string)
+		now := time.Now()
+		for _, t := range c.state.tasks {
+			if t.id == taskID {
+				var errMsg any
+				if t.errorMessage != "" {
+					errMsg = t.errorMessage
+				}
+				var srcHash, wrkHash, tgtHash any
+				if t.sourceHash != "" {
+					srcHash = t.sourceHash
+				}
+				if t.workerHash != "" {
+					wrkHash = t.workerHash
+				}
+				if t.targetHash != "" {
+					tgtHash = t.targetHash
+				}
+				return &boxMigRows{
+					cols: []string{"id", "migration_id", "sync_job_id", "prerequisite_task_id", "resource_type", "file_path", "resolved_target_path", "file_size", "status", "attempts", "error_message", "next_retry_at", "worker_hash", "claim_epoch", "pass_generation", "source_hash", "target_hash", "checksum_verified", "metadata", "created_at", "updated_at"},
+					rows: [][]driver.Value{{
+						t.id, t.migrationID, "", "", t.resourceType, t.filePath, "", t.fileSize, t.status,
+						t.attempts, errMsg, nil, wrkHash, t.claimEpoch, int64(0), srcHash, tgtHash,
+						t.verified, t.metadata, now, now,
+					}},
+				}, nil
+			}
+		}
+		return &boxMigRows{cols: []string{"id"}}, nil
+	case strings.Contains(query, "WITH errors AS MATERIALIZED"):
+		now := time.Now()
+		var rows [][]driver.Value
+		for _, t := range c.state.tasks {
+			if t.status == "FAILED" {
+				rows = append(rows, []driver.Value{
+					t.id, "transfer", t.resourceType, t.filePath, t.status, t.attempts,
+					t.errorMessage, t.metadata, now, int64(0),
+				})
+			}
+		}
+		for _, ie := range c.state.indexingErrors {
+			rows = append(rows, []driver.Value{
+				ie.ID, ie.Kind, ie.ResourceType, ie.Path, ie.Status, int64(0),
+				ie.ErrorMessage, []byte("{}"), now, int64(0),
+			})
+		}
+		total := int64(len(rows))
+		for i := range rows {
+			rows[i][9] = total
+		}
+		return &boxMigRows{
+			cols: []string{"id", "kind", "resource_type", "path", "status", "attempts", "error_message", "metadata", "occurred_at", "total"},
+			rows: rows,
+		}, nil
+	default:
+		return &boxMigRows{cols: []string{"c1"}}, nil
+	}
+}
+
+type boxMigTx struct{}
+
+func (boxMigTx) Commit() error   { return nil }
+func (boxMigTx) Rollback() error { return nil }
+
+type boxMigRows struct {
+	cols []string
+	rows [][]driver.Value
+	idx  int
+}
+
+func (r *boxMigRows) Columns() []string { return r.cols }
+func (r *boxMigRows) Close() error      { return nil }
+func (r *boxMigRows) Next(dest []driver.Value) error {
+	if r.idx >= len(r.rows) {
+		return io.EOF
+	}
+	copy(dest, r.rows[r.idx])
+	r.idx++
+	return nil
+}
+
+type boxScenarioItem struct {
+	id              string
+	typ             string
+	name            string
+	url             string
+	content         []byte
+	downloadBlocked bool
+	blockedCode     string
+}
+
+func newFakeBoxScenarioServer(t *testing.T, token string, folders map[string][]boxScenarioItem) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var downloadHits atomic.Int32
+	itemsByID := make(map[string]boxScenarioItem)
+	for _, list := range folders {
+		for _, it := range list {
+			itemsByID[it.id] = it
+		}
+	}
+
+	var dlServer *httptest.Server
+	dlServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/dl/")
+		it, ok := itemsByID[id]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(it.content)
+	}))
+	t.Cleanup(dlServer.Close)
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/2.0/users/me":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"1","type":"user","name":"Box User","login":"box@example.test"}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/folders/") && strings.HasSuffix(r.URL.Path, "/items"):
+			folderID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/2.0/folders/"), "/items")
+			list := folders[folderID]
+			entries := make([]map[string]any, 0, len(list))
+			for _, it := range list {
+				sha1Hex := ""
+				if it.typ == "file" && len(it.content) > 0 {
+					sum := sha1.Sum(it.content)
+					sha1Hex = hex.EncodeToString(sum[:])
+				}
+				entries = append(entries, map[string]any{
+					"id":          it.id,
+					"type":        it.typ,
+					"name":        it.name,
+					"size":        len(it.content),
+					"sha1":        sha1Hex,
+					"modified_at": "2026-02-01T10:00:00Z",
+					"url":         it.url,
+				})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"entries": entries, "limit": 1000, "next_marker": ""})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
+			downloadHits.Add(1)
+			fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/2.0/files/"), "/content")
+			it, ok := itemsByID[fileID]
+			if !ok || it.typ != "file" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if it.downloadBlocked {
+				code := it.blockedCode
+				if code == "" {
+					code = "forbidden_by_policy"
+				}
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(fmt.Sprintf(`{"type":"error","status":403,"code":%q}`, code)))
+				return
+			}
+			http.Redirect(w, r, dlServer.URL+"/dl/"+fileID, http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(apiServer.Close)
+	return apiServer, &downloadHits
+}
+
+func TestBoxMigrationSkipsNotesCanvasWebLinksAndMigratesNormalFile(t *testing.T) {
+	const boxToken = "box-mig-token"
+	const secretKey = "01234567890123456789012345678901"
+	encryptedPass, err := crypto.EncryptWithDomain(boxToken, secretKey, crypto.ConnectionCredentialDomain(true))
+	if err != nil {
+		t.Fatalf("EncryptWithDomain: %v", err)
+	}
+	encryptedTargetPass, err := crypto.EncryptWithDomain("target-pass", secretKey, crypto.ConnectionCredentialDomain(false))
+	if err != nil {
+		t.Fatalf("EncryptWithDomain(target): %v", err)
+	}
+
+	normalContent := []byte("real deliverable content")
+	apiServer, downloadHits := newFakeBoxScenarioServer(t, boxToken, map[string][]boxScenarioItem{
+		"0": {{id: "folder-ws", typ: "folder", name: "Workspace"}},
+		"folder-ws": {
+			{id: "note-1", typ: "file", name: "Meeting.boxnote", content: []byte(`{"doc":"note"}`)},
+			{id: "canvas-1", typ: "file", name: "Board.boxcanvas", content: []byte(`{"canvas":1}`)},
+			{id: "link-1", typ: "web_link", name: "Portal", url: "https://example.test/portal"},
+			{id: "file-1", typ: "file", name: "report.txt", content: normalContent},
+		},
+	})
+
+	state := &boxMigTestState{
+		migID:               "mig-box-skip",
+		status:              "INDEXING",
+		selectedPaths:       []string{"/Workspace"},
+		encryptedPass:       encryptedPass,
+		encryptedTargetPass: encryptedTargetPass,
+	}
+	database := newBoxMigTestDB(t, state)
+
+	idx, err := indexer.NewIndexer(database, secretKey, nil, time.Minute)
+	if err != nil {
+		t.Fatalf("NewIndexer: %v", err)
+	}
+	idx.SetSourceFactory(func(_ context.Context, _, _, _, password string, _ ...storage.ProviderOption) (indexer.IndexSource, error) {
+		return storage.NewBoxTestProvider(password, apiServer.URL+"/2.0", apiServer.URL+"/api/2.0", apiServer.Client())
+	})
+	idx.Start(context.Background(), state.migID)
+
+	target := newBoxSHA1TargetProvider()
+	proc, err := NewProcessor(database, nil, Config{
+		WorkerID:      "box-worker",
+		SecretKey:     secretKey,
+		MaxThreads:    2,
+		ProviderSlots: make(chan struct{}, 2),
+	})
+	if err != nil {
+		t.Fatalf("NewProcessor: %v", err)
+	}
+	pool := newProviderPool()
+	defer pool.Close()
+	pool.factory = func(_ context.Context, providerType, _, _, password string, _ ...storage.ProviderOption) (PooledProvider, error) {
+		if providerType == "box" {
+			return storage.NewBoxTestProvider(password, apiServer.URL+"/2.0", apiServer.URL+"/api/2.0", apiServer.Client())
+		}
+		return target, nil
+	}
+
+	// Execute any PENDING tasks (only report.txt should be PENDING; the other 3 were indexed as SKIPPED).
+	state.mu.Lock()
+	var pendingIDs []string
+	tasksByPath := make(map[string]*boxMigTestTask, len(state.tasks))
+	for _, tk := range state.tasks {
+		tasksByPath[tk.filePath] = tk
+		if tk.status == "PENDING" {
+			pendingIDs = append(pendingIDs, tk.id)
+		}
+	}
+	state.mu.Unlock()
+
+	if len(pendingIDs) != 2 {
+		t.Fatalf("pending task count = %d, want 2 (mkdir + normal file); tasks = %+v", len(pendingIDs), tasksByPath)
+	}
+	for _, taskID := range pendingIDs {
+		state.mu.Lock()
+		for _, tk := range state.tasks {
+			if tk.id == taskID {
+				tk.status = "RUNNING"
+			}
+		}
+		state.mu.Unlock()
+		proc.dispatchClaimedTask(context.Background(), &queue.Payload{
+			TaskID:      taskID,
+			MigrationID: state.migID,
+			ClaimEpoch:  1,
+		}, 0, pool)
+	}
+
+	if !bytes.Equal(target.files["/migrated/Workspace/report.txt"], normalContent) {
+		t.Fatalf("target report.txt = %q (files=%v), want %q", target.files["/migrated/Workspace/report.txt"], target.files, normalContent)
+	}
+	if got := downloadHits.Load(); got != 1 {
+		t.Fatalf("Box download hits = %d, want 1 (only normal file)", got)
+	}
+
+	state.mu.Lock()
+	for _, skippedPath := range []string{"/Workspace/Meeting.boxnote", "/Workspace/Board.boxcanvas", "/Workspace/Portal"} {
+		tk, ok := tasksByPath[skippedPath]
+		if !ok {
+			state.mu.Unlock()
+			t.Fatalf("missing task for %s", skippedPath)
+		}
+		if tk.status != "SKIPPED" || strings.TrimSpace(tk.errorMessage) == "" {
+			state.mu.Unlock()
+			t.Fatalf("%s task = (status=%q, err=%q), want SKIPPED with reason", skippedPath, tk.status, tk.errorMessage)
+		}
+	}
+	if state.skippedFiles != 3 || state.failedFiles != 0 || state.processedFiles != 5 {
+		t.Fatalf("migration counters = (processed=%d, skipped=%d, failed=%d), want (5, 3, 0)", state.processedFiles, state.skippedFiles, state.failedFiles)
+	}
+
+	// Also verify processor directly skips a pre-existing PENDING task for a Box Note via InspectResource.
+	preExisting := &boxMigTestTask{
+		id:           "task-preexisting-note",
+		migrationID:  state.migID,
+		resourceType: "files",
+		filePath:     "/Workspace/Meeting.boxnote",
+		fileSize:     14,
+		status:       "RUNNING",
+		claimEpoch:   1,
+		metadata:     []byte(`{}`),
+	}
+	state.tasks = append(state.tasks, preExisting)
+	state.mu.Unlock()
+
+	proc.dispatchClaimedTask(context.Background(), &queue.Payload{
+		TaskID:      preExisting.id,
+		MigrationID: state.migID,
+		ClaimEpoch:  1,
+	}, 0, pool)
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if preExisting.status != "SKIPPED" || strings.TrimSpace(preExisting.errorMessage) == "" {
+		t.Fatalf("pre-existing Box Note task = (status=%q, err=%q), want SKIPPED with reason", preExisting.status, preExisting.errorMessage)
+	}
+	if got := downloadHits.Load(); got != 1 {
+		t.Fatalf("Box download hits after pre-existing Box Note = %d, want still 1", got)
+	}
+}
+
+func TestBoxMigrationDownloadBlockedFileFailsOnceWithoutRetry(t *testing.T) {
+	const boxToken = "box-blocked-token"
+	const secretKey = "01234567890123456789012345678901"
+	encryptedPass, err := crypto.EncryptWithDomain(boxToken, secretKey, crypto.ConnectionCredentialDomain(true))
+	if err != nil {
+		t.Fatalf("EncryptWithDomain: %v", err)
+	}
+	encryptedTargetPass, err := crypto.EncryptWithDomain("target-pass", secretKey, crypto.ConnectionCredentialDomain(false))
+	if err != nil {
+		t.Fatalf("EncryptWithDomain(target): %v", err)
+	}
+
+	apiServer, downloadHits := newFakeBoxScenarioServer(t, boxToken, map[string][]boxScenarioItem{
+		"0": {{id: "folder-r", typ: "folder", name: "Restricted"}},
+		"folder-r": {
+			{id: "blocked-1", typ: "file", name: "policy.pdf", content: []byte("secret"), downloadBlocked: true, blockedCode: "forbidden_by_policy"},
+		},
+	})
+
+	state := &boxMigTestState{
+		migID:               "mig-box-blocked",
+		status:              "INDEXING",
+		selectedPaths:       []string{"/Restricted"},
+		encryptedPass:       encryptedPass,
+		encryptedTargetPass: encryptedTargetPass,
+	}
+	database := newBoxMigTestDB(t, state)
+
+	idx, err := indexer.NewIndexer(database, secretKey, nil, time.Minute)
+	if err != nil {
+		t.Fatalf("NewIndexer: %v", err)
+	}
+	idx.SetSourceFactory(func(_ context.Context, _, _, _, password string, _ ...storage.ProviderOption) (indexer.IndexSource, error) {
+		return storage.NewBoxTestProvider(password, apiServer.URL+"/2.0", apiServer.URL+"/api/2.0", apiServer.Client())
+	})
+	idx.Start(context.Background(), state.migID)
+
+	proc, err := NewProcessor(database, nil, Config{
+		WorkerID:      "box-worker",
+		SecretKey:     secretKey,
+		MaxThreads:    1,
+		ProviderSlots: make(chan struct{}, 1),
+	})
+	if err != nil {
+		t.Fatalf("NewProcessor: %v", err)
+	}
+	pool := newProviderPool()
+	defer pool.Close()
+	target := newBoxSHA1TargetProvider()
+	pool.factory = func(_ context.Context, providerType, _, _, password string, _ ...storage.ProviderOption) (PooledProvider, error) {
+		if providerType == "box" {
+			return storage.NewBoxTestProvider(password, apiServer.URL+"/2.0", apiServer.URL+"/api/2.0", apiServer.Client())
+		}
+		return target, nil
+	}
+
+	state.mu.Lock()
+	var blockedTask *boxMigTestTask
+	for _, tk := range state.tasks {
+		if tk.filePath == "/Restricted/policy.pdf" {
+			blockedTask = tk
+			break
+		}
+	}
+	if blockedTask == nil || blockedTask.status != "PENDING" {
+		state.mu.Unlock()
+		t.Fatalf("indexed tasks = %+v, want PENDING task for /Restricted/policy.pdf", state.tasks)
+	}
+	blockedTask.status = "RUNNING"
+	state.mu.Unlock()
+
+	proc.dispatchClaimedTask(context.Background(), &queue.Payload{
+		TaskID:      blockedTask.id,
+		MigrationID: state.migID,
+		ClaimEpoch:  1,
+	}, 0, pool)
+
+	if got := downloadHits.Load(); got != 1 {
+		t.Fatalf("download hits = %d, want 1 (no retries on 403 blocked file)", got)
+	}
+
+	state.mu.Lock()
+	if blockedTask.status != "FAILED" {
+		state.mu.Unlock()
+		t.Fatalf("blocked task status = %q, want FAILED", blockedTask.status)
+	}
+	if blockedTask.attempts != 1 {
+		state.mu.Unlock()
+		t.Fatalf("blocked task attempts = %d, want 1", blockedTask.attempts)
+	}
+	if blockedTask.hasNextRetry {
+		state.mu.Unlock()
+		t.Fatal("blocked task scheduled next_retry_at, want nil (permanent failure)")
+	}
+	if !strings.Contains(blockedTask.errorMessage, "forbidden_by_policy") {
+		state.mu.Unlock()
+		t.Fatalf("blocked task errorMessage = %q, want forbidden_by_policy", blockedTask.errorMessage)
+	}
+	if state.failedFiles != 1 || state.processedFiles != 1 {
+		state.mu.Unlock()
+		t.Fatalf("migration counters = (processed=%d, failed=%d), want (1, 1)", state.processedFiles, state.failedFiles)
+	}
+	state.mu.Unlock()
+
+	errItems, total, err := db.GetMigrationErrors(database, state.migID, 50, 0)
+	if err != nil {
+		t.Fatalf("GetMigrationErrors: %v", err)
+	}
+	if total != 1 || len(errItems) != 1 || errItems[0].Path != "/Restricted/policy.pdf" || errItems[0].Status != "FAILED" {
+		t.Fatalf("GetMigrationErrors = (%+v, total=%d), want 1 FAILED entry for /Restricted/policy.pdf", errItems, total)
+	}
+}
+
 type boxMigrationStubSource struct {
 	files map[string]storage.CloudResource
 	data  map[string][]byte
@@ -313,10 +1049,19 @@ type boxFullFakeServer struct {
 	children        map[string][]string
 	sessions        map[string]*boxFakeSession
 	abortedSessions []string
+	requests        []string
 	uploadPosts     int
 	partSize        int64
 	faultHook       func(r *http.Request) (status int, retryAfter, body string)
 	nextID          int
+}
+
+type boxFakeFileVersion struct {
+	Size              int64
+	SHA1              string
+	Content           []byte
+	ModifiedAt        string
+	ContentModifiedAt string
 }
 
 type boxFakeItem struct {
@@ -329,10 +1074,12 @@ type boxFakeItem struct {
 	Content           []byte
 	ModifiedAt        string
 	ContentModifiedAt string
+	Versions          []boxFakeFileVersion
 }
 
 type boxFakeSession struct {
 	ID       string
+	FileID   string
 	FolderID string
 	FileName string
 	FileSize int64
@@ -377,6 +1124,8 @@ func (s *boxFullFakeServer) addFolder(parentID, name string) string {
 
 func (s *boxFullFakeServer) addFile(parentID, name string, content []byte, mtime string) string {
 	sum := sha1.Sum(content)
+	sha1Hex := hex.EncodeToString(sum[:])
+	copied := append([]byte(nil), content...)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.nextID++
@@ -386,22 +1135,47 @@ func (s *boxFullFakeServer) addFile(parentID, name string, content []byte, mtime
 		Type:              "file",
 		Name:              name,
 		ParentID:          parentID,
-		Size:              int64(len(content)),
-		SHA1:              hex.EncodeToString(sum[:]),
-		Content:           append([]byte(nil), content...),
+		Size:              int64(len(copied)),
+		SHA1:              sha1Hex,
+		Content:           copied,
 		ModifiedAt:        "2026-01-01T00:00:00Z",
 		ContentModifiedAt: mtime,
+		Versions: []boxFakeFileVersion{{
+			Size:              int64(len(copied)),
+			SHA1:              sha1Hex,
+			Content:           append([]byte(nil), copied...),
+			ModifiedAt:        "2026-01-01T00:00:00Z",
+			ContentModifiedAt: mtime,
+		}},
 	}
 	s.children[parentID] = append(s.children[parentID], id)
 	return id
 }
 
 func (s *boxFullFakeServer) handle(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/dl/") {
+		if r.Header.Get("Authorization") != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/dl/")
+		s.mu.Lock()
+		it, ok := s.items[id]
+		s.mu.Unlock()
+		if !ok || it.Type != "file" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(it.Content)
+		return
+	}
 	if r.Header.Get("Authorization") != "Bearer "+s.token {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	s.mu.Lock()
+	s.requests = append(s.requests, r.Method+" "+r.URL.RequestURI())
 	if r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/content" {
 		s.uploadPosts++
 	}
@@ -426,10 +1200,20 @@ func (s *boxFullFakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		s.handleList(w, folderID)
 	case r.Method == http.MethodPost && r.URL.Path == "/2.0/folders":
 		s.handleCreateFolder(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
+		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/2.0/files/"), "/content")
+		w.Header().Set("Location", s.server.URL+"/dl/"+fileID)
+		w.WriteHeader(http.StatusFound)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/content":
 		s.handleSingleUpload(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
+		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/2.0/files/"), "/content")
+		s.handleSingleUploadVersion(w, r, fileID)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/upload_sessions":
 		s.handleCreateSession(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/") && strings.HasSuffix(r.URL.Path, "/upload_sessions"):
+		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/2.0/files/"), "/upload_sessions")
+		s.handleCreateNewVersionSession(w, r, fileID)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/upload_sessions/") && strings.HasSuffix(r.URL.Path, "/commit"):
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/2.0/files/upload_sessions/"), "/commit")
 		s.handleCommitSession(w, r, id)
@@ -504,11 +1288,11 @@ func (s *boxFullFakeServer) handleCreateFolder(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(map[string]any{"id": it.ID, "type": it.Type, "name": it.Name})
 }
 
-func (s *boxFullFakeServer) handleSingleUpload(w http.ResponseWriter, r *http.Request) {
+func (s *boxFullFakeServer) parseSingleMultipart(w http.ResponseWriter, r *http.Request) (name, parentID, modAt, sha1Hex string, data []byte, ok bool) {
 	mr, err := r.MultipartReader()
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		return
+		return "", "", "", "", nil, false
 	}
 	var attr struct {
 		Name   string `json:"name"`
@@ -517,7 +1301,6 @@ func (s *boxFullFakeServer) handleSingleUpload(w http.ResponseWriter, r *http.Re
 		} `json:"parent"`
 		ContentModifiedAt string `json:"content_modified_at"`
 	}
-	var data []byte
 	gotAttr := false
 	for {
 		part, err := mr.NextPart()
@@ -526,47 +1309,100 @@ func (s *boxFullFakeServer) handleSingleUpload(w http.ResponseWriter, r *http.Re
 		}
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			return
+			return "", "", "", "", nil, false
 		}
 		switch part.FormName() {
 		case "attributes":
 			if err := json.NewDecoder(part).Decode(&attr); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
-				return
+				return "", "", "", "", nil, false
 			}
 			gotAttr = true
 		case "file":
 			if !gotAttr {
 				w.WriteHeader(http.StatusBadRequest)
-				return
+				return "", "", "", "", nil, false
 			}
 			data, _ = io.ReadAll(part)
 		}
 		part.Close()
 	}
 	sum := sha1.Sum(data)
-	sha1Hex := hex.EncodeToString(sum[:])
+	sha1Hex = hex.EncodeToString(sum[:])
 	if md5Hdr := r.Header.Get("content-md5"); md5Hdr != "" && !strings.EqualFold(md5Hdr, sha1Hex) {
 		w.WriteHeader(http.StatusBadRequest)
+		return "", "", "", "", nil, false
+	}
+	return attr.Name, attr.Parent.ID, attr.ContentModifiedAt, sha1Hex, data, true
+}
+
+func (s *boxFullFakeServer) handleSingleUpload(w http.ResponseWriter, r *http.Request) {
+	name, parentID, modAt, sha1Hex, data, ok := s.parseSingleMultipart(w, r)
+	if !ok {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, cid := range s.children[attr.Parent.ID] {
-		if strings.EqualFold(s.items[cid].Name, attr.Name) {
+	for _, cid := range s.children[parentID] {
+		ex := s.items[cid]
+		if strings.EqualFold(ex.Name, name) {
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"type": "error", "status": 409, "code": "item_name_in_use",
+				"context_info": map[string]any{"conflicts": map[string]any{"type": ex.Type, "id": ex.ID, "name": ex.Name}},
+			})
 			return
 		}
 	}
 	s.nextID++
 	id := strconv.Itoa(s.nextID)
+	copied := append([]byte(nil), data...)
 	it := boxFakeItem{
-		ID: id, Type: "file", Name: attr.Name, ParentID: attr.Parent.ID,
-		Size: int64(len(data)), SHA1: sha1Hex, Content: data,
-		ModifiedAt: "2026-02-01T00:00:00Z", ContentModifiedAt: attr.ContentModifiedAt,
+		ID: id, Type: "file", Name: name, ParentID: parentID,
+		Size: int64(len(copied)), SHA1: sha1Hex, Content: copied,
+		ModifiedAt: "2026-02-01T00:00:00Z", ContentModifiedAt: modAt,
+		Versions: []boxFakeFileVersion{{
+			Size: int64(len(copied)), SHA1: sha1Hex, Content: append([]byte(nil), copied...),
+			ModifiedAt: "2026-02-01T00:00:00Z", ContentModifiedAt: modAt,
+		}},
 	}
 	s.items[id] = it
-	s.children[attr.Parent.ID] = append(s.children[attr.Parent.ID], id)
+	s.children[parentID] = append(s.children[parentID], id)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"total_count": 1,
+		"entries":     []map[string]any{{"id": it.ID, "type": "file", "name": it.Name, "size": it.Size, "sha1": it.SHA1}},
+	})
+}
+
+func (s *boxFullFakeServer) handleSingleUploadVersion(w http.ResponseWriter, r *http.Request, fileID string) {
+	name, _, modAt, sha1Hex, data, ok := s.parseSingleMultipart(w, r)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, exists := s.items[fileID]
+	if !exists || it.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	copied := append([]byte(nil), data...)
+	if name != "" {
+		it.Name = name
+	}
+	it.Size = int64(len(copied))
+	it.SHA1 = sha1Hex
+	it.Content = copied
+	it.ModifiedAt = "2026-02-02T00:00:00Z"
+	it.ContentModifiedAt = modAt
+	it.Versions = append(it.Versions, boxFakeFileVersion{
+		Size: int64(len(copied)), SHA1: sha1Hex, Content: append([]byte(nil), copied...),
+		ModifiedAt: "2026-02-02T00:00:00Z", ContentModifiedAt: modAt,
+	})
+	s.items[fileID] = it
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -587,10 +1423,49 @@ func (s *boxFullFakeServer) handleCreateSession(w http.ResponseWriter, r *http.R
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, cid := range s.children[body.FolderID] {
+		ex := s.items[cid]
+		if strings.EqualFold(ex.Name, body.FileName) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"type": "error", "status": 409, "code": "item_name_in_use",
+				"context_info": map[string]any{"conflicts": map[string]any{"type": ex.Type, "id": ex.ID, "name": ex.Name}},
+			})
+			return
+		}
+	}
+	s.createSessionLocked(w, "", body.FolderID, body.FileName, body.FileSize)
+}
+
+func (s *boxFullFakeServer) handleCreateNewVersionSession(w http.ResponseWriter, r *http.Request, fileID string) {
+	var body struct {
+		FileName string `json:"file_name"`
+		FileSize int64  `json:"file_size"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, exists := s.items[fileID]
+	if !exists || it.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	name := body.FileName
+	if name == "" {
+		name = it.Name
+	}
+	s.createSessionLocked(w, fileID, it.ParentID, name, body.FileSize)
+}
+
+func (s *boxFullFakeServer) createSessionLocked(w http.ResponseWriter, fileID, folderID, fileName string, fileSize int64) {
 	s.nextID++
 	sid := "sess-" + strconv.Itoa(s.nextID)
 	s.sessions[sid] = &boxFakeSession{
-		ID: sid, FolderID: body.FolderID, FileName: body.FileName, FileSize: body.FileSize, PartSize: s.partSize, Parts: make(map[int64][]byte),
+		ID: sid, FileID: fileID, FolderID: folderID, FileName: fileName, FileSize: fileSize, PartSize: s.partSize, Parts: make(map[int64][]byte),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -658,16 +1533,39 @@ func (s *boxFullFakeServer) handleCommitSession(w http.ResponseWriter, r *http.R
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	s.nextID++
-	id := strconv.Itoa(s.nextID)
 	sha1Hex := hex.EncodeToString(sum[:])
-	it := boxFakeItem{
-		ID: id, Type: "file", Name: sess.FileName, ParentID: sess.FolderID,
-		Size: sess.FileSize, SHA1: sha1Hex, Content: assembled,
-		ModifiedAt: "2026-02-01T00:00:00Z", ContentModifiedAt: body.Attributes.ContentModifiedAt,
+	copied := append([]byte(nil), assembled...)
+	ver := boxFakeFileVersion{
+		Size: sess.FileSize, SHA1: sha1Hex, Content: append([]byte(nil), copied...),
+		ModifiedAt: "2026-02-02T00:00:00Z", ContentModifiedAt: body.Attributes.ContentModifiedAt,
 	}
-	s.items[id] = it
-	s.children[sess.FolderID] = append(s.children[sess.FolderID], id)
+	var it boxFakeItem
+	if sess.FileID != "" {
+		existing, exists := s.items[sess.FileID]
+		if !exists || existing.Type != "file" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		existing.Size = sess.FileSize
+		existing.SHA1 = sha1Hex
+		existing.Content = copied
+		existing.ModifiedAt = "2026-02-02T00:00:00Z"
+		existing.ContentModifiedAt = body.Attributes.ContentModifiedAt
+		existing.Versions = append(existing.Versions, ver)
+		s.items[sess.FileID] = existing
+		it = existing
+	} else {
+		s.nextID++
+		id := strconv.Itoa(s.nextID)
+		it = boxFakeItem{
+			ID: id, Type: "file", Name: sess.FileName, ParentID: sess.FolderID,
+			Size: sess.FileSize, SHA1: sha1Hex, Content: copied,
+			ModifiedAt: "2026-02-01T00:00:00Z", ContentModifiedAt: body.Attributes.ContentModifiedAt,
+			Versions: []boxFakeFileVersion{ver},
+		}
+		s.items[id] = it
+		s.children[sess.FolderID] = append(s.children[sess.FolderID], id)
+	}
 	delete(s.sessions, sid)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -980,4 +1878,340 @@ func TestMigrationIntoBoxUpload429And5xxNotRetriedInternally(t *testing.T) {
 	if posts != 1 {
 		t.Fatalf("single upload POSTs = %d, want 1 (no internal retry)", posts)
 	}
+}
+
+func assertNoBoxTempStaging(t *testing.T, srv *boxFullFakeServer) {
+	t.Helper()
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	for _, it := range srv.items {
+		if strings.HasSuffix(it.Name, ".tmp") || strings.Contains(it.Name, ".bak-") {
+			t.Fatalf("unexpected temp/backup item staged on Box: %+v", it)
+		}
+	}
+	for _, r := range srv.requests {
+		if strings.Contains(r, ".tmp") || strings.Contains(r, ".bak-") {
+			t.Fatalf("unexpected temp/backup request sent to Box: %s", r)
+		}
+	}
+}
+
+func TestMigrationIntoBoxOverwriteSingleAndChunked(t *testing.T) {
+	srv := newBoxFullFakeServer("box-target-token")
+	defer srv.close()
+
+	docsID := srv.addFolder("0", "Docs")
+	v1Single := []byte("single-v1-original")
+	v1SingleSum := sha1.Sum(v1Single)
+	v1SingleHex := hex.EncodeToString(v1SingleSum[:])
+	singleID := srv.addFile(docsID, "report.txt", v1Single, "2024-01-01T00:00:00Z")
+
+	backupsID := srv.addFolder("0", "Backups")
+	v1Chunked := bytes.Repeat([]byte("A"), 50*1024*1024+1)
+	v1ChunkedSum := sha1.Sum(v1Chunked)
+	v1ChunkedHex := hex.EncodeToString(v1ChunkedSum[:])
+	chunkedID := srv.addFile(backupsID, "big.bin", v1Chunked, "2024-01-01T00:00:00Z")
+
+	boxTarget := srv.newProvider(t)
+	defer boxTarget.Close()
+	if boxTarget.SupportsAtomicRename() {
+		t.Fatal("BoxProvider.SupportsAtomicRename() = true, want false")
+	}
+
+	fakeDB := sql.OpenDB(boxNoopSQLConnector{})
+	defer fakeDB.Close()
+	proc, err := NewProcessor(fakeDB, nil, Config{
+		WorkerID:      "w-box-overwrite",
+		SecretKey:     "test-secret",
+		MaxThreads:    1,
+		ProviderSlots: make(chan struct{}, 1),
+	})
+	if err != nil {
+		t.Fatalf("NewProcessor: %v", err)
+	}
+	ctx := context.Background()
+
+	// 1. Single-request OVERWRITE: failure leaves v1 untouched, success creates v2.
+	v2Single := []byte("single-v2-replacement-content")
+	v2SingleSum := sha1.Sum(v2Single)
+	v2SingleHex := hex.EncodeToString(v2SingleSum[:])
+	v2SingleSHA1 := "SHA1:" + v2SingleHex
+	v2SingleMtime := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+
+	src := &boxMigrationStubSource{
+		files: map[string]storage.CloudResource{
+			"/Docs/report.txt": {Path: "/Docs/report.txt", Name: "report.txt", Size: int64(len(v2Single)), Hash: v2SingleSHA1, LastModified: v2SingleMtime},
+		},
+		data: map[string][]byte{"/Docs/report.txt": v2Single},
+	}
+
+	mig := &db.Migration{ID: "mig-ow-single", SourceProvider: "nextcloud", TargetProvider: "box", TargetDir: "/", ConflictStrategy: "OVERWRITE"}
+
+	srv.faultHook = func(r *http.Request) (int, string, string) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/"+singleID+"/content" {
+			return http.StatusServiceUnavailable, "", `{"type":"error","status":503}`
+		}
+		return 0, "", ""
+	}
+	failSingleTask := &db.Task{
+		ID: "task-ow-single-fail", MigrationID: mig.ID, ResourceType: "files",
+		FilePath: "/Docs/report.txt", FileSize: int64(len(v2Single)),
+		SourceHash: sql.NullString{String: v2SingleSHA1, Valid: true}, ClaimEpoch: 1,
+	}
+	if err := proc.executeMigrationTransfer(ctx, func() {}, mig, failSingleTask, src, boxTarget, nil); err == nil {
+		t.Fatal("expected single OVERWRITE failure when Box returns 503")
+	}
+	srv.mu.Lock()
+	srv.faultHook = nil
+	singleItemAfterFail := srv.items[singleID]
+	srv.mu.Unlock()
+	if len(singleItemAfterFail.Versions) != 1 || singleItemAfterFail.SHA1 != v1SingleHex || !bytes.Equal(singleItemAfterFail.Content, v1Single) {
+		t.Fatalf("failed single OVERWRITE modified v1: versions=%d sha1=%s", len(singleItemAfterFail.Versions), singleItemAfterFail.SHA1)
+	}
+
+	singleTask := &db.Task{
+		ID: "task-ow-single-ok", MigrationID: mig.ID, ResourceType: "files",
+		FilePath: "/Docs/report.txt", FileSize: int64(len(v2Single)),
+		SourceHash: sql.NullString{String: v2SingleSHA1, Valid: true}, ClaimEpoch: 1,
+	}
+	if err := proc.executeMigrationTransfer(ctx, func() {}, mig, singleTask, src, boxTarget, nil); err != nil {
+		t.Fatalf("executeMigrationTransfer(single OVERWRITE): %v", err)
+	}
+	if singleTask.Status != "COMPLETED" || !singleTask.ChecksumVerified {
+		t.Fatalf("singleTask = (status=%q, verified=%v), want (COMPLETED, true)", singleTask.Status, singleTask.ChecksumVerified)
+	}
+
+	srv.mu.Lock()
+	singleItem := srv.items[singleID]
+	srv.mu.Unlock()
+	if len(singleItem.Versions) != 2 || singleItem.SHA1 != v2SingleHex || !bytes.Equal(singleItem.Content, v2Single) {
+		t.Fatalf("single OVERWRITE versions=%d sha1=%s, want 2 and %s", len(singleItem.Versions), singleItem.SHA1, v2SingleHex)
+	}
+	inspectedSingle, err := boxTarget.InspectResource(ctx, "files", "/Docs/report.txt")
+	if err != nil || inspectedSingle.Hash != v2SingleSHA1 || !inspectedSingle.LastModified.Equal(v2SingleMtime) {
+		t.Fatalf("InspectResource(report.txt) = (%+v, %v), want hash=%s mtime=%v", inspectedSingle, err, v2SingleSHA1, v2SingleMtime)
+	}
+
+	// 2. Chunked OVERWRITE (> 50 MiB): failure aborts session and leaves v1 intact, retry creates v2.
+	v2Chunked := bytes.Repeat([]byte("B"), 50*1024*1024+1)
+	v2ChunkedSum := sha1.Sum(v2Chunked)
+	v2ChunkedHex := hex.EncodeToString(v2ChunkedSum[:])
+	v2ChunkedSHA1 := "SHA1:" + v2ChunkedHex
+	v2ChunkedMtime := time.Date(2026, 6, 2, 11, 0, 0, 0, time.UTC)
+
+	src.files["/Backups/big.bin"] = storage.CloudResource{
+		Path: "/Backups/big.bin", Name: "big.bin", Size: int64(len(v2Chunked)), Hash: v2ChunkedSHA1, LastModified: v2ChunkedMtime,
+	}
+	src.data["/Backups/big.bin"] = v2Chunked
+
+	var putCalls int
+	srv.faultHook = func(r *http.Request) (int, string, string) {
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/2.0/files/upload_sessions/") {
+			putCalls++
+			if putCalls >= 2 {
+				return http.StatusServiceUnavailable, "", `{"type":"error","status":503}`
+			}
+		}
+		return 0, "", ""
+	}
+	chunkedTask := &db.Task{
+		ID: "task-ow-chunked-1", MigrationID: mig.ID, ResourceType: "files",
+		FilePath: "/Backups/big.bin", FileSize: int64(len(v2Chunked)),
+		SourceHash: sql.NullString{String: v2ChunkedSHA1, Valid: true}, ClaimEpoch: 1,
+	}
+	if err := proc.executeMigrationTransfer(ctx, func() {}, mig, chunkedTask, src, boxTarget, nil); err == nil {
+		t.Fatal("expected chunked OVERWRITE failure on part 2")
+	}
+
+	srv.mu.Lock()
+	srv.faultHook = nil
+	abortedCount := len(srv.abortedSessions)
+	activeCount := len(srv.sessions)
+	chunkedAfterFail := srv.items[chunkedID]
+	srv.mu.Unlock()
+	if abortedCount != 1 || activeCount != 0 {
+		t.Fatalf("after failed chunked OVERWRITE: aborted=%d active=%d, want (1, 0)", abortedCount, activeCount)
+	}
+	if len(chunkedAfterFail.Versions) != 1 || chunkedAfterFail.SHA1 != v1ChunkedHex || !bytes.Equal(chunkedAfterFail.Content, v1Chunked) {
+		t.Fatalf("failed chunked OVERWRITE modified v1: versions=%d sha1=%s", len(chunkedAfterFail.Versions), chunkedAfterFail.SHA1)
+	}
+
+	chunkedTask.ClaimEpoch = 2
+	if err := proc.executeMigrationTransfer(ctx, func() {}, mig, chunkedTask, src, boxTarget, nil); err != nil {
+		t.Fatalf("retry executeMigrationTransfer(chunked OVERWRITE): %v", err)
+	}
+	if chunkedTask.Status != "COMPLETED" || !chunkedTask.ChecksumVerified {
+		t.Fatalf("chunkedTask = (status=%q, verified=%v), want (COMPLETED, true)", chunkedTask.Status, chunkedTask.ChecksumVerified)
+	}
+
+	srv.mu.Lock()
+	chunkedItem := srv.items[chunkedID]
+	srv.mu.Unlock()
+	if len(chunkedItem.Versions) != 2 || chunkedItem.SHA1 != v2ChunkedHex || !bytes.Equal(chunkedItem.Content, v2Chunked) {
+		t.Fatalf("chunked OVERWRITE versions=%d sha1=%s, want 2 and %s", len(chunkedItem.Versions), chunkedItem.SHA1, v2ChunkedHex)
+	}
+	inspectedChunked, err := boxTarget.InspectResource(ctx, "files", "/Backups/big.bin")
+	if err != nil || inspectedChunked.Hash != v2ChunkedSHA1 || !inspectedChunked.LastModified.Equal(v2ChunkedMtime) {
+		t.Fatalf("InspectResource(big.bin) = (%+v, %v), want hash=%s mtime=%v", inspectedChunked, err, v2ChunkedSHA1, v2ChunkedMtime)
+	}
+
+	assertNoBoxTempStaging(t, srv)
+}
+
+func TestExecuteSyncTransferIntoBoxOverwriteSingleAndChunked(t *testing.T) {
+	srv := newBoxFullFakeServer("box-sync-token")
+	defer srv.close()
+
+	syncDirID := srv.addFolder("0", "Sync")
+	v1Single := []byte("sync-single-v1")
+	v1SingleSum := sha1.Sum(v1Single)
+	v1SingleHex := hex.EncodeToString(v1SingleSum[:])
+	singleID := srv.addFile(syncDirID, "notes.txt", v1Single, "2024-02-01T00:00:00Z")
+
+	v1Chunked := bytes.Repeat([]byte("S"), 50*1024*1024+1)
+	v1ChunkedSum := sha1.Sum(v1Chunked)
+	v1ChunkedHex := hex.EncodeToString(v1ChunkedSum[:])
+	chunkedID := srv.addFile(syncDirID, "bundle.bin", v1Chunked, "2024-02-01T00:00:00Z")
+
+	boxTarget := srv.newProvider(t)
+	defer boxTarget.Close()
+	if boxTarget.SupportsAtomicRename() {
+		t.Fatal("BoxProvider.SupportsAtomicRename() = true, want false")
+	}
+
+	ctx := context.Background()
+
+	// 1. Single sync overwrite: failure keeps v1, success creates v2 and sets verified SHA-1.
+	v2Single := []byte("sync-single-v2-updated")
+	v2SingleSum := sha1.Sum(v2Single)
+	v2SingleHex := hex.EncodeToString(v2SingleSum[:])
+	v2SingleSHA1 := "SHA1:" + v2SingleHex
+	v2SingleMtime := time.Date(2026, 9, 1, 8, 30, 0, 0, time.UTC)
+
+	src := &boxMigrationStubSource{
+		files: map[string]storage.CloudResource{
+			"/Sync/notes.txt": {Path: "/Sync/notes.txt", Name: "notes.txt", Size: int64(len(v2Single)), Hash: v2SingleSHA1, LastModified: v2SingleMtime},
+		},
+		data: map[string][]byte{"/Sync/notes.txt": v2Single},
+	}
+
+	srv.faultHook = func(r *http.Request) (int, string, string) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/"+singleID+"/content" {
+			return http.StatusServiceUnavailable, "", `{"type":"error","status":503}`
+		}
+		return 0, "", ""
+	}
+	failTask := &db.Task{ID: "sync-single-fail", ResourceType: "files", FilePath: "/Sync/notes.txt", FileSize: int64(len(v2Single))}
+	if err := executeSyncTransfer(ctx, syncTransfer{
+		Task: failTask, Source: src, Target: boxTarget,
+		SourceProvider: "nextcloud", TargetProvider: "box",
+		SourcePath: "/Sync/notes.txt", TargetPath: "/Sync/notes.txt",
+		Throttler: throttle.NewMigrationThrottler(0), Progress: make(chan int64, 64),
+	}); err == nil {
+		t.Fatal("expected sync single overwrite failure on 503")
+	}
+	srv.mu.Lock()
+	srv.faultHook = nil
+	singleAfterFail := srv.items[singleID]
+	srv.mu.Unlock()
+	if len(singleAfterFail.Versions) != 1 || singleAfterFail.SHA1 != v1SingleHex {
+		t.Fatalf("failed sync single overwrite mutated v1: versions=%d sha1=%s", len(singleAfterFail.Versions), singleAfterFail.SHA1)
+	}
+
+	okTask := &db.Task{
+		ID: "sync-single-ok", ResourceType: "files", FilePath: "/Sync/notes.txt",
+		FileSize: int64(len(v2Single)), SourceHash: sql.NullString{String: v2SingleSHA1, Valid: true},
+	}
+	if err := executeSyncTransfer(ctx, syncTransfer{
+		Task: okTask, Source: src, Target: boxTarget,
+		SourceProvider: "nextcloud", TargetProvider: "box",
+		SourcePath: "/Sync/notes.txt", TargetPath: "/Sync/notes.txt",
+		Throttler: throttle.NewMigrationThrottler(0), Progress: make(chan int64, 64),
+	}); err != nil {
+		t.Fatalf("executeSyncTransfer(single Box overwrite): %v", err)
+	}
+	if !okTask.ChecksumVerified || okTask.TargetHash.String != v2SingleSHA1 {
+		t.Fatalf("okTask verification = (%v, %q), want (true, %q)", okTask.ChecksumVerified, okTask.TargetHash.String, v2SingleSHA1)
+	}
+	dlSingle, err := boxTarget.StreamDownload(ctx, "files", "/Sync/notes.txt")
+	if err != nil {
+		t.Fatalf("StreamDownload(/Sync/notes.txt): %v", err)
+	}
+	gotSingle, _ := io.ReadAll(dlSingle)
+	dlSingle.Close()
+	if !bytes.Equal(gotSingle, v2Single) {
+		t.Fatalf("downloaded single sync content = %q, want %q", gotSingle, v2Single)
+	}
+
+	// 2. Chunked sync overwrite (> 50 MiB): failure aborts and keeps v1, retry creates v2.
+	v2Chunked := bytes.Repeat([]byte("T"), 50*1024*1024+1)
+	v2ChunkedSum := sha1.Sum(v2Chunked)
+	v2ChunkedHex := hex.EncodeToString(v2ChunkedSum[:])
+	v2ChunkedSHA1 := "SHA1:" + v2ChunkedHex
+	v2ChunkedMtime := time.Date(2026, 9, 2, 9, 45, 0, 0, time.UTC)
+
+	src.files["/Sync/bundle.bin"] = storage.CloudResource{
+		Path: "/Sync/bundle.bin", Name: "bundle.bin", Size: int64(len(v2Chunked)), Hash: v2ChunkedSHA1, LastModified: v2ChunkedMtime,
+	}
+	src.data["/Sync/bundle.bin"] = v2Chunked
+
+	var syncPutCalls int
+	srv.faultHook = func(r *http.Request) (int, string, string) {
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/2.0/files/upload_sessions/") {
+			syncPutCalls++
+			if syncPutCalls >= 2 {
+				return http.StatusServiceUnavailable, "", `{"type":"error","status":503}`
+			}
+		}
+		return 0, "", ""
+	}
+	chunkedSyncTask := &db.Task{
+		ID: "sync-chunked-1", ResourceType: "files", FilePath: "/Sync/bundle.bin",
+		FileSize: int64(len(v2Chunked)), SourceHash: sql.NullString{String: v2ChunkedSHA1, Valid: true},
+	}
+	if err := executeSyncTransfer(ctx, syncTransfer{
+		Task: chunkedSyncTask, Source: src, Target: boxTarget,
+		SourceProvider: "nextcloud", TargetProvider: "box",
+		SourcePath: "/Sync/bundle.bin", TargetPath: "/Sync/bundle.bin",
+		Throttler: throttle.NewMigrationThrottler(0), Progress: make(chan int64, 64),
+	}); err == nil {
+		t.Fatal("expected sync chunked overwrite failure on part 2")
+	}
+
+	srv.mu.Lock()
+	srv.faultHook = nil
+	abortedCount := len(srv.abortedSessions)
+	activeCount := len(srv.sessions)
+	chunkedAfterFail := srv.items[chunkedID]
+	srv.mu.Unlock()
+	if abortedCount != 1 || activeCount != 0 {
+		t.Fatalf("after failed sync chunked overwrite: aborted=%d active=%d, want (1, 0)", abortedCount, activeCount)
+	}
+	if len(chunkedAfterFail.Versions) != 1 || chunkedAfterFail.SHA1 != v1ChunkedHex {
+		t.Fatalf("failed sync chunked overwrite mutated v1: versions=%d sha1=%s", len(chunkedAfterFail.Versions), chunkedAfterFail.SHA1)
+	}
+
+	if err := executeSyncTransfer(ctx, syncTransfer{
+		Task: chunkedSyncTask, Source: src, Target: boxTarget,
+		SourceProvider: "nextcloud", TargetProvider: "box",
+		SourcePath: "/Sync/bundle.bin", TargetPath: "/Sync/bundle.bin",
+		Throttler: throttle.NewMigrationThrottler(0), Progress: make(chan int64, 64),
+	}); err != nil {
+		t.Fatalf("retry executeSyncTransfer(chunked Box overwrite): %v", err)
+	}
+	if !chunkedSyncTask.ChecksumVerified || chunkedSyncTask.TargetHash.String != v2ChunkedSHA1 {
+		t.Fatalf("chunkedSyncTask verification = (%v, %q), want (true, %q)", chunkedSyncTask.ChecksumVerified, chunkedSyncTask.TargetHash.String, v2ChunkedSHA1)
+	}
+	srv.mu.Lock()
+	chunkedItem := srv.items[chunkedID]
+	srv.mu.Unlock()
+	if len(chunkedItem.Versions) != 2 || chunkedItem.SHA1 != v2ChunkedHex {
+		t.Fatalf("chunked sync overwrite versions=%d sha1=%s, want 2 and %s", len(chunkedItem.Versions), chunkedItem.SHA1, v2ChunkedHex)
+	}
+	inspected, err := boxTarget.InspectResource(ctx, "files", "/Sync/bundle.bin")
+	if err != nil || !inspected.LastModified.Equal(v2ChunkedMtime) {
+		t.Fatalf("InspectResource(/Sync/bundle.bin) = (%+v, %v), want mtime=%v", inspected, err, v2ChunkedMtime)
+	}
+
+	assertNoBoxTempStaging(t, srv)
 }

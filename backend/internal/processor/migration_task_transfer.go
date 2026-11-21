@@ -57,6 +57,13 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 			return p.skipMigrationTask(ctx, task, "OneDrive Personal Vault cannot be migrated through the API")
 		}
 	}
+	if mig.SourceProvider == "box" && task.ResourceType == "files" {
+		if resource, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr == nil {
+			if reason, skip := resource.BoxSkipReason(); skip {
+				return p.skipMigrationTask(ctx, task, reason)
+			}
+		}
+	}
 
 	// Handle directory creation tasks (action == "mkdir").
 	// These are emitted by the indexer for every directory encountered so that
@@ -265,7 +272,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		SourcePath:       task.FilePath,
 		TargetPath:       uploadPath,
 		VerificationPath: targetPath,
-		UploadOptions:    storage.UploadOptions{Metadata: transferMeta},
+		UploadOptions:    storage.UploadOptions{Metadata: transferMeta, Overwrite: mig.ConflictStrategy == "OVERWRITE"},
 		FileSize:         task.FileSize,
 		SourceHash:       task.SourceHash.String,
 		Throttler:        migrationThrottler,

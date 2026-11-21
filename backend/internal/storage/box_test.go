@@ -19,6 +19,14 @@ import (
 	"time"
 )
 
+type fakeBoxFileVersion struct {
+	Size              int64
+	SHA1              string
+	Content           []byte
+	ModifiedAt        string
+	ContentModifiedAt string
+}
+
 type fakeBoxItem struct {
 	ID                string
 	Type              string // "folder" or "file"
@@ -29,8 +37,10 @@ type fakeBoxItem struct {
 	Content           []byte
 	ModifiedAt        string
 	ContentModifiedAt string
+	Versions          []fakeBoxFileVersion
 	URL               string
 	DownloadBlocked   bool
+	BlockedCode       string
 	UnsupportedMedia  bool
 	Thumbnail         []byte
 	ThumbnailType     string
@@ -71,12 +81,13 @@ type fakeBoxServer struct {
 	commitRetryAfter        string
 	commitDigests           []string
 	partDigests             []string
+	omitConflictContext     bool
 }
 
 type fakeBoxUploadSession struct {
 	ID       string
-	FolderID string
 	FileID   string
+	FolderID string
 	FileName string
 	FileSize int64
 	PartSize int64
@@ -156,6 +167,7 @@ func (f *fakeBoxServer) addFileContent(parentID, id, name string, content []byte
 		f.nextID++
 		id = strconv.Itoa(f.nextID)
 	}
+	copied := append([]byte(nil), content...)
 	f.items[id] = fakeBoxItem{
 		ID:                id,
 		Type:              "file",
@@ -163,9 +175,35 @@ func (f *fakeBoxServer) addFileContent(parentID, id, name string, content []byte
 		ParentID:          parentID,
 		Size:              int64(len(content)),
 		SHA1:              sha1Hex,
-		Content:           append([]byte(nil), content...),
+		Content:           copied,
 		ModifiedAt:        "2026-01-16T12:00:00Z",
 		ContentModifiedAt: "2026-01-16T11:30:00Z",
+		Versions: []fakeBoxFileVersion{{
+			Size:              int64(len(content)),
+			SHA1:              sha1Hex,
+			Content:           append([]byte(nil), copied...),
+			ModifiedAt:        "2026-01-16T12:00:00Z",
+			ContentModifiedAt: "2026-01-16T11:30:00Z",
+		}},
+	}
+	f.children[parentID] = append(f.children[parentID], id)
+	return id
+}
+
+func (f *fakeBoxServer) addWebLink(parentID, id, name, rawURL string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id == "" {
+		f.nextID++
+		id = strconv.Itoa(f.nextID)
+	}
+	f.items[id] = fakeBoxItem{
+		ID:         id,
+		Type:       "web_link",
+		Name:       name,
+		ParentID:   parentID,
+		URL:        rawURL,
+		ModifiedAt: "2026-01-16T12:00:00Z",
 	}
 	f.children[parentID] = append(f.children[parentID], id)
 	return id
@@ -270,15 +308,15 @@ func (f *fakeBoxServer) handle(w http.ResponseWriter, r *http.Request) {
 		fileID := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
 		f.handleDeleteFile(w, fileID)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/content":
-		f.handleSingleUpload(w, r, "")
+		f.handleSingleUpload(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
 		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/2.0/files/"), "/content")
-		f.handleSingleUpload(w, r, fileID)
+		f.handleSingleUploadVersion(w, r, fileID)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/upload_sessions":
-		f.handleCreateUploadSession(w, r, "")
+		f.handleCreateUploadSession(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/") && strings.HasSuffix(r.URL.Path, "/upload_sessions"):
 		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/2.0/files/"), "/upload_sessions")
-		f.handleCreateUploadSession(w, r, fileID)
+		f.handleCreateNewVersionUploadSession(w, r, fileID)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/2.0/files/upload_sessions/") && strings.HasSuffix(r.URL.Path, "/commit"):
 		sessionID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/2.0/files/upload_sessions/"), "/commit")
 		f.handleCommitUploadSession(w, r, sessionID)
@@ -304,8 +342,12 @@ func (f *fakeBoxServer) handleDownloadRedirect(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if item.DownloadBlocked {
+		code := item.BlockedCode
+		if code == "" {
+			code = "forbidden_by_policy"
+		}
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"type":"error","status":403,"code":"forbidden_by_policy"}`))
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"type":"error","status":403,"code":%q}`, code)))
 		return
 	}
 	target := f.downloadServer.URL + "/dl/" + id
@@ -1325,6 +1367,88 @@ func TestBoxVerificationModeAndTestProviderGuard(t *testing.T) {
 	}
 }
 
+func TestBoxProviderMarksNonTransferableItemsAndMapsBlockedDownloads(t *testing.T) {
+	srv := newFakeBoxServer("valid-token")
+	defer srv.close()
+
+	p := srv.provider()
+	defer p.Close()
+
+	docsID := srv.addFolder("0", "10", "Docs")
+	srv.addFileContent(docsID, "11", "Meeting.BoxNote", []byte(`{"doc":"note"}`))
+	srv.addFileContent(docsID, "12", "Diagram.boxcanvas", []byte(`{"canvas":1}`))
+	srv.addWebLink(docsID, "13", "Portal", "https://example.test/portal")
+	srv.addFileContent(docsID, "14", "report.txt", []byte("plain"))
+	blockedID := srv.addFileContent(docsID, "15", "blocked.pdf", []byte("secret"))
+	srv.mu.Lock()
+	it := srv.items[blockedID]
+	it.DownloadBlocked = true
+	srv.items[blockedID] = it
+	srv.mu.Unlock()
+
+	ctx := context.Background()
+	listed, err := p.GetDirectoryListing(ctx, "files", "/Docs")
+	if err != nil {
+		t.Fatalf("GetDirectoryListing(/Docs): %v", err)
+	}
+	byName := make(map[string]CloudResource, len(listed))
+	for _, res := range listed {
+		byName[res.Name] = res
+	}
+
+	for _, name := range []string{"Meeting.BoxNote", "Diagram.boxcanvas", "Portal"} {
+		res, ok := byName[name]
+		if !ok {
+			t.Fatalf("missing %s from listing", name)
+		}
+		reason, skip := res.BoxSkipReason()
+		if !skip || reason == "" {
+			t.Fatalf("listing %s: BoxSkipReason() = (%q, %v), want non-empty reason and true", name, reason, skip)
+		}
+		inspected, err := p.InspectResource(ctx, "files", "/Docs/"+name)
+		if err != nil {
+			t.Fatalf("InspectResource(%s): %v", name, err)
+		}
+		insReason, insSkip := inspected.BoxSkipReason()
+		if !insSkip || insReason != reason {
+			t.Fatalf("InspectResource(%s).BoxSkipReason() = (%q, %v), want (%q, true)", name, insReason, insSkip, reason)
+		}
+		if _, err := p.StreamDownload(ctx, "files", "/Docs/"+name); !errors.Is(err, ErrPermanentTransfer) {
+			t.Fatalf("StreamDownload(%s) = %v, want ErrPermanentTransfer", name, err)
+		}
+	}
+
+	for _, name := range []string{"report.txt", "blocked.pdf"} {
+		res, ok := byName[name]
+		if !ok {
+			t.Fatalf("missing %s from listing", name)
+		}
+		if reason, skip := res.BoxSkipReason(); skip || reason != "" {
+			t.Fatalf("listing %s: BoxSkipReason() = (%q, %v), want (\"\", false)", name, reason, skip)
+		}
+	}
+
+	_, err = p.StreamDownload(ctx, "files", "/Docs/blocked.pdf")
+	if !errors.Is(err, ErrPermission) || !errors.Is(err, ErrPermanentTransfer) {
+		t.Fatalf("StreamDownload(blocked.pdf) = %v, want ErrPermission wrapping ErrPermanentTransfer", err)
+	}
+	if !strings.Contains(err.Error(), "forbidden_by_policy") {
+		t.Fatalf("StreamDownload(blocked.pdf) error = %q, want Box error code forbidden_by_policy", err.Error())
+	}
+
+	deniedID := srv.addFileContent(docsID, "16", "denied.pdf", []byte("denied"))
+	srv.mu.Lock()
+	denied := srv.items[deniedID]
+	denied.DownloadBlocked = true
+	denied.BlockedCode = "access_denied_insufficient_permissions"
+	srv.items[deniedID] = denied
+	srv.mu.Unlock()
+	_, err = p.StreamDownload(ctx, "files", "/Docs/denied.pdf")
+	if !errors.Is(err, ErrPermission) || !errors.Is(err, ErrPermanentTransfer) || !strings.Contains(err.Error(), "access_denied_insufficient_permissions") {
+		t.Fatalf("StreamDownload(denied.pdf) = %v, want ErrPermission with access_denied_insufficient_permissions", err)
+	}
+}
+
 func (f *fakeBoxServer) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 	var reqBody struct {
 		Name   string `json:"name"`
@@ -1445,12 +1569,20 @@ func TestBoxCreateDirectoryAndParentDirectories(t *testing.T) {
 	}
 }
 
-func (f *fakeBoxServer) handleSingleUpload(w http.ResponseWriter, r *http.Request, existingFileID string) {
+type fakeBoxSingleUploadPayload struct {
+	name              string
+	parentID          string
+	contentModifiedAt string
+	fileData          []byte
+	sha1Hex           string
+}
+
+func (f *fakeBoxServer) parseSingleUploadMultipart(w http.ResponseWriter, r *http.Request, requireParent bool) (fakeBoxSingleUploadPayload, bool) {
 	mr, err := r.MultipartReader()
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"bad_request"}`))
-		return
+		return fakeBoxSingleUploadPayload{}, false
 	}
 
 	var partOrder []string
@@ -1472,7 +1604,7 @@ func (f *fakeBoxServer) handleSingleUpload(w http.ResponseWriter, r *http.Reques
 		}
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			return
+			return fakeBoxSingleUploadPayload{}, false
 		}
 		name := part.FormName()
 		partOrder = append(partOrder, name)
@@ -1481,23 +1613,23 @@ func (f *fakeBoxServer) handleSingleUpload(w http.ResponseWriter, r *http.Reques
 			if gotFile {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"metadata_after_file_contents"}`))
-				return
+				return fakeBoxSingleUploadPayload{}, false
 			}
 			if err := json.NewDecoder(part).Decode(&attr); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
-				return
+				return fakeBoxSingleUploadPayload{}, false
 			}
 			gotAttrs = true
 		case "file":
 			if !gotAttrs {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"metadata_after_file_contents"}`))
-				return
+				return fakeBoxSingleUploadPayload{}, false
 			}
 			fileData, err = io.ReadAll(part)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
-				return
+				return fakeBoxSingleUploadPayload{}, false
 			}
 			gotFile = true
 		}
@@ -1509,10 +1641,10 @@ func (f *fakeBoxServer) handleSingleUpload(w http.ResponseWriter, r *http.Reques
 	f.singleUploadOrder = append(f.singleUploadOrder, partOrder)
 	f.mu.Unlock()
 
-	if !gotAttrs || !gotFile || (existingFileID == "" && (attr.Name == "" || attr.Parent.ID == "")) {
+	if !gotAttrs || !gotFile || (requireParent && (attr.Name == "" || attr.Parent.ID == "")) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"bad_request"}`))
-		return
+		return fakeBoxSingleUploadPayload{}, false
 	}
 
 	sum := sha1.Sum(fileData)
@@ -1521,83 +1653,21 @@ func (f *fakeBoxServer) handleSingleUpload(w http.ResponseWriter, r *http.Reques
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"bad_digest"}`))
-		return
+		return fakeBoxSingleUploadPayload{}, false
 	}
 
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	return fakeBoxSingleUploadPayload{
+		name:              attr.Name,
+		parentID:          attr.Parent.ID,
+		contentModifiedAt: attr.ContentModifiedAt,
+		fileData:          fileData,
+		sha1Hex:           sha1Hex,
+	}, true
+}
 
-	now := "2026-02-05T12:00:00Z"
-	modAt := attr.ContentModifiedAt
-	if modAt == "" {
-		modAt = now
-	}
-
-	var item fakeBoxItem
-	if existingFileID != "" {
-		existing, ok := f.items[existingFileID]
-		if !ok || existing.Type != "file" {
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
-			return
-		}
-		if attr.Name != "" {
-			existing.Name = attr.Name
-		}
-		existing.Size = int64(len(fileData))
-		existing.SHA1 = sha1Hex
-		existing.Content = append([]byte(nil), fileData...)
-		existing.ModifiedAt = now
-		existing.ContentModifiedAt = modAt
-		f.items[existingFileID] = existing
-		item = existing
-	} else {
-		parent, ok := f.items[attr.Parent.ID]
-		if !ok || parent.Type != "folder" {
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
-			return
-		}
-		for _, cid := range f.children[attr.Parent.ID] {
-			existing := f.items[cid]
-			if strings.EqualFold(existing.Name, attr.Name) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"type":   "error",
-					"status": 409,
-					"code":   "item_name_in_use",
-					"context_info": map[string]any{
-						"conflicts": map[string]any{
-							"type": existing.Type,
-							"id":   existing.ID,
-							"name": existing.Name,
-						},
-					},
-				})
-				return
-			}
-		}
-
-		f.nextID++
-		id := strconv.Itoa(f.nextID)
-		item = fakeBoxItem{
-			ID:                id,
-			Type:              "file",
-			Name:              attr.Name,
-			ParentID:          attr.Parent.ID,
-			Size:              int64(len(fileData)),
-			SHA1:              sha1Hex,
-			Content:           append([]byte(nil), fileData...),
-			ModifiedAt:        now,
-			ContentModifiedAt: modAt,
-		}
-		f.items[id] = item
-		f.children[attr.Parent.ID] = append(f.children[attr.Parent.ID], id)
-	}
-
+func writeFakeBoxUploadEntry(w http.ResponseWriter, status int, item fakeBoxItem) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"total_count": 1,
 		"entries": []map[string]any{
@@ -1612,6 +1682,114 @@ func (f *fakeBoxServer) handleSingleUpload(w http.ResponseWriter, r *http.Reques
 			},
 		},
 	})
+}
+
+func (f *fakeBoxServer) handleSingleUpload(w http.ResponseWriter, r *http.Request) {
+	payload, ok := f.parseSingleUploadMultipart(w, r, true)
+	if !ok {
+		return
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	parent, ok := f.items[payload.parentID]
+	if !ok || parent.Type != "folder" {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+	for _, cid := range f.children[payload.parentID] {
+		existing := f.items[cid]
+		if strings.EqualFold(existing.Name, payload.name) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"type":   "error",
+				"status": 409,
+				"code":   "item_name_in_use",
+				"context_info": map[string]any{
+					"conflicts": map[string]any{
+						"type": existing.Type,
+						"id":   existing.ID,
+						"name": existing.Name,
+					},
+				},
+			})
+			return
+		}
+	}
+
+	f.nextID++
+	id := strconv.Itoa(f.nextID)
+	now := "2026-02-05T12:00:00Z"
+	modAt := payload.contentModifiedAt
+	if modAt == "" {
+		modAt = now
+	}
+	copied := append([]byte(nil), payload.fileData...)
+	item := fakeBoxItem{
+		ID:                id,
+		Type:              "file",
+		Name:              payload.name,
+		ParentID:          payload.parentID,
+		Size:              int64(len(copied)),
+		SHA1:              payload.sha1Hex,
+		Content:           copied,
+		ModifiedAt:        now,
+		ContentModifiedAt: modAt,
+		Versions: []fakeBoxFileVersion{{
+			Size:              int64(len(copied)),
+			SHA1:              payload.sha1Hex,
+			Content:           append([]byte(nil), copied...),
+			ModifiedAt:        now,
+			ContentModifiedAt: modAt,
+		}},
+	}
+	f.items[id] = item
+	f.children[payload.parentID] = append(f.children[payload.parentID], id)
+	writeFakeBoxUploadEntry(w, http.StatusCreated, item)
+}
+
+func (f *fakeBoxServer) handleSingleUploadVersion(w http.ResponseWriter, r *http.Request, fileID string) {
+	payload, ok := f.parseSingleUploadMultipart(w, r, false)
+	if !ok {
+		return
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	item, exists := f.items[fileID]
+	if !exists || item.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+
+	now := "2026-02-06T12:00:00Z"
+	modAt := payload.contentModifiedAt
+	if modAt == "" {
+		modAt = now
+	}
+	copied := append([]byte(nil), payload.fileData...)
+	if payload.name != "" {
+		item.Name = payload.name
+	}
+	item.Size = int64(len(copied))
+	item.SHA1 = payload.sha1Hex
+	item.Content = copied
+	item.ModifiedAt = now
+	item.ContentModifiedAt = modAt
+	item.Versions = append(item.Versions, fakeBoxFileVersion{
+		Size:              int64(len(copied)),
+		SHA1:              payload.sha1Hex,
+		Content:           append([]byte(nil), copied...),
+		ModifiedAt:        now,
+		ContentModifiedAt: modAt,
+	})
+	f.items[fileID] = item
+	writeFakeBoxUploadEntry(w, http.StatusCreated, item)
 }
 
 func TestBoxStreamUploadSingleRequestAttributesOrderSHA1AndMtime(t *testing.T) {
@@ -1748,13 +1926,13 @@ func TestBoxStreamUploadDoesNotRetryStreamedBodyOn429Or5xx(t *testing.T) {
 	}
 }
 
-func (f *fakeBoxServer) handleCreateUploadSession(w http.ResponseWriter, r *http.Request, existingFileID string) {
+func (f *fakeBoxServer) handleCreateUploadSession(w http.ResponseWriter, r *http.Request) {
 	var reqBody struct {
 		FolderID string `json:"folder_id"`
 		FileName string `json:"file_name"`
 		FileSize int64  `json:"file_size"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil || reqBody.FileSize <= 0 || (existingFileID == "" && (reqBody.FolderID == "" || reqBody.FileName == "")) {
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil || reqBody.FileSize <= 0 || reqBody.FolderID == "" || reqBody.FileName == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"bad_request"}`))
 		return
@@ -1763,48 +1941,67 @@ func (f *fakeBoxServer) handleCreateUploadSession(w http.ResponseWriter, r *http
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	folderID := reqBody.FolderID
-	fileName := reqBody.FileName
-	if existingFileID != "" {
-		existing, ok := f.items[existingFileID]
-		if !ok || existing.Type != "file" {
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
-			return
-		}
-		folderID = existing.ParentID
-		if fileName == "" {
-			fileName = existing.Name
-		}
-	} else {
-		parent, ok := f.items[folderID]
-		if !ok || parent.Type != "folder" {
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
-			return
-		}
-		for _, cid := range f.children[folderID] {
-			existing := f.items[cid]
-			if strings.EqualFold(existing.Name, fileName) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"type":   "error",
-					"status": 409,
-					"code":   "item_name_in_use",
-					"context_info": map[string]any{
-						"conflicts": []map[string]any{{
-							"type": existing.Type,
-							"id":   existing.ID,
-							"name": existing.Name,
-						}},
-					},
-				})
-				return
+	parent, ok := f.items[reqBody.FolderID]
+	if !ok || parent.Type != "folder" {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+	for _, cid := range f.children[reqBody.FolderID] {
+		existing := f.items[cid]
+		if strings.EqualFold(existing.Name, reqBody.FileName) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			resp := map[string]any{
+				"type":   "error",
+				"status": 409,
+				"code":   "item_name_in_use",
 			}
+			if !f.omitConflictContext {
+				resp["context_info"] = map[string]any{
+					"conflicts": []map[string]any{{
+						"type": existing.Type,
+						"id":   existing.ID,
+						"name": existing.Name,
+					}},
+				}
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
 		}
 	}
 
+	f.createAndWriteSession(w, "", reqBody.FolderID, reqBody.FileName, reqBody.FileSize)
+}
+
+func (f *fakeBoxServer) handleCreateNewVersionUploadSession(w http.ResponseWriter, r *http.Request, fileID string) {
+	var reqBody struct {
+		FileName string `json:"file_name"`
+		FileSize int64  `json:"file_size"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil || reqBody.FileSize <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"type":"error","status":400,"code":"bad_request"}`))
+		return
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	item, ok := f.items[fileID]
+	if !ok || item.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+	name := reqBody.FileName
+	if name == "" {
+		name = item.Name
+	}
+	f.createAndWriteSession(w, fileID, item.ParentID, name, reqBody.FileSize)
+}
+
+func (f *fakeBoxServer) createAndWriteSession(w http.ResponseWriter, fileID, folderID, fileName string, fileSize int64) {
 	partSize := f.chunkPartSize
 	if partSize <= 0 {
 		partSize = 8 * 1024 * 1024
@@ -1813,14 +2010,14 @@ func (f *fakeBoxServer) handleCreateUploadSession(w http.ResponseWriter, r *http
 	sessionID := "sess-" + strconv.Itoa(f.nextID)
 	f.sessions[sessionID] = &fakeBoxUploadSession{
 		ID:       sessionID,
+		FileID:   fileID,
 		FolderID: folderID,
-		FileID:   existingFileID,
 		FileName: fileName,
-		FileSize: reqBody.FileSize,
+		FileSize: fileSize,
 		PartSize: partSize,
 		Parts:    make(map[int64][]byte),
 	}
-	totalParts := int((reqBody.FileSize + partSize - 1) / partSize)
+	totalParts := int((fileSize + partSize - 1) / partSize)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -1978,6 +2175,15 @@ func (f *fakeBoxServer) handleCommitUploadSession(w http.ResponseWriter, r *http
 		modAt = now
 	}
 	sha1Hex := hex.EncodeToString(wholeSum[:])
+	copied := append([]byte(nil), assembled...)
+	ver := fakeBoxFileVersion{
+		Size:              sess.FileSize,
+		SHA1:              sha1Hex,
+		Content:           append([]byte(nil), copied...),
+		ModifiedAt:        now,
+		ContentModifiedAt: modAt,
+	}
+
 	var item fakeBoxItem
 	if sess.FileID != "" {
 		existing, exists := f.items[sess.FileID]
@@ -1985,14 +2191,12 @@ func (f *fakeBoxServer) handleCommitUploadSession(w http.ResponseWriter, r *http
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if sess.FileName != "" {
-			existing.Name = sess.FileName
-		}
 		existing.Size = sess.FileSize
 		existing.SHA1 = sha1Hex
-		existing.Content = assembled
+		existing.Content = copied
 		existing.ModifiedAt = now
 		existing.ContentModifiedAt = modAt
+		existing.Versions = append(existing.Versions, ver)
 		f.items[sess.FileID] = existing
 		item = existing
 	} else {
@@ -2014,31 +2218,16 @@ func (f *fakeBoxServer) handleCommitUploadSession(w http.ResponseWriter, r *http
 			ParentID:          sess.FolderID,
 			Size:              sess.FileSize,
 			SHA1:              sha1Hex,
-			Content:           assembled,
+			Content:           copied,
 			ModifiedAt:        now,
 			ContentModifiedAt: modAt,
+			Versions:          []fakeBoxFileVersion{ver},
 		}
 		f.items[id] = item
 		f.children[sess.FolderID] = append(f.children[sess.FolderID], id)
 	}
 	delete(f.sessions, sessionID)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"total_count": 1,
-		"entries": []map[string]any{
-			{
-				"id":                  item.ID,
-				"type":                item.Type,
-				"name":                item.Name,
-				"size":                item.Size,
-				"sha1":                item.SHA1,
-				"modified_at":         item.ModifiedAt,
-				"content_modified_at": item.ContentModifiedAt,
-			},
-		},
-	})
+	writeFakeBoxUploadEntry(w, http.StatusCreated, item)
 }
 
 func (f *fakeBoxServer) handleAbortUploadSession(w http.ResponseWriter, _ *http.Request, sessionID string) {
@@ -2313,5 +2502,250 @@ func TestBoxStreamUploadChunkedStreamErrorAnd5xxExhaustionAbortSession(t *testin
 	}
 	if exists, _, _ := p.FileExists(ctx, "files", "/part-503.bin"); exists {
 		t.Fatal("aborted 503 upload left a file in target")
+	}
+}
+
+type trackingReader struct {
+	r    io.Reader
+	read bool
+}
+
+func (t *trackingReader) Read(p []byte) (int, error) {
+	t.read = true
+	return t.r.Read(p)
+}
+
+func TestBoxStreamUploadOverwriteCreatesNewVersionAndPreservesOnFailure(t *testing.T) {
+	srv := newFakeBoxServer("valid-token")
+	defer srv.close()
+
+	docsID := srv.addFolder("0", "200", "Docs")
+	v1Payload := []byte("version-1-original-content")
+	v1Sum := sha1.Sum(v1Payload)
+	v1Hex := hex.EncodeToString(v1Sum[:])
+	fileID := srv.addFileContent(docsID, "501", "report.txt", v1Payload)
+
+	p := srv.provider()
+	defer p.Close()
+
+	if p.SupportsAtomicRename() {
+		t.Fatal("BoxProvider.SupportsAtomicRename() = true, want false")
+	}
+
+	ctx := context.Background()
+
+	// 1. Overwrite=false must reject existing file with ErrManagerConflict and leave v1 intact.
+	if _, err := p.StreamUploadWithOptions(ctx, "files", "/Docs/report.txt", strings.NewReader("blocked"), 7, UploadOptions{Overwrite: false}); !errors.Is(err, ErrManagerConflict) {
+		t.Fatalf("StreamUploadWithOptions(Overwrite=false) = %v, want ErrManagerConflict", err)
+	}
+
+	// 2. Overwrite=true on a folder name must fail with ErrManagerConflict without consuming stream.
+	srv.addFolder(docsID, "201", "FolderCollision")
+	folderStream := &trackingReader{r: strings.NewReader("never-read")}
+	if _, err := p.StreamUploadWithOptions(ctx, "files", "/Docs/FolderCollision", folderStream, 10, UploadOptions{Overwrite: true}); !errors.Is(err, ErrManagerConflict) {
+		t.Fatalf("StreamUploadWithOptions(Overwrite=true on folder) = %v, want ErrManagerConflict", err)
+	}
+	if folderStream.read {
+		t.Fatal("stream was consumed even though target resolved to a folder")
+	}
+
+	// 3. Overwrite=true uploads a new version to POST /files/{id}/content with SHA-1 and mtime.
+	v2Payload := []byte("version-2-updated-box-payload")
+	v2Sum := sha1.Sum(v2Payload)
+	v2Hex := hex.EncodeToString(v2Sum[:])
+	v2Mtime := time.Date(2026, 6, 15, 10, 20, 30, 0, time.UTC)
+
+	res, err := p.StreamUploadWithOptions(ctx, "files", "/Docs/report.txt", bytes.NewReader(v2Payload), int64(len(v2Payload)), UploadOptions{
+		Metadata:  FileMetadata{ModifiedTime: v2Mtime},
+		Checksum:  "SHA1:" + v2Hex,
+		Overwrite: true,
+	})
+	if err != nil {
+		t.Fatalf("StreamUploadWithOptions(Overwrite=true): %v", err)
+	}
+	if res.Receipt.TargetResourceID != fileID {
+		t.Fatalf("TargetResourceID = %q, want %q", res.Receipt.TargetResourceID, fileID)
+	}
+
+	inspected, err := p.InspectResource(ctx, "files", "/Docs/report.txt")
+	if err != nil {
+		t.Fatalf("InspectResource after overwrite: %v", err)
+	}
+	if inspected.Size != int64(len(v2Payload)) || inspected.Hash != "SHA1:"+v2Hex || !inspected.LastModified.Equal(v2Mtime) {
+		t.Fatalf("inspected = %+v, want size=%d hash=SHA1:%s mtime=%v", inspected, len(v2Payload), v2Hex, v2Mtime)
+	}
+
+	dl, err := p.StreamDownload(ctx, "files", "/Docs/report.txt")
+	if err != nil {
+		t.Fatalf("StreamDownload after overwrite: %v", err)
+	}
+	gotV2, _ := io.ReadAll(dl)
+	dl.Close()
+	if !bytes.Equal(gotV2, v2Payload) {
+		t.Fatalf("downloaded = %q, want %q", gotV2, v2Payload)
+	}
+
+	srv.mu.Lock()
+	versions := append([]fakeBoxFileVersion(nil), srv.items[fileID].Versions...)
+	srv.mu.Unlock()
+	if len(versions) != 2 {
+		t.Fatalf("version count = %d, want 2", len(versions))
+	}
+	if !bytes.Equal(versions[0].Content, v1Payload) || versions[0].SHA1 != v1Hex {
+		t.Fatalf("version 1 corrupted: %+v", versions[0])
+	}
+	if !bytes.Equal(versions[1].Content, v2Payload) || versions[1].SHA1 != v2Hex {
+		t.Fatalf("version 2 mismatch: %+v", versions[1])
+	}
+
+	// 4. Failed overwrite (503 during POST /files/{id}/content or stream failure) must leave v2 intact and not add a version.
+	srv.faultHook = func(r *http.Request) *fakeBoxFault {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/2.0/files/"+fileID+"/content" {
+			return &fakeBoxFault{status: http.StatusServiceUnavailable}
+		}
+		return nil
+	}
+	if _, err := p.StreamUploadWithOptions(ctx, "files", "/Docs/report.txt", strings.NewReader("v3-fail"), 7, UploadOptions{Overwrite: true}); err == nil {
+		t.Fatal("expected error when new-version upload hits 503")
+	}
+	srv.faultHook = nil
+	if _, err := p.StreamUploadWithOptions(ctx, "files", "/Docs/report.txt", &failingAfterNReader{data: []byte("v3-truncated"), cap: 4, fail: errors.New("stream drop")}, 12, UploadOptions{Overwrite: true}); err == nil {
+		t.Fatal("expected error when new-version upload stream drops")
+	}
+	srv.mu.Lock()
+	versionsAfterFail := append([]fakeBoxFileVersion(nil), srv.items[fileID].Versions...)
+	itemAfterFail := srv.items[fileID]
+	srv.mu.Unlock()
+	if len(versionsAfterFail) != 2 || !bytes.Equal(itemAfterFail.Content, v2Payload) || itemAfterFail.SHA1 != v2Hex {
+		t.Fatalf("failed overwrite mutated existing version: count=%d sha1=%s", len(versionsAfterFail), itemAfterFail.SHA1)
+	}
+}
+
+func TestBoxStreamUploadChunkedOverwriteCreatesNewVersionAndAbortsOnFailure(t *testing.T) {
+	srv := newFakeBoxServer("valid-token")
+	defer srv.close()
+	srv.chunkPartSize = 1024
+
+	archivesID := srv.addFolder("0", "300", "Archives")
+	v1Payload := bytes.Repeat([]byte("V1"), 1200) // 2400 bytes
+	v1Sum := sha1.Sum(v1Payload)
+	v1Hex := hex.EncodeToString(v1Sum[:])
+	fileID := srv.addFileContent(archivesID, "701", "big.bin", v1Payload)
+
+	p := srv.provider()
+	defer p.Close()
+
+	ctx := context.Background()
+
+	// 1. Overwrite=false must fail with ErrManagerConflict without consuming stream or creating a session.
+	noOverwriteStream := &trackingReader{r: bytes.NewReader([]byte("unused"))}
+	if _, err := p.StreamUploadChunkedWithOptions(ctx, "files", "/Archives/big.bin", noOverwriteStream, 6, nil, UploadOptions{Overwrite: false}); !errors.Is(err, ErrManagerConflict) {
+		t.Fatalf("StreamUploadChunkedWithOptions(Overwrite=false) = %v, want ErrManagerConflict", err)
+	}
+	if noOverwriteStream.read {
+		t.Fatal("stream was consumed when chunked session creation returned 409 without Overwrite")
+	}
+
+	// 2. Midway failure during Overwrite=true chunked upload must abort the session and leave v1 untouched.
+	var putCount int
+	srv.faultHook = func(r *http.Request) *fakeBoxFault {
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/2.0/files/upload_sessions/") {
+			putCount++
+			if putCount == 2 {
+				return &fakeBoxFault{status: http.StatusBadRequest, body: `{"type":"error","status":400,"code":"bad_request"}`}
+			}
+		}
+		return nil
+	}
+	v2Payload := bytes.Repeat([]byte("V2-NEW-"), 400) // 2800 bytes -> 3 parts (1024, 1024, 752)
+	v2Sum := sha1.Sum(v2Payload)
+	v2Hex := hex.EncodeToString(v2Sum[:])
+	v2Mtime := time.Date(2026, 7, 1, 14, 0, 0, 0, time.UTC)
+
+	if _, err := p.StreamUploadChunkedWithOptions(ctx, "files", "/Archives/big.bin", bytes.NewReader(v2Payload), int64(len(v2Payload)), nil, UploadOptions{
+		Metadata:  FileMetadata{ModifiedTime: v2Mtime},
+		Overwrite: true,
+	}); err == nil {
+		t.Fatal("expected chunked overwrite failure on part 2, got nil")
+	}
+
+	srv.mu.Lock()
+	abortedCount := len(srv.abortedSessions)
+	activeCount := len(srv.sessions)
+	versionsAfterFail := append([]fakeBoxFileVersion(nil), srv.items[fileID].Versions...)
+	itemAfterFail := srv.items[fileID]
+	srv.faultHook = nil
+	srv.mu.Unlock()
+
+	if abortedCount != 1 || activeCount != 0 {
+		t.Fatalf("after failed chunked overwrite: aborted=%d active=%d, want (1, 0)", abortedCount, activeCount)
+	}
+	if len(versionsAfterFail) != 1 || !bytes.Equal(itemAfterFail.Content, v1Payload) || itemAfterFail.SHA1 != v1Hex {
+		t.Fatalf("failed chunked overwrite corrupted v1: versions=%d sha1=%s", len(versionsAfterFail), itemAfterFail.SHA1)
+	}
+
+	// 3. Successful Overwrite=true creates v2 via POST /files/{file_id}/upload_sessions and preserves v1 in history.
+	res, err := p.StreamUploadChunkedWithOptions(ctx, "files", "/Archives/big.bin", bytes.NewReader(v2Payload), int64(len(v2Payload)), nil, UploadOptions{
+		Metadata:  FileMetadata{ModifiedTime: v2Mtime},
+		Checksum:  "SHA1:" + v2Hex,
+		Overwrite: true,
+	})
+	if err != nil {
+		t.Fatalf("StreamUploadChunkedWithOptions(Overwrite=true): %v", err)
+	}
+	if res.Receipt.TargetResourceID != fileID {
+		t.Fatalf("TargetResourceID = %q, want %q", res.Receipt.TargetResourceID, fileID)
+	}
+
+	inspected, err := p.InspectResource(ctx, "files", "/Archives/big.bin")
+	if err != nil {
+		t.Fatalf("InspectResource: %v", err)
+	}
+	if inspected.Size != int64(len(v2Payload)) || inspected.Hash != "SHA1:"+v2Hex || !inspected.LastModified.Equal(v2Mtime) {
+		t.Fatalf("inspected = %+v, want size=%d hash=SHA1:%s mtime=%v", inspected, len(v2Payload), v2Hex, v2Mtime)
+	}
+	dl, err := p.StreamDownload(ctx, "files", "/Archives/big.bin")
+	if err != nil {
+		t.Fatalf("StreamDownload: %v", err)
+	}
+	gotV2, _ := io.ReadAll(dl)
+	dl.Close()
+	if !bytes.Equal(gotV2, v2Payload) {
+		t.Fatalf("downloaded %d bytes, want %d matching v2", len(gotV2), len(v2Payload))
+	}
+
+	srv.mu.Lock()
+	versions := append([]fakeBoxFileVersion(nil), srv.items[fileID].Versions...)
+	srv.omitConflictContext = true
+	srv.mu.Unlock()
+	if len(versions) != 2 || !bytes.Equal(versions[0].Content, v1Payload) || !bytes.Equal(versions[1].Content, v2Payload) {
+		t.Fatalf("version history mismatch: len=%d", len(versions))
+	}
+
+	// 4. Even when 409 omits context_info.conflicts, fallback lookup resolves file ID and overwrites via > 50MB StreamUploadWithOptions.
+	srv.chunkPartSize = 16 * 1024 * 1024
+	srv.addFileContent(archivesID, "702", "huge.bin", []byte("huge-v1"))
+	hugeV2 := bytes.Repeat([]byte("H"), 50_000_001)
+	hugeSum := sha1.Sum(hugeV2)
+	hugeHex := hex.EncodeToString(hugeSum[:])
+	hugeMtime := time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC)
+
+	resHuge, err := p.StreamUploadWithOptions(ctx, "files", "/Archives/huge.bin", bytes.NewReader(hugeV2), int64(len(hugeV2)), UploadOptions{
+		Metadata:  FileMetadata{ModifiedTime: hugeMtime},
+		Checksum:  "SHA1:" + hugeHex,
+		Overwrite: true,
+	})
+	if err != nil {
+		t.Fatalf("StreamUploadWithOptions(>50MB Overwrite=true): %v", err)
+	}
+	if resHuge.Receipt.TargetResourceID != "702" {
+		t.Fatalf("huge TargetResourceID = %q, want 702", resHuge.Receipt.TargetResourceID)
+	}
+	srv.mu.Lock()
+	hugeVersions := len(srv.items["702"].Versions)
+	hugeStoredHash := srv.items["702"].SHA1
+	srv.mu.Unlock()
+	if hugeVersions != 2 || hugeStoredHash != hugeHex {
+		t.Fatalf("huge.bin after overwrite: versions=%d sha1=%s, want 2 and %s", hugeVersions, hugeStoredHash, hugeHex)
 	}
 }
