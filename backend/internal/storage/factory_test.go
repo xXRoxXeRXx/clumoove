@@ -333,8 +333,8 @@ func TestImmichManagerCapabilities(t *testing.T) {
 
 func TestBoxManagerCapabilities(t *testing.T) {
 	capabilities := ManagerCapabilitiesFor("box")
-	if !capabilities.Browse || !capabilities.NativePagination || !capabilities.Download {
-		t.Fatalf("Box manager capabilities = %#v, want browse, native pagination, and download", capabilities)
+	if !capabilities.Browse || !capabilities.NativePagination || !capabilities.Download || !capabilities.Thumbnails {
+		t.Fatalf("Box manager capabilities = %#v, want browse, native pagination, download, and thumbnails", capabilities)
 	}
 }
 

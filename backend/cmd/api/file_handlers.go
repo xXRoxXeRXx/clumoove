@@ -1185,6 +1185,18 @@ func (api *fileAPI) writeFileProfileError(w http.ResponseWriter, err error) {
 }
 
 func (api *fileAPI) writeFileProviderError(w http.ResponseWriter, err error) {
+	var retryAfterErr *storage.RetryAfterError
+	if errors.As(err, &retryAfterErr) {
+		if retryAfterErr.After > 0 {
+			secs := int((retryAfterErr.After + time.Second - 1) / time.Second)
+			if secs < 1 {
+				secs = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(secs))
+		}
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
 	switch {
 	case errors.Is(err, storage.ErrManagerDirectoryChanged):
 		writeConflictError(w, ErrFilesDirectoryChanged)
