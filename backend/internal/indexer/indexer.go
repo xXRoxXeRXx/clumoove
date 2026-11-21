@@ -244,6 +244,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			indexErrors = append(indexErrors, db.IndexingErrorInput{Path: p, ResourceType: "files", ErrorMessage: "OneDrive Personal Vault cannot be migrated through the API"})
 			continue
 		}
+		if reason, skip := res.BoxSkipReason(); skip {
+			indexErrors = append(indexErrors, db.IndexingErrorInput{Path: p, ResourceType: "files", ErrorMessage: reason})
+			continue
+		}
 
 		if res.IsDir {
 			// Emit a mkdir task for the root selected directory itself (unless it
@@ -690,6 +694,19 @@ func indexFolderWithClaim(ctx context.Context, database *sql.DB, client folderLi
 		batchBytes = 0
 		return nil
 	}
+	enqueueTask := func(task *db.Task, isDir bool) error {
+		taskBatch = append(taskBatch, task)
+		if isDir {
+			batchDirs++
+		} else {
+			batchFiles++
+			batchBytes += task.FileSize
+		}
+		if len(taskBatch) >= 500 {
+			return flushBatch()
+		}
+		return nil
+	}
 
 	inFlight := 0
 	interrupted := false
@@ -753,6 +770,25 @@ func indexFolderWithClaim(ctx context.Context, database *sql.DB, client folderLi
 				// reported above, so ordinary root migrations stay clean.
 				continue
 			}
+			if reason, skip := file.BoxSkipReason(); skip {
+				key := resourceIndexKey(resourceType, file.Path)
+				if indexedPaths[key] {
+					continue
+				}
+				indexedPaths[key] = true
+				if err := enqueueTask(&db.Task{
+					MigrationID:  migID,
+					ResourceType: resourceType,
+					FilePath:     file.Path,
+					FileSize:     0,
+					Status:       "SKIPPED",
+					ErrorMessage: sql.NullString{String: reason, Valid: true},
+					Metadata:     marshalIndexedResourceMetadata(file),
+				}, false); err != nil {
+					return err
+				}
+				continue
+			}
 			if file.IsDir {
 				// Emit a mkdir task for every sub-directory encountered so that
 				// empty directories (no files inside) are created on the target.
@@ -760,19 +796,15 @@ func indexFolderWithClaim(ctx context.Context, database *sql.DB, client folderLi
 				if targetProvider != "immich" && !storage.IsVirtualProvider(sourceProvider) && !indexedPaths[dirKey] {
 					indexedPaths[dirKey] = true
 					mkdirMeta, _ := json.Marshal(directoryTaskMetadata())
-					taskBatch = append(taskBatch, &db.Task{
+					if err := enqueueTask(&db.Task{
 						MigrationID:  migID,
 						ResourceType: resourceType,
 						FilePath:     file.Path,
 						FileSize:     0,
 						Status:       "PENDING",
 						Metadata:     mkdirMeta,
-					})
-					batchDirs++
-					if len(taskBatch) >= 500 {
-						if err := flushBatch(); err != nil {
-							return err
-						}
+					}, true); err != nil {
+						return err
 					}
 				}
 				if !visited[file.Path] {
@@ -788,36 +820,22 @@ func indexFolderWithClaim(ctx context.Context, database *sql.DB, client folderLi
 					continue
 				}
 				indexedPaths[key] = true
-				meta := file.Metadata
 				fileSize, err := resolveIndexedFileSize(ctx, client, resourceType, file.Path, file)
 				if err != nil {
 					*indexErrors = append(*indexErrors, db.IndexingErrorInput{Path: file.Path, ResourceType: resourceType, ErrorMessage: "Unable to determine file size."})
 					observability.Logger(ctx).Debug("indexing_file_size_skipped", slog.String("component", "indexer"), slog.String("path", file.Path), observability.ErrorAttr(err, true), slog.String("error_kind", observability.ErrorKind(err)))
 					continue
 				}
-				if meta.ModifiedTime.IsZero() {
-					meta.ModifiedTime = file.LastModified
-				}
-				metaJSON, err := json.Marshal(meta)
-				if err != nil {
-					metaJSON = []byte("{}")
-				}
-				task := &db.Task{
+				if err := enqueueTask(&db.Task{
 					MigrationID:  migID,
 					ResourceType: resourceType,
 					FilePath:     file.Path,
 					FileSize:     fileSize,
 					SourceHash:   sql.NullString{String: file.Hash, Valid: file.Hash != ""},
 					Status:       "PENDING",
-					Metadata:     metaJSON,
-				}
-				taskBatch = append(taskBatch, task)
-				batchFiles++
-				batchBytes += fileSize
-				if len(taskBatch) >= 500 {
-					if err := flushBatch(); err != nil {
-						return err
-					}
+					Metadata:     marshalIndexedResourceMetadata(file),
+				}, false); err != nil {
+					return err
 				}
 			}
 		}
@@ -826,6 +844,18 @@ func indexFolderWithClaim(ctx context.Context, database *sql.DB, client folderLi
 	// while applying this final batch, preserving the partial work accumulated
 	// before the traversal deadline was reached.
 	return flushBatch()
+}
+
+func marshalIndexedResourceMetadata(file storage.CloudResource) []byte {
+	meta := file.Metadata
+	if meta.ModifiedTime.IsZero() {
+		meta.ModifiedTime = file.LastModified
+	}
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return []byte("{}")
+	}
+	return metaJSON
 }
 
 // resourceIndexKey returns a unique key for deduplicating resources during indexing.
