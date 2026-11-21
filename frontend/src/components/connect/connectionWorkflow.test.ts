@@ -52,6 +52,8 @@ describe('resolveConnection', () => {
   it('resolves OAuth providers to their API endpoint and account name', () => {
     expect(resolveConnection(draft({ provider: 'dropbox', password: 'tok', oauthUser: 'me@dropbox.test' })))
       .toEqual({ url: 'https://api.dropbox.com', username: 'me@dropbox.test', password: 'tok' });
+    expect(resolveConnection(draft({ provider: 'box', password: 'tok', oauthUser: 'ada@box.test' })))
+      .toEqual({ url: 'https://api.box.com', username: 'ada@box.test', password: 'tok' });
     expect(resolveConnection(draft({ provider: 'onedrive', password: 'tok' })))
       .toEqual({ url: 'oauth://onedrive', username: 'onedrive', password: 'tok' });
   });

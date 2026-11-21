@@ -523,7 +523,7 @@ describe('ConnectionManager workflows', () => {
       const popup = { closed: false, close: vi.fn() } as unknown as Window;
       vi.spyOn(window, 'open').mockReturnValue(popup);
 
-      await renderManager({ oauthProviders: { google: true, dropbox: true, hidrive: true } });
+      await renderManager({ oauthProviders: { google: true, dropbox: true, hidrive: true, box: true } });
       await openNewProfileModal();
 
       await act(async () => { selectProvider(container, 'Google'); });
@@ -564,10 +564,11 @@ describe('ConnectionManager workflows', () => {
       expect(container.querySelector('[role="dialog"]')?.textContent).toContain('Connected as user@gmail.com');
       await submitProfileForm();
 
-      // Dropbox & HiDrive OAuth creation
+      // Dropbox, HiDrive & Box OAuth creation
       for (const spec of [
         { label: 'Dropbox', provider: 'dropbox', name: 'My Dropbox', user: 'user@dropbox.test' },
         { label: 'HiDrive', provider: 'hidrive', name: 'My HiDrive', user: 'user@hidrive.test' },
+        { label: 'Box', provider: 'box', name: 'My Box', user: 'user@box.test' },
       ]) {
         await openNewProfileModal();
         await act(async () => { selectProvider(container, spec.label); });
@@ -619,6 +620,16 @@ describe('ConnectionManager workflows', () => {
           refresh_token: 'hidrive-refresh',
           refresh_token_expires_in: 3600,
           oauth_user: 'user@hidrive.test',
+        },
+        {
+          name: 'My Box',
+          provider: 'box',
+          url: 'oauth://box',
+          username: 'user@box.test',
+          password: 'box-access',
+          refresh_token: 'box-refresh',
+          refresh_token_expires_in: 3600,
+          oauth_user: 'user@box.test',
         },
       ]);
       expect(container.innerHTML).not.toContain('google-access-token');

@@ -266,6 +266,7 @@ describe('ConnectForm workflows', () => {
       expect(defaultLabels).not.toContain('Local');
       expect(defaultLabels).not.toContain('Google');
       expect(defaultLabels).not.toContain('Dropbox');
+      expect(defaultLabels).not.toContain('Box');
 
       await renderForm({ localStorageEnabled: true, oauthProviders: { google: true, onedrive: true } });
       const enabledLabels = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]')).map((el) => el.textContent?.trim());
@@ -274,6 +275,7 @@ describe('ConnectForm workflows', () => {
       expect(enabledLabels).toContain('Google');
       expect(enabledLabels).toContain('OneDrive');
       expect(enabledLabels).not.toContain('Dropbox');
+      expect(enabledLabels).not.toContain('Box');
     });
 
     it('navigates between step 1, step 2, and onBack, and toggles help guide', async () => {
@@ -733,14 +735,15 @@ describe('ConnectForm workflows', () => {
       });
     });
 
-    it('renders matching provider-derived labels for Dropbox, Google, OneDrive, and HiDrive on source and target sides', async () => {
-      await renderForm({ oauthProviders: { google: true, onedrive: true, dropbox: true, hidrive: true } });
+    it('renders matching provider-derived labels for Dropbox, Google, OneDrive, HiDrive, and Box on source and target sides', async () => {
+      await renderForm({ oauthProviders: { google: true, onedrive: true, dropbox: true, hidrive: true, box: true } });
 
       const specs = [
         { radio: 'Dropbox', connectHeading: 'Dropbox Connection', button: 'Connect with Dropbox' },
         { radio: 'Google', connectHeading: 'Google Connection', button: 'Connect with Google' },
         { radio: 'OneDrive', connectHeading: 'OneDrive Connection', button: 'Connect with OneDrive' },
         { radio: 'HiDrive', connectHeading: 'HiDrive Connection', button: 'Connect with HiDrive' },
+        { radio: 'Box', connectHeading: 'Box Connection', button: 'Connect with Box' },
       ];
 
       for (const spec of specs) {
@@ -750,7 +753,7 @@ describe('ConnectForm workflows', () => {
       }
 
       // Advance to target step using Local source
-      await renderForm({ localStorageEnabled: true, oauthProviders: { google: true, onedrive: true, dropbox: true, hidrive: true } });
+      await renderForm({ localStorageEnabled: true, oauthProviders: { google: true, onedrive: true, dropbox: true, hidrive: true, box: true } });
       await act(async () => { selectProviderRadio(container, 'Local'); });
       await clickVerifyAndAdvance();
 

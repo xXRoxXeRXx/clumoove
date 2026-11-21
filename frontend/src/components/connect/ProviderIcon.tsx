@@ -8,6 +8,7 @@ import {
   SiMega,
   SiOwncloud,
   SiSeafile,
+  SiBox,
 } from 'react-icons/si';
 import { BiLogoAws } from 'react-icons/bi';
 import { FiHardDrive } from 'react-icons/fi';
@@ -42,6 +43,9 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({ provider, className 
 
     case 'dropbox':
       return <SiDropbox className={iconCls} aria-hidden="true" />;
+
+    case 'box':
+      return <SiBox className={iconCls} aria-hidden="true" />;
 
     case 'google':
       return <SiGoogledrive className={iconCls} aria-hidden="true" />;

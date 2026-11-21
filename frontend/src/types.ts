@@ -25,12 +25,13 @@ export type Provider =
   | 'ftp'
   | 'local'
   | 'immich'
-  | 'mega';
+  | 'mega'
+  | 'box';
 
 
 export type ProviderId = Provider;
 
-export const OAUTH_PROVIDERS = ['dropbox', 'google', 'onedrive', 'hidrive'] as const satisfies readonly Provider[];
+export const OAUTH_PROVIDERS = ['dropbox', 'google', 'onedrive', 'hidrive', 'box'] as const satisfies readonly Provider[];
 
 export function isOAuthProvider(provider: string): provider is (typeof OAUTH_PROVIDERS)[number] {
   return (OAUTH_PROVIDERS as readonly string[]).includes(provider);

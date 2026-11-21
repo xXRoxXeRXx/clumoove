@@ -44,7 +44,7 @@ describe('OAuthConnectFields', () => {
     await act(async () => {
       root.render(
         <OAuthConnectFields
-          provider="box"
+          provider="acme-oauth"
           oauthUser=""
           connected={true}
           onConnect={vi.fn()}
@@ -53,16 +53,16 @@ describe('OAuthConnectFields', () => {
       );
     });
 
-    expect(container.textContent).toContain('box Connection');
-    expect(container.textContent).toContain('box Account');
+    expect(container.textContent).toContain('acme-oauth Connection');
+    expect(container.textContent).toContain('acme-oauth Account');
     expect(container.textContent).not.toContain('Dropbox');
 
     await act(async () => {
       await i18n.changeLanguage('de');
     });
 
-    expect(container.textContent).toContain('box Verbindung');
-    expect(container.textContent).toContain('box-Konto');
+    expect(container.textContent).toContain('acme-oauth Verbindung');
+    expect(container.textContent).toContain('acme-oauth-Konto');
     expect(container.textContent).not.toContain('Dropbox');
   });
 
@@ -102,6 +102,15 @@ describe('OAuthConnectFields', () => {
       deConnect: 'HiDrive Verbindung',
       deButton: 'Mit HiDrive verbinden',
       deAccount: 'HiDrive-Konto',
+    },
+    {
+      provider: 'box',
+      enConnect: 'Box Connection',
+      enButton: 'Connect with Box',
+      enAccount: 'Box Account',
+      deConnect: 'Box Verbindung',
+      deButton: 'Mit Box verbinden',
+      deAccount: 'Box-Konto',
     },
   ])('renders unchanged labels for $provider in en and de', async (spec) => {
     await act(async () => {
