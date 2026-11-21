@@ -997,6 +997,7 @@ func TestFileManagerDeleteMutateThumbnailAndProviderMatrix(t *testing.T) {
 			"immich":       &ImmichProvider{},
 			"seafile":      &SeafileProvider{},
 			"mega":         &MegaProvider{},
+			"box":          &BoxProvider{},
 		}
 		if len(providers) != len(ValidProviders) {
 			t.Fatalf("provider matrix count = %d, want %d", len(providers), len(ValidProviders))

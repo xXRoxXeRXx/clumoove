@@ -170,6 +170,14 @@ func TestProvidersConfiguredWithUserAgentTransport(t *testing.T) {
 	if _, ok := od.httpClient.Transport.(*userAgentTransport); !ok {
 		t.Errorf("OneDrive transport is %T, want *userAgentTransport", od.httpClient.Transport)
 	}
+
+	bx, err := NewBoxProvider("access-token")
+	if err != nil {
+		t.Fatalf("NewBoxProvider failed: %v", err)
+	}
+	if _, ok := bx.httpClient.Transport.(*userAgentTransport); !ok {
+		t.Errorf("Box transport is %T, want *userAgentTransport", bx.httpClient.Transport)
+	}
 }
 
 

@@ -598,6 +598,17 @@ var providerCatalogueEntries = []providerRegistration{
 			return NewMegaProvider(username, password, opts.MegaSession), nil
 		},
 	},
+	{
+		Type:                   "box",
+		SupportedResourceTypes: map[string]bool{"files": true},
+		SupportsAtomicRename:   false,
+		VerificationMode:       VerificationCryptographicHash,
+		ManagerCapabilities:    ManagerCapabilities{Browse: true, NativePagination: true},
+		ManagerRootNativeID:    "0",
+		Construct: func(_ context.Context, _, _, password string) (StorageProvider, error) {
+			return NewBoxProvider(password)
+		},
+	},
 }
 
 // NewManagerRenamer selects a provider's dedicated manager implementation

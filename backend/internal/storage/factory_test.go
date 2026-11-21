@@ -53,7 +53,7 @@ func TestProviderSupportsResourceType(t *testing.T) {
 	if !ProviderSupportsResourceType("google", "calendars") || !ProviderSupportsResourceType("google", "contacts") {
 		t.Errorf("expected google to support calendars and contacts")
 	}
-	for _, p := range []string{"local", "webdav", "s3", "sftp", "ftp", "smb", "dropbox", "onedrive", "hidrive", "immich", "magentacloud", "koofr"} {
+	for _, p := range []string{"local", "webdav", "s3", "sftp", "ftp", "smb", "dropbox", "onedrive", "hidrive", "immich", "magentacloud", "koofr", "box"} {
 		if !ProviderSupportsResourceType(p, "files") {
 			t.Errorf("expected %s to support files", p)
 		}
@@ -208,6 +208,7 @@ func TestProviderRegistryCapabilitiesMatchRuntime(t *testing.T) {
 		"immich":       &ImmichProvider{},
 		"seafile":      &SeafileProvider{},
 		"mega":         &MegaProvider{},
+		"box":          &BoxProvider{},
 	}
 	for providerType, meta := range defaultProviderCatalogue.entries {
 		provider, ok := runtimeProviders[providerType]
@@ -246,6 +247,13 @@ func TestManagerReadCapabilitiesCoverEveryFilesProvider(t *testing.T) {
 			continue
 		}
 		capabilities := ManagerCapabilitiesFor(providerType)
+		if providerType == "box" {
+			// TODO(#111): Box DownloadManager lands in #111; #110 enables Browse + NativePagination.
+			if !capabilities.Browse {
+				t.Errorf("%s read capabilities = %#v, want browse", providerType, capabilities)
+			}
+			continue
+		}
 		if !capabilities.Browse || !capabilities.Download {
 			t.Errorf("%s read capabilities = %#v, want browse and download", providerType, capabilities)
 		}
@@ -330,6 +338,13 @@ func TestImmichManagerCapabilities(t *testing.T) {
 	}
 }
 
+func TestBoxManagerCapabilities(t *testing.T) {
+	capabilities := ManagerCapabilitiesFor("box")
+	if !capabilities.Browse || !capabilities.NativePagination {
+		t.Fatalf("Box manager capabilities = %#v, want browse and native pagination", capabilities)
+	}
+}
+
 func TestManagerCapabilityInterfaceSatisfaction(t *testing.T) {
 	t.Setenv("LOCAL_STORAGE_ROOT", t.TempDir())
 	ctx := WithLocalUserScope(context.Background(), "test-user")
@@ -350,6 +365,7 @@ func TestManagerCapabilityInterfaceSatisfaction(t *testing.T) {
 		{"koofr", "", "u", "p"},
 		{"immich", "https://example.com", "", "apikey"},
 		{"seafile", "https://example.com", "u", "p"},
+		{"box", "", "u", "token"},
 	}
 
 	for _, tc := range dedicatedProviders {
@@ -493,6 +509,7 @@ func TestPublicFactoryConstructsEveryProvider(t *testing.T) {
 		"immich":       {"https://1.1.1.1", "", "key", &ImmichProvider{}},
 		"seafile":      {"https://1.1.1.1", "user", "secret", &SeafileProvider{}},
 		"mega":         {"", "user@example.com", "secret", &MegaProvider{}},
+		"box":          {"", "", "token", &BoxProvider{}},
 	}
 	for providerType, tt := range cases {
 		t.Run(providerType, func(t *testing.T) {
@@ -530,6 +547,12 @@ func TestNewProviderOAuthProviders(t *testing.T) {
 	}
 	if p, err := NewProvider(context.Background(), "hidrive", "", "u", "oauth-token"); err != nil || p == nil {
 		t.Errorf("hidrive: got p=%v err=%v", p, err)
+	}
+	if p, err := NewProvider(context.Background(), "box", "", "u", "oauth-token"); err != nil || p == nil {
+		t.Errorf("box: got p=%v err=%v", p, err)
+	}
+	if _, err := NewProvider(context.Background(), "box", "", "", ""); err == nil {
+		t.Error("box without token: expected error")
 	}
 	// Fixed-endpoint providers ignore url.
 	if p, err := NewProvider(context.Background(), "magentacloud", "", "u", "p"); err != nil || p == nil {
@@ -932,7 +955,7 @@ func TestProviderCatalogueMigrationTraitsAreAuthoritative(t *testing.T) {
 
 	// Verify that changing an entry's migration traits in the catalogue
 	// directly changes the runtime behavior of constructed providers across all
-	// 17 registered providers.
+	// 18 registered providers.
 	testInputs := map[string]struct {
 		url, username, password string
 	}{
@@ -953,6 +976,7 @@ func TestProviderCatalogueMigrationTraitsAreAuthoritative(t *testing.T) {
 		"immich":       {"https://1.1.1.1", "", "key"},
 		"seafile":      {"https://1.1.1.1", "user", "secret"},
 		"mega":         {"", "user@example.com", "secret"},
+		"box":          {"", "", "token"},
 	}
 
 	for _, providerType := range ValidProviders {
@@ -1108,6 +1132,7 @@ func TestProviderCatalogueMigrationTraitsAreAuthoritative(t *testing.T) {
 			"immich":       (*ImmichProvider)(nil),
 			"seafile":      (*SeafileProvider)(nil),
 			"mega":         (*MegaProvider)(nil),
+			"box":          (*BoxProvider)(nil),
 		}
 		for _, providerType := range ValidProviders {
 			p := nilProviders[providerType]
