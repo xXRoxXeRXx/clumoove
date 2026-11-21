@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/oauth"
@@ -30,6 +32,171 @@ type taskToCreate struct {
 	side               string // source or target
 	id                 string
 	prerequisiteTaskID string
+}
+
+// calculateFileDelta computes file transfer, conflict-copy, and deletion tasks
+// from the current source/target scans and previous pass baselines.
+func calculateFileDelta(
+	syncJobID, direction, conflictStrategy string,
+	deletePropagation bool,
+	sourceMap, targetMap map[string]fileState,
+	prevSource, prevTarget map[string]db.SyncState,
+) (renameTasks, tasks []taskToCreate) {
+	allKeys := make(map[string]bool, len(sourceMap)+len(targetMap)+len(prevSource)+len(prevTarget))
+	for k := range sourceMap {
+		allKeys[k] = true
+	}
+	for k := range targetMap {
+		allKeys[k] = true
+	}
+	for k := range prevSource {
+		allKeys[k] = true
+	}
+	for k := range prevTarget {
+		allKeys[k] = true
+	}
+
+	for S := range allKeys {
+		srcFile, hasSrc := sourceMap[S]
+		tgtFile, hasTgt := targetMap[S]
+		pSrc, hasPrevSrc := prevSource[S]
+		pTgt, hasPrevTgt := prevTarget[S]
+
+		// Direct equality check between source and target file
+		inSyncDirectMatch := hasSrc && hasTgt && isFileMatchingTarget(srcFile, tgtFile)
+
+		// Source modified check
+		srcModified := false
+		if hasSrc {
+			if inSyncDirectMatch {
+				srcModified = false
+			} else if hasPrevSrc {
+				srcModified = isFileModified(srcFile, pSrc, true)
+			} else {
+				srcModified = true
+			}
+		}
+
+		// Target modified check
+		tgtModified := false
+		if hasTgt {
+			if inSyncDirectMatch {
+				tgtModified = false
+			} else if hasPrevTgt {
+				tgtModified = isFileModified(tgtFile, pTgt, false)
+			} else {
+				tgtModified = true
+			}
+		}
+
+		if direction == "one_way" {
+			// One-Way: Source -> Target
+			if hasSrc && (srcModified || !hasTgt) {
+				tasks = append(tasks, taskToCreate{
+					filePath:     S,
+					fileSize:     srcFile.Size,
+					sourceHash:   srcFile.Hash,
+					resourceType: "files",
+					action:       "upload",
+				})
+			} else if !hasSrc && hasPrevSrc {
+				if deletePropagation && hasTgt {
+					tasks = append(tasks, taskToCreate{
+						filePath:     S,
+						fileSize:     0,
+						resourceType: "files",
+						action:       "delete",
+						side:         "target",
+					})
+				}
+			}
+			continue
+		}
+
+		// Two-Way: Bidirectional
+		srcDeleted := !hasSrc && hasPrevSrc
+		tgtDeleted := !hasTgt && hasPrevTgt
+
+		if hasSrc && hasTgt && inSyncDirectMatch {
+			continue
+		}
+
+		if hasSrc && srcModified && hasTgt && tgtModified {
+			switch conflictStrategy {
+			case "OVERWRITE":
+				tasks = append(tasks, taskToCreate{
+					filePath:     S,
+					fileSize:     srcFile.Size,
+					sourceHash:   srcFile.Hash,
+					resourceType: "files",
+					action:       "upload",
+				})
+			case "SKIP":
+				// Do nothing.
+			case "RENAME":
+				prerequisiteTaskID := ""
+				if conflictNeedsRename(conflictStrategy) {
+					prerequisiteTaskID = uuid.NewString()
+					renameTasks = append(renameTasks, taskToCreate{
+						id:           prerequisiteTaskID,
+						filePath:     S,
+						fileSize:     0,
+						resourceType: "files",
+						action:       "conflict_copy",
+						side:         "target",
+					})
+				}
+				tasks = append(tasks, taskToCreate{
+					filePath:           S,
+					fileSize:           srcFile.Size,
+					sourceHash:         srcFile.Hash,
+					resourceType:       "files",
+					action:             "upload",
+					prerequisiteTaskID: prerequisiteTaskID,
+				})
+			default:
+				slog.Warn("ignoring conflict with unsupported strategy", "sync_job_id", syncJobID, "conflict_strategy", conflictStrategy)
+			}
+		} else if hasSrc && (srcModified || (!hasTgt && !tgtDeleted)) {
+			tasks = append(tasks, taskToCreate{
+				filePath:     S,
+				fileSize:     srcFile.Size,
+				sourceHash:   srcFile.Hash,
+				resourceType: "files",
+				action:       "upload",
+			})
+		} else if hasTgt && (tgtModified || (!hasSrc && !srcDeleted)) {
+			tasks = append(tasks, taskToCreate{
+				filePath:     S,
+				fileSize:     tgtFile.Size,
+				sourceHash:   tgtFile.Hash,
+				resourceType: "files",
+				action:       "download",
+			})
+		} else if srcDeleted && (!hasTgt || !tgtModified) {
+			if deletePropagation && hasTgt {
+				tasks = append(tasks, taskToCreate{
+					filePath:     S,
+					fileSize:     0,
+					resourceType: "files",
+					action:       "delete",
+					side:         "target",
+				})
+			}
+		} else if tgtDeleted && (!hasSrc || !srcModified) {
+			if deletePropagation && hasSrc {
+				tasks = append(tasks, taskToCreate{
+					filePath:     S,
+					fileSize:     0,
+					resourceType: "files",
+					action:       "delete",
+					side:         "source",
+				})
+			}
+		}
+	}
+
+	return renameTasks, tasks
 }
 
 // directoryCleanupCandidate is a directory deleted on the opposite side of a
@@ -628,6 +795,13 @@ func (e *Engine) listFiles(
 			continue
 		}
 
+		if res.IsPersonalVault() {
+			continue
+		}
+		if _, skip := res.BoxSkipReason(); skip {
+			continue
+		}
+
 		if !res.IsDir {
 			addFile(fileState{
 				Path:         startPath,
@@ -688,6 +862,12 @@ func (e *Engine) listFiles(
 				continue
 			}
 			for _, file := range result.files {
+				if file.IsPersonalVault() {
+					continue
+				}
+				if _, skip := file.BoxSkipReason(); skip {
+					continue
+				}
 				cpath := cleanRelPath(file.Path)
 				if file.IsDir {
 					addDirETag(cpath, file.ETag)
@@ -837,9 +1017,9 @@ func isFileMatchingTarget(src, tgt fileState) bool {
 	}
 
 	if src.Hash != "" && tgt.Hash != "" {
-		_, cleanSrc := storage.ParseHashString(src.Hash)
-		_, cleanTgt := storage.ParseHashString(tgt.Hash)
-		if cleanSrc != "" && cleanTgt != "" {
+		srcAlgo, cleanSrc := storage.ParseHashString(src.Hash)
+		tgtAlgo, cleanTgt := storage.ParseHashString(tgt.Hash)
+		if cleanSrc != "" && cleanTgt != "" && (srcAlgo == tgtAlgo || srcAlgo == "UNKNOWN" || tgtAlgo == "UNKNOWN") {
 			return cleanSrc == cleanTgt
 		}
 	}

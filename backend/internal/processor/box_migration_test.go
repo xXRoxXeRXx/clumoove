@@ -2215,3 +2215,58 @@ func TestExecuteSyncTransferIntoBoxOverwriteSingleAndChunked(t *testing.T) {
 
 	assertNoBoxTempStaging(t, srv)
 }
+
+func TestExecuteSyncTransferFromBoxToOtherProvider(t *testing.T) {
+	srv := newBoxFullFakeServer("box-sync-src-token")
+	defer srv.close()
+
+	syncDirID := srv.addFolder("0", "Sync")
+	payload := []byte("box-to-peer-sync-payload-v1")
+	sum := sha1.Sum(payload)
+	wantSHA1 := "SHA1:" + hex.EncodeToString(sum[:])
+	const mtimeStr = "2026-08-15T14:30:00Z"
+	srv.addFile(syncDirID, "report.txt", payload, mtimeStr)
+
+	boxSource := srv.newProvider(t)
+	defer boxSource.Close()
+
+	target := newBoxSHA1TargetProvider()
+	task := &db.Task{
+		ID:           "sync-from-box-1",
+		ResourceType: "files",
+		FilePath:     "/Sync/report.txt",
+		FileSize:     int64(len(payload)),
+		SourceHash:   sql.NullString{String: wantSHA1, Valid: true},
+	}
+
+	if err := executeSyncTransfer(context.Background(), syncTransfer{
+		Task:           task,
+		Source:         boxSource,
+		Target:         target,
+		SourceProvider: "box",
+		TargetProvider: "nextcloud",
+		SourcePath:     "/Sync/report.txt",
+		TargetPath:     "/Target/Sync/report.txt",
+		Throttler:      throttle.NewMigrationThrottler(0),
+		Progress:       make(chan int64, 64),
+	}); err != nil {
+		t.Fatalf("executeSyncTransfer(Box -> nextcloud): %v", err)
+	}
+
+	if !task.ChecksumVerified {
+		t.Fatal("ChecksumVerified = false, want true")
+	}
+	if task.WorkerHash.String != wantSHA1 || task.TargetHash.String != wantSHA1 {
+		t.Fatalf("worker/target hash = (%q, %q), want %q", task.WorkerHash.String, task.TargetHash.String, wantSHA1)
+	}
+	if !bytes.Equal(target.files["/Target/Sync/report.txt"], payload) {
+		t.Fatalf("target content = %q, want %q", target.files["/Target/Sync/report.txt"], payload)
+	}
+	if len(target.uploadOpts) != 1 || target.uploadOpts[0].Checksum != wantSHA1 {
+		t.Fatalf("uploadOpts = %+v, want forwarded SHA1 checksum %q", target.uploadOpts, wantSHA1)
+	}
+	wantMtime, _ := time.Parse(time.RFC3339, mtimeStr)
+	if !target.uploadOpts[0].Metadata.ModifiedTime.Equal(wantMtime) {
+		t.Fatalf("uploadOpts[0].Metadata.ModifiedTime = %v, want %v", target.uploadOpts[0].Metadata.ModifiedTime, wantMtime)
+	}
+}
