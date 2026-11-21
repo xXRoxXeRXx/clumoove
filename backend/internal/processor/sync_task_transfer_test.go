@@ -150,6 +150,11 @@ func TestExecuteSyncTransferRecordsTargetStreamHash(t *testing.T) {
 		{"dropbox target records DROPBOX", "nextcloud", "dropbox", "DROPBOX:" + dropboxHash(data)},
 		{"hidrive target records HIDRIVE", "nextcloud", "hidrive", "HIDRIVE:" + hidriveHash(data)},
 		{"dropbox source keeps its own algorithm", "dropbox", "dropbox", "DROPBOX:" + dropboxHash(data)},
+		{"box target records SHA1", "nextcloud", "box", fmt.Sprintf("SHA1:%x", sha1.Sum(data))},
+		{"dropbox to box records SHA1", "dropbox", "box", fmt.Sprintf("SHA1:%x", sha1.Sum(data))},
+		{"google to box records SHA1", "google", "box", fmt.Sprintf("SHA1:%x", sha1.Sum(data))},
+		{"onedrive to box records SHA1", "onedrive", "box", fmt.Sprintf("SHA1:%x", sha1.Sum(data))},
+		{"box source to nextcloud records SHA1", "box", "nextcloud", fmt.Sprintf("SHA1:%x", sha1.Sum(data))},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
