@@ -247,13 +247,6 @@ func TestManagerReadCapabilitiesCoverEveryFilesProvider(t *testing.T) {
 			continue
 		}
 		capabilities := ManagerCapabilitiesFor(providerType)
-		if providerType == "box" {
-			// TODO(#111): Box DownloadManager lands in #111; #110 enables Browse + NativePagination.
-			if !capabilities.Browse {
-				t.Errorf("%s read capabilities = %#v, want browse", providerType, capabilities)
-			}
-			continue
-		}
 		if !capabilities.Browse || !capabilities.Download {
 			t.Errorf("%s read capabilities = %#v, want browse and download", providerType, capabilities)
 		}
@@ -340,8 +333,8 @@ func TestImmichManagerCapabilities(t *testing.T) {
 
 func TestBoxManagerCapabilities(t *testing.T) {
 	capabilities := ManagerCapabilitiesFor("box")
-	if !capabilities.Browse || !capabilities.NativePagination {
-		t.Fatalf("Box manager capabilities = %#v, want browse and native pagination", capabilities)
+	if !capabilities.Browse || !capabilities.NativePagination || !capabilities.Download {
+		t.Fatalf("Box manager capabilities = %#v, want browse, native pagination, and download", capabilities)
 	}
 }
 

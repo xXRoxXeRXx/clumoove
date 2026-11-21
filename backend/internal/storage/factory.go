@@ -603,7 +603,7 @@ var providerCatalogueEntries = []providerRegistration{
 		SupportedResourceTypes: map[string]bool{"files": true},
 		SupportsAtomicRename:   false,
 		VerificationMode:       VerificationCryptographicHash,
-		ManagerCapabilities:    ManagerCapabilities{Browse: true, NativePagination: true},
+		ManagerCapabilities:    ManagerCapabilities{Browse: true, NativePagination: true, Download: true},
 		ManagerRootNativeID:    "0",
 		Construct: func(_ context.Context, _, _, password string) (StorageProvider, error) {
 			return NewBoxProvider(password)

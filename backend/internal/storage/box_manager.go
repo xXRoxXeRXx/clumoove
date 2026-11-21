@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -11,6 +13,7 @@ var (
 	_ ManagerConnector    = (*BoxProvider)(nil)
 	_ ManagerLister       = (*BoxProvider)(nil)
 	_ ManagerPathResolver = (*BoxProvider)(nil)
+	_ ManagerDownloader   = (*BoxProvider)(nil)
 )
 
 func (p *BoxProvider) ConnectManager(ctx context.Context) (bool, error) {
@@ -57,10 +60,6 @@ func (p *BoxProvider) ListManager(ctx context.Context, locator ManagerLocator, o
 
 	items := make([]ManagerItem, 0, len(page.Entries))
 	for _, entry := range page.Entries {
-		modTime := parseBoxTime(entry.ContentModifiedAt)
-		if modTime.IsZero() {
-			modTime = parseBoxTime(entry.ModifiedAt)
-		}
 		items = append(items, ManagerItem{
 			Locator: ManagerLocator{
 				Path:     boxChildPath(parentPath, entry.Name),
@@ -69,7 +68,7 @@ func (p *BoxProvider) ListManager(ctx context.Context, locator ManagerLocator, o
 			Name:     entry.Name,
 			IsDir:    entry.Type == "folder",
 			Size:     entry.Size,
-			Modified: modTime,
+			Modified: boxItemModTime(entry),
 		})
 	}
 	return ManagerPage{
@@ -121,4 +120,33 @@ func boxManagerParentID(value string) string {
 		return ""
 	}
 	return value
+}
+
+// DownloadManager retrieves a Box file stream directly by its immutable NativeID.
+func (p *BoxProvider) DownloadManager(ctx context.Context, locator ManagerLocator) (ManagerDownload, error) {
+	if p == nil || locator.NativeID == "" || locator.NativeID == boxRootFolderID {
+		return ManagerDownload{}, fmt.Errorf("box manager download: %w", ErrNotFound)
+	}
+	var item boxItem
+	endpoint := p.apiBase + "/files/" + url.PathEscape(locator.NativeID) + "?fields=" + url.QueryEscape(boxItemFields)
+	if err := p.doJSON(ctx, http.MethodGet, endpoint, nil, &item, "manager inspect file"); err != nil {
+		return ManagerDownload{}, err
+	}
+	if item.Type != "file" {
+		return ManagerDownload{}, fmt.Errorf("box manager download: %w", ErrNotFound)
+	}
+	stream, err := p.streamDownloadByID(ctx, locator.NativeID)
+	if err != nil {
+		return ManagerDownload{}, err
+	}
+	return ManagerDownload{
+		Item: ManagerItem{
+			Locator:  locator,
+			Name:     item.Name,
+			IsDir:    false,
+			Size:     item.Size,
+			Modified: boxItemModTime(item),
+		},
+		Stream: stream,
+	}, nil
 }

@@ -2,9 +2,12 @@ package storage
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -21,9 +24,11 @@ type fakeBoxItem struct {
 	ParentID          string
 	Size              int64
 	SHA1              string
+	Content           []byte
 	ModifiedAt        string
 	ContentModifiedAt string
 	URL               string
+	DownloadBlocked   bool
 }
 
 type fakeBoxFault struct {
@@ -33,16 +38,21 @@ type fakeBoxFault struct {
 }
 
 type fakeBoxServer struct {
-	server *httptest.Server
-	token  string
+	server         *httptest.Server
+	downloadServer *httptest.Server
+	token          string
 
-	mu          sync.Mutex
-	items       map[string]fakeBoxItem
-	children    map[string][]string
-	faults      []fakeBoxFault
-	requests    []string
-	nextID      int
-	maxPageSize int
+	mu                  sync.Mutex
+	items               map[string]fakeBoxItem
+	children            map[string][]string
+	faults              []fakeBoxFault
+	requests            []string
+	downloadAuthHeaders []string
+	downloadRanges      []string
+	redirectOverride    string
+	rangeResponder      func(w http.ResponseWriter, r *http.Request, item fakeBoxItem)
+	nextID              int
+	maxPageSize         int
 }
 
 func newFakeBoxServer(token string) *fakeBoxServer {
@@ -53,12 +63,16 @@ func newFakeBoxServer(token string) *fakeBoxServer {
 		nextID:   100,
 	}
 	f.items["0"] = fakeBoxItem{ID: "0", Type: "folder", Name: "All Files"}
+	f.downloadServer = httptest.NewServer(http.HandlerFunc(f.handleDownload))
 	f.server = httptest.NewServer(http.HandlerFunc(f.handle))
 	return f
 }
 
 func (f *fakeBoxServer) close() {
 	f.server.Close()
+	if f.downloadServer != nil {
+		f.downloadServer.Close()
+	}
 }
 
 func (f *fakeBoxServer) provider() *BoxProvider {
@@ -97,6 +111,30 @@ func (f *fakeBoxServer) addFile(parentID, id, name string, size int64, sha1Hex s
 		ParentID:          parentID,
 		Size:              size,
 		SHA1:              sha1Hex,
+		ModifiedAt:        "2026-01-16T12:00:00Z",
+		ContentModifiedAt: "2026-01-16T11:30:00Z",
+	}
+	f.children[parentID] = append(f.children[parentID], id)
+	return id
+}
+
+func (f *fakeBoxServer) addFileContent(parentID, id, name string, content []byte) string {
+	sum := sha1.Sum(content)
+	sha1Hex := hex.EncodeToString(sum[:])
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id == "" {
+		f.nextID++
+		id = strconv.Itoa(f.nextID)
+	}
+	f.items[id] = fakeBoxItem{
+		ID:                id,
+		Type:              "file",
+		Name:              name,
+		ParentID:          parentID,
+		Size:              int64(len(content)),
+		SHA1:              sha1Hex,
+		Content:           append([]byte(nil), content...),
 		ModifiedAt:        "2026-01-16T12:00:00Z",
 		ContentModifiedAt: "2026-01-16T11:30:00Z",
 	}
@@ -150,12 +188,92 @@ func (f *fakeBoxServer) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/folders/"):
 		folderID := strings.TrimPrefix(r.URL.Path, "/2.0/folders/")
 		f.handleGetItem(w, folderID, "folder")
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/files/") && strings.HasSuffix(r.URL.Path, "/content"):
+		fileID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/2.0/files/"), "/content")
+		f.handleDownloadRedirect(w, r, fileID)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/2.0/files/"):
 		fileID := strings.TrimPrefix(r.URL.Path, "/2.0/files/")
 		f.handleGetItem(w, fileID, "file")
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (f *fakeBoxServer) handleDownloadRedirect(w http.ResponseWriter, r *http.Request, id string) {
+	f.mu.Lock()
+	item, ok := f.items[id]
+	redirectOverride := f.redirectOverride
+	f.mu.Unlock()
+	if !ok || item.Type != "file" {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"error","status":404,"code":"not_found"}`))
+		return
+	}
+	if item.DownloadBlocked {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"type":"error","status":403,"code":"forbidden_by_policy"}`))
+		return
+	}
+	target := f.downloadServer.URL + "/dl/" + id
+	if redirectOverride != "" {
+		target = redirectOverride
+	}
+	w.Header().Set("Location", target)
+	w.WriteHeader(http.StatusFound)
+}
+
+func (f *fakeBoxServer) handleDownload(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/dl/")
+	f.mu.Lock()
+	f.downloadAuthHeaders = append(f.downloadAuthHeaders, r.Header.Get("Authorization"))
+	f.downloadRanges = append(f.downloadRanges, r.Header.Get("Range"))
+	item, ok := f.items[id]
+	responder := f.rangeResponder
+	f.mu.Unlock()
+
+	if r.Header.Get("Authorization") != "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("authorization header must not be forwarded to download host"))
+		return
+	}
+	if !ok || item.Type != "file" {
+		http.NotFound(w, r)
+		return
+	}
+	if responder != nil && r.Header.Get("Range") != "" {
+		responder(w, r, item)
+		return
+	}
+	if rangeHdr := r.Header.Get("Range"); rangeHdr != "" {
+		if !strings.HasPrefix(rangeHdr, "bytes=") {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		parts := strings.SplitN(strings.TrimPrefix(rangeHdr, "bytes="), "-", 2)
+		if len(parts) != 2 {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		start, err1 := strconv.ParseInt(parts[0], 10, 64)
+		end, err2 := strconv.ParseInt(parts[1], 10, 64)
+		total := int64(len(item.Content))
+		if err1 != nil || err2 != nil || start < 0 || end < start || start >= total {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if end >= total {
+			end = total - 1
+		}
+		slice := item.Content[start : end+1]
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, total))
+		w.Header().Set("Content-Length", strconv.Itoa(len(slice)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(slice)
+		return
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(item.Content)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(item.Content)
 }
 
 func (f *fakeBoxServer) handleGetItem(w http.ResponseWriter, id, wantType string) {
@@ -486,5 +604,296 @@ func TestBoxInspectResourceFileExistsAndHash(t *testing.T) {
 
 	if _, err := p.GetFileHash(context.Background(), "files", "/Docs/NoHash.bin"); !errors.Is(err, ErrChecksumNotAvailable) {
 		t.Fatalf("GetFileHash(empty) = %v, want ErrChecksumNotAvailable", err)
+	}
+}
+
+func TestBoxStreamDownloadFollowsRedirectAndStripsAuthorization(t *testing.T) {
+	srv := newFakeBoxServer("secret-box-token")
+	defer srv.close()
+
+	payload := []byte("hello box download stream with SHA-1 verification")
+	docsID := srv.addFolder("0", "10", "Docs")
+	srv.addFileContent(docsID, "12", "hello.txt", payload)
+
+	p := srv.provider()
+	defer p.Close()
+
+	stream, err := p.StreamDownload(context.Background(), "files", "/Docs/hello.txt")
+	if err != nil {
+		t.Fatalf("StreamDownload: %v", err)
+	}
+	defer stream.Close()
+
+	got, err := io.ReadAll(stream)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("downloaded = %q, want %q", got, payload)
+	}
+
+	srv.mu.Lock()
+	auths := append([]string(nil), srv.downloadAuthHeaders...)
+	srv.mu.Unlock()
+	if len(auths) != 1 || auths[0] != "" {
+		t.Fatalf("download host Authorization headers = %q, want single empty header", auths)
+	}
+
+	// Downloading a folder or missing file returns ErrNotFound.
+	if _, err := p.StreamDownload(context.Background(), "files", "/Docs"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("StreamDownload(folder) = %v, want ErrNotFound", err)
+	}
+	if _, err := p.StreamDownload(context.Background(), "files", "/Docs/missing.txt"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("StreamDownload(missing) = %v, want ErrNotFound", err)
+	}
+	if _, err := p.StreamDownload(context.Background(), "calendars", "/Docs/hello.txt"); !errors.Is(err, ErrUnsupportedResourceType) {
+		t.Fatalf("StreamDownload(calendars) = %v, want ErrUnsupportedResourceType", err)
+	}
+}
+
+type boxRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f boxRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestBoxStreamDownloadRejectsDisallowedRedirects(t *testing.T) {
+	srv := newFakeBoxServer("secret-box-token")
+	defer srv.close()
+
+	docsID := srv.addFolder("0", "10", "Docs")
+	srv.addFileContent(docsID, "12", "hello.txt", []byte("payload"))
+	p := srv.provider()
+	defer p.Close()
+
+	// Even from a local fake API server, non-local disallowed targets must be rejected.
+	for _, target := range []string{
+		"http://dl.boxcloud.com/dl/12",
+		"https://169.254.169.254/latest/meta-data",
+		"http://localhost.evil.test/dl/12",
+	} {
+		srv.mu.Lock()
+		srv.redirectOverride = target
+		srv.mu.Unlock()
+
+		stream, err := p.StreamDownload(context.Background(), "files", "/Docs/hello.txt")
+		if err == nil {
+			stream.Close()
+			t.Fatalf("expected redirect to %q to be rejected", target)
+		}
+		if !strings.Contains(err.Error(), "redirect") {
+			t.Fatalf("expected redirect rejection error for %q, got: %v", target, err)
+		}
+		if strings.Contains(err.Error(), "secret-box-token") {
+			t.Fatalf("error leaked token: %v", err)
+		}
+	}
+
+	// Production endpoint (non-local apiBase) must reject loopback, metadata, and plaintext HTTP redirects.
+	for _, redirectURL := range []string{
+		"https://127.0.0.1/dl/12",
+		"https://169.254.169.254/latest/meta-data",
+		"http://dl.boxcloud.com/dl/12",
+	} {
+		redirectedToDownload := false
+		client := &http.Client{
+			Transport: boxRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Host == "api.box.com" && req.URL.Path == "/2.0/folders/0/items" {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"entries":[{"id":"12","type":"file","name":"hello.txt","size":7}]}`)),
+						Request:    req,
+					}, nil
+				}
+				if req.URL.Host == "api.box.com" && req.URL.Path == "/2.0/files/12/content" {
+					return &http.Response{
+						StatusCode: http.StatusFound,
+						Header:     http.Header{"Location": []string{redirectURL}},
+						Body:       io.NopCloser(strings.NewReader("")),
+						Request:    req,
+					}, nil
+				}
+				redirectedToDownload = true
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader("should not reach")),
+					Request:    req,
+				}, nil
+			}),
+		}
+		prodLike := newBoxProvider("secret-box-token", defaultBoxAPIBase, defaultBoxUploadBase, client)
+		stream, err := prodLike.StreamDownload(context.Background(), "files", "/hello.txt")
+		if err == nil {
+			stream.Close()
+			t.Fatalf("prodLike redirect to %q succeeded, want rejection", redirectURL)
+		}
+		if !strings.Contains(err.Error(), "redirect") {
+			t.Fatalf("prodLike expected redirect rejection error for %q, got: %v", redirectURL, err)
+		}
+		if redirectedToDownload {
+			t.Fatalf("prodLike followed disallowed redirect to %q", redirectURL)
+		}
+	}
+}
+
+func TestBoxStreamDownloadRangeAndMalformedRejection(t *testing.T) {
+	srv := newFakeBoxServer("valid-token")
+	defer srv.close()
+
+	payload := []byte("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	docsID := srv.addFolder("0", "10", "Docs")
+	srv.addFileContent(docsID, "12", "pack.bin", payload)
+
+	p := srv.provider()
+	defer p.Close()
+
+	rd, ok := StorageProvider(p).(RangeDownloader)
+	if !ok {
+		t.Fatal("*BoxProvider does not implement RangeDownloader")
+	}
+
+	// Exact slice read across redirect without forwarding Authorization.
+	stream, err := rd.StreamDownloadRange(context.Background(), "files", "/Docs/pack.bin", 10, 6)
+	if err != nil {
+		t.Fatalf("StreamDownloadRange(10, 6): %v", err)
+	}
+	got, err := io.ReadAll(stream)
+	stream.Close()
+	if err != nil {
+		t.Fatalf("ReadAll(range): %v", err)
+	}
+	if string(got) != "ABCDEF" {
+		t.Fatalf("range bytes = %q, want %q", got, "ABCDEF")
+	}
+	srv.mu.Lock()
+	auths := append([]string(nil), srv.downloadAuthHeaders...)
+	ranges := append([]string(nil), srv.downloadRanges...)
+	srv.mu.Unlock()
+	if len(auths) != 1 || auths[0] != "" {
+		t.Fatalf("range download Authorization headers = %q, want empty", auths)
+	}
+	if len(ranges) != 1 || ranges[0] != "bytes=10-15" {
+		t.Fatalf("range download Range headers = %q, want [bytes=10-15]", ranges)
+	}
+
+	// Invalid inputs fail locally before hitting the network.
+	for _, tc := range []struct {
+		offset int64
+		length int64
+	}{
+		{-1, 5},
+		{0, 0},
+		{0, -4},
+	} {
+		if _, err := rd.StreamDownloadRange(context.Background(), "files", "/Docs/pack.bin", tc.offset, tc.length); !errors.Is(err, ErrInvalidByteRange) {
+			t.Fatalf("StreamDownloadRange(%d, %d) = %v, want ErrInvalidByteRange", tc.offset, tc.length, err)
+		}
+	}
+
+	if _, err := rd.StreamDownloadRange(context.Background(), "calendars", "/Docs/pack.bin", 0, 5); !errors.Is(err, ErrUnsupportedResourceType) {
+		t.Fatalf("StreamDownloadRange(calendars) = %v, want ErrUnsupportedResourceType", err)
+	}
+
+	// Malformed 200 OK instead of 206 Partial Content must be rejected.
+	srv.mu.Lock()
+	srv.rangeResponder = func(w http.ResponseWriter, _ *http.Request, item fakeBoxItem) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(item.Content)
+	}
+	srv.mu.Unlock()
+	if _, err := rd.StreamDownloadRange(context.Background(), "files", "/Docs/pack.bin", 2, 4); !errors.Is(err, ErrRangeHeaderMismatch) {
+		t.Fatalf("200 OK range response = %v, want ErrRangeHeaderMismatch", err)
+	}
+
+	// Mismatched Content-Range must be rejected.
+	srv.mu.Lock()
+	srv.rangeResponder = func(w http.ResponseWriter, _ *http.Request, item fakeBoxItem) {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-3/%d", len(item.Content)))
+		w.Header().Set("Content-Length", "4")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(item.Content[:4])
+	}
+	srv.mu.Unlock()
+	if _, err := rd.StreamDownloadRange(context.Background(), "files", "/Docs/pack.bin", 2, 4); !errors.Is(err, ErrRangeHeaderMismatch) {
+		t.Fatalf("mismatched Content-Range = %v, want ErrRangeHeaderMismatch", err)
+	}
+
+	// Mismatched Content-Length must be rejected.
+	srv.mu.Lock()
+	srv.rangeResponder = func(w http.ResponseWriter, _ *http.Request, item fakeBoxItem) {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 2-5/%d", len(item.Content)))
+		w.Header().Set("Content-Length", "10")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(item.Content[2:12])
+	}
+	srv.mu.Unlock()
+	if _, err := rd.StreamDownloadRange(context.Background(), "files", "/Docs/pack.bin", 2, 4); !errors.Is(err, ErrRangeHeaderMismatch) {
+		t.Fatalf("mismatched Content-Length = %v, want ErrRangeHeaderMismatch", err)
+	}
+
+	// 416 Range Not Satisfiable maps to ErrRangeNotSatisfied.
+	srv.mu.Lock()
+	srv.rangeResponder = func(w http.ResponseWriter, _ *http.Request, _ fakeBoxItem) {
+		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+	}
+	srv.mu.Unlock()
+	if _, err := rd.StreamDownloadRange(context.Background(), "files", "/Docs/pack.bin", 2, 4); !errors.Is(err, ErrRangeNotSatisfied) {
+		t.Fatalf("416 range response = %v, want ErrRangeNotSatisfied", err)
+	}
+
+	// Truncated 206 stream must return ErrUnexpectedEOF when read.
+	srv.mu.Lock()
+	srv.rangeResponder = func(w http.ResponseWriter, _ *http.Request, item fakeBoxItem) {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 2-5/%d", len(item.Content)))
+		w.Header().Set("Content-Length", "4")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(item.Content[2:4]) // 2 bytes instead of declared 4
+	}
+	srv.mu.Unlock()
+	truncStream, err := rd.StreamDownloadRange(context.Background(), "files", "/Docs/pack.bin", 2, 4)
+	if err != nil {
+		t.Fatalf("StreamDownloadRange(truncated): %v", err)
+	}
+	_, readErr := io.ReadAll(truncStream)
+	truncStream.Close()
+	if !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		t.Fatalf("truncated range ReadAll error = %v, want ErrUnexpectedEOF", readErr)
+	}
+}
+
+func TestBoxVerificationModeAndTestProviderGuard(t *testing.T) {
+	srv := newFakeBoxServer("valid-token")
+	defer srv.close()
+
+	p := srv.provider()
+	defer p.Close()
+
+	if got := p.VerificationMode(); got != VerificationCryptographicHash {
+		t.Fatalf("VerificationMode() = %q, want %q", got, VerificationCryptographicHash)
+	}
+	if _, err := NewBoxTestProvider("", srv.server.URL+"/2.0", srv.server.URL+"/api/2.0", srv.server.Client()); !errors.Is(err, ErrAuth) {
+		t.Fatalf("NewBoxTestProvider(empty token) = %v, want ErrAuth", err)
+	}
+	for _, badBase := range []string{
+		"https://api.box.com/2.0",
+		"http://localhost.evil.test/2.0",
+		"http://127.0.0.1.evil.test/2.0",
+	} {
+		if _, err := NewBoxTestProvider("token", badBase, badBase, nil); err == nil {
+			t.Fatalf("NewBoxTestProvider(%q) succeeded, want rejection", badBase)
+		}
+	}
+
+	docsID := srv.addFolder("0", "10", "Docs")
+	blockedID := srv.addFileContent(docsID, "13", "blocked.pdf", []byte("blocked"))
+	srv.mu.Lock()
+	it := srv.items[blockedID]
+	it.DownloadBlocked = true
+	srv.items[blockedID] = it
+	srv.mu.Unlock()
+
+	if _, err := p.StreamDownload(context.Background(), "files", "/Docs/blocked.pdf"); !errors.Is(err, ErrPermission) {
+		t.Fatalf("StreamDownload(blocked) = %v, want ErrPermission", err)
 	}
 }

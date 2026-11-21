@@ -34,7 +34,10 @@ type BoxProvider struct {
 	pathCache   *boundedStringCache
 }
 
-var _ StorageProvider = (*BoxProvider)(nil)
+var (
+	_ StorageProvider = (*BoxProvider)(nil)
+	_ RangeDownloader = (*BoxProvider)(nil)
+)
 
 // NewBoxProvider constructs a BoxProvider using the given OAuth2 access token.
 func NewBoxProvider(token string) (*BoxProvider, error) {
@@ -51,6 +54,21 @@ func NewBoxProvider(token string) (*BoxProvider, error) {
 		ResponseHeaderTimeout: 2 * time.Minute,
 	}
 	return newBoxProvider(token, defaultBoxAPIBase, defaultBoxUploadBase, &http.Client{Transport: newUserAgentTransport(transport)}), nil
+}
+
+// NewBoxTestProvider constructs a BoxProvider targeting local loopback httptest
+// endpoints for cross-package integration tests. Non-local endpoints are rejected.
+func NewBoxTestProvider(token, apiBase, uploadBase string, client *http.Client) (*BoxProvider, error) {
+	if token == "" {
+		return nil, fmt.Errorf("box provider requires an oauth token: %w", ErrAuth)
+	}
+	if !isBoxLocalTestingURL(apiBase) || (uploadBase != "" && !isBoxLocalTestingURL(uploadBase)) {
+		return nil, fmt.Errorf("box test provider requires local loopback endpoints")
+	}
+	if client == nil {
+		client = &http.Client{}
+	}
+	return newBoxProvider(token, apiBase, uploadBase, client), nil
 }
 
 // newBoxProvider is package-private so tests can target a local httptest Box
@@ -126,6 +144,13 @@ func boxWait(ctx context.Context, delay time.Duration) error {
 }
 
 func (p *BoxProvider) do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	return p.doWithClient(ctx, p.httpClient, req)
+}
+
+func (p *BoxProvider) doWithClient(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
+	if client == nil {
+		return nil, fmt.Errorf("box client is not configured")
+	}
 	replayable := req.Body == nil || req.GetBody != nil
 	for attempt := 0; attempt <= boxMaxRetries; attempt++ {
 		if attempt > 0 && req.GetBody != nil {
@@ -135,7 +160,7 @@ func (p *BoxProvider) do(ctx context.Context, req *http.Request) (*http.Response
 			}
 			req.Body = body
 		}
-		resp, err := p.httpClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -254,14 +279,17 @@ func parseBoxTime(raw string) time.Time {
 	return time.Time{}
 }
 
+func boxItemModTime(item boxItem) time.Time {
+	if t := parseBoxTime(item.ContentModifiedAt); !t.IsZero() {
+		return t
+	}
+	return parseBoxTime(item.ModifiedAt)
+}
+
 func boxCloudResource(item boxItem, fullPath string) CloudResource {
 	hash := ""
 	if item.SHA1 != "" {
 		hash = "SHA1:" + strings.ToLower(item.SHA1)
-	}
-	modTime := parseBoxTime(item.ContentModifiedAt)
-	if modTime.IsZero() {
-		modTime = parseBoxTime(item.ModifiedAt)
 	}
 	return CloudResource{
 		Path:         fullPath,
@@ -269,7 +297,7 @@ func boxCloudResource(item boxItem, fullPath string) CloudResource {
 		Size:         item.Size,
 		IsDir:        item.Type == "folder",
 		Hash:         hash,
-		LastModified: modTime,
+		LastModified: boxItemModTime(item),
 	}
 }
 
@@ -424,6 +452,45 @@ func (p *BoxProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 	return resources, nil
 }
 
+func (p *BoxProvider) resolvePathItem(ctx context.Context, resourcePath string) (boxItem, string, error) {
+	cleanPath, err := boxCleanPath(resourcePath)
+	if err != nil {
+		return boxItem{}, "", err
+	}
+	if cleanPath == "/" {
+		return boxItem{ID: boxRootFolderID, Type: "folder", Name: "/"}, "/", nil
+	}
+	parentPath := path.Dir(cleanPath)
+	baseName := path.Base(cleanPath)
+	parentID, err := p.resolveFolderID(ctx, parentPath)
+	if err != nil {
+		return boxItem{}, "", err
+	}
+	item, err := p.findChildByName(ctx, parentID, baseName)
+	if err != nil {
+		return boxItem{}, "", err
+	}
+	canonicalPath := boxChildPath(parentPath, item.Name)
+	if item.Type == "folder" {
+		p.ensurePathCache().Set(strings.ToLower(canonicalPath), item.ID)
+	}
+	return item, canonicalPath, nil
+}
+
+func (p *BoxProvider) resolveFileID(ctx context.Context, filePath string) (string, error) {
+	item, canonicalPath, err := p.resolvePathItem(ctx, filePath)
+	if err != nil {
+		return "", err
+	}
+	if item.Type == "folder" {
+		return "", fmt.Errorf("box path %q is a folder: %w", canonicalPath, ErrNotFound)
+	}
+	if item.Type != "file" {
+		return "", fmt.Errorf("box path %q has non-file type %q: %w", canonicalPath, item.Type, ErrPermanentTransfer)
+	}
+	return item.ID, nil
+}
+
 func (p *BoxProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
 	if resourceType != "files" {
 		return CloudResource{}, ErrUnsupportedResourceType
@@ -440,25 +507,111 @@ func (p *BoxProvider) InspectResource(ctx context.Context, resourceType, resourc
 		return CloudResource{Path: "/", Name: "/", IsDir: true, LastModified: parseBoxTime(root.ModifiedAt)}, nil
 	}
 
-	parentPath := path.Dir(cleanPath)
-	baseName := path.Base(cleanPath)
-	parentID, err := p.resolveFolderID(ctx, parentPath)
+	item, canonicalPath, err := p.resolvePathItem(ctx, cleanPath)
 	if err != nil {
 		return CloudResource{}, err
-	}
-	item, err := p.findChildByName(ctx, parentID, baseName)
-	if err != nil {
-		return CloudResource{}, err
-	}
-	canonicalPath := boxChildPath(parentPath, item.Name)
-	if item.Type == "folder" {
-		p.ensurePathCache().Set(strings.ToLower(canonicalPath), item.ID)
 	}
 	return boxCloudResource(item, canonicalPath), nil
 }
 
+func isBoxLocalTestingURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if !strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+}
+
+func (p *BoxProvider) checkDownloadRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("box download: stopped after 10 redirects")
+	}
+	// Strip Box OAuth bearer credentials before following pre-signed redirects
+	// (e.g. dl.boxcloud.com) so tokens never leak to external download hosts.
+	req.Header.Del("Authorization")
+
+	if isBoxLocalTestingURL(p.apiBase) && isBoxLocalTestingURL(req.URL.String()) {
+		return nil
+	}
+	if !strings.EqualFold(req.URL.Scheme, "https") {
+		return fmt.Errorf("box redirect scheme %q rejected: HTTPS required", req.URL.Scheme)
+	}
+	if err := ValidateEgressHostContext(req.Context(), req.URL.Hostname()); err != nil {
+		return fmt.Errorf("box redirect host rejected: %w", err)
+	}
+	return nil
+}
+
+func (p *BoxProvider) downloadHTTPClient() *http.Client {
+	if p == nil || p.httpClient == nil {
+		return &http.Client{CheckRedirect: p.checkDownloadRedirect}
+	}
+	client := *p.httpClient
+	client.CheckRedirect = p.checkDownloadRedirect
+	return &client
+}
+
+func (p *BoxProvider) openDownloadResponse(ctx context.Context, fileID, rangeHeader string) (*http.Response, error) {
+	endpoint := p.apiBase + "/files/" + url.PathEscape(fileID) + "/content"
+	req, err := p.newRequest(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+	return p.doWithClient(ctx, p.downloadHTTPClient(), req)
+}
+
+func (p *BoxProvider) streamDownloadByID(ctx context.Context, fileID string) (io.ReadCloser, error) {
+	resp, err := p.openDownloadResponse(ctx, fileID, "")
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp.Body.Close()
+		return nil, boxAPIError("download", resp.StatusCode)
+	}
+	return resp.Body, nil
+}
+
 func (p *BoxProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
-	return nil, fmt.Errorf("box download not implemented: %w", ErrPermanentTransfer)
+	if resourceType != "files" {
+		return nil, ErrUnsupportedResourceType
+	}
+	fileID, err := p.resolveFileID(ctx, filePath)
+	if err != nil {
+		return nil, err
+	}
+	return p.streamDownloadByID(ctx, fileID)
+}
+
+// StreamDownloadRange implements RangeDownloader for BoxProvider.
+func (p *BoxProvider) StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	if resourceType != "files" {
+		return nil, ErrUnsupportedResourceType
+	}
+	rangeHeader, err := FormatByteRangeHeader(offset, length)
+	if err != nil {
+		return nil, err
+	}
+	fileID, err := p.resolveFileID(ctx, filePath)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := p.openDownloadResponse(ctx, fileID, rangeHeader)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
+		resp.Body.Close()
+		return nil, boxAPIError("range download", resp.StatusCode)
+	}
+	return ValidateHTTPRangeResponse(resp, offset, length)
 }
 
 func (p *BoxProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
