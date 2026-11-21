@@ -141,6 +141,8 @@
     "wizardStepTarget": "Step 2 of 3: Set target",
     "connectionsBadge": "Connections",
     "oauthConnect": "Connect with {{provider}}",
+    "oauthConnection": "{{provider}} Connection",
+    "oauthAccount": "{{provider}} Account",
     "providerName": {
       "google": "Google",
       "onedrive": "OneDrive",

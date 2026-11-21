@@ -732,6 +732,34 @@ describe('ConnectForm workflows', () => {
         target_url: 'https://api.hidrive.com',
       });
     });
+
+    it('renders matching provider-derived labels for Dropbox, Google, OneDrive, and HiDrive on source and target sides', async () => {
+      await renderForm({ oauthProviders: { google: true, onedrive: true, dropbox: true, hidrive: true } });
+
+      const specs = [
+        { radio: 'Dropbox', connectHeading: 'Dropbox Connection', button: 'Connect with Dropbox' },
+        { radio: 'Google', connectHeading: 'Google Connection', button: 'Connect with Google' },
+        { radio: 'OneDrive', connectHeading: 'OneDrive Connection', button: 'Connect with OneDrive' },
+        { radio: 'HiDrive', connectHeading: 'HiDrive Connection', button: 'Connect with HiDrive' },
+      ];
+
+      for (const spec of specs) {
+        await act(async () => { selectProviderRadio(container, spec.radio); });
+        expect(container.textContent).toContain(spec.connectHeading);
+        expect(findButton(container, spec.button)).toBeDefined();
+      }
+
+      // Advance to target step using Local source
+      await renderForm({ localStorageEnabled: true, oauthProviders: { google: true, onedrive: true, dropbox: true, hidrive: true } });
+      await act(async () => { selectProviderRadio(container, 'Local'); });
+      await clickVerifyAndAdvance();
+
+      for (const spec of specs) {
+        await act(async () => { selectProviderRadio(container, spec.radio); });
+        expect(container.textContent).toContain(spec.connectHeading);
+        expect(findButton(container, spec.button)).toBeDefined();
+      }
+    });
   });
 
   describe('saved profiles, credential isolation, and save-as-profile', () => {
