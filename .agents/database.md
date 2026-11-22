@@ -9,7 +9,7 @@
 ## Domain Stores
 - Backup, restore, and sync orchestration persist through `db.BackupStore`, `db.RestoreStore`, and `db.SyncStore` (`NewBackupStore(sqlDB)` etc. in `backend/internal/db/*_store.go`). They delegate to the package-level functions; fencing, ownership, and claim-epoch predicates stay in those functions, never in the store wrappers.
 - Add a new orchestration persistence call to the store interface and its delegating method in the same change, so consumers can fake it.
-- Connection profiles are the first table whose queries are unexported: outside `internal/db` they are reached only through `db.ProfileStore` (`NewProfileStore(sqlDB)`). Callers must run `VerifyProfileOwnership` before reading or mutating a profile by id; the other store calls are keyed by id alone. Migrate other tables the same way, one feature at a time (issue #83), and never call a migrated feature's queries from outside `db`.
+- Connection profiles and the API-facing migration queries are unexported: outside `internal/db` they are reached only through `db.ProfileStore` and `db.MigrationStore` (`NewProfileStore(sqlDB)`, `NewMigrationStore(sqlDB)`). Callers must verify ownership (`VerifyProfileOwnership`, `GetOwnedMigrationContext`) before mutating by id; other store calls are keyed by id alone. Worker-side migration functions stay exported until the worker packages migrate. Migrate other tables the same way, one feature at a time (issue #83), and never call a migrated feature's queries from outside `db`.
 - `BackupRepositoryCredentials` is shared by the backup and restore stores.
 - Naming note: "repository" in the backup domain means the pack repository, so the persistence modules are called stores.
 
