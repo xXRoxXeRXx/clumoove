@@ -316,7 +316,17 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col font-sans relative">
-      
+      <a
+        href="#main-content"
+        className="ui-skip-link"
+        onClick={(event) => {
+          event.preventDefault();
+          mainRef.current?.focus();
+        }}
+      >
+        {t('common.skipToContent')}
+      </a>
+
       <header className="sticky top-0 z-[var(--layer-sticky)] border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
           <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
           <div className="min-w-0">
@@ -429,7 +439,7 @@ function App() {
         </div>
       </header>
 
-      <main ref={mainRef} className={`mx-auto flex w-full max-w-6xl flex-grow flex-col px-4 py-6 sm:px-6 sm:py-8 ${step === 'login' || step === 'reset-password' || step === 'confirm-email' ? 'justify-center' : 'justify-start'}`}>
+      <main ref={mainRef} id="main-content" tabIndex={-1} className={`focus:outline-none mx-auto flex w-full max-w-6xl flex-grow flex-col px-4 py-6 sm:px-6 sm:py-8 ${step === 'login' || step === 'reset-password' || step === 'confirm-email' ? 'justify-center' : 'justify-start'}`}>
         <div key={`${step}:${migrationId}:${syncId}:${backupId}:${profileId}`} className="ui-view-enter w-full">
           {step === 'login' && (
             <AuthForm apiUrl={API_URL} onAuthSuccess={handleAuthSuccess} />

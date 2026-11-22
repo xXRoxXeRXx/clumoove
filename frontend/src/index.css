@@ -375,6 +375,22 @@ body {
   outline-offset: 2px;
 }
 
+.ui-skip-link {
+  background-color: var(--color-bg-inverse);
+  border-radius: var(--radius-md);
+  color: var(--color-text-inverse);
+  font-size: 0.875rem;
+  font-weight: 500;
+  left: 1rem;
+  padding: 0.5rem 0.75rem;
+  position: fixed;
+  top: 0.5rem;
+  transform: translateY(calc(-100% - 1rem));
+  z-index: var(--layer-toast);
+}
+
+.ui-skip-link:focus-visible { transform: none; }
+
 .ui-brand-logo {
   mask: url('/clumoove_logo.svg') center / contain no-repeat;
   -webkit-mask: url('/clumoove_logo.svg') center / contain no-repeat;
