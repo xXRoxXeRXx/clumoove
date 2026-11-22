@@ -632,3 +632,46 @@ func TestSyncStoreWorkerCallsKeepTheirGenerationFences(t *testing.T) {
 		requireSingleStatement(t, rec, "status = 'VERIFYING' AND verification_generation = $2", "sync-1", int64(8))
 	})
 }
+
+func TestSyncStoreAPICallsStayOwnerAndStateScoped(t *testing.T) {
+	t.Run("ownership check binds the job and the owner", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		rec.queryColumns = []string{"exists"}
+		rec.queryRow = []driver.Value{true}
+
+		owned, err := NewSyncStore(database).VerifySyncJobOwnershipContext(context.Background(), "sync-1", "user-1")
+		if err != nil {
+			t.Fatalf("VerifySyncJobOwnershipContext() error: %v", err)
+		}
+		if !owned {
+			t.Error("VerifySyncJobOwnershipContext() = false, want true")
+		}
+		requireSingleStatement(t, rec, "FROM sync_jobs WHERE id = $1 AND user_id = $2", "sync-1", "user-1")
+	})
+
+	t.Run("owned lookup binds both the job and the owner", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		_, _ = NewSyncStore(database).GetOwnedSyncJobContext(context.Background(), "sync-1", "user-1")
+		requireSingleStatement(t, rec, "user_id = $2", "sync-1", "user-1")
+	})
+
+	t.Run("failing a job only touches one that is still in flight", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		failed, err := NewSyncStore(database).FailSyncJobIfActive(context.Background(), "sync-1", "refresh failed")
+		if err != nil {
+			t.Fatalf("FailSyncJobIfActive() error: %v", err)
+		}
+		if !failed {
+			t.Error("FailSyncJobIfActive() = false, want true when a row changed")
+		}
+		requireSingleStatement(t, rec, "WHERE id = $2 AND status IN ('INDEXING', 'RUNNING', 'VERIFYING')", "refresh failed", "sync-1")
+	})
+
+	t.Run("threads update is keyed by job id", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewSyncStore(database).UpdateSyncJobThreads("sync-1", 6); err != nil {
+			t.Fatalf("UpdateSyncJobThreads() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "SET threads = $1", int64(6), "sync-1")
+	})
+}

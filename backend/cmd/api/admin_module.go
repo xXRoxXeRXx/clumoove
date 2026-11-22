@@ -16,6 +16,7 @@ import (
 type adminDependencies struct {
 	db             *sql.DB
 	migrations     db.MigrationStore
+	syncs          db.SyncStore
 	encryptionKey  string
 	cancelSyncJob  func(context.Context, string) error
 	getRedirectURI func(*http.Request) string
@@ -36,6 +37,9 @@ func newAdminAPI(deps adminDependencies) *adminAPI {
 	if deps.migrations == nil {
 		deps.migrations = migrationStoreFor(deps.db)
 	}
+	if deps.syncs == nil {
+		deps.syncs = syncStoreFor(deps.db)
+	}
 	if deps.getRedirectURI == nil {
 		deps.getRedirectURI = defaultRedirectURI
 	}
@@ -47,6 +51,7 @@ func (s *APIServer) administration() *adminAPI {
 		requestEnv:    s.requestEnv(),
 		db:            s.db,
 		migrations:    migrationStoreFor(s.db),
+		syncs:         syncStoreFor(s.db),
 		encryptionKey: s.encryptionKey,
 		cancelSyncJob: func(ctx context.Context, syncJobID string) error {
 			return s.syncPass.Cancel(ctx, syncJobID)

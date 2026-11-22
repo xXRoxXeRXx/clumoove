@@ -57,6 +57,34 @@ type SyncStore interface {
 	RenewSyncJobVerificationLease(ctx context.Context, syncJobID string, runGeneration, verificationGeneration int) (bool, error)
 	ReleaseSyncJobVerificationLease(ctx context.Context, syncJobID string, verificationGeneration int) error
 	GetUnverifiedCompletedSyncTasks(ctx context.Context, syncJobID string, generation int) ([]*Task, error)
+
+	// API side: creation, owner-scoped reads, listings, settings and
+	// reports. GetOwnedSyncJobContext returns sql.ErrNoRows for a missing or
+	// foreign job; VerifySyncJobOwnershipContext is the row-less variant.
+	// Every other call is keyed by job id alone, so callers resolve
+	// ownership first.
+	CreateSyncJobAndSchedule(job *SyncJob, schedule *Schedule) (string, error)
+	GetOwnedSyncJobContext(ctx context.Context, id, userID string) (*SyncJob, error)
+	VerifySyncJobOwnershipContext(ctx context.Context, syncJobID, userID string) (bool, error)
+	GetSyncJobsForUserContext(ctx context.Context, userID string) ([]SyncJob, error)
+	ListAllSyncJobsContext(ctx context.Context, p SyncListParams) ([]AdminSyncView, int, error)
+
+	// Settings and status. UpdateSyncJobStatus is an unfenced write for callers
+	// that already hold ownership. UpdateSyncJobScope checks the job status inside
+	// its transaction and FailSyncJobIfActive only fails a job that is still in
+	// flight; the other setting writes are keyed by id alone.
+	UpdateSyncJobStatus(id, status string, errMsg *string) error
+	FailSyncJobIfActive(ctx context.Context, id, errMsg string) (bool, error)
+	UpdateSyncJobBandwidthLimit(id string, limitMbps int) error
+	UpdateSyncJobThreads(id string, threads int) error
+	UpdateSyncJobInterval(syncJobID string, intervalMinutes int) error
+	UpdateSyncJobScope(syncJobID string, selectedPaths []string, targetDir, conflictStrategy, direction string, deletePropagation *bool) error
+
+	// Reports, live file lists and the credential-expiry scan.
+	GetFailedSyncTasksForReport(syncJobID string, generation int) ([]Task, error)
+	GetActiveSyncTaskPaths(ctx context.Context, syncJobID string) ([]string, error)
+	GetVerifyingSyncTaskPaths(ctx context.Context, syncJobID string) ([]string, error)
+	GetExpiringOAuthSyncJobs() ([]ExpiringOAuthSyncJob, error)
 }
 
 type postgresSyncStore struct{ db *sql.DB }
@@ -75,7 +103,7 @@ func (s postgresSyncStore) GetSyncJob(id string) (*SyncJob, error) {
 }
 
 func (s postgresSyncStore) GetSyncJobContext(ctx context.Context, id string) (*SyncJob, error) {
-	return GetSyncJobContext(ctx, s.db, id)
+	return getSyncJobContext(ctx, s.db, id)
 }
 
 func (s postgresSyncStore) GetSyncJobOwnerID(syncJobID string) (string, error) {
@@ -186,6 +214,66 @@ func (s postgresSyncStore) GetUnverifiedCompletedSyncTasks(ctx context.Context, 
 	return getUnverifiedCompletedSyncTasks(s.db, ctx, syncJobID, generation)
 }
 
+func (s postgresSyncStore) CreateSyncJobAndSchedule(job *SyncJob, schedule *Schedule) (string, error) {
+	return createSyncJobAndSchedule(s.db, job, schedule)
+}
+
+func (s postgresSyncStore) GetOwnedSyncJobContext(ctx context.Context, id, userID string) (*SyncJob, error) {
+	return getOwnedSyncJobContext(ctx, s.db, id, userID)
+}
+
+func (s postgresSyncStore) VerifySyncJobOwnershipContext(ctx context.Context, syncJobID, userID string) (bool, error) {
+	return verifySyncJobOwnershipContext(ctx, s.db, syncJobID, userID)
+}
+
+func (s postgresSyncStore) GetSyncJobsForUserContext(ctx context.Context, userID string) ([]SyncJob, error) {
+	return getSyncJobsForUserContext(ctx, s.db, userID)
+}
+
+func (s postgresSyncStore) ListAllSyncJobsContext(ctx context.Context, p SyncListParams) ([]AdminSyncView, int, error) {
+	return listAllSyncJobsContext(ctx, s.db, p)
+}
+
+func (s postgresSyncStore) UpdateSyncJobStatus(id, status string, errMsg *string) error {
+	return updateSyncJobStatus(s.db, id, status, errMsg)
+}
+
+func (s postgresSyncStore) FailSyncJobIfActive(ctx context.Context, id, errMsg string) (bool, error) {
+	return failSyncJobIfActive(ctx, s.db, id, errMsg)
+}
+
+func (s postgresSyncStore) UpdateSyncJobBandwidthLimit(id string, limitMbps int) error {
+	return updateSyncJobBandwidthLimit(s.db, id, limitMbps)
+}
+
+func (s postgresSyncStore) UpdateSyncJobThreads(id string, threads int) error {
+	return updateSyncJobThreads(s.db, id, threads)
+}
+
+func (s postgresSyncStore) UpdateSyncJobInterval(syncJobID string, intervalMinutes int) error {
+	return updateSyncJobInterval(s.db, syncJobID, intervalMinutes)
+}
+
+func (s postgresSyncStore) UpdateSyncJobScope(syncJobID string, selectedPaths []string, targetDir, conflictStrategy, direction string, deletePropagation *bool) error {
+	return updateSyncJobScope(s.db, syncJobID, selectedPaths, targetDir, conflictStrategy, direction, deletePropagation)
+}
+
+func (s postgresSyncStore) GetFailedSyncTasksForReport(syncJobID string, generation int) ([]Task, error) {
+	return getFailedSyncTasksForReport(s.db, syncJobID, generation)
+}
+
+func (s postgresSyncStore) GetActiveSyncTaskPaths(ctx context.Context, syncJobID string) ([]string, error) {
+	return getActiveSyncTaskPaths(s.db, ctx, syncJobID)
+}
+
+func (s postgresSyncStore) GetVerifyingSyncTaskPaths(ctx context.Context, syncJobID string) ([]string, error) {
+	return getVerifyingSyncTaskPaths(s.db, ctx, syncJobID)
+}
+
+func (s postgresSyncStore) GetExpiringOAuthSyncJobs() ([]ExpiringOAuthSyncJob, error) {
+	return getExpiringOAuthSyncJobs(s.db)
+}
+
 func (s postgresSyncStore) SyncJobTokenSink(id, role string) OAuthReauthSink {
-	return NewSyncJobTokenSink(s.db, id, role)
+	return newSyncJobTokenSink(s.db, id, role)
 }

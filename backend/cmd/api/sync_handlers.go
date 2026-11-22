@@ -118,7 +118,7 @@ func openSyncJobEndpoint[T any](api *syncAPI, ctx context.Context, id, userID, r
 					return token, nil
 				},
 				OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
-					latestJob, lerr := db.GetSyncJobContext(lockCtx, api.db, id)
+					latestJob, lerr := api.syncs.GetSyncJobContext(lockCtx, id)
 					if lerr != nil {
 						return "", false, "", nil
 					}
@@ -148,10 +148,10 @@ func openSyncJobEndpoint[T any](api *syncAPI, ctx context.Context, id, userID, r
 					}
 					return "", false, "", nil
 				},
-				Sink:            db.NewSyncJobTokenSink(api.db, id, role),
+				Sink:            api.syncs.SyncJobTokenSink(id, role),
 				ExpectedRefresh: func() string { return expectedRefreshEnc },
 				AdoptSuperseded: refresher.AdoptDecryptedWinner(func(persistCtx context.Context) (string, error) {
-					latestJob, lerr := db.GetSyncJobContext(persistCtx, api.db, id)
+					latestJob, lerr := api.syncs.GetSyncJobContext(persistCtx, id)
 					if lerr != nil {
 						return "", lerr
 					}
@@ -235,7 +235,7 @@ func (api *syncAPI) handleListSyncs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs, err := db.GetSyncJobsForUserContext(r.Context(), api.db, userID)
+	jobs, err := api.syncs.GetSyncJobsForUserContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "Error fetching sync jobs for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -393,7 +393,7 @@ func (api *syncAPI) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		NextRunAt:      sql.NullTime{Time: nextRun, Valid: true},
 		IsActive:       true,
 	}
-	jobID, err := db.CreateSyncJobAndSchedule(api.db, job, sched)
+	jobID, err := api.syncs.CreateSyncJobAndSchedule(job, sched)
 	if err != nil {
 		api.logf(r, "Failed to create sync job and schedule: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -431,11 +431,11 @@ func (api *syncAPI) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if job.Status == "RUNNING" || job.Status == "INDEXING" {
-		if activeFiles, err := db.GetActiveSyncTaskPaths(api.db, r.Context(), id); err == nil {
+		if activeFiles, err := api.syncs.GetActiveSyncTaskPaths(r.Context(), id); err == nil {
 			job.ActiveFiles = activeFiles
 		}
 	} else if job.Status == "VERIFYING" {
-		if verifyingFiles, err := db.GetVerifyingSyncTaskPaths(api.db, r.Context(), id); err == nil {
+		if verifyingFiles, err := api.syncs.GetVerifyingSyncTaskPaths(r.Context(), id); err == nil {
 			job.ActiveFiles = verifyingFiles
 		}
 	}
@@ -598,7 +598,7 @@ func (api *syncAPI) handleDownloadSyncReport(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	failedTasks, err := db.GetFailedSyncTasksForReport(api.db, id, job.RunGeneration)
+	failedTasks, err := api.syncs.GetFailedSyncTasksForReport(id, job.RunGeneration)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -704,7 +704,7 @@ func (api *syncAPI) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		case <-ticker.C:
-			jobs, err := db.GetSyncJobsForUserContext(r.Context(), api.db, userID)
+			jobs, err := api.syncs.GetSyncJobsForUserContext(r.Context(), userID)
 			if err != nil {
 				continue
 			}
@@ -713,11 +713,11 @@ func (api *syncAPI) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 			}
 			for i := range jobs {
 				if jobs[i].Status == "RUNNING" || jobs[i].Status == "INDEXING" {
-					if activeFiles, err := db.GetActiveSyncTaskPaths(api.db, r.Context(), jobs[i].ID); err == nil {
+					if activeFiles, err := api.syncs.GetActiveSyncTaskPaths(r.Context(), jobs[i].ID); err == nil {
 						jobs[i].ActiveFiles = activeFiles
 					}
 				} else if jobs[i].Status == "VERIFYING" {
-					if verifyingFiles, err := db.GetVerifyingSyncTaskPaths(api.db, r.Context(), jobs[i].ID); err == nil {
+					if verifyingFiles, err := api.syncs.GetVerifyingSyncTaskPaths(r.Context(), jobs[i].ID); err == nil {
 						jobs[i].ActiveFiles = verifyingFiles
 					}
 				}
@@ -799,7 +799,7 @@ func (api *syncAPI) handleSetSyncThreads(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := db.UpdateSyncJobThreads(api.db, id, threads); err != nil {
+	if err := api.syncs.UpdateSyncJobThreads(id, threads); err != nil {
 		api.logf(r, "Error updating threads for sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -838,7 +838,7 @@ func (api *syncAPI) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := db.UpdateSyncJobBandwidthLimit(api.db, id, req.LimitMbps); err != nil {
+	if err := api.syncs.UpdateSyncJobBandwidthLimit(id, req.LimitMbps); err != nil {
 		api.logf(r, "Error updating bandwidth limit for sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -905,7 +905,7 @@ func (api *syncAPI) handleUpdateSyncSchedule(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := db.UpdateSyncJobInterval(api.db, id, req.IntervalMinutes); err != nil {
+	if err := api.syncs.UpdateSyncJobInterval(id, req.IntervalMinutes); err != nil {
 		api.logf(r, "Error updating sync schedule for job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -1120,7 +1120,7 @@ func (api *syncAPI) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request
 		req.TargetDir = "/"
 	}
 
-	if err := db.UpdateSyncJobScope(api.db, id, req.SelectedPaths, req.TargetDir, req.ConflictStrategy, req.Direction, req.DeletePropagation); err != nil {
+	if err := api.syncs.UpdateSyncJobScope(id, req.SelectedPaths, req.TargetDir, req.ConflictStrategy, req.Direction, req.DeletePropagation); err != nil {
 		if errors.Is(err, db.ErrSyncInvalidState) {
 			writeError(w, http.StatusConflict, ErrSyncInvalidState)
 			return

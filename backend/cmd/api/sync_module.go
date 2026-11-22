@@ -18,6 +18,7 @@ import (
 // stream-pool, and background concerns are injected at module construction.
 type syncDependencies struct {
 	db                     *sql.DB
+	syncs                  db.SyncStore
 	tasks                  db.TaskStore
 	encryptionKey          string
 	backgroundCtx          context.Context
@@ -51,6 +52,9 @@ func newSyncAPI(deps syncDependencies) *syncAPI {
 	if deps.oauthLocker == nil && deps.profiles != nil {
 		deps.oauthLocker = deps.profiles.oauthLocker
 	}
+	if deps.syncs == nil {
+		deps.syncs = syncStoreFor(deps.db)
+	}
 	if deps.tasks == nil {
 		deps.tasks = taskStoreFor(deps.db)
 	}
@@ -64,6 +68,15 @@ func newSyncAPI(deps syncDependencies) *syncAPI {
 		deps.streamPollInterval = 3 * time.Second
 	}
 	return &syncAPI{syncDependencies: deps}
+}
+
+// syncStoreFor returns the PostgreSQL sync store, or nil when a module is built
+// without a database handle (route-only tests).
+func syncStoreFor(database *sql.DB) db.SyncStore {
+	if database == nil {
+		return nil
+	}
+	return db.NewSyncStore(database)
 }
 
 // taskStoreFor returns the PostgreSQL task store, or nil when a module is built
@@ -85,6 +98,7 @@ func (s *APIServer) syncs() *syncAPI {
 	return newSyncAPI(syncDependencies{
 		requestEnv:             s.requestEnv(),
 		db:                     s.db,
+		syncs:                  syncStoreFor(s.db),
 		tasks:                  taskStoreFor(s.db),
 		encryptionKey:          s.encryptionKey,
 		backgroundCtx:          s.backgroundCtx,
@@ -156,7 +170,7 @@ func (api *syncAPI) releaseSyncStream(userID string) {
 // The returned row is a snapshot: it must not be used to guard a state
 // transition. Status guards belong in the UPDATE statement itself.
 func (api *syncAPI) requireOwnedSync(w http.ResponseWriter, r *http.Request, id, userID string) (*db.SyncJob, bool) {
-	job, err := db.GetOwnedSyncJobContext(r.Context(), api.db, id, userID)
+	job, err := api.syncs.GetOwnedSyncJobContext(r.Context(), id, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, ErrSyncNotFound)
@@ -171,7 +185,7 @@ func (api *syncAPI) requireOwnedSync(w http.ResponseWriter, r *http.Request, id,
 // requireSyncOwnership is the existence-only variant of requireOwnedSync for
 // handlers that never read the row. It shares the same error contract.
 func (api *syncAPI) requireSyncOwnership(w http.ResponseWriter, r *http.Request, id, userID string) bool {
-	owned, err := db.VerifySyncJobOwnershipContext(r.Context(), api.db, id, userID)
+	owned, err := api.syncs.VerifySyncJobOwnershipContext(r.Context(), id, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return false

@@ -39,7 +39,7 @@ var supersededPersistencePaths = map[string]string{
 	"SetRestoreItemResolvedTargetPathContext": "unused",
 	// sync
 	"CreateSyncJob":             "unused",
-	"GetSyncJobsForUser":        "GetSyncJobsForUserContext",
+	"GetSyncJobsForUser":        "SyncStore.GetSyncJobsForUserContext",
 	"GetSyncErrors":             "TaskStore.GetSyncErrorsContext",
 	"PauseSyncJob":              "SyncStore.PauseSyncJobAndDeactivateSchedules",
 	"ResumeSyncJob":             "SyncStore.ResumeSyncJobAndReactivateSchedules",
@@ -48,7 +48,7 @@ var supersededPersistencePaths = map[string]string{
 	"FinalizeSyncJobPass":       "SyncStore.FinalizeSyncJobPassWithStates",
 	"FinalizeEmptySyncJobPass":  "SyncStore.FinalizeEmptySyncJobPassWithStates",
 	"ListActiveSyncJobs":        "unused",
-	"VerifySyncJobOwnership":    "VerifySyncJobOwnershipContext",
+	"VerifySyncJobOwnership":    "SyncStore.VerifySyncJobOwnershipContext",
 	"IncrementSyncJobProgress":  "unused",
 	"UpsertSyncState":           "unused",
 	"GetSyncState":              "unused",

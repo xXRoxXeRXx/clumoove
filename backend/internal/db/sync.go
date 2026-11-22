@@ -165,10 +165,10 @@ func insertSyncJob(ctx context.Context, database queryExecerContext, s *SyncJob)
 	).Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt)
 }
 
-// CreateSyncJobAndSchedule creates a sync job and its periodic schedule atomically.
+// createSyncJobAndSchedule creates a sync job and its periodic schedule atomically.
 // A sync job without a schedule cannot run automatically, so neither record may be
 // committed unless both inserts succeed.
-func CreateSyncJobAndSchedule(db *sql.DB, job *SyncJob, schedule *Schedule) (string, error) {
+func createSyncJobAndSchedule(db *sql.DB, job *SyncJob, schedule *Schedule) (string, error) {
 	resetSyncJobAndSchedule(job, schedule)
 	tx, err := db.Begin()
 	if err != nil {
@@ -210,18 +210,18 @@ func resetSyncJobAndSchedule(job *SyncJob, schedule *Schedule) {
 
 // getSyncJob retrieves a sync job by ID
 func getSyncJob(db *sql.DB, id string) (*SyncJob, error) {
-	return GetSyncJobContext(context.Background(), db, id)
+	return getSyncJobContext(context.Background(), db, id)
 }
 
-// GetSyncJobContext retrieves a sync job while honoring caller cancellation.
-func GetSyncJobContext(ctx context.Context, db *sql.DB, id string) (*SyncJob, error) {
+// getSyncJobContext retrieves a sync job while honoring caller cancellation.
+func getSyncJobContext(ctx context.Context, db *sql.DB, id string) (*SyncJob, error) {
 	return querySyncJob(ctx, db, `WHERE id = $1`, id)
 }
 
-// GetOwnedSyncJobContext loads a sync job only if it belongs to userID, in a
+// getOwnedSyncJobContext loads a sync job only if it belongs to userID, in a
 // single owner-scoped query. A missing job and one owned by another user are
 // indistinguishable: both return sql.ErrNoRows.
-func GetOwnedSyncJobContext(ctx context.Context, db *sql.DB, id, userID string) (*SyncJob, error) {
+func getOwnedSyncJobContext(ctx context.Context, db *sql.DB, id, userID string) (*SyncJob, error) {
 	return querySyncJob(ctx, db, `WHERE id = $1 AND user_id = $2`, id, userID)
 }
 
@@ -272,8 +272,8 @@ func getSyncJobOwnerID(database queryExecerContext, syncJobID string) (string, e
 	return owner.String, nil
 }
 
-// GetSyncJobsForUserContext lists sync jobs while honoring caller cancellation.
-func GetSyncJobsForUserContext(ctx context.Context, db *sql.DB, userID string) ([]SyncJob, error) {
+// getSyncJobsForUserContext lists sync jobs while honoring caller cancellation.
+func getSyncJobsForUserContext(ctx context.Context, db *sql.DB, userID string) ([]SyncJob, error) {
 	query := `
 		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_provider,
 		       target_url, target_username, target_provider, direction, conflict_strategy,
@@ -311,8 +311,8 @@ func GetSyncJobsForUserContext(ctx context.Context, db *sql.DB, userID string) (
 	return list, rows.Err()
 }
 
-// UpdateSyncJobStatus updates the status of a sync job
-func UpdateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) error {
+// updateSyncJobStatus updates the status of a sync job
+func updateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) error {
 	var errVal sql.NullString
 	if errMsg != nil {
 		errVal = sql.NullString{String: *errMsg, Valid: true}
@@ -329,10 +329,10 @@ func UpdateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) e
 	return err
 }
 
-// FailSyncJobIfActive marks a sync job FAILED only while a pass is in flight.
+// failSyncJobIfActive marks a sync job FAILED only while a pass is in flight.
 // The source-state predicate is part of the UPDATE, so a job the user already
 // paused or that already finished is never overwritten by a late failure.
-func FailSyncJobIfActive(ctx context.Context, database *sql.DB, id string, errMsg string) (bool, error) {
+func failSyncJobIfActive(ctx context.Context, database *sql.DB, id string, errMsg string) (bool, error) {
 	result, err := database.ExecContext(ctx, `
 		UPDATE sync_jobs
 		SET status = 'FAILED', verification_lease_until = NULL, error_message = $1, updated_at = CURRENT_TIMESTAMP
@@ -356,9 +356,9 @@ func updateSyncJobStatusForGeneration(db *sql.DB, id string, generation int, sta
 	return err
 }
 
-// UpdateSyncJobBandwidthLimit persists a sync job's transfer limit in Mbps.
+// updateSyncJobBandwidthLimit persists a sync job's transfer limit in Mbps.
 // A zero value means unlimited.
-func UpdateSyncJobBandwidthLimit(db *sql.DB, id string, limitMbps int) error {
+func updateSyncJobBandwidthLimit(db *sql.DB, id string, limitMbps int) error {
 	result, err := db.Exec(`
 		UPDATE sync_jobs
 		SET bandwidth_limit_mbps = $1, updated_at = CURRENT_TIMESTAMP
@@ -561,8 +561,8 @@ type ExpiringOAuthSyncJob struct {
 	RefreshTokenEncrypted string
 }
 
-// GetExpiringOAuthSyncJobs returns active sync jobs whose OAuth access tokens expire within 15 minutes.
-func GetExpiringOAuthSyncJobs(db *sql.DB) ([]ExpiringOAuthSyncJob, error) {
+// getExpiringOAuthSyncJobs returns active sync jobs whose OAuth access tokens expire within 15 minutes.
+func getExpiringOAuthSyncJobs(db *sql.DB) ([]ExpiringOAuthSyncJob, error) {
 	threshold := time.Now().Add(15 * time.Minute)
 	query := `
 		SELECT id, 'source' AS role, source_provider, source_refresh_token_encrypted
@@ -804,8 +804,8 @@ func failSyncJobPass(db *sql.DB, id string, generation int, errMsg string) (bool
 	return true, nil
 }
 
-// VerifySyncJobOwnershipContext verifies ownership while honoring caller cancellation.
-func VerifySyncJobOwnershipContext(ctx context.Context, db *sql.DB, syncJobID, userID string) (bool, error) {
+// verifySyncJobOwnershipContext verifies ownership while honoring caller cancellation.
+func verifySyncJobOwnershipContext(ctx context.Context, db *sql.DB, syncJobID, userID string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM sync_jobs WHERE id = $1 AND user_id = $2)`
 	var exists bool
 	err := db.QueryRowContext(ctx, query, syncJobID, userID).Scan(&exists)
@@ -879,8 +879,8 @@ func reconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) e
 	return tx.Commit()
 }
 
-// GetFailedSyncTasksForReport retrieves failed tasks for one sync pass.
-func GetFailedSyncTasksForReport(db *sql.DB, syncJobID string, generation int) ([]Task, error) {
+// getFailedSyncTasksForReport retrieves failed tasks for one sync pass.
+func getFailedSyncTasksForReport(db *sql.DB, syncJobID string, generation int) ([]Task, error) {
 	query := `
 		SELECT id, sync_job_id, file_path, file_size, source_hash, worker_hash, target_hash,
 		       status, error_message, attempts, next_retry_at, created_at, updated_at, resource_type, metadata
@@ -1151,15 +1151,15 @@ func bulkUpsertSyncStatesTx(tx *sql.Tx, upserts []*SyncState, deletes []SyncStat
 	return nil
 }
 
-// UpdateSyncJobThreads updates the thread count for a sync job.
-func UpdateSyncJobThreads(db *sql.DB, id string, threads int) error {
+// updateSyncJobThreads updates the thread count for a sync job.
+func updateSyncJobThreads(db *sql.DB, id string, threads int) error {
 	query := `UPDATE sync_jobs SET threads = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
 	_, err := db.Exec(query, threads, id)
 	return err
 }
 
-// GetActiveSyncTaskPaths returns the file_paths of all tasks currently in RUNNING state for the given sync job.
-func GetActiveSyncTaskPaths(db *sql.DB, ctx context.Context, syncJobID string) ([]string, error) {
+// getActiveSyncTaskPaths returns the file_paths of all tasks currently in RUNNING state for the given sync job.
+func getActiveSyncTaskPaths(db *sql.DB, ctx context.Context, syncJobID string) ([]string, error) {
 	query := `SELECT file_path, metadata FROM tasks WHERE sync_job_id = $1 AND status = 'RUNNING' ORDER BY updated_at DESC`
 	rows, err := db.QueryContext(ctx, query, syncJobID)
 	if err != nil {
@@ -1182,8 +1182,8 @@ func GetActiveSyncTaskPaths(db *sql.DB, ctx context.Context, syncJobID string) (
 	return paths, nil
 }
 
-// GetVerifyingSyncTaskPaths returns paths of completed sync tasks awaiting verification.
-func GetVerifyingSyncTaskPaths(db *sql.DB, ctx context.Context, syncJobID string) ([]string, error) {
+// getVerifyingSyncTaskPaths returns paths of completed sync tasks awaiting verification.
+func getVerifyingSyncTaskPaths(db *sql.DB, ctx context.Context, syncJobID string) ([]string, error) {
 	query := `SELECT file_path, metadata FROM tasks WHERE sync_job_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE ORDER BY updated_at ASC LIMIT 4`
 	rows, err := db.QueryContext(ctx, query, syncJobID)
 	if err != nil {
@@ -1218,8 +1218,8 @@ type SyncListParams struct {
 	Limit int
 }
 
-// ListAllSyncJobsContext lists sync jobs for administration while honoring caller cancellation.
-func ListAllSyncJobsContext(ctx context.Context, database *sql.DB, p SyncListParams) ([]AdminSyncView, int, error) {
+// listAllSyncJobsContext lists sync jobs for administration while honoring caller cancellation.
+func listAllSyncJobsContext(ctx context.Context, database *sql.DB, p SyncListParams) ([]AdminSyncView, int, error) {
 	var total int
 	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_jobs`).Scan(&total); err != nil {
 		return nil, 0, err
@@ -1304,8 +1304,8 @@ func deleteSyncStateForJob(exec queryExecerContext, syncJobID string) error {
 	return err
 }
 
-// UpdateSyncJobScope updates selected_paths, target_dir, conflict_strategy, direction, and delete_propagation for a sync job and clears its sync_state in a single transaction.
-func UpdateSyncJobScope(db *sql.DB, syncJobID string, selectedPaths []string, targetDir string, conflictStrategy string, direction string, deletePropagation *bool) error {
+// updateSyncJobScope updates selected_paths, target_dir, conflict_strategy, direction, and delete_propagation for a sync job and clears its sync_state in a single transaction.
+func updateSyncJobScope(db *sql.DB, syncJobID string, selectedPaths []string, targetDir string, conflictStrategy string, direction string, deletePropagation *bool) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -1371,8 +1371,8 @@ func UpdateSyncJobScope(db *sql.DB, syncJobID string, selectedPaths []string, ta
 	return tx.Commit()
 }
 
-// UpdateSyncJobInterval updates interval_minutes on sync_jobs and recalculates next_run_at on the linked schedule.
-func UpdateSyncJobInterval(db *sql.DB, syncJobID string, intervalMinutes int) error {
+// updateSyncJobInterval updates interval_minutes on sync_jobs and recalculates next_run_at on the linked schedule.
+func updateSyncJobInterval(db *sql.DB, syncJobID string, intervalMinutes int) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err

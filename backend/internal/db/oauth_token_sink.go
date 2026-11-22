@@ -141,8 +141,8 @@ func newMigrationTokenSink(database *sql.DB, migrationID, role string) OAuthReau
 	return newRoleReauthSink(database, "migrations", migrationID, role)
 }
 
-// NewSyncJobTokenSink persists the source or target OAuth tokens of a sync job.
-func NewSyncJobTokenSink(database *sql.DB, syncJobID, role string) OAuthReauthSink {
+// newSyncJobTokenSink persists the source or target OAuth tokens of a sync job.
+func newSyncJobTokenSink(database *sql.DB, syncJobID, role string) OAuthReauthSink {
 	return newRoleReauthSink(database, "sync_jobs", syncJobID, role)
 }
 

@@ -198,9 +198,9 @@ func TestFailSyncJobIfActive(t *testing.T) {
 				t.Fatal(err)
 			}
 			errMsg := "OAuth token refresh failed (dropbox)"
-			applied, err := FailSyncJobIfActive(context.Background(), database, syncJobID, errMsg)
+			applied, err := failSyncJobIfActive(context.Background(), database, syncJobID, errMsg)
 			if err != nil {
-				t.Fatalf("FailSyncJobIfActive() error = %v", err)
+				t.Fatalf("failSyncJobIfActive() error = %v", err)
 			}
 			if applied != tc.wantApplied {
 				t.Fatalf("applied = %v, want %v", applied, tc.wantApplied)

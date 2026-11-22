@@ -169,7 +169,7 @@ func TestConditionalOAuthTokenUpdate(t *testing.T) {
 
 	// 1. Updating with matching expected refresh token should succeed and overwrite tokens
 	laterExp := now.Add(2 * time.Hour)
-	err = NewSyncJobTokenSink(database, "sync-1", "source").Persist(context.Background(), EncryptedOAuthTokens{Access: "new-pass-1", Refresh: "new-refresh-1", ExpiresAt: laterExp}, "old-refresh")
+	err = newSyncJobTokenSink(database, "sync-1", "source").Persist(context.Background(), EncryptedOAuthTokens{Access: "new-pass-1", Refresh: "new-refresh-1", ExpiresAt: laterExp}, "old-refresh")
 	if err != nil {
 		t.Fatalf("sync job token sink Persist failed: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestConditionalOAuthTokenUpdate(t *testing.T) {
 
 	// 2. Updating with mismatched expected refresh token (concurrent update occurred) must return ErrOAuthTokenConflict
 	earlierExp := now.Add(30 * time.Minute)
-	err = NewSyncJobTokenSink(database, "sync-1", "source").Persist(context.Background(), EncryptedOAuthTokens{Access: "stale-pass", Refresh: "stale-refresh", ExpiresAt: earlierExp}, "stale-old-token")
+	err = newSyncJobTokenSink(database, "sync-1", "source").Persist(context.Background(), EncryptedOAuthTokens{Access: "stale-pass", Refresh: "stale-refresh", ExpiresAt: earlierExp}, "stale-old-token")
 	if err == nil {
 		t.Fatalf("expected ErrOAuthTokenConflict when expectedRefreshTokenEncrypted mismatches, got nil")
 	}
@@ -248,9 +248,9 @@ func TestGetExpiringOAuthSyncJobs(t *testing.T) {
 		t.Fatalf("seed sync jobs: %v", err)
 	}
 
-	expiring, err := GetExpiringOAuthSyncJobs(database)
+	expiring, err := getExpiringOAuthSyncJobs(database)
 	if err != nil {
-		t.Fatalf("GetExpiringOAuthSyncJobs failed: %v", err)
+		t.Fatalf("getExpiringOAuthSyncJobs failed: %v", err)
 	}
 
 	if len(expiring) != 1 {

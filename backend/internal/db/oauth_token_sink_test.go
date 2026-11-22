@@ -120,7 +120,7 @@ func tokenSinkOwners() []tokenSinkOwner {
 			case "migrations":
 				owner.sink = func(database *sql.DB) OAuthTokenSink { return newMigrationTokenSink(database, "owner-1", role) }
 			case "sync_jobs":
-				owner.sink = func(database *sql.DB) OAuthTokenSink { return NewSyncJobTokenSink(database, "owner-1", role) }
+				owner.sink = func(database *sql.DB) OAuthTokenSink { return newSyncJobTokenSink(database, "owner-1", role) }
 			default:
 				owner.sink = func(database *sql.DB) OAuthTokenSink { return NewBackupJobTokenSink(database, "owner-1", role) }
 			}
@@ -253,7 +253,7 @@ func TestOAuthTokenSinkRejectsInvalidRole(t *testing.T) {
 	var database *sql.DB
 	for name, sink := range map[string]OAuthTokenSink{
 		"migration":  newMigrationTokenSink(database, "owner-1", "sideways"),
-		"sync job":   NewSyncJobTokenSink(database, "owner-1", "sideways"),
+		"sync job":   newSyncJobTokenSink(database, "owner-1", "sideways"),
 		"backup job": NewBackupJobTokenSink(database, "owner-1", "sideways"),
 	} {
 		err := sink.Persist(context.Background(), rotated("a", "r"), "old-refresh")
@@ -310,7 +310,7 @@ func TestOAuthTokenSinksHonorContext(t *testing.T) {
 	cancel()
 	for name, sink := range map[string]OAuthTokenSink{
 		"migration":          newMigrationTokenSink(database, "id", "source"),
-		"sync job":           NewSyncJobTokenSink(database, "id", "target"),
+		"sync job":           newSyncJobTokenSink(database, "id", "target"),
 		"backup job":         NewBackupJobTokenSink(database, "id", "source"),
 		"backup repository":  NewBackupRepositoryTokenSink(database, "id"),
 		"restore run":        NewRestoreRunTokenSink(database, "id"),
@@ -322,7 +322,7 @@ func TestOAuthTokenSinksHonorContext(t *testing.T) {
 	}
 	for name, sink := range map[string]OAuthReauthSink{
 		"migration": newMigrationTokenSink(database, "id", "source"),
-		"sync job":  NewSyncJobTokenSink(database, "id", "target"),
+		"sync job":  newSyncJobTokenSink(database, "id", "target"),
 	} {
 		if err := sink.Reauthorize(ctx, rotated("a", "r")); !errors.Is(err, context.Canceled) {
 			t.Errorf("%s: Reauthorize(canceled ctx) error = %v, want context.Canceled", name, err)

@@ -39,6 +39,7 @@ func newOAuthRotationCache() *oauthRotationCache {
 type ownedProfileAccess struct {
 	db              *sql.DB
 	store           db.ProfileStore
+	syncs           db.SyncStore
 	encryptionKey   string
 	providerFactory profileProviderFactory
 	refreshOAuth    func(context.Context, string, string) (*oauth.TokenResponse, error)
@@ -69,6 +70,7 @@ func newOwnedProfileAccess(database *sql.DB, encryptionKey string, factory profi
 	return &ownedProfileAccess{
 		db:              database,
 		store:           profileStoreFor(database),
+		syncs:           syncStoreFor(database),
 		encryptionKey:   encryptionKey,
 		providerFactory: factory,
 		oauthRotations:  rotations,
@@ -83,6 +85,18 @@ func profileStoreFor(database *sql.DB) db.ProfileStore {
 		return nil
 	}
 	return db.NewProfileStore(database)
+}
+
+// syncStore returns the injected sync store, falling back to one built on the
+// database handle for callers that assemble the struct by hand.
+func (a *ownedProfileAccess) syncStore() db.SyncStore {
+	if a == nil {
+		return nil
+	}
+	if a.syncs != nil {
+		return a.syncs
+	}
+	return syncStoreFor(a.db)
 }
 
 // profileStore returns the injected store, falling back to one built on the
@@ -220,7 +234,7 @@ func (c *ownedProfileConnection) SyncJobOAuthTokens(syncJobID, role, expectedRef
 		expiresAt = c.access.currentTime().Add(time.Hour)
 	}
 	rotated := db.EncryptedOAuthTokens{Access: accessEncrypted, Refresh: refreshEncrypted, ExpiresAt: expiresAt}
-	if err := db.NewSyncJobTokenSink(c.access.db, syncJobID, role).Persist(context.Background(), rotated, expectedRefreshEncrypted); err != nil && !errors.Is(err, db.ErrOAuthTokenConflict) {
+	if err := c.access.syncStore().SyncJobTokenSink(syncJobID, role).Persist(context.Background(), rotated, expectedRefreshEncrypted); err != nil && !errors.Is(err, db.ErrOAuthTokenConflict) {
 		return err
 	}
 	return nil

@@ -111,7 +111,7 @@ migrations** so the schema self-heals on first boot:
 - **Default-credential rejection:** if the DB host is publicly reachable and the DSN still contains
   `postgres:postgres@`, startup fails (local/private hosts are exempted).
 
-Key query helpers include `CreateMigration`, `GetMigration`, `TransitionMigration` (guarded pause/cancel/fail transitions),
+Key persistence operations (several are now reached only through the feature stores described below) include `CreateMigration`, `GetMigration`, `TransitionMigration` (guarded pause/cancel/fail transitions),
 `UpdateMigrationStatusIfIndexing`, `IncrementMigrationProgress` (transitions to `COMPLETED`/`FAILED`),
 `CreateSyncJobAndSchedule`, `GetSyncJob`, `ListSyncJobs`,
 `CreateBackupJob`, `GetBackupJob`, `ListBackupJobs`, `CreateBackupRun`, `GetBackupRun`, `ListBackupSnapshots`,
@@ -121,7 +121,7 @@ Key query helpers include `CreateMigration`, `GetMigration`, `TransitionMigratio
 `VerifyMigrationOwnership`, `VerifySyncOwnership`, `VerifyBackupOwnership`, `IsSetupRequired`, `ListUsers`, `GetGlobalStats`,
 `ListAllMigrations`, `ListAllSyncs`, `ListAuditLog`, and paginated admin views.
 
-Persistence is moving behind feature stores one feature at a time (issue #83). Connection profiles, the migrations table, task rows and the worker side of sync jobs are done: outside `internal/db` they are reached only through `db.ProfileStore`, `db.MigrationStore`, `db.TaskStore` and `db.SyncStore` (`NewProfileStore`, `NewMigrationStore`, `NewTaskStore`, `NewSyncStore`), so in-package tests of the scheduler, indexer, processor and worker can swap in a fake. Still outside the stores: the sync-job functions the API calls directly (`GetSyncJobContext`, `UpdateSyncJobStatus`, `UpdateSyncJobThreads`, the sync report and admin listings and similar), inline SQL in the scheduler, worker maintenance, the queue dequeue and the sync engine, and the migration notification outbox.
+Persistence is moving behind feature stores one feature at a time (issue #83). Connection profiles, the migrations table, task rows and sync jobs are done: outside `internal/db` they are reached only through `db.ProfileStore`, `db.MigrationStore`, `db.TaskStore` and `db.SyncStore` (`NewProfileStore`, `NewMigrationStore`, `NewTaskStore`, `NewSyncStore`), so API handlers take a store through their dependencies and in-package tests of the scheduler, indexer, processor and worker can swap in a fake. Still outside the stores: inline SQL on `sync_jobs`, `migrations` and `tasks` in the scheduler, worker maintenance and verification, the queue dequeue and the sync engine, the other tables (users, schedules, settings, audit, notifications, OAuth providers, backup and restore API reads), and the migration notification outbox.
 
 ### `StringArray` & JSONB
 

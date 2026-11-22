@@ -417,7 +417,7 @@ func (api *adminAPI) handleAdminListSyncs(w http.ResponseWriter, r *http.Request
 		limit = 20
 	}
 
-	syncs, total, err := db.ListAllSyncJobsContext(r.Context(), api.db, db.SyncListParams{Page: page, Limit: limit})
+	syncs, total, err := api.syncs.ListAllSyncJobsContext(r.Context(), db.SyncListParams{Page: page, Limit: limit})
 	if err != nil {
 		api.logf(r, "Admin list syncs: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

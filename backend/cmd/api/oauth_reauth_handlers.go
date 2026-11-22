@@ -127,12 +127,12 @@ func (api *syncAPI) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
-	err = persistReauthTokens(context.WithoutCancel(r.Context()), db.NewSyncJobTokenSink(api.db, id, req.Role), db.EncryptedOAuthTokens{Access: access, Refresh: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}, expected)
+	err = persistReauthTokens(context.WithoutCancel(r.Context()), api.syncs.SyncJobTokenSink(id, req.Role), db.EncryptedOAuthTokens{Access: access, Refresh: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}, expected)
 	if err != nil {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
-	if err = db.UpdateSyncJobStatus(api.db, id, "IDLE", nil); err != nil {
+	if err = api.syncs.UpdateSyncJobStatus(id, "IDLE", nil); err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

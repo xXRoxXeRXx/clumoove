@@ -207,7 +207,7 @@ func TestSyncPassGenerationFencesVerificationReconciliationAndReporting(t *testi
 		t.Fatalf("reconciled current pass = status=%s result=%#v total=%d processed=%d failed=%d; want RUNNING/NULL/0/1/1", status, result, total, processed, failed)
 	}
 
-	reportTasks, err := GetFailedSyncTasksForReport(database, "generation-fence", 2)
+	reportTasks, err := getFailedSyncTasksForReport(database, "generation-fence", 2)
 	if err != nil || len(reportTasks) != 1 || reportTasks[0].ID != "current-failed" {
 		t.Fatalf("current pass report = %#v, %v; want only current-failed", reportTasks, err)
 	}

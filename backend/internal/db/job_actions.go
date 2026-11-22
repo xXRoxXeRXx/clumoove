@@ -62,7 +62,7 @@ var syncActionSources = actionSources{
 	JobActionStart:  {"IDLE", "FAILED"},
 	JobActionPause:  {"IDLE", "INDEXING", "RUNNING", "VERIFYING"},
 	JobActionResume: {"PAUSED"},
-	// UpdateSyncJobScope binds this set into its SQL guard. PAUSED_CONNECTION_LOSS
+	// updateSyncJobScope binds this set into its SQL guard. PAUSED_CONNECTION_LOSS
 	// is excluded for the same reason it has no pause or resume.
 	JobActionEditScope: {"IDLE", "PAUSED", "FAILED"},
 }
