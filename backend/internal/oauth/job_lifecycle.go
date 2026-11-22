@@ -115,9 +115,7 @@ func (r *JobTokenRefresher) refreshLifecycle(ctx context.Context, state jobOAuth
 		RefreshToken: refresh,
 		Label:        fmt.Sprintf("%s %s %s", state.OAuthWorkKind(), state.OAuthJobID(), role),
 		Refresh: func(refreshCtx context.Context, provider, tok string) (*TokenResponse, error) {
-			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
-			defer cancel()
-			resp, rerr := r.refreshToken(tCtx, provider, tok)
+			resp, rerr := r.refreshToken(refreshCtx, provider, tok)
 			if rerr != nil {
 				return nil, fmt.Errorf("refresh OAuth token for %s: %w", role, rerr)
 			}

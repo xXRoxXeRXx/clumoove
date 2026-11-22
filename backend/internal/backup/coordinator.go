@@ -1092,9 +1092,7 @@ func (c *Coordinator) ensureFreshOAuthToken(ctx context.Context, job *db.BackupJ
 		RefreshToken: refresh,
 		Label:        "backup job " + job.ID + " " + role,
 		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
-			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
-			defer cancel()
-			token, rerr := oauth.RefreshToken(tCtx, prov, tok)
+			token, rerr := oauth.RefreshToken(refreshCtx, prov, tok)
 			if rerr != nil {
 				return nil, fmt.Errorf("refresh backup OAuth token: %w", rerr)
 			}

@@ -326,3 +326,25 @@ func TestRefresherAdoptsDecryptedWinnerThroughTheHook(t *testing.T) {
 		t.Fatalf("Refresh() = %+v, want the decrypted winner adopted", res)
 	}
 }
+
+// Call sites no longer wrap the provider call in their own timeout, so the
+// refresher must hand the callback a context that is already bounded.
+func TestRefresherBoundsTheProviderCall(t *testing.T) {
+	refresher := newTestRefresher(t, nil, time.Now())
+
+	var deadline time.Time
+	var hasDeadline bool
+	_, err := refresher.Refresh(context.Background(), OwnerRefresh{
+		UserID: "u1", Provider: "google", RefreshToken: "T1",
+		Refresh: func(ctx context.Context, _, _ string) (*TokenResponse, error) {
+			deadline, hasDeadline = ctx.Deadline()
+			return &TokenResponse{AccessToken: "a", RefreshToken: "r", ExpiresIn: 3600}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if !hasDeadline || time.Until(deadline) > tokenRefreshTimeout {
+		t.Fatalf("provider call deadline = %v (set=%v), want within %v", deadline, hasDeadline, tokenRefreshTimeout)
+	}
+}

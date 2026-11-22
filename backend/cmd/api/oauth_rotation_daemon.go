@@ -267,11 +267,6 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthJob(ctx context.Context, logger
 		Provider:     spec.provider,
 		RefreshToken: refreshToken,
 		Label:        spec.jobType + " " + spec.role,
-		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
-			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
-			defer cancel()
-			return oauth.RefreshToken(tCtx, prov, tok)
-		},
 		OnLocked: func(lockCtx context.Context, target string) (string, bool, string, error) {
 			_, latestRefreshEnc, latestExpiresAt, latestActive, _, lerr := spec.loadSnapshot(lockCtx)
 			if lerr != nil {
@@ -302,13 +297,15 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthJob(ctx context.Context, logger
 		},
 	})
 	if err != nil {
+		// One event per failure, named for the stage that failed.
+		event := "oauth_rotation_refresh_failed"
 		switch {
 		case errors.Is(err, oauth.ErrRotatedTokenEncrypt):
-			logger.ErrorContext(ctx, "oauth_rotation_encrypt_failed", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			event = "oauth_rotation_encrypt_failed"
 		case errors.Is(err, oauth.ErrRotatedTokenPersist):
-			logger.ErrorContext(ctx, "oauth_rotation_persist_failed", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), slog.String("role", spec.role), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			event = "oauth_rotation_persist_failed"
 		}
-		logger.ErrorContext(ctx, "oauth_rotation_refresh_failed", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), slog.String("role", spec.role), slog.String("provider", spec.provider), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		logger.ErrorContext(ctx, event, slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), slog.String("role", spec.role), slog.String("provider", spec.provider), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		if errors.Is(err, oauth.ErrRefreshTokenInvalid) && spec.markFailed != nil {
 			if _, freshRefreshEnc, _, _, _, ferr := spec.loadSnapshot(ctx); ferr == nil && isOAuthRotationAlreadyResolved(currentRefreshEnc, freshRefreshEnc) {
 				logger.InfoContext(ctx, "oauth_rotation_already_resolved", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), slog.String("role", spec.role))

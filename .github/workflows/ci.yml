@@ -14,6 +14,21 @@ jobs:
   backend:
     name: Backend (Go)
     runs-on: ubuntu-latest
+    # PostgreSQL for the OAuth token sink contract only; `go test ./...` below
+    # runs without DATABASE_URL, so the other DB-backed tests keep skipping.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: clumoove_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -26,6 +41,14 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Test
         run: go test ./...
+      - name: OAuth token sink contract (PostgreSQL)
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/clumoove_test?sslmode=disable
+        run: |
+          set -o pipefail
+          go test ./internal/db -run 'TestOAuthTokenSinkContract|TestOAuthReauthSinkReplacesTokensUnconditionally' -count=1 -v | tee sink-contract.log
+          # The contract skips without a database; a skip here would be a silent pass.
+          if grep -q -- '--- SKIP' sink-contract.log; then echo "sink contract was skipped" >&2; exit 1; fi
       - name: Check table-scoped canonical schema DDL coverage
         run: go test ./internal/db -run TestCanonicalSchemaColumnsAppearInInitDB -count=1
       - name: Storage race check
