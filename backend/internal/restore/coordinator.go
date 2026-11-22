@@ -265,7 +265,7 @@ func (c *Coordinator) previewTargetWithItems(ctx context.Context, preview *db.Re
 		paths = append(paths, targetPath)
 	}
 	sort.Strings(paths)
-	_, metadataSupported := target.(storage.MetadataApplier)
+	metadataSupported := storage.SupportsMetadata(target)
 	for _, targetPath := range paths {
 		item := expected[targetPath]
 		if item.IsDir {
@@ -832,18 +832,13 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 	throttledUpload := throttle.NewUploadThrottledReader(ctx, reader, throttler)
 	var uploadErr error
 	if !targetProvider.SupportsAtomicRename() {
-		if uploader, ok := targetProvider.(storage.TransferUploader); ok {
-			var opts storage.UploadOptions
-			opts.Overwrite = overwriteExisting
-			if item.SourceMTime.Valid {
-				opts.Metadata.ModifiedTime = item.SourceMTime.Time
-			}
-			if item.SizeBytes > storage.DefaultChunkedUploadThreshold {
-				_, uploadErr = uploader.StreamUploadChunkedWithOptions(ctx, "files", uploadPath, throttledUpload, item.SizeBytes, nil, opts)
-			} else {
-				_, uploadErr = uploader.StreamUploadWithOptions(ctx, "files", uploadPath, throttledUpload, item.SizeBytes, opts)
-			}
-		} else {
+		var opts storage.UploadOptions
+		opts.Overwrite = overwriteExisting
+		if item.SourceMTime.Valid {
+			opts.Metadata.ModifiedTime = item.SourceMTime.Time
+		}
+		_, uploadErr = storage.StreamUploadWithOptions(ctx, targetProvider, "files", uploadPath, throttledUpload, item.SizeBytes, nil, opts)
+		if errors.Is(uploadErr, storage.ErrCapabilityUnsupported) {
 			uploadErr = targetProvider.StreamUpload(ctx, "files", uploadPath, throttledUpload, item.SizeBytes)
 		}
 	} else {
@@ -912,11 +907,10 @@ func (c *Coordinator) applyItemMetadata(ctx context.Context, target any, item *d
 	if item.SourceMTime.Valid {
 		metadata.ModifiedTime = item.SourceMTime.Time
 	}
-	applier, ok := target.(storage.MetadataApplier)
-	if !ok {
-		return c.store.WarnRestoreItemContext(ctx, item.Lease(), item.RestoreRunID, "RESTORE_METADATA_UNSUPPORTED")
-	}
-	if err := applier.ApplyMetadata(ctx, "files", item.TargetPath, metadata); err != nil {
+	if err := storage.ApplyMetadata(ctx, target, "files", item.TargetPath, metadata); err != nil {
+		if errors.Is(err, storage.ErrCapabilityUnsupported) {
+			return c.store.WarnRestoreItemContext(ctx, item.Lease(), item.RestoreRunID, "RESTORE_METADATA_UNSUPPORTED")
+		}
 		return c.store.WarnRestoreItemContext(ctx, item.Lease(), item.RestoreRunID, "RESTORE_METADATA_FAILED")
 	}
 	return nil

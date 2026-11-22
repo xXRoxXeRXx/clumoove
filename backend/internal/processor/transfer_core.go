@@ -133,11 +133,9 @@ func transferTargetHasher(provider string) (string, hash.Hash) {
 }
 
 func streamUploadWithOptions(ctx context.Context, target uploadTarget, resourceType, targetPath string, reader io.Reader, fileSize int64, progress chan<- int64, opts storage.UploadOptions) (storage.UploadResult, error) {
-	if uploader, ok := target.(storage.TransferUploader); ok {
-		if fileSize > chunkedUploadThreshold {
-			return uploader.StreamUploadChunkedWithOptions(ctx, resourceType, targetPath, reader, fileSize, progress, opts)
-		}
-		return uploader.StreamUploadWithOptions(ctx, resourceType, targetPath, reader, fileSize, opts)
+	result, err := storage.StreamUploadWithOptions(ctx, target, resourceType, targetPath, reader, fileSize, progress, opts)
+	if !errors.Is(err, storage.ErrCapabilityUnsupported) {
+		return result, err
 	}
 	if fileSize > chunkedUploadThreshold {
 		return storage.UploadResult{}, target.StreamUploadChunked(ctx, resourceType, targetPath, reader, fileSize, progress)
@@ -241,9 +239,8 @@ func applyTransferMetadata(req transferRequest) (fatal bool, err error) {
 	if req.Metadata == nil {
 		return false, nil
 	}
-	applier, ok := req.Target.(storage.MetadataApplier)
 	meta := req.UploadOptions.Metadata
-	if !ok || (meta.ModifiedTime.IsZero() && meta.Description == "") {
+	if meta.ModifiedTime.IsZero() && meta.Description == "" {
 		return false, nil
 	}
 	finalPath := req.VerificationPath
@@ -256,7 +253,10 @@ func applyTransferMetadata(req transferRequest) (fatal bool, err error) {
 		ctx, cancel = context.WithTimeout(ctx, req.Metadata.Timeout)
 		defer cancel()
 	}
-	err = applier.ApplyMetadata(ctx, req.ResourceType, finalPath, meta)
+	err = storage.ApplyMetadata(ctx, req.Target, req.ResourceType, finalPath, meta)
+	if errors.Is(err, storage.ErrCapabilityUnsupported) {
+		return false, nil
+	}
 	return err != nil && req.Metadata.FailOn != nil && req.Metadata.FailOn(err), err
 }
 
