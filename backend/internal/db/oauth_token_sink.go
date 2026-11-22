@@ -179,8 +179,8 @@ func NewRestoreRunTokenSink(database *sql.DB, restoreRunID string) OAuthTokenSin
 			AND status IN ('QUEUED','PLANNING','RUNNING','VERIFYING','CANCELLING')`}
 }
 
-// NewConnectionProfileTokenSink persists the OAuth tokens of a saved connection profile.
-func NewConnectionProfileTokenSink(database *sql.DB, profileID string) OAuthTokenSink {
+// newConnectionProfileTokenSink persists the OAuth tokens of a saved connection profile.
+func newConnectionProfileTokenSink(database *sql.DB, profileID string) OAuthTokenSink {
 	return casTokenSink{db: database, id: profileID, persistQuery: `
 		UPDATE connection_profiles
 		SET password_encrypted = $1,

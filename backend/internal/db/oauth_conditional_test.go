@@ -217,7 +217,7 @@ func TestConditionalConnectionProfileOAuthTokenUpdate(t *testing.T) {
 	}
 
 	expiresAt := now.Add(time.Hour)
-	if err := NewConnectionProfileTokenSink(database, "onedrive-profile").Persist(context.Background(), EncryptedOAuthTokens{Access: "new-access", Refresh: "new-refresh", ExpiresAt: expiresAt}, "old-refresh"); err != nil {
+	if err := newConnectionProfileTokenSink(database, "onedrive-profile").Persist(context.Background(), EncryptedOAuthTokens{Access: "new-access", Refresh: "new-refresh", ExpiresAt: expiresAt}, "old-refresh"); err != nil {
 		t.Fatal(err)
 	}
 	var access, refresh string
@@ -227,7 +227,7 @@ func TestConditionalConnectionProfileOAuthTokenUpdate(t *testing.T) {
 	if access != "new-access" || refresh != "new-refresh" {
 		t.Fatalf("persisted tokens = %q, %q; want new values", access, refresh)
 	}
-	if err := NewConnectionProfileTokenSink(database, "onedrive-profile").Persist(context.Background(), EncryptedOAuthTokens{Access: "stale-access", Refresh: "stale-refresh", ExpiresAt: expiresAt}, "old-refresh"); err != ErrOAuthTokenConflict {
+	if err := newConnectionProfileTokenSink(database, "onedrive-profile").Persist(context.Background(), EncryptedOAuthTokens{Access: "stale-access", Refresh: "stale-refresh", ExpiresAt: expiresAt}, "old-refresh"); err != ErrOAuthTokenConflict {
 		t.Fatalf("stale update error = %v, want ErrOAuthTokenConflict", err)
 	}
 }

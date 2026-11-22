@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"net/http"
+
+	"backend/internal/db"
 )
 
 // profileDependencies contains only the infrastructure required by the
@@ -10,6 +12,8 @@ import (
 // by the root server and are injected as narrow functions.
 type profileDependencies struct {
 	db            *sql.DB
+	// store defaults to the PostgreSQL store on db; tests inject a fake.
+	store         db.ProfileStore
 	encryptionKey string
 	profiles      *ownedProfileAccess
 	rateLimiter   rateLimiter
@@ -22,8 +26,12 @@ type profileAPI struct {
 
 func newProfileAPI(deps profileDependencies) *profileAPI {
 	deps.requestEnv = deps.requestEnv.withDefaults("profile")
+	if deps.store == nil {
+		deps.store = profileStoreFor(deps.db)
+	}
 	if deps.profiles == nil {
 		deps.profiles = newOwnedProfileAccess(deps.db, deps.encryptionKey, nil, nil, nil)
+		deps.profiles.store = deps.store
 	}
 	return &profileAPI{profileDependencies: deps}
 }
@@ -32,6 +40,7 @@ func (s *APIServer) connectionProfiles() *profileAPI {
 	return newProfileAPI(profileDependencies{
 		requestEnv:    s.requestEnv(),
 		db:            s.db,
+		store:         profileStoreFor(s.db),
 		encryptionKey: s.encryptionKey,
 		profiles:      s.profiles(),
 		rateLimiter:   s.rateLimiter,

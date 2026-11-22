@@ -113,13 +113,15 @@ migrations** so the schema self-heals on first boot:
 
 Key query helpers include `CreateMigration`, `GetMigration`, `TransitionMigration` (guarded pause/cancel/fail transitions),
 `UpdateMigrationStatusIfIndexing`, `IncrementMigrationProgress` (transitions to `COMPLETED`/`FAILED`),
-`CreateSyncJobAndSchedule`, `GetSyncJob`, `ListSyncJobs`, `CreateConnectionProfile`, `ListConnectionProfiles`,
+`CreateSyncJobAndSchedule`, `GetSyncJob`, `ListSyncJobs`,
 `CreateBackupJob`, `GetBackupJob`, `ListBackupJobs`, `CreateBackupRun`, `GetBackupRun`, `ListBackupSnapshots`,
 `CreateRestorePreview`, `GetRestorePreview`, `CreateRestoreRun`, `GetRestoreRun`,
 `CreateTask`, `GetTask`, `UpdateTaskStatus`, `ResetMigrationForReindex` (TOCTOU-safe),
 `RecordIndexingErrors`, `WriteAuditLog`, `GetDueSchedules`, `UpdateNextRunAt`, `DeactivateSchedule`,
 `VerifyMigrationOwnership`, `VerifySyncOwnership`, `VerifyBackupOwnership`, `IsSetupRequired`, `ListUsers`, `GetGlobalStats`,
 `ListAllMigrations`, `ListAllSyncs`, `ListAuditLog`, and paginated admin views.
+
+Connection profiles are the first table whose queries are unexported: outside `internal/db` they are reached only through `db.ProfileStore` (`NewProfileStore`), so API tests can inject a fake. The other tables migrate feature by feature (issue #83).
 
 ### `StringArray` & JSONB
 

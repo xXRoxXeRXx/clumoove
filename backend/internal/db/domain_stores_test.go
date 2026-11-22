@@ -195,6 +195,7 @@ func TestDomainStoreConstructorsRejectNilDatabase(t *testing.T) {
 		"backup":  func() { NewBackupStore(nil) },
 		"restore": func() { NewRestoreStore(nil) },
 		"sync":    func() { NewSyncStore(nil) },
+		"profile": func() { NewProfileStore(nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			defer func() {
@@ -376,4 +377,60 @@ func TestFencedWritesRejectAZeroLeaseWithoutTouchingTheDatabase(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestProfileStoreDelegatesToProfilePersistence(t *testing.T) {
+	t.Run("ownership check is scoped to the profile and the user", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		rec.queryColumns = []string{"exists"}
+		rec.queryRow = []driver.Value{true}
+		var store ProfileStore = NewProfileStore(database)
+
+		owned, err := store.VerifyProfileOwnership(context.Background(), "profile-1", "user-1")
+		if err != nil {
+			t.Fatalf("VerifyProfileOwnership() error: %v", err)
+		}
+		if !owned {
+			t.Error("VerifyProfileOwnership() = false, want true")
+		}
+		requireSingleStatement(t, rec, "FROM connection_profiles WHERE id = $1 AND user_id = $2", "profile-1", "user-1")
+	})
+
+	t.Run("delete is keyed by profile id", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewProfileStore(database).DeleteConnectionProfile(context.Background(), "profile-1"); err != nil {
+			t.Fatalf("DeleteConnectionProfile() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "DELETE FROM connection_profiles WHERE id = $1", "profile-1")
+	})
+
+	t.Run("update with no fields issues no statement", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewProfileStore(database).UpdateConnectionProfile(context.Background(), "profile-1", UpdateConnectionProfileInput{}); err != nil {
+			t.Fatalf("UpdateConnectionProfile() error: %v", err)
+		}
+		if len(rec.statements) != 0 {
+			t.Fatalf("recorded %d statements, want 0", len(rec.statements))
+		}
+	})
+
+	t.Run("update binds the profile id first", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		name := "renamed"
+		if err := NewProfileStore(database).UpdateConnectionProfile(context.Background(), "profile-1", UpdateConnectionProfileInput{Name: &name}); err != nil {
+			t.Fatalf("UpdateConnectionProfile() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "UPDATE connection_profiles SET name = $2 WHERE id = $1", "profile-1", "renamed")
+	})
+
+	t.Run("token sink is guarded by the previously read refresh token", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		err := NewProfileStore(database).TokenSink("profile-1").Persist(context.Background(), EncryptedOAuthTokens{Access: "a", Refresh: "r"}, "old-refresh")
+		if err != nil {
+			t.Fatalf("Persist() error: %v", err)
+		}
+		if len(rec.statements) != 1 || !strings.Contains(rec.statements[0].query, "UPDATE connection_profiles") || !strings.Contains(rec.statements[0].query, "refresh_token_encrypted = $5") {
+			t.Fatalf("statements = %+v", rec.statements)
+		}
+	})
 }

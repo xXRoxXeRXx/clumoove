@@ -38,6 +38,7 @@ func newOAuthRotationCache() *oauthRotationCache {
 // feature handlers interact with owned profiles only at intent level.
 type ownedProfileAccess struct {
 	db              *sql.DB
+	store           db.ProfileStore
 	encryptionKey   string
 	providerFactory profileProviderFactory
 	refreshOAuth    func(context.Context, string, string) (*oauth.TokenResponse, error)
@@ -67,11 +68,33 @@ func (c *sharedRotationCache) get() *oauth.RotationCache {
 func newOwnedProfileAccess(database *sql.DB, encryptionKey string, factory profileProviderFactory, locker oauth.TokenLocker, rotations *oauth.RotationCache) *ownedProfileAccess {
 	return &ownedProfileAccess{
 		db:              database,
+		store:           profileStoreFor(database),
 		encryptionKey:   encryptionKey,
 		providerFactory: factory,
 		oauthRotations:  rotations,
 		oauthLocker:     locker,
 	}
+}
+
+// profileStoreFor returns the PostgreSQL profile store, or nil when the module is
+// built without a database handle (route-only tests).
+func profileStoreFor(database *sql.DB) db.ProfileStore {
+	if database == nil {
+		return nil
+	}
+	return db.NewProfileStore(database)
+}
+
+// profileStore returns the injected store, falling back to one built on the
+// database handle for callers that assemble the struct by hand.
+func (a *ownedProfileAccess) profileStore() db.ProfileStore {
+	if a == nil {
+		return nil
+	}
+	if a.store != nil {
+		return a.store
+	}
+	return profileStoreFor(a.db)
 }
 
 // profiles composes the shared profile access component from gateway state.
@@ -98,10 +121,14 @@ func (a *ownedProfileAccess) refreshToken(ctx context.Context, provider, refresh
 }
 
 func (a *ownedProfileAccess) VerifyOwned(ctx context.Context, userID, profileID string) error {
-	if userID == "" || profileID == "" || a == nil || a.db == nil {
+	if userID == "" || profileID == "" {
 		return errProfileNotFound
 	}
-	owned, err := db.VerifyProfileOwnershipContext(ctx, a.db, profileID, userID)
+	store := a.profileStore()
+	if store == nil {
+		return errProfileNotFound
+	}
+	owned, err := store.VerifyProfileOwnership(ctx, profileID, userID)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errProfileOwnership, err)
 	}
@@ -115,7 +142,7 @@ func (a *ownedProfileAccess) LoadOwned(ctx context.Context, userID, profileID st
 	if err := a.VerifyOwned(ctx, userID, profileID); err != nil {
 		return nil, err
 	}
-	profile, err := db.GetConnectionProfile(ctx, a.db, profileID)
+	profile, err := a.profileStore().GetConnectionProfile(ctx, profileID)
 	if err != nil {
 		return nil, errProfileNotFound
 	}
@@ -497,7 +524,7 @@ func (a *ownedProfileAccess) persistMegaSession(ctx context.Context, profile *db
 	if err != nil {
 		return err
 	}
-	return db.UpdateConnectionProfileMegaSession(ctx, a.db, profile.ID, sessionIDEncrypted, masterKeyEncrypted, profile.MegaSessionIDEncrypted)
+	return a.profileStore().UpdateConnectionProfileMegaSession(ctx, profile.ID, sessionIDEncrypted, masterKeyEncrypted, profile.MegaSessionIDEncrypted)
 }
 
 func (a *ownedProfileAccess) encryptMegaSession(session storage.MegaSession) (string, string, error) {
@@ -675,7 +702,7 @@ func (a *ownedProfileAccess) resolveAndRefreshOAuth(
 			isProfileToken = suppliedRefresh == "" || (storedRefresh != "" && (subtle.ConstantTimeCompare([]byte(suppliedRefresh), []byte(storedRefresh)) == 1 || subtle.ConstantTimeCompare([]byte(target), []byte(storedRefresh)) == 1))
 			return "", false, "", nil
 		},
-		Sink:            db.NewConnectionProfileTokenSink(a.db, profile.ID),
+		Sink:            a.profileStore().TokenSink(profile.ID),
 		ExpectedRefresh: func() string { return profile.RefreshTokenEncrypted },
 		SkipPersist:     func() bool { return !isProfileToken },
 		OnPersisted: func(tokens db.EncryptedOAuthTokens) {
@@ -718,10 +745,11 @@ func (a *ownedProfileAccess) reloadProfileOAuthState(
 	storedRefresh *string,
 	secretFailurePolicy profileSecretFailurePolicy,
 ) (bool, error) {
-	if a.db == nil || profile == nil || profile.ID == "" {
+	store := a.profileStore()
+	if store == nil || profile == nil || profile.ID == "" {
 		return false, nil
 	}
-	latest, err := db.GetConnectionProfile(ctx, a.db, profile.ID)
+	latest, err := store.GetConnectionProfile(ctx, profile.ID)
 	if err != nil || latest == nil || latest.UserID != profile.UserID {
 		return false, nil
 	}

@@ -29,7 +29,7 @@ func (api *profileAPI) handleListProfiles(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	profiles, err := db.GetConnectionProfiles(r.Context(), api.db, userID)
+	profiles, err := api.store.ListConnectionProfiles(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "handleListProfiles: query failed for user %s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -109,7 +109,7 @@ func (api *profileAPI) handleCreateProfile(w http.ResponseWriter, r *http.Reques
 		p.RefreshTokenEncrypted = ""
 	}
 
-	id, err := db.CreateConnectionProfile(api.db, p)
+	id, err := api.store.CreateConnectionProfile(r.Context(), p)
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			writeError(w, http.StatusConflict, ErrProfileNameExists)
@@ -237,7 +237,7 @@ func (api *profileAPI) handleUpdateConnectionProfile(w http.ResponseWriter, r *h
 		return
 	}
 
-	if err := db.UpdateConnectionProfile(api.db, id, in); err != nil {
+	if err := api.store.UpdateConnectionProfile(r.Context(), id, in); err != nil {
 		if db.IsUniqueViolation(err) {
 			writeError(w, http.StatusConflict, ErrProfileNameExists)
 			return
@@ -264,7 +264,7 @@ func (api *profileAPI) handleDeleteProfile(w http.ResponseWriter, r *http.Reques
 		api.writeOwnedProfileAccessError(w, r, "handleDeleteProfile", err)
 		return
 	}
-	if err := db.DeleteConnectionProfile(api.db, id); err != nil {
+	if err := api.store.DeleteConnectionProfile(r.Context(), id); err != nil {
 		api.logf(r, "handleDeleteProfile: delete failed for profile %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return

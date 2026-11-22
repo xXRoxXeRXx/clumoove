@@ -160,7 +160,7 @@ func tokenSinkOwners() []tokenSinkOwner {
 					t.Fatalf("seed connection_profiles: %v", err)
 				}
 			},
-			sink: func(database *sql.DB) OAuthTokenSink { return NewConnectionProfileTokenSink(database, "owner-1") },
+			sink: func(database *sql.DB) OAuthTokenSink { return newConnectionProfileTokenSink(database, "owner-1") },
 			read: func(t *testing.T, database *sql.DB) (string, string) {
 				t.Helper()
 				var access, refresh string
@@ -314,7 +314,7 @@ func TestOAuthTokenSinksHonorContext(t *testing.T) {
 		"backup job":         NewBackupJobTokenSink(database, "id", "source"),
 		"backup repository":  NewBackupRepositoryTokenSink(database, "id"),
 		"restore run":        NewRestoreRunTokenSink(database, "id"),
-		"connection profile": NewConnectionProfileTokenSink(database, "id"),
+		"connection profile": newConnectionProfileTokenSink(database, "id"),
 	} {
 		if err := sink.Persist(ctx, rotated("a", "r"), "old-refresh"); !errors.Is(err, context.Canceled) {
 			t.Errorf("%s: Persist(canceled ctx) error = %v, want context.Canceled", name, err)
