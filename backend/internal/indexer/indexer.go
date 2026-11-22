@@ -906,11 +906,11 @@ func resolveIndexedFileSize(ctx context.Context, provider any, resourceType, res
 	if resource.Metadata.CustomProps == nil || resource.Metadata.CustomProps["google_workspace_export"] != "true" {
 		return resource.Size, nil
 	}
-	resolver, ok := provider.(storage.ResourceSizeResolver)
-	if !ok {
+	size, err := storage.ResolveResourceSize(ctx, provider, resourceType, resourcePath)
+	if errors.Is(err, storage.ErrCapabilityUnsupported) {
 		return 0, fmt.Errorf("provider does not resolve Google Workspace export sizes")
 	}
-	return resolver.ResolveResourceSize(ctx, resourceType, resourcePath)
+	return size, err
 }
 
 // Immich accepts media formats supported by its current MIME registry, including

@@ -140,3 +140,101 @@ func TestStreamUploadWithOptionsReportsUnsupportedWithoutReadingStream(t *testin
 		t.Fatalf("stream was consumed: %d bytes left, want 9", stream.Len())
 	}
 }
+
+type duplicateDetectingTarget struct {
+	bareCapabilityTarget
+	native bool
+}
+
+func (d duplicateDetectingTarget) UsesNativeDuplicateDetection() bool { return d.native }
+
+func TestUsesNativeDuplicateDetection(t *testing.T) {
+	if !UsesNativeDuplicateDetection(duplicateDetectingTarget{native: true}) {
+		t.Fatal("provider declaring native detection should report true")
+	}
+	if UsesNativeDuplicateDetection(duplicateDetectingTarget{native: false}) {
+		t.Fatal("provider declining native detection should report false")
+	}
+	if UsesNativeDuplicateDetection(bareCapabilityTarget{}) {
+		t.Fatal("bare target should report false")
+	}
+}
+
+type rangeCapableSource struct {
+	bareCapabilityTarget
+	resourceType, path string
+	offset, length     int64
+	err                error
+}
+
+func (r *rangeCapableSource) StreamDownloadRange(_ context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	r.resourceType, r.path, r.offset, r.length = resourceType, filePath, offset, length
+	if r.err != nil {
+		return nil, r.err
+	}
+	return io.NopCloser(strings.NewReader("range")), nil
+}
+
+func TestStreamDownloadRangeDelegatesToCapableSource(t *testing.T) {
+	source := &rangeCapableSource{}
+	if !SupportsRangeDownload(source) {
+		t.Fatal("capable source should support range download")
+	}
+	body, err := StreamDownloadRange(context.Background(), source, "files", "/pack", 10, 5)
+	if err != nil {
+		t.Fatalf("StreamDownloadRange: %v", err)
+	}
+	defer body.Close()
+	if data, _ := io.ReadAll(body); string(data) != "range" {
+		t.Fatalf("body = %q, want range", data)
+	}
+	if source.resourceType != "files" || source.path != "/pack" || source.offset != 10 || source.length != 5 {
+		t.Fatalf("source got %q %q %d %d", source.resourceType, source.path, source.offset, source.length)
+	}
+}
+
+func TestStreamDownloadRangeReturnsProviderError(t *testing.T) {
+	boom := errors.New("boom")
+	_, err := StreamDownloadRange(context.Background(), &rangeCapableSource{err: boom}, "files", "/pack", 0, 1)
+	if !errors.Is(err, boom) || errors.Is(err, ErrCapabilityUnsupported) {
+		t.Fatalf("err = %v, want provider error that is not unsupported", err)
+	}
+}
+
+func TestStreamDownloadRangeReportsUnsupported(t *testing.T) {
+	if SupportsRangeDownload(bareCapabilityTarget{}) {
+		t.Fatal("bare source should not support range download")
+	}
+	_, err := StreamDownloadRange(context.Background(), bareCapabilityTarget{}, "files", "/pack", 0, 1)
+	if !errors.Is(err, ErrCapabilityUnsupported) {
+		t.Fatalf("err = %v, want ErrCapabilityUnsupported", err)
+	}
+}
+
+type sizeResolvingProvider struct {
+	bareCapabilityTarget
+	size int64
+	err  error
+}
+
+func (s sizeResolvingProvider) ResolveResourceSize(context.Context, string, string) (int64, error) {
+	return s.size, s.err
+}
+
+func TestResolveResourceSize(t *testing.T) {
+	size, err := ResolveResourceSize(context.Background(), sizeResolvingProvider{size: 42}, "files", "/doc")
+	if err != nil || size != 42 {
+		t.Fatalf("ResolveResourceSize = %d, %v; want 42, nil", size, err)
+	}
+
+	boom := errors.New("boom")
+	_, err = ResolveResourceSize(context.Background(), sizeResolvingProvider{err: boom}, "files", "/doc")
+	if !errors.Is(err, boom) || errors.Is(err, ErrCapabilityUnsupported) {
+		t.Fatalf("err = %v, want provider error that is not unsupported", err)
+	}
+
+	_, err = ResolveResourceSize(context.Background(), bareCapabilityTarget{}, "files", "/doc")
+	if !errors.Is(err, ErrCapabilityUnsupported) {
+		t.Fatalf("err = %v, want ErrCapabilityUnsupported", err)
+	}
+}

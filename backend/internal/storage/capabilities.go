@@ -41,3 +41,37 @@ func StreamUploadWithOptions(ctx context.Context, client any, resourceType, file
 	}
 	return uploader.StreamUploadWithOptions(ctx, resourceType, filePath, stream, size, opts)
 }
+
+// UsesNativeDuplicateDetection reports whether the provider owns duplicate
+// detection, so a filename-based existence preflight would be unsafe.
+func UsesNativeDuplicateDetection(client any) bool {
+	detector, ok := client.(NativeDuplicateDetector)
+	return ok && detector.UsesNativeDuplicateDetection()
+}
+
+// SupportsRangeDownload reports whether the provider can stream byte ranges.
+func SupportsRangeDownload(client any) bool {
+	_, ok := client.(RangeDownloader)
+	return ok
+}
+
+// StreamDownloadRange streams a byte range through the provider's
+// RangeDownloader, returning ErrCapabilityUnsupported when it has none.
+func StreamDownloadRange(ctx context.Context, client any, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	downloader, ok := client.(RangeDownloader)
+	if !ok {
+		return nil, ErrCapabilityUnsupported
+	}
+	return downloader.StreamDownloadRange(ctx, resourceType, filePath, offset, length)
+}
+
+// ResolveResourceSize resolves an exact transferable size through the
+// provider's ResourceSizeResolver, returning ErrCapabilityUnsupported when it
+// has none.
+func ResolveResourceSize(ctx context.Context, client any, resourceType, resourcePath string) (int64, error) {
+	resolver, ok := client.(ResourceSizeResolver)
+	if !ok {
+		return 0, ErrCapabilityUnsupported
+	}
+	return resolver.ResolveResourceSize(ctx, resourceType, resourcePath)
+}

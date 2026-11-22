@@ -152,7 +152,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		return fmt.Errorf("invalid migration conflict strategy %q", mig.ConflictStrategy)
 	}
 
-	_, nativeDuplicates := targetClient.(storage.NativeDuplicateDetector)
+	nativeDuplicates := storage.UsesNativeDuplicateDetection(targetClient)
 	if targetPathPersisted {
 		// A prior attempt selected this exact destination. Re-running conflict
 		// resolution would turn a retry into another rename once the first

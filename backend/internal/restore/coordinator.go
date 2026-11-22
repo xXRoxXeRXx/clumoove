@@ -804,9 +804,9 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 	var reconstructedSHA1 []byte
 	go func() {
 		var openRange RangeOpener
-		if rangeDownloader, ok := repositoryProvider.(storage.RangeDownloader); ok {
+		if storage.SupportsRangeDownload(repositoryProvider) {
 			openRange = func(ctx context.Context, packPath string, offset, length int64) (io.ReadCloser, error) {
-				reader, err := rangeDownloader.StreamDownloadRange(ctx, "files", packPath, offset, length)
+				reader, err := storage.StreamDownloadRange(ctx, repositoryProvider, "files", packPath, offset, length)
 				if err != nil {
 					return nil, err
 				}
