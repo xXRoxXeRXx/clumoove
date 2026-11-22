@@ -77,6 +77,7 @@
   --color-danger-fg: #ffffff;
   --color-media-bg: #18181b;
   --color-media-fg: #ffffff;
+  --color-text-link: var(--color-text-primary);
 }
 
 html {
@@ -104,6 +105,7 @@ html {
   --color-bg-inverse: #fafafa;
   --color-primary-hover: #e4e4e7;
   --color-toggle-on: #3b82f6;
+  --color-text-link: var(--color-text-primary);
   --color-border-control: #8a8a94;
   --color-danger-bg: #dc2626;
   --color-danger-bg-hover: #b91c1c;

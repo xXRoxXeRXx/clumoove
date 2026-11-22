@@ -48,7 +48,7 @@ export function FixedCredentialsFields({
               href="https://app.koofr.net/app/admin/preferences/password"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[var(--color-text-link)] hover:underline"
+              className="text-[var(--color-text-link)] underline underline-offset-2 hover:no-underline"
             >
               {t('connect.koofrAppPasswordLink')}
             </a>

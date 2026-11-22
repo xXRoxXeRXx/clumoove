@@ -78,7 +78,7 @@ export const EditBackupModal: React.FC<EditBackupModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[var(--layer-modal)] flex items-center justify-center p-4 bg-black/60"
+      className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center p-4 bg-[var(--color-overlay)]"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}

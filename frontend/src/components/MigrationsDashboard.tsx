@@ -1155,7 +1155,7 @@ function BackupList({
                     className="flex flex-col text-left group hover:opacity-80 transition-opacity"
                     title={t('backup.openDetail')}
                   >
-                    <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text-primary)] group-hover:text-[var(--color-accent)]">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text-primary)]">
                       <span className="capitalize">{job.source_provider}</span>
                       <span aria-hidden="true">→</span>
                       <span className="capitalize">{job.target_provider}</span>
