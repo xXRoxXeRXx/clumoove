@@ -5,6 +5,7 @@ import { useFormat, formatDuration } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 import { useToast } from '../contexts/useToast';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
+import { useSliderCommit } from '../hooks/useSliderCommit';
 import { Badge } from './Badge';
 import { StatusBadge } from './StatusBadge';
 import { ApiDisplayError, apiErrorMessage, apiFetch, apiResponseError } from '../utils/apiClient';
@@ -117,6 +118,9 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       setBandwidthLoading(false);
     }
   };
+
+  const threadsHandlers = useSliderCommit(threadsDraggingRef, (value) => void commitThreadsChange(value));
+  const bandwidthHandlers = useSliderCommit(bandwidthDraggingRef, (index) => void commitBandwidthChange(bandwidthIndexToValue(index)));
 
   useEffect(() => {
     let cancelled = false;
@@ -562,16 +566,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                 value={threads}
                 disabled={threadsLoading}
                 onChange={(e) => setThreads(Number(e.target.value))}
-                onPointerDown={() => { threadsDraggingRef.current = true; }}
-                onPointerUp={(e) => {
-                  threadsDraggingRef.current = false;
-                  commitThreadsChange(Number((e.target as HTMLInputElement).value));
-                }}
-                onKeyDown={() => { threadsDraggingRef.current = true; }}
-                onKeyUp={(e) => {
-                  threadsDraggingRef.current = false;
-                  commitThreadsChange(Number((e.target as HTMLInputElement).value));
-                }}
+                {...threadsHandlers}
                 className="w-full accent-[var(--color-text-primary)]"
               />
               <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
@@ -597,16 +592,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                 value={valueToBandwidthIndex(bandwidthLimit)}
                 disabled={bandwidthLoading}
                 onChange={(e) => setBandwidthLimit(bandwidthIndexToValue(Number(e.target.value)))}
-                onPointerDown={() => { bandwidthDraggingRef.current = true; }}
-                onPointerUp={(e) => {
-                  bandwidthDraggingRef.current = false;
-                  commitBandwidthChange(bandwidthIndexToValue(Number((e.target as HTMLInputElement).value)));
-                }}
-                onKeyDown={() => { bandwidthDraggingRef.current = true; }}
-                onKeyUp={(e) => {
-                  bandwidthDraggingRef.current = false;
-                  commitBandwidthChange(bandwidthIndexToValue(Number((e.target as HTMLInputElement).value)));
-                }}
+                {...bandwidthHandlers}
                 className="w-full accent-[var(--color-text-primary)]"
               />
               <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">

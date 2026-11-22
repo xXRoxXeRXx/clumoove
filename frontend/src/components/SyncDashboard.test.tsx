@@ -205,9 +205,10 @@ describe('SyncDashboard initial snapshot ordering', () => {
     const bandwidthInput = container.querySelector<HTMLInputElement>('#sync-bandwidth-limit')!;
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
     await act(async () => {
+      // A keyboard adjustment starts with a key-down on the slider and is persisted on key-up.
+      bandwidthInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
       valueSetter?.call(bandwidthInput, '1');
       bandwidthInput.dispatchEvent(new Event('input', { bubbles: true }));
-      // SyncDashboard persists keyboard slider adjustments from its onKeyUp handler.
       bandwidthInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true }));
       await Promise.resolve();
     });

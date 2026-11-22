@@ -5,6 +5,7 @@ import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
 import { useToast } from '../contexts/useToast';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
+import { useSliderCommit } from '../hooks/useSliderCommit';
 import { Badge } from './Badge';
 import { StatusBadge } from './StatusBadge';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
@@ -238,6 +239,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   };
 
   const threadsDraggingRef = useRef<boolean>(false);
+  const bandwidthDraggingRef = useRef<boolean>(false);
+  const threadsHandlers = useSliderCommit(threadsDraggingRef, (value) => void commitThreadsChange(value));
+  const bandwidthHandlers = useSliderCommit(bandwidthDraggingRef, (index) => void commitBandwidthChange(bandwidthIndexToValue(index)));
 
 
   useEffect(() => {
@@ -286,7 +290,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           setServerUnreachable(false);
           setData((prev) => (prev ? { ...prev, ...payload } : payload));
 
-          if (payload.bandwidth_limit_mbps !== undefined) {
+          if (payload.bandwidth_limit_mbps !== undefined && !bandwidthDraggingRef.current) {
             setBandwidthLimit(payload.bandwidth_limit_mbps);
           }
           if (payload.threads !== undefined && !threadsDraggingRef.current) {
@@ -538,10 +542,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 value={valueToBandwidthIndex(bandwidthLimit)}
                 disabled={bandwidthLoading}
                 onChange={(e) => setBandwidthLimit(bandwidthIndexToValue(Number(e.target.value)))}
-                onPointerUp={(e) => {
-                  const idx = Number((e.target as HTMLInputElement).value);
-                  commitBandwidthChange(bandwidthIndexToValue(idx));
-                }}
+                {...bandwidthHandlers}
                 className="w-full cursor-pointer accent-[var(--color-text-primary)]"
               />
               <p className="text-xs text-[var(--color-text-muted)] leading-relaxed font-sans">
@@ -579,16 +580,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 value={threads}
                 disabled={threadsLoading}
                 onChange={(e) => setThreads(Number(e.target.value))}
-                onPointerDown={() => { threadsDraggingRef.current = true; }}
-                onPointerUp={(e) => {
-                  threadsDraggingRef.current = false;
-                  commitThreadsChange(Number((e.target as HTMLInputElement).value));
-                }}
-                onKeyDown={() => { threadsDraggingRef.current = true; }}
-                onKeyUp={(e) => {
-                  threadsDraggingRef.current = false;
-                  commitThreadsChange(Number((e.target as HTMLInputElement).value));
-                }}
+                {...threadsHandlers}
                 className="w-full accent-[var(--color-text-primary)]"
               />
               <p className="text-xs text-[var(--color-text-muted)] leading-relaxed font-mono">
