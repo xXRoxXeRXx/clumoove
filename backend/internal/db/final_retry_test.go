@@ -112,10 +112,10 @@ func TestMaybeRetryFailedMigrationTasks(t *testing.T) {
 	}
 
 	// First call: while an active task (next_retry_at IS NOT NULL) exists,
-	// MaybeRetryFailedMigrationTasks MUST NOT claim final retry.
-	requeuedActive, err := MaybeRetryFailedMigrationTasks(database, ctx, migID)
+	// maybeRetryFailedMigrationTasks MUST NOT claim final retry.
+	requeuedActive, err := maybeRetryFailedMigrationTasks(database, ctx, migID)
 	if err != nil {
-		t.Fatalf("MaybeRetryFailedMigrationTasks call with active task returned error: %v", err)
+		t.Fatalf("maybeRetryFailedMigrationTasks call with active task returned error: %v", err)
 	}
 	if requeuedActive {
 		t.Fatalf("expected requeuedActive=false while active task exists, got true")
@@ -136,9 +136,9 @@ func TestMaybeRetryFailedMigrationTasks(t *testing.T) {
 	}
 
 	// Second call: no active tasks remain -> should claim final retry and requeue 2 terminal failed tasks
-	requeued, err := MaybeRetryFailedMigrationTasks(database, ctx, migID)
+	requeued, err := maybeRetryFailedMigrationTasks(database, ctx, migID)
 	if err != nil {
-		t.Fatalf("MaybeRetryFailedMigrationTasks call returned error: %v", err)
+		t.Fatalf("maybeRetryFailedMigrationTasks call returned error: %v", err)
 	}
 	if !requeued {
 		t.Fatalf("expected requeued=true, got false")
@@ -170,9 +170,9 @@ func TestMaybeRetryFailedMigrationTasks(t *testing.T) {
 	}
 
 	// Third call: should return requeued=false (already claimed, no infinite loop)
-	requeuedAgain, err := MaybeRetryFailedMigrationTasks(database, ctx, migID)
+	requeuedAgain, err := maybeRetryFailedMigrationTasks(database, ctx, migID)
 	if err != nil {
-		t.Fatalf("MaybeRetryFailedMigrationTasks subsequent call returned error: %v", err)
+		t.Fatalf("maybeRetryFailedMigrationTasks subsequent call returned error: %v", err)
 	}
 	if requeuedAgain {
 		t.Fatalf("expected requeuedAgain=false, got true")
@@ -194,8 +194,8 @@ func TestTransitionResetsFailedRetryDoneFlag(t *testing.T) {
 	}
 
 	// Transition INDEXING -> RUNNING should reset failed_retry_done to false
-	if err := TransitionMigrationIndexingToRunning(database, migID); err != nil {
-		t.Fatalf("TransitionMigrationIndexingToRunning error: %v", err)
+	if err := transitionMigrationIndexingToRunning(database, migID); err != nil {
+		t.Fatalf("transitionMigrationIndexingToRunning error: %v", err)
 	}
 
 	var flagDone bool

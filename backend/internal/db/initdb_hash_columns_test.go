@@ -62,7 +62,7 @@ func TestInitDBFreshSchemaSupportsTaskHashRuntimeQueries(t *testing.T) {
 		Status:       "PENDING",
 		Metadata:     json.RawMessage(`{}`),
 	}
-	if _, err := CreateMigrationTaskWhileIndexing(initializedDB, migrationTask); err != nil {
+	if _, err := createMigrationTaskWhileIndexing(initializedDB, migrationTask); err != nil {
 		t.Fatalf("insert indexed task: %v", err)
 	}
 	if _, err := GetTask(initializedDB, migrationTask.ID); err != nil {

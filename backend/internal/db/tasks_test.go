@@ -75,18 +75,18 @@ func TestCreateMigrationTaskWhileIndexingPersistsSourceHash(t *testing.T) {
 		Metadata:     json.RawMessage(`{}`),
 	}
 
-	if _, err := CreateMigrationTaskWhileIndexing(database, task); err != nil {
-		t.Fatalf("CreateMigrationTaskWhileIndexing() error = %v", err)
+	if _, err := createMigrationTaskWhileIndexing(database, task); err != nil {
+		t.Fatalf("createMigrationTaskWhileIndexing() error = %v", err)
 	}
 	const wantInsert = "INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata, source_hash) SELECT"
 	if normalized := strings.Join(strings.Fields(state.query), " "); !strings.Contains(normalized, wantInsert) {
-		t.Fatalf("CreateMigrationTaskWhileIndexing() INSERT columns = %q, want ordered source_hash column", normalized)
+		t.Fatalf("createMigrationTaskWhileIndexing() INSERT columns = %q, want ordered source_hash column", normalized)
 	}
 	if len(state.args) != 7 {
-		t.Fatalf("CreateMigrationTaskWhileIndexing() argument count = %d, want 7", len(state.args))
+		t.Fatalf("createMigrationTaskWhileIndexing() argument count = %d, want 7", len(state.args))
 	}
 	if got := state.args[6].Value; got != task.SourceHash.String {
-		t.Fatalf("CreateMigrationTaskWhileIndexing() source_hash argument = %#v, want %#v", got, task.SourceHash.String)
+		t.Fatalf("createMigrationTaskWhileIndexing() source_hash argument = %#v, want %#v", got, task.SourceHash.String)
 	}
 }
 
@@ -102,22 +102,22 @@ func TestBulkCreateMigrationTasksWhileIndexingPersistsSourceHash(t *testing.T) {
 		Metadata:     json.RawMessage(`{}`),
 	}
 
-	created, err := BulkCreateMigrationTasksWhileIndexing(context.Background(), database, task.MigrationID, []*Task{task})
+	created, err := bulkCreateMigrationTasksUnfenced(context.Background(), database, task.MigrationID, []*Task{task})
 	if err != nil {
-		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() error = %v", err)
+		t.Fatalf("bulkCreateMigrationTasksUnfenced() error = %v", err)
 	}
 	if !created {
-		t.Fatal("BulkCreateMigrationTasksWhileIndexing() created = false, want true")
+		t.Fatal("bulkCreateMigrationTasksUnfenced() created = false, want true")
 	}
 	const wantInsert = "INSERT INTO tasks (migration_id, resource_type, file_path, file_size, source_hash, status, metadata, error_message)"
 	if normalized := strings.Join(strings.Fields(state.execQuery), " "); !strings.Contains(normalized, wantInsert) {
-		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() INSERT columns = %q, want ordered source_hash column", normalized)
+		t.Fatalf("bulkCreateMigrationTasksUnfenced() INSERT columns = %q, want ordered source_hash column", normalized)
 	}
 	if len(state.execArgs) != 8 {
-		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() argument count = %d, want 8", len(state.execArgs))
+		t.Fatalf("bulkCreateMigrationTasksUnfenced() argument count = %d, want 8", len(state.execArgs))
 	}
 	if got := state.execArgs[4].Value; got != task.SourceHash.String {
-		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() source_hash argument = %#v, want %#v", got, task.SourceHash.String)
+		t.Fatalf("bulkCreateMigrationTasksUnfenced() source_hash argument = %#v, want %#v", got, task.SourceHash.String)
 	}
 }
 
@@ -133,22 +133,22 @@ func TestBulkCreateMigrationTasksWhileIndexingPersistsErrorMessage(t *testing.T)
 		Metadata:     json.RawMessage(`{}`),
 	}
 
-	created, err := BulkCreateMigrationTasksWhileIndexing(context.Background(), database, task.MigrationID, []*Task{task})
+	created, err := bulkCreateMigrationTasksUnfenced(context.Background(), database, task.MigrationID, []*Task{task})
 	if err != nil {
-		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() error = %v", err)
+		t.Fatalf("bulkCreateMigrationTasksUnfenced() error = %v", err)
 	}
 	if !created {
-		t.Fatal("BulkCreateMigrationTasksWhileIndexing() created = false, want true")
+		t.Fatal("bulkCreateMigrationTasksUnfenced() created = false, want true")
 	}
 	const wantInsert = "INSERT INTO tasks (migration_id, resource_type, file_path, file_size, source_hash, status, metadata, error_message)"
 	if normalized := strings.Join(strings.Fields(state.execQuery), " "); !strings.Contains(normalized, wantInsert) {
-		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() INSERT columns = %q, want error_message column", normalized)
+		t.Fatalf("bulkCreateMigrationTasksUnfenced() INSERT columns = %q, want error_message column", normalized)
 	}
 	if len(state.execArgs) != 8 {
-		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() argument count = %d, want 8", len(state.execArgs))
+		t.Fatalf("bulkCreateMigrationTasksUnfenced() argument count = %d, want 8", len(state.execArgs))
 	}
 	if got := state.execArgs[7].Value; got != task.ErrorMessage.String {
-		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() error_message argument = %#v, want %#v", got, task.ErrorMessage.String)
+		t.Fatalf("bulkCreateMigrationTasksUnfenced() error_message argument = %#v, want %#v", got, task.ErrorMessage.String)
 	}
 }
 

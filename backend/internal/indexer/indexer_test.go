@@ -133,7 +133,7 @@ func TestResolveIndexedFileSize(t *testing.T) {
 func TestIndexFolderFlushesStagedCountersAfterCommit(t *testing.T) {
 	database, state := newBatchTestDB(t, false)
 	files, dirs, bytes := 0, 0, int64(0)
-	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: []storage.CloudResource{
+	err := indexFolder(context.Background(), db.NewMigrationStore(database), indexFolderTestProvider{listing: []storage.CloudResource{
 		{Path: "/report.txt", Name: "report.txt", Size: 42},
 		{Path: "/notes.txt", Name: "notes.txt", Size: 8},
 	}}, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
@@ -151,7 +151,7 @@ func TestIndexFolderFlushesStagedCountersAfterCommit(t *testing.T) {
 func TestIndexFolderDoesNotApplyStagedCountersWhenBatchInsertFails(t *testing.T) {
 	database, state := newBatchTestDB(t, true)
 	files, dirs, bytes := 0, 0, int64(0)
-	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: []storage.CloudResource{{
+	err := indexFolder(context.Background(), db.NewMigrationStore(database), indexFolderTestProvider{listing: []storage.CloudResource{{
 		Path: "/report.txt", Name: "report.txt", Size: 42,
 	}}}, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
 	if err == nil {
@@ -169,7 +169,7 @@ func TestIndexFolderStopsWhenMigrationIndexingClaimIsLost(t *testing.T) {
 	database, state := newBatchTestDB(t, false)
 	state.claimLost = true
 	files, dirs, bytes := 0, 0, int64(0)
-	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: []storage.CloudResource{{
+	err := indexFolder(context.Background(), db.NewMigrationStore(database), indexFolderTestProvider{listing: []storage.CloudResource{{
 		Path: "/report.txt", Name: "report.txt", Size: 42,
 	}}}, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
 	if !errors.Is(err, db.ErrMigrationIndexingClaimLost) {
@@ -189,7 +189,7 @@ func TestIndexFolderFlushesPartialBatchAfterCancellation(t *testing.T) {
 	defer cancel()
 	files, dirs, bytes := 0, 0, int64(0)
 	var indexErrors []db.IndexingErrorInput
-	err := indexFolder(ctx, database, indexFolderTestProvider{
+	err := indexFolder(ctx, db.NewMigrationStore(database), indexFolderTestProvider{
 		listing: []storage.CloudResource{
 			{Path: "/report.txt", Name: "report.txt", Size: 42},
 			{Path: "/later", Name: "later", IsDir: true},
@@ -224,7 +224,7 @@ func TestIndexFolderSkipsNonMediaForImmichWithoutError(t *testing.T) {
 		{Path: "/temp.tmp", Name: "temp.tmp", Size: 5},
 	}
 
-	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: listing}, "files", "/", "migration-1", "local", "immich", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+	err := indexFolder(context.Background(), db.NewMigrationStore(database), indexFolderTestProvider{listing: listing}, "files", "/", "migration-1", "local", "immich", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
 	if err != nil {
 		t.Fatalf("indexFolder() error = %v", err)
 	}
@@ -266,7 +266,7 @@ func TestIndexFolderLimitsConcurrentListingsAndIndexesEveryPathOnce(t *testing.T
 	var indexErrors []db.IndexingErrorInput
 	done := make(chan error, 1)
 	go func() {
-		done <- indexFolder(context.Background(), database, provider, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+		done <- indexFolder(context.Background(), db.NewMigrationStore(database), provider, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
 	}()
 
 	for range indexFolderListingWorkers {
@@ -333,7 +333,7 @@ func TestIndexFolderSkipsFailedListingAndContinuesSibling(t *testing.T) {
 	files, dirs, bytes := 0, 0, int64(0)
 	var indexErrors []db.IndexingErrorInput
 
-	err := indexFolder(context.Background(), database, provider, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+	err := indexFolder(context.Background(), db.NewMigrationStore(database), provider, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
 	if err != nil {
 		t.Fatalf("indexFolder() error = %v", err)
 	}
@@ -371,7 +371,7 @@ func TestIndexFolderFlushesPartialBatchAfterInFlightListingCancellation(t *testi
 	var indexErrors []db.IndexingErrorInput
 	done := make(chan error, 1)
 	go func() {
-		done <- indexFolder(ctx, database, provider, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+		done <- indexFolder(ctx, db.NewMigrationStore(database), provider, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
 	}()
 
 	for range indexFolderListingWorkers {
@@ -690,7 +690,7 @@ func TestIndexerSetSourceFactoryAcceptsMinimalIndexSource(t *testing.T) {
 		t.Fatalf("InspectResource() = (%+v, %v), want directory", res, err)
 	}
 	files, dirs, bytes := 0, 0, int64(0)
-	if err := indexFolder(context.Background(), database, client, "files", "/root", "mig-1", "nextcloud", "google", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{}); err != nil {
+	if err := indexFolder(context.Background(), db.NewMigrationStore(database), client, "files", "/root", "mig-1", "nextcloud", "google", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{}); err != nil {
 		t.Fatalf("indexFolder() error = %v", err)
 	}
 	_ = client.Close()
@@ -702,7 +702,7 @@ func TestIndexerSetSourceFactoryAcceptsMinimalIndexSource(t *testing.T) {
 func TestIndexFolderAcceptsListingOnlySource(t *testing.T) {
 	database, _ := newBatchTestDB(t, false)
 	files, dirs, bytes := 0, 0, int64(0)
-	err := indexFolder(context.Background(), database, listingOnlySource{listing: []storage.CloudResource{
+	err := indexFolder(context.Background(), db.NewMigrationStore(database), listingOnlySource{listing: []storage.CloudResource{
 		{Path: "/only-listed.txt", Name: "only-listed.txt", Size: 19},
 	}}, "files", "/", "migration-1", "local", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
 	if err != nil {
@@ -761,7 +761,7 @@ func TestIndexFolderRecordsBoxNonTransferableItemsAsSkippedWithReason(t *testing
 	database, state := newBatchTestDB(t, false)
 	files, dirs, bytes := 0, 0, int64(0)
 	var indexErrors []db.IndexingErrorInput
-	err = indexFolder(context.Background(), database, boxClient, "files", "/Docs", "mig-box-1", "box", "nextcloud", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+	err = indexFolder(context.Background(), db.NewMigrationStore(database), boxClient, "files", "/Docs", "mig-box-1", "box", "nextcloud", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
 	if err != nil {
 		t.Fatalf("indexFolder() error = %v", err)
 	}

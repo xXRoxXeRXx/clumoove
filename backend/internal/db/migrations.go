@@ -229,12 +229,12 @@ func resetMigrationAndSchedule(migration *Migration, schedule *Schedule) {
 	schedule.UpdatedAt = time.Time{}
 }
 
-func GetMigration(db *sql.DB, id string) (*Migration, error) {
-	return GetMigrationContext(context.Background(), db, id)
+func getMigration(db *sql.DB, id string) (*Migration, error) {
+	return getMigrationContext(context.Background(), db, id)
 }
 
-// GetMigrationContext retrieves a migration while honoring caller cancellation.
-func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration, error) {
+// getMigrationContext retrieves a migration while honoring caller cancellation.
+func getMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration, error) {
 	return queryMigration(ctx, db, `WHERE id = $1`, id)
 }
 
@@ -364,10 +364,10 @@ func listAllMigrationsContext(ctx context.Context, database *sql.DB, p Migration
 	return views, total, nil
 }
 
-// PauseMigrationForConnectionLoss transitions only an active migration. A
+// pauseMigrationForConnectionLoss transitions only an active migration. A
 // worker can observe a network failure after a user has cancelled the job, so
 // this guard must be part of the update rather than a preceding read.
-func PauseMigrationForConnectionLoss(db *sql.DB, id string) (bool, error) {
+func pauseMigrationForConnectionLoss(db *sql.DB, id string) (bool, error) {
 	result, err := db.Exec(`
 		UPDATE migrations
 		SET status = 'PAUSED_CONNECTION_LOSS', indexing_lease_until = NULL, error_message = NULL, updated_at = CURRENT_TIMESTAMP
@@ -380,11 +380,11 @@ func PauseMigrationForConnectionLoss(db *sql.DB, id string) (bool, error) {
 	return affected > 0, err
 }
 
-// RecoverConnectionLostMigration resumes only the paused state owned by the
+// recoverConnectionLostMigration resumes only the paused state owned by the
 // connection-recovery scheduler. It deliberately cannot overwrite a later
 // cancellation or terminal transition. needsDiscovery is returned from the
 // same fenced update, so a later pause cannot cause a spurious indexer launch.
-func RecoverConnectionLostMigration(db *sql.DB, id string) (recovered bool, needsDiscovery bool, err error) {
+func recoverConnectionLostMigration(db *sql.DB, id string) (recovered bool, needsDiscovery bool, err error) {
 	err = db.QueryRow(`
 		UPDATE migrations
 		SET status = CASE WHEN discovery_complete THEN 'RUNNING' ELSE 'INDEXING' END,
@@ -420,14 +420,14 @@ func resumeMigration(db *sql.DB, id string) (resumed bool, needsDiscovery bool, 
 	return err == nil, needsDiscovery, err
 }
 
-// FailMigrationWhileIndexing records an indexing failure only if the indexer
+// failMigrationWhileIndexing records an indexing failure only if the indexer
 // still owns the migration lifecycle. It prevents a late provider error from
 // replacing a user's CANCELLED status.
-func FailMigrationWhileIndexing(db *sql.DB, id string, errMsg *string) (bool, error) {
-	return FailMigrationWhileIndexingClaim(db, id, 0, errMsg)
+func failMigrationWhileIndexing(db *sql.DB, id string, errMsg *string) (bool, error) {
+	return failMigrationWhileIndexingClaim(db, id, 0, errMsg)
 }
 
-func FailMigrationWhileIndexingClaim(db *sql.DB, id string, generation int64, errMsg *string) (bool, error) {
+func failMigrationWhileIndexingClaim(db *sql.DB, id string, generation int64, errMsg *string) (bool, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return false, err
@@ -455,10 +455,10 @@ func FailMigrationWhileIndexingClaim(db *sql.DB, id string, generation int64, er
 	return true, tx.Commit()
 }
 
-// FailStaleIndexingMigration marks only a long-stale indexing migration as
+// failStaleIndexingMigration marks only a long-stale indexing migration as
 // failed. The timestamp guard prevents recovery from overwriting a newly
 // started indexer after it has been selected for inspection.
-func FailStaleIndexingMigration(ctx context.Context, database *sql.DB, id string, errMsg *string) (bool, error) {
+func failStaleIndexingMigration(ctx context.Context, database *sql.DB, id string, errMsg *string) (bool, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -488,16 +488,16 @@ func FailStaleIndexingMigration(ctx context.Context, database *sql.DB, id string
 	return true, tx.Commit()
 }
 
-// ClaimScheduledMigrationForIndexing atomically claims a scheduled migration for
+// claimScheduledMigrationForIndexing atomically claims a scheduled migration for
 // indexing. A false result means the row either does not exist or is no longer
 // in SCHEDULED state; both cases are intentionally treated as an invalid claim.
-func ClaimScheduledMigrationForIndexing(db *sql.DB, id string) (bool, error) {
-	return ClaimScheduledMigrationForIndexingContext(context.Background(), db, id)
+func claimScheduledMigrationForIndexing(db *sql.DB, id string) (bool, error) {
+	return claimScheduledMigrationForIndexingContext(context.Background(), db, id)
 }
 
-// ClaimScheduledMigrationForIndexingContext atomically claims a scheduled
+// claimScheduledMigrationForIndexingContext atomically claims a scheduled
 // migration while honoring caller cancellation.
-func ClaimScheduledMigrationForIndexingContext(ctx context.Context, db *sql.DB, id string) (bool, error) {
+func claimScheduledMigrationForIndexingContext(ctx context.Context, db *sql.DB, id string) (bool, error) {
 	query := `
 		UPDATE migrations
 		SET status = 'INDEXING', discovery_complete = FALSE, discovery_generation = discovery_generation + 1, indexing_lease_until = CURRENT_TIMESTAMP + ($2 * INTERVAL '1 second'), error_message = NULL, updated_at = CURRENT_TIMESTAMP
@@ -514,9 +514,9 @@ func ClaimScheduledMigrationForIndexingContext(ctx context.Context, db *sql.DB, 
 	return rowsAffected == 1, nil
 }
 
-// RenewMigrationIndexingLease extends a generation-fenced indexer lease. A false
+// renewMigrationIndexingLease extends a generation-fenced indexer lease. A false
 // result means a pause/resume successor or terminal transition owns the row.
-func RenewMigrationIndexingLease(ctx context.Context, database *sql.DB, id string, generation int64, duration time.Duration) (bool, error) {
+func renewMigrationIndexingLease(ctx context.Context, database *sql.DB, id string, generation int64, duration time.Duration) (bool, error) {
 	res, err := database.ExecContext(ctx, `
 		UPDATE migrations
 		SET indexing_lease_until = CURRENT_TIMESTAMP + ($3 * INTERVAL '1 second')
@@ -529,13 +529,13 @@ func RenewMigrationIndexingLease(ctx context.Context, database *sql.DB, id strin
 	return n == 1, err
 }
 
-// TransitionMigrationIndexingToRunning completes indexing. It rejects a stale
+// transitionMigrationIndexingToRunning completes indexing. It rejects a stale
 // transition instead of silently leaving newly-created tasks unrunnable.
-func TransitionMigrationIndexingToRunning(db *sql.DB, id string) error {
-	return TransitionMigrationIndexingToRunningClaim(db, id, 0)
+func transitionMigrationIndexingToRunning(db *sql.DB, id string) error {
+	return transitionMigrationIndexingToRunningClaim(db, id, 0)
 }
 
-func TransitionMigrationIndexingToRunningClaim(db *sql.DB, id string, generation int64) error {
+func transitionMigrationIndexingToRunningClaim(db *sql.DB, id string, generation int64) error {
 	query := `
 		UPDATE migrations
 		SET status = 'RUNNING', discovery_complete = TRUE, failed_retry_done = FALSE, indexing_lease_until = NULL, updated_at = CURRENT_TIMESTAMP
@@ -557,10 +557,10 @@ func TransitionMigrationIndexingToRunningClaim(db *sql.DB, id string, generation
 	return nil
 }
 
-// MaybeRetryFailedMigrationTasks performs a single-shot final retry for terminally
+// maybeRetryFailedMigrationTasks performs a single-shot final retry for terminally
 // failed tasks (status = 'FAILED' AND next_retry_at IS NULL) before the migration
 // transitions to verification or completion. Returns true if tasks were requeued.
-func MaybeRetryFailedMigrationTasks(db *sql.DB, ctx context.Context, migrationID string) (bool, error) {
+func maybeRetryFailedMigrationTasks(db *sql.DB, ctx context.Context, migrationID string) (bool, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -620,13 +620,13 @@ func MaybeRetryFailedMigrationTasks(db *sql.DB, ctx context.Context, migrationID
 	return true, nil
 }
 
-// TransitionMigrationIndexingToCompleted completes an empty migration without
+// transitionMigrationIndexingToCompleted completes an empty migration without
 // allowing an indexer that lost its lifecycle claim to overwrite cancellation.
-func TransitionMigrationIndexingToCompleted(db *sql.DB, id string) error {
-	return TransitionMigrationIndexingToCompletedClaim(db, id, 0)
+func transitionMigrationIndexingToCompleted(db *sql.DB, id string) error {
+	return transitionMigrationIndexingToCompletedClaim(db, id, 0)
 }
 
-func TransitionMigrationIndexingToCompletedClaim(db *sql.DB, id string, generation int64) error {
+func transitionMigrationIndexingToCompletedClaim(db *sql.DB, id string, generation int64) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -654,11 +654,11 @@ func TransitionMigrationIndexingToCompletedClaim(db *sql.DB, id string, generati
 	return tx.Commit()
 }
 
-// CreateMigrationTaskWhileIndexing creates a task only while the migration's
+// createMigrationTaskWhileIndexing creates a task only while the migration's
 // INDEXING claim is still active. The status predicate and insert are one SQL
 // statement, so cancellation cannot leave a task inserted after its pending
 // task sweep has completed.
-func CreateMigrationTaskWhileIndexing(db *sql.DB, t *Task) (string, error) {
+func createMigrationTaskWhileIndexing(db *sql.DB, t *Task) (string, error) {
 	query := `
 		INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata, source_hash)
 		SELECT $1, $2, $3, $4, $5, $6, $7
@@ -675,7 +675,7 @@ func CreateMigrationTaskWhileIndexing(db *sql.DB, t *Task) (string, error) {
 	return t.ID, nil
 }
 
-func CreateMigrationTaskWhileIndexingClaim(db *sql.DB, t *Task, generation int64) (string, error) {
+func createMigrationTaskWhileIndexingClaim(db *sql.DB, t *Task, generation int64) (string, error) {
 	query := `
 		INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata, source_hash)
 		SELECT $1, $2, $3, $4, $5, $6, $7
@@ -696,11 +696,11 @@ func CreateMigrationTaskWhileIndexingClaim(db *sql.DB, t *Task, generation int64
 // BulkCreateMigrationTasksWhileIndexing persists indexing batches only while
 // the migration still has the INDEXING lifecycle claim. All batches share one
 // transaction, so a lost claim rolls back every earlier batch in this call.
-func BulkCreateMigrationTasksWhileIndexing(ctx context.Context, db *sql.DB, migrationID string, tasks []*Task) (bool, error) {
+func bulkCreateMigrationTasksUnfenced(ctx context.Context, db *sql.DB, migrationID string, tasks []*Task) (bool, error) {
 	return bulkCreateMigrationTasksWhileIndexing(ctx, db, migrationID, 0, tasks, false)
 }
 
-func BulkCreateMigrationTasksWhileIndexingClaim(ctx context.Context, db *sql.DB, migrationID string, generation int64, tasks []*Task) (bool, error) {
+func bulkCreateMigrationTasksWhileIndexingClaim(ctx context.Context, db *sql.DB, migrationID string, generation int64, tasks []*Task) (bool, error) {
 	return bulkCreateMigrationTasksWhileIndexing(ctx, db, migrationID, generation, tasks, true)
 }
 
@@ -787,7 +787,7 @@ func updateMigrationThreads(db *sql.DB, id string, threads int) error {
 	return err
 }
 
-func UpdateMigrationPickerSession(db *sql.DB, id string, pickerSessionID string) error {
+func updateMigrationPickerSession(db *sql.DB, id string, pickerSessionID string) error {
 	query := `
 		UPDATE migrations
 		SET picker_session_id = $1, updated_at = CURRENT_TIMESTAMP
@@ -797,7 +797,7 @@ func UpdateMigrationPickerSession(db *sql.DB, id string, pickerSessionID string)
 	return err
 }
 
-func UpdateMigrationTotals(db *sql.DB, id string, totalFiles int, totalBytes int64) error {
+func updateMigrationTotals(db *sql.DB, id string, totalFiles int, totalBytes int64) error {
 	query := `
 		UPDATE migrations
 		SET total_files = $1, total_bytes = $2, updated_at = CURRENT_TIMESTAMP
@@ -807,9 +807,9 @@ func UpdateMigrationTotals(db *sql.DB, id string, totalFiles int, totalBytes int
 	return err
 }
 
-// UpdateMigrationTotalsWhileIndexingClaim prevents a superseded traversal from
+// updateMigrationTotalsWhileIndexingClaim prevents a superseded traversal from
 // overwriting totals after its successor has resumed discovery.
-func UpdateMigrationTotalsWhileIndexingClaim(db *sql.DB, id string, generation int64, totalFiles int, totalBytes int64) error {
+func updateMigrationTotalsWhileIndexingClaim(db *sql.DB, id string, generation int64, totalFiles int, totalBytes int64) error {
 	result, err := db.Exec(`
 		UPDATE migrations SET total_files = $1, total_bytes = $2, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $3 AND status = 'INDEXING' AND discovery_generation = $4
@@ -827,12 +827,12 @@ func UpdateMigrationTotalsWhileIndexingClaim(db *sql.DB, id string, generation i
 	return nil
 }
 
-// MigrationIndexedTaskKeys lets a restarted discovery traversal skip work that
+// migrationIndexedTaskKeys lets a restarted discovery traversal skip work that
 // was durably inserted by an earlier generation. Directory tasks use a
 // different key from transfers at the same path. This intentionally scans the
 // migration's task set once on resume: completed tasks must be included too,
 // otherwise a restarted traversal could transfer them a second time.
-func MigrationIndexedTaskKeys(db *sql.DB, migrationID string) (map[string]bool, error) {
+func migrationIndexedTaskKeys(db *sql.DB, migrationID string) (map[string]bool, error) {
 	rows, err := db.Query(`SELECT resource_type, file_path, COALESCE(metadata->>'action', '') FROM tasks WHERE migration_id = $1`, migrationID)
 	if err != nil {
 		return nil, err
@@ -853,14 +853,14 @@ func MigrationIndexedTaskKeys(db *sql.DB, migrationID string) (map[string]bool, 
 	return keys, rows.Err()
 }
 
-func MigrationTaskTotals(db *sql.DB, migrationID string) (int, int64, error) {
+func migrationTaskTotals(db *sql.DB, migrationID string) (int, int64, error) {
 	var files int
 	var bytes int64
 	err := db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM tasks WHERE migration_id = $1`, migrationID).Scan(&files, &bytes)
 	return files, bytes, err
 }
 
-func IncrementMigrationProgress(db *sql.DB, ctx context.Context, id string, filesDelta int, bytesDelta int64, skippedDelta int, failedDelta int) error {
+func incrementMigrationProgress(db *sql.DB, ctx context.Context, id string, filesDelta int, bytesDelta int64, skippedDelta int, failedDelta int) error {
 	query := `
 		UPDATE migrations
 		SET processed_files = processed_files + $1,
@@ -875,7 +875,7 @@ func IncrementMigrationProgress(db *sql.DB, ctx context.Context, id string, file
 	return err
 }
 
-func AddLiveBytes(db *sql.DB, ctx context.Context, id string, bytesDelta int64) error {
+func addLiveBytes(db *sql.DB, ctx context.Context, id string, bytesDelta int64) error {
 	query := `
 		UPDATE migrations
 		SET live_bytes = live_bytes + $1, updated_at = CURRENT_TIMESTAMP
@@ -885,7 +885,7 @@ func AddLiveBytes(db *sql.DB, ctx context.Context, id string, bytesDelta int64) 
 	return err
 }
 
-func ResetLiveBytes(db *sql.DB, ctx context.Context, id string) error {
+func resetLiveBytes(db *sql.DB, ctx context.Context, id string) error {
 	query := `
 		UPDATE migrations
 		SET live_bytes = processed_bytes, updated_at = CURRENT_TIMESTAMP
@@ -895,14 +895,14 @@ func ResetLiveBytes(db *sql.DB, ctx context.Context, id string) error {
 	return err
 }
 
-func ReconcileMigrationProgress(dbsql *sql.DB, migrationID string) error {
+func reconcileMigrationProgressUnfenced(dbsql *sql.DB, migrationID string) error {
 	_, err := reconcileMigrationProgress(dbsql, migrationID, nil)
 	return err
 }
 
-// ReconcileMigrationProgressWhileVerifying finalizes a verification pass only
+// reconcileMigrationProgressWhileVerifying finalizes a verification pass only
 // while its generation still owns the active lease.
-func ReconcileMigrationProgressWhileVerifying(dbsql *sql.DB, migrationID string, generation int) (bool, error) {
+func reconcileMigrationProgressWhileVerifying(dbsql *sql.DB, migrationID string, generation int) (bool, error) {
 	return reconcileMigrationProgress(dbsql, migrationID, &generation)
 }
 
@@ -1007,12 +1007,12 @@ func countActiveMigrationsForUser(db *sql.DB, userID string) (int, error) {
 	return count, err
 }
 
-func VerifyMigrationOwnership(db *sql.DB, migrationID, userID string) (bool, error) {
-	return VerifyMigrationOwnershipContext(context.Background(), db, migrationID, userID)
+func verifyMigrationOwnership(db *sql.DB, migrationID, userID string) (bool, error) {
+	return verifyMigrationOwnershipContext(context.Background(), db, migrationID, userID)
 }
 
-// VerifyMigrationOwnershipContext verifies ownership while honoring caller cancellation.
-func VerifyMigrationOwnershipContext(ctx context.Context, db *sql.DB, migrationID, userID string) (bool, error) {
+// verifyMigrationOwnershipContext verifies ownership while honoring caller cancellation.
+func verifyMigrationOwnershipContext(ctx context.Context, db *sql.DB, migrationID, userID string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM migrations WHERE id = $1 AND user_id = $2)`
 	var exists bool
 	err := db.QueryRowContext(ctx, query, migrationID, userID).Scan(&exists)
@@ -1028,7 +1028,7 @@ func migrationExistsContext(ctx context.Context, db *sql.DB, migrationID string)
 	return exists, err
 }
 
-func GetMigrationOwnerID(database queryExecerContext, migrationID string) (string, error) {
+func getMigrationOwnerID(database queryExecerContext, migrationID string) (string, error) {
 	var owner sql.NullString
 	err := database.QueryRowContext(context.Background(), `SELECT user_id FROM migrations WHERE id = $1`, migrationID).Scan(&owner)
 	if err != nil {
@@ -1138,7 +1138,7 @@ func getExpiringOAuthMigrations(db *sql.DB) ([]ExpiringOAuthMigration, error) {
 	return result, rows.Err()
 }
 
-func LockPendingEmailNotifications(dbsql *sql.DB, limit int) (*sql.Tx, []PendingEmailNotification, error) {
+func lockPendingEmailNotifications(dbsql *sql.DB, limit int) (*sql.Tx, []PendingEmailNotification, error) {
 	tx, err := dbsql.Begin()
 	if err != nil {
 		return nil, nil, err
@@ -1183,7 +1183,7 @@ func LockPendingEmailNotifications(dbsql *sql.DB, limit int) (*sql.Tx, []Pending
 	return tx, notifications, nil
 }
 
-func MarkMigrationEmailSentTx(tx *sql.Tx, migrationID string) error {
+func markMigrationEmailSentTx(tx *sql.Tx, migrationID string) error {
 	_, err := tx.Exec(
 		`UPDATE migrations SET email_sent = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
 		migrationID,
@@ -1191,7 +1191,7 @@ func MarkMigrationEmailSentTx(tx *sql.Tx, migrationID string) error {
 	return err
 }
 
-func MarkMigrationEmailSent(db *sql.DB, migrationID string) error {
+func markMigrationEmailSent(db *sql.DB, migrationID string) error {
 	query := `UPDATE migrations SET email_sent = TRUE WHERE id = $1`
 	_, err := db.Exec(query, migrationID)
 	return err

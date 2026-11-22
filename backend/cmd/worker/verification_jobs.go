@@ -11,7 +11,7 @@ import (
 )
 
 func (v *checksumVerifier) verifyMigrationChecksums(ctx context.Context, migrationID string, guardAlreadyHeld bool) {
-	generation, claimed, err := db.ClaimMigrationVerification(v.db, ctx, migrationID)
+	generation, claimed, err := v.migrations.ClaimMigrationVerification(ctx, migrationID)
 	if err != nil {
 		workerLogf("verifier", "[VERIFIER] Cannot claim verification for migration %s: %v\n", migrationID, err)
 		return
@@ -19,9 +19,9 @@ func (v *checksumVerifier) verifyMigrationChecksums(ctx context.Context, migrati
 	if !claimed {
 		return
 	}
-	mig, err := db.GetMigration(v.db, migrationID)
+	mig, err := v.migrations.GetMigration(migrationID)
 	if err != nil {
-		_ = db.ReleaseMigrationVerificationLease(v.db, context.Background(), migrationID, generation)
+		_ = v.migrations.ReleaseMigrationVerificationLease(context.Background(), migrationID, generation)
 		return
 	}
 	var leaseOwned atomic.Bool
@@ -37,13 +37,13 @@ func (v *checksumVerifier) verifyMigrationChecksums(ctx context.Context, migrati
 	targetPass, err = v.tokenRefresher().EnsureFreshMigrationToken(ctx, mig, "target", targetPass)
 	if err != nil {
 		workerLogf("verifier", "[VERIFIER] Failed to refresh target OAuth token for migration %s: %v\n", migrationID, err)
-		_ = db.ReleaseMigrationVerificationLease(v.db, context.Background(), migrationID, generation)
+		_ = v.migrations.ReleaseMigrationVerificationLease(context.Background(), migrationID, generation)
 		return
 	}
 	targetMegaSession, err := megasecret.DecodeProviderMegaSession(mig.TargetProvider, mig.TargetMegaSessionIDEncrypted, mig.TargetMegaMasterKeyEncrypted, v.secretKey)
 	if err != nil {
 		workerLogf("verifier", "[VERIFIER] Failed to decode target MEGA session for migration %s: %v\n", migrationID, err)
-		_ = db.ReleaseMigrationVerificationLease(v.db, context.Background(), migrationID, generation)
+		_ = v.migrations.ReleaseMigrationVerificationLease(context.Background(), migrationID, generation)
 		return
 	}
 	defer clear(targetMegaSession.MasterKey)
@@ -65,23 +65,23 @@ func (v *checksumVerifier) verifyMigrationChecksums(ctx context.Context, migrati
 			return db.GetUnverifiedCompletedTasks(v.db, ctx, migrationID)
 		},
 		MarkVerified: func(ctx context.Context, task *db.Task, targetHash string) (bool, error) {
-			return db.MarkMigrationTaskChecksumVerifiedWhileVerifying(v.db, ctx, task.ID, targetHash, generation)
+			return v.migrations.MarkMigrationTaskChecksumVerifiedWhileVerifying(ctx, task.ID, targetHash, generation)
 		},
 		MarkMismatch: func(ctx context.Context, task *db.Task) (bool, error) {
-			return db.MarkMigrationTaskChecksumMismatchWhileVerifying(v.db, ctx, task, generation)
+			return v.migrations.MarkMigrationTaskChecksumMismatchWhileVerifying(ctx, task, generation)
 		},
 		ReconcileProgress: func() error {
-			_, err := db.ReconcileMigrationProgressWhileVerifying(v.db, migrationID, generation)
+			_, err := v.migrations.ReconcileMigrationProgressWhileVerifying(migrationID, generation)
 			return err
 		},
 		RenewLease: func(ctx context.Context) (bool, error) {
-			owned, err := db.RenewMigrationVerificationLease(v.db, ctx, migrationID, generation)
+			owned, err := v.migrations.RenewMigrationVerificationLease(ctx, migrationID, generation)
 			leaseOwned.Store(owned && err == nil)
 			return owned, err
 		},
 		CanWrite: leaseOwned.Load,
 		Release: func(ctx context.Context) {
-			if err := db.ReleaseMigrationVerificationLease(v.db, ctx, migrationID, generation); err != nil {
+			if err := v.migrations.ReleaseMigrationVerificationLease(ctx, migrationID, generation); err != nil {
 				workerLogf("verifier", "[VERIFIER] Cannot release verification lease for migration %s: %v\n", migrationID, err)
 			}
 		},

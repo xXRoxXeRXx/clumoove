@@ -989,9 +989,9 @@ func TestBoxMigrationDownloadBlockedFileFailsOnceWithoutRetry(t *testing.T) {
 	}
 	state.mu.Unlock()
 
-	errItems, total, err := db.GetMigrationErrors(database, state.migID, 50, 0)
+	errItems, total, err := db.NewMigrationStore(database).GetMigrationErrorsContext(context.Background(), state.migID, 50, 0)
 	if err != nil {
-		t.Fatalf("GetMigrationErrors: %v", err)
+		t.Fatalf("GetMigrationErrorsContext: %v", err)
 	}
 	if total != 1 || len(errItems) != 1 || errItems[0].Path != "/Restricted/policy.pdf" || errItems[0].Status != "FAILED" {
 		t.Fatalf("GetMigrationErrors = (%+v, total=%d), want 1 FAILED entry for /Restricted/policy.pdf", errItems, total)

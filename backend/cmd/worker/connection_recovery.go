@@ -158,7 +158,7 @@ func (m *workerMaintenance) recoverPausedMigrations(ctx context.Context) {
 	`
 	m.recoverPausedEntities(ctx, false, query, maxMigrationRecoveryProbesPerTick, func(candidate recoveryCandidate) bool {
 		workerLogf("maintenance", "[RecoveryScheduler] Connection restored for migration %s! Resuming...\n", candidate.id)
-		recovered, needsDiscovery, recoverErr := db.RecoverConnectionLostMigration(m.db, candidate.id)
+		recovered, needsDiscovery, recoverErr := m.migrations.RecoverConnectionLostMigration(candidate.id)
 		if recoverErr != nil {
 			workerLogf("maintenance", "[RecoveryScheduler] Error resuming migration %s: %v\n", candidate.id, recoverErr)
 			return false

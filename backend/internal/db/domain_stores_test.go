@@ -491,3 +491,37 @@ func TestMigrationStoreDelegatesToMigrationPersistence(t *testing.T) {
 		}
 	})
 }
+
+func TestMigrationStoreWorkerCallsKeepTheirFences(t *testing.T) {
+	t.Run("indexing lease renewal is fenced by status and generation", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		renewed, err := NewMigrationStore(database).RenewMigrationIndexingLease(context.Background(), "mig-1", 3, 90*time.Second)
+		if err != nil {
+			t.Fatalf("RenewMigrationIndexingLease() error: %v", err)
+		}
+		if !renewed {
+			t.Error("RenewMigrationIndexingLease() = false, want true when one row matches")
+		}
+		requireSingleStatement(t, rec, "status = 'INDEXING' AND discovery_generation = $2", "mig-1", int64(3), int64(90))
+	})
+
+	t.Run("live byte counters are keyed by migration id", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewMigrationStore(database).AddLiveBytes(context.Background(), "mig-1", 512); err != nil {
+			t.Fatalf("AddLiveBytes() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "SET live_bytes = live_bytes + $1", int64(512), "mig-1")
+	})
+
+	t.Run("owner lookup reads the migration owner", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		owner, err := NewMigrationStore(database).GetMigrationOwnerID("mig-1")
+		if err != nil {
+			t.Fatalf("GetMigrationOwnerID() error: %v", err)
+		}
+		if owner != "row-id" {
+			t.Errorf("owner = %q, want the scanned user_id", owner)
+		}
+		requireSingleStatement(t, rec, "SELECT user_id FROM migrations WHERE id = $1", "mig-1")
+	})
+}

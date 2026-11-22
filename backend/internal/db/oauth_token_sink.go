@@ -136,8 +136,8 @@ func newRoleReauthSink(database *sql.DB, table, id, role string) OAuthReauthSink
 	return reauthTokenSink{casTokenSink: casTokenSink{db: database, id: id, persistQuery: persist}, reauthQuery: reauth}
 }
 
-// NewMigrationTokenSink persists the source or target OAuth tokens of a migration.
-func NewMigrationTokenSink(database *sql.DB, migrationID, role string) OAuthReauthSink {
+// newMigrationTokenSink persists the source or target OAuth tokens of a migration.
+func newMigrationTokenSink(database *sql.DB, migrationID, role string) OAuthReauthSink {
 	return newRoleReauthSink(database, "migrations", migrationID, role)
 }
 

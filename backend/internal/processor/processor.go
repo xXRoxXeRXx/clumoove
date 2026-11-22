@@ -41,6 +41,7 @@ type activeTaskInfo struct {
 
 type Processor struct {
 	db                 *sql.DB
+	migrations         db.MigrationStore
 	queue              *queue.Queue
 	oauthRefresher     *oauth.JobTokenRefresher
 	oauthRefresherOnce sync.Once
@@ -224,7 +225,7 @@ func fileManagerTransferOperation(pickerSessionID string) string {
 
 func (p *Processor) reconcileFileManagerTransferIfDone(mig *db.Migration) {
 	if p.db != nil && mig != nil && fileManagerTransferOperation(mig.PickerSessionID) != "" {
-		_ = db.ReconcileMigrationProgress(p.db, mig.ID)
+		_ = p.migrations.ReconcileMigrationProgress(mig.ID)
 	}
 }
 
@@ -358,8 +359,13 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 	if refresher == nil {
 		refresher = oauth.NewJobTokenRefresher(database, cfg.SecretKey, queueTokenLocker(q))
 	}
+	var migrations db.MigrationStore
+	if database != nil {
+		migrations = db.NewMigrationStore(database)
+	}
 	return &Processor{
 		db:              database,
+		migrations:      migrations,
 		queue:           q,
 		oauthRefresher:  refresher,
 		workerID:        cfg.WorkerID,
@@ -401,7 +407,7 @@ func (p *Processor) pruneProviderPool(ctx context.Context, pool *providerPool) {
 	pool.prune(func(key providerPoolKey) bool {
 		switch key.entityType {
 		case "migration":
-			mig, err := db.GetMigration(p.db, key.entityID)
+			mig, err := p.migrations.GetMigration(key.entityID)
 			return err == nil && (mig.Status == "COMPLETED" || mig.Status == "COMPLETED_WITH_ERRORS" || mig.Status == "FAILED" || mig.Status == "CANCELLED")
 		case "sync":
 			job, err := db.GetSyncJob(p.db, key.entityID)
@@ -633,7 +639,7 @@ func migStatusOrEmpty(mig *db.Migration, err error) string {
 func (p *Processor) cleanupThrottlers() {
 	p.throttlers.Range(func(key, value interface{}) bool {
 		id := key.(string)
-		mig, err := db.GetMigration(p.db, id)
+		mig, err := p.migrations.GetMigration(id)
 		if shouldEvictThrottler(migStatusOrEmpty(mig, err), err, func() (string, error) {
 			job, jerr := db.GetSyncJob(p.db, id)
 			if jerr != nil {

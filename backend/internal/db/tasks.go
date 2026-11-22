@@ -362,9 +362,9 @@ func UpdateClaimedTaskMetadata(db *sql.DB, ctx context.Context, lease Lease, met
 	return nil
 }
 
-// UpdateMigrationTaskAndProgress commits a fenced terminal task transition and
+// updateMigrationTaskAndProgress commits a fenced terminal task transition and
 // its migration counters together, so a crash cannot leave them divergent.
-func UpdateMigrationTaskAndProgress(db *sql.DB, ctx context.Context, t *Task, filesDelta int, bytesDelta int64, skippedDelta, failedDelta int, liveBytesDelta int64) error {
+func updateMigrationTaskAndProgress(db *sql.DB, ctx context.Context, t *Task, filesDelta int, bytesDelta int64, skippedDelta, failedDelta int, liveBytesDelta int64) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -498,9 +498,9 @@ func CancelRemainingPendingTasks(dbsql *sql.DB, migrationID string) (int, error)
 	return int(n), err
 }
 
-// FailMigrationForAuthentication finalizes the claimed task, all outstanding
+// failMigrationForAuthentication finalizes the claimed task, all outstanding
 // tasks, migration counters, terminal state, and outbox event in one commit.
-func FailMigrationForAuthentication(db *sql.DB, ctx context.Context, t *Task, errMsg string) (bool, error) {
+func failMigrationForAuthentication(db *sql.DB, ctx context.Context, t *Task, errMsg string) (bool, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -708,7 +708,7 @@ func getFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
 	return tasks, rows.Err()
 }
 
-func RecordIndexingErrors(ctx context.Context, db *sql.DB, migrationID string, errors []IndexingErrorInput) error {
+func recordIndexingErrors(ctx context.Context, db *sql.DB, migrationID string, errors []IndexingErrorInput) error {
 	if len(errors) == 0 {
 		return nil
 	}
@@ -795,13 +795,8 @@ func getIndexingErrorsForReport(db *sql.DB, migrationID string) ([]IndexingError
 	return errs, rows.Err()
 }
 
-// GetMigrationErrors returns final transfer failures and non-fatal indexing
-// errors in one chronologically ordered, paginated list.
-func GetMigrationErrors(db *sql.DB, migrationID string, limit, offset int) ([]ErrorListItem, int, error) {
-	return getMigrationErrorsContext(context.Background(), db, migrationID, limit, offset)
-}
-
-// getMigrationErrorsContext retrieves paginated migration errors while honoring caller cancellation.
+// getMigrationErrorsContext returns final transfer failures and non-fatal indexing
+// errors in one chronologically ordered, paginated list, honoring caller cancellation.
 func getMigrationErrorsContext(ctx context.Context, db *sql.DB, migrationID string, limit, offset int) ([]ErrorListItem, int, error) {
 	rows, err := db.QueryContext(ctx, `
 		WITH errors AS MATERIALIZED (

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 // FileManagerTransfer is one ad-hoc file-manager transfer, stored as a
@@ -70,6 +71,51 @@ type MigrationStore interface {
 	// Credential rotation.
 	GetExpiringOAuthMigrations() ([]ExpiringOAuthMigration, error)
 	TokenSink(id, role string) OAuthReauthSink
+
+	// Worker side: the indexer, scheduler, processor and verification
+	// workers. Claim-fenced calls take the discovery generation captured when
+	// the indexing pass started and report ErrMigrationIndexingClaimLost (or
+	// false) when a pause/resume successor owns the migration.
+	GetMigration(id string) (*Migration, error)
+	GetMigrationOwnerID(id string) (string, error)
+
+	// Scheduler claim and stale-indexing recovery.
+	ClaimScheduledMigrationForIndexingContext(ctx context.Context, id string) (bool, error)
+	FailStaleIndexingMigration(ctx context.Context, id string, errMsg *string) (bool, error)
+
+	// Indexing pass.
+	RenewMigrationIndexingLease(ctx context.Context, id string, generation int64, duration time.Duration) (bool, error)
+	MigrationIndexedTaskKeys(id string) (map[string]bool, error)
+	MigrationTaskTotals(id string) (int, int64, error)
+	CreateMigrationTaskWhileIndexingClaim(t *Task, generation int64) (string, error)
+	BulkCreateMigrationTasksWhileIndexing(ctx context.Context, id string, tasks []*Task) (bool, error)
+	BulkCreateMigrationTasksWhileIndexingClaim(ctx context.Context, id string, generation int64, tasks []*Task) (bool, error)
+	UpdateMigrationTotalsWhileIndexingClaim(id string, generation int64, totalFiles int, totalBytes int64) error
+	TransitionMigrationIndexingToRunningClaim(id string, generation int64) error
+	TransitionMigrationIndexingToCompletedClaim(id string, generation int64) error
+	FailMigrationWhileIndexingClaim(id string, generation int64, errMsg *string) (bool, error)
+
+	// Task processing and verification.
+	PauseMigrationForConnectionLoss(id string) (bool, error)
+	RecoverConnectionLostMigration(id string) (recovered, needsDiscovery bool, err error)
+	MaybeRetryFailedMigrationTasks(ctx context.Context, id string) (bool, error)
+	AddLiveBytes(ctx context.Context, id string, bytesDelta int64) error
+	ResetLiveBytes(ctx context.Context, id string) error
+	ReconcileMigrationProgress(id string) error
+	ReconcileMigrationProgressWhileVerifying(id string, generation int) (bool, error)
+
+	// Task outcome: one atomic write of the task row and the migration counters.
+	UpdateMigrationTaskAndProgress(ctx context.Context, t *Task, filesDelta int, bytesDelta int64, skippedDelta, failedDelta int, liveBytesDelta int64) error
+	FailMigrationForAuthentication(ctx context.Context, t *Task, errMsg string) (bool, error)
+	RecordIndexingErrors(ctx context.Context, id string, errs []IndexingErrorInput) error
+
+	// Verification pass. A verifier owns a pass through the generation it
+	// claimed; every write is fenced by it and reports false once superseded.
+	ClaimMigrationVerification(ctx context.Context, id string) (generation int, claimed bool, err error)
+	RenewMigrationVerificationLease(ctx context.Context, id string, generation int) (bool, error)
+	ReleaseMigrationVerificationLease(ctx context.Context, id string, generation int) error
+	MarkMigrationTaskChecksumVerifiedWhileVerifying(ctx context.Context, taskID, targetHash string, generation int) (bool, error)
+	MarkMigrationTaskChecksumMismatchWhileVerifying(ctx context.Context, t *Task, generation int) (bool, error)
 }
 
 type postgresMigrationStore struct{ db *sql.DB }
@@ -93,7 +139,7 @@ func (s postgresMigrationStore) CreateMigrationAndSchedule(m *Migration, sched *
 }
 
 func (s postgresMigrationStore) GetMigrationContext(ctx context.Context, id string) (*Migration, error) {
-	return GetMigrationContext(ctx, s.db, id)
+	return getMigrationContext(ctx, s.db, id)
 }
 
 func (s postgresMigrationStore) GetOwnedMigrationContext(ctx context.Context, id, userID string) (*Migration, error) {
@@ -184,8 +230,124 @@ func (s postgresMigrationStore) GetExpiringOAuthMigrations() ([]ExpiringOAuthMig
 	return getExpiringOAuthMigrations(s.db)
 }
 
+func (s postgresMigrationStore) GetMigration(id string) (*Migration, error) {
+	return getMigration(s.db, id)
+}
+
+func (s postgresMigrationStore) GetMigrationOwnerID(id string) (string, error) {
+	return getMigrationOwnerID(s.db, id)
+}
+
+func (s postgresMigrationStore) ClaimScheduledMigrationForIndexingContext(ctx context.Context, id string) (bool, error) {
+	return claimScheduledMigrationForIndexingContext(ctx, s.db, id)
+}
+
+func (s postgresMigrationStore) FailStaleIndexingMigration(ctx context.Context, id string, errMsg *string) (bool, error) {
+	return failStaleIndexingMigration(ctx, s.db, id, errMsg)
+}
+
+func (s postgresMigrationStore) RenewMigrationIndexingLease(ctx context.Context, id string, generation int64, duration time.Duration) (bool, error) {
+	return renewMigrationIndexingLease(ctx, s.db, id, generation, duration)
+}
+
+func (s postgresMigrationStore) MigrationIndexedTaskKeys(id string) (map[string]bool, error) {
+	return migrationIndexedTaskKeys(s.db, id)
+}
+
+func (s postgresMigrationStore) MigrationTaskTotals(id string) (int, int64, error) {
+	return migrationTaskTotals(s.db, id)
+}
+
+func (s postgresMigrationStore) CreateMigrationTaskWhileIndexingClaim(t *Task, generation int64) (string, error) {
+	return createMigrationTaskWhileIndexingClaim(s.db, t, generation)
+}
+
+func (s postgresMigrationStore) BulkCreateMigrationTasksWhileIndexing(ctx context.Context, id string, tasks []*Task) (bool, error) {
+	return bulkCreateMigrationTasksUnfenced(ctx, s.db, id, tasks)
+}
+
+func (s postgresMigrationStore) BulkCreateMigrationTasksWhileIndexingClaim(ctx context.Context, id string, generation int64, tasks []*Task) (bool, error) {
+	return bulkCreateMigrationTasksWhileIndexingClaim(ctx, s.db, id, generation, tasks)
+}
+
+func (s postgresMigrationStore) UpdateMigrationTotalsWhileIndexingClaim(id string, generation int64, totalFiles int, totalBytes int64) error {
+	return updateMigrationTotalsWhileIndexingClaim(s.db, id, generation, totalFiles, totalBytes)
+}
+
+func (s postgresMigrationStore) TransitionMigrationIndexingToRunningClaim(id string, generation int64) error {
+	return transitionMigrationIndexingToRunningClaim(s.db, id, generation)
+}
+
+func (s postgresMigrationStore) TransitionMigrationIndexingToCompletedClaim(id string, generation int64) error {
+	return transitionMigrationIndexingToCompletedClaim(s.db, id, generation)
+}
+
+func (s postgresMigrationStore) FailMigrationWhileIndexingClaim(id string, generation int64, errMsg *string) (bool, error) {
+	return failMigrationWhileIndexingClaim(s.db, id, generation, errMsg)
+}
+
+func (s postgresMigrationStore) PauseMigrationForConnectionLoss(id string) (bool, error) {
+	return pauseMigrationForConnectionLoss(s.db, id)
+}
+
+func (s postgresMigrationStore) RecoverConnectionLostMigration(id string) (bool, bool, error) {
+	return recoverConnectionLostMigration(s.db, id)
+}
+
+func (s postgresMigrationStore) MaybeRetryFailedMigrationTasks(ctx context.Context, id string) (bool, error) {
+	return maybeRetryFailedMigrationTasks(s.db, ctx, id)
+}
+
+func (s postgresMigrationStore) AddLiveBytes(ctx context.Context, id string, bytesDelta int64) error {
+	return addLiveBytes(s.db, ctx, id, bytesDelta)
+}
+
+func (s postgresMigrationStore) ResetLiveBytes(ctx context.Context, id string) error {
+	return resetLiveBytes(s.db, ctx, id)
+}
+
+func (s postgresMigrationStore) ReconcileMigrationProgress(id string) error {
+	return reconcileMigrationProgressUnfenced(s.db, id)
+}
+
+func (s postgresMigrationStore) ReconcileMigrationProgressWhileVerifying(id string, generation int) (bool, error) {
+	return reconcileMigrationProgressWhileVerifying(s.db, id, generation)
+}
+
+func (s postgresMigrationStore) UpdateMigrationTaskAndProgress(ctx context.Context, t *Task, filesDelta int, bytesDelta int64, skippedDelta, failedDelta int, liveBytesDelta int64) error {
+	return updateMigrationTaskAndProgress(s.db, ctx, t, filesDelta, bytesDelta, skippedDelta, failedDelta, liveBytesDelta)
+}
+
+func (s postgresMigrationStore) FailMigrationForAuthentication(ctx context.Context, t *Task, errMsg string) (bool, error) {
+	return failMigrationForAuthentication(s.db, ctx, t, errMsg)
+}
+
+func (s postgresMigrationStore) RecordIndexingErrors(ctx context.Context, id string, errs []IndexingErrorInput) error {
+	return recordIndexingErrors(ctx, s.db, id, errs)
+}
+
+func (s postgresMigrationStore) ClaimMigrationVerification(ctx context.Context, id string) (int, bool, error) {
+	return claimMigrationVerification(s.db, ctx, id)
+}
+
+func (s postgresMigrationStore) RenewMigrationVerificationLease(ctx context.Context, id string, generation int) (bool, error) {
+	return renewMigrationVerificationLease(s.db, ctx, id, generation)
+}
+
+func (s postgresMigrationStore) ReleaseMigrationVerificationLease(ctx context.Context, id string, generation int) error {
+	return releaseMigrationVerificationLease(s.db, ctx, id, generation)
+}
+
+func (s postgresMigrationStore) MarkMigrationTaskChecksumVerifiedWhileVerifying(ctx context.Context, taskID, targetHash string, generation int) (bool, error) {
+	return markMigrationTaskChecksumVerifiedWhileVerifying(s.db, ctx, taskID, targetHash, generation)
+}
+
+func (s postgresMigrationStore) MarkMigrationTaskChecksumMismatchWhileVerifying(ctx context.Context, t *Task, generation int) (bool, error) {
+	return markMigrationTaskChecksumMismatchWhileVerifying(s.db, ctx, t, generation)
+}
+
 func (s postgresMigrationStore) TokenSink(id, role string) OAuthReauthSink {
-	return NewMigrationTokenSink(s.db, id, role)
+	return newMigrationTokenSink(s.db, id, role)
 }
 
 // listFileManagerTransfers returns the user's recent file-manager transfers

@@ -21,7 +21,7 @@ type claimedMigrationTask struct {
 // handled reports that the task was deliberately requeued, skipped, or
 // cancelled and therefore must not enter the transfer stage.
 func (p *Processor) claimMigrationTask(ctx context.Context, payload *queue.Payload) (context.Context, *claimedMigrationTask, bool, error) {
-	mig, err := db.GetMigration(p.db, payload.MigrationID)
+	mig, err := p.migrations.GetMigration(payload.MigrationID)
 	if err != nil {
 		return ctx, nil, false, fmt.Errorf("failed to fetch migration: %w", err)
 	}

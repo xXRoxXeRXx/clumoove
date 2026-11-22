@@ -13,6 +13,7 @@ import (
 
 type workerMaintenance struct {
 	db                      *sql.DB
+	migrations              db.MigrationStore
 	queue                   *queue.Queue
 	indexer                 *indexer.Indexer
 	workerID                string
@@ -25,12 +26,17 @@ type workerMaintenance struct {
 }
 
 func newWorkerMaintenance(database *sql.DB, q *queue.Queue, idx *indexer.Indexer, workerID, secretKey string) *workerMaintenance {
+	var migrations db.MigrationStore
+	if database != nil {
+		migrations = db.NewMigrationStore(database)
+	}
 	return &workerMaintenance{
-		db:        database,
-		queue:     q,
-		indexer:   idx,
-		workerID:  workerID,
-		secretKey: secretKey,
+		migrations: migrations,
+		db:         database,
+		queue:      q,
+		indexer:    idx,
+		workerID:   workerID,
+		secretKey:  secretKey,
 	}
 }
 
@@ -220,14 +226,14 @@ func (m *workerMaintenance) reconcileActiveMigrations(ctx context.Context) {
 	}
 
 	for _, id := range ids {
-		requeued, err := db.MaybeRetryFailedMigrationTasks(m.db, ctx, id)
+		requeued, err := m.migrations.MaybeRetryFailedMigrationTasks(ctx, id)
 		if err != nil {
 			workerLogf("maintenance", "[ProgressReconciler] error checking failed tasks retry for migration %s: %v\n", id, err)
 		}
 		if requeued {
 			m.queue.NotifyTaskAvailable(ctx, m.db)
 		}
-		if err := db.ReconcileMigrationProgress(m.db, id); err != nil {
+		if err := m.migrations.ReconcileMigrationProgress(id); err != nil {
 			workerLogf("maintenance", "[ProgressReconciler] error reconciling migration %s: %v\n", id, err)
 		}
 	}

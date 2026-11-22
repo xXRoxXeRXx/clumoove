@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"backend/internal/db"
 	"backend/internal/oauth"
 )
 
@@ -20,6 +21,7 @@ type verificationWork struct {
 // verification passes for migrations and sync jobs in VERIFYING state.
 type checksumVerifier struct {
 	db                  *sql.DB
+	migrations          db.MigrationStore
 	secretKey           string
 	oauthRefresher      *oauth.JobTokenRefresher
 	providerSlots       chan struct{}
@@ -44,8 +46,13 @@ func newChecksumVerifier(database *sql.DB, secretKey string, maxThreads int, pro
 	if refresher == nil && database != nil {
 		refresher = oauth.NewJobTokenRefresher(database, secretKey, nil)
 	}
+	var migrations db.MigrationStore
+	if database != nil {
+		migrations = db.NewMigrationStore(database)
+	}
 	return &checksumVerifier{
 		db:                  database,
+		migrations:          migrations,
 		secretKey:           secretKey,
 		oauthRefresher:      refresher,
 		providerSlots:       providerSlots,

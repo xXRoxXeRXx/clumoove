@@ -18,12 +18,13 @@ import (
 
 // Scheduler is the core daemon that manages scheduled tasks
 type Scheduler struct {
-	db       *sql.DB
-	backups  db.BackupStore
-	syncs    db.SyncStore
-	queue    *queue.Queue
-	indexer  *indexer.Indexer
-	syncPass atomic.Pointer[syncPassSlot]
+	db         *sql.DB
+	backups    db.BackupStore
+	migrations db.MigrationStore
+	syncs      db.SyncStore
+	queue      *queue.Queue
+	indexer    *indexer.Indexer
+	syncPass   atomic.Pointer[syncPassSlot]
 }
 
 type syncPassSlot struct{ pass sync.Pass }
@@ -46,11 +47,12 @@ func schedulerLogger(ctx context.Context) *slog.Logger {
 // NewScheduler creates a new Scheduler instance
 func NewScheduler(database *sql.DB, q *queue.Queue, idx *indexer.Indexer) *Scheduler {
 	return &Scheduler{
-		db:      database,
-		backups: db.NewBackupStore(database),
-		syncs:   db.NewSyncStore(database),
-		queue:   q,
-		indexer: idx,
+		db:         database,
+		backups:    db.NewBackupStore(database),
+		migrations: db.NewMigrationStore(database),
+		syncs:      db.NewSyncStore(database),
+		queue:      q,
+		indexer:    idx,
 	}
 }
 
@@ -244,7 +246,7 @@ func isJobActiveStatus(status string) bool {
 func (s *Scheduler) isJobActive(ctx context.Context, taskType, taskID string) (bool, error) {
 	switch taskType {
 	case "migration":
-		mig, err := db.GetMigrationContext(ctx, s.db, taskID)
+		mig, err := s.migrations.GetMigrationContext(ctx, taskID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return false, nil // Migration doesn't exist, not active
@@ -303,7 +305,7 @@ func (s *Scheduler) triggerMigration(ctx context.Context, migrationID string) er
 	// Atomically claim the migration before starting the asynchronous indexer.
 	// A prior status read cannot prevent a competing cancel/trigger from changing
 	// the row before this point.
-	claimed, err := db.ClaimScheduledMigrationForIndexingContext(ctx, s.db, migrationID)
+	claimed, err := s.migrations.ClaimScheduledMigrationForIndexingContext(ctx, migrationID)
 	if err != nil {
 		return fmt.Errorf("claim scheduled migration %s: %w", migrationID, err)
 	}
@@ -547,7 +549,7 @@ func (s *Scheduler) failOrphanedImmediateMigrations(ctx context.Context, logger 
 			logger.ErrorContext(ctx, "orphaned_unscheduled_migration_scan_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			continue
 		}
-		failed, err := db.FailStaleIndexingMigration(ctx, s.db, migrationID, stringPtr(recoveryMsg))
+		failed, err := s.migrations.FailStaleIndexingMigration(ctx, migrationID, stringPtr(recoveryMsg))
 		if err != nil {
 			logger.ErrorContext(ctx, "orphaned_unscheduled_migration_failure_persist_failed", slog.String("migration_id", migrationID), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			continue

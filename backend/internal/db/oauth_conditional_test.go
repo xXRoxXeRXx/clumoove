@@ -83,7 +83,7 @@ func TestErrOAuthTokenConflictSentinel(t *testing.T) {
 }
 
 // A migration must retain OAuth credentials from creation through the worker's
-// GetMigration lookup. The worker refreshes after that lookup, so dropping
+// getMigration lookup. The worker refreshes after that lookup, so dropping
 // either set of columns makes every OAuth provider fail at its first 401.
 func TestCreateMigrationPersistsOAuthTokens(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
@@ -140,7 +140,7 @@ func TestCreateMigrationPersistsOAuthTokens(t *testing.T) {
 		t.Fatalf("create migration: %v", err)
 	}
 
-	stored, err := GetMigration(database, migration.ID)
+	stored, err := getMigration(database, migration.ID)
 	if err != nil {
 		t.Fatalf("get migration: %v", err)
 	}

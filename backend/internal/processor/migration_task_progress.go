@@ -28,7 +28,7 @@ func (p *Processor) startMigrationProgressReporter(ctx context.Context, cancel c
 			case bytes, ok := <-progressChan:
 				if !ok {
 					if bufferedBytes > 0 {
-						_ = db.AddLiveBytes(p.db, ctx, migrationID, bufferedBytes)
+						_ = p.migrations.AddLiveBytes(ctx, migrationID, bufferedBytes)
 					}
 					return
 				}
@@ -36,7 +36,7 @@ func (p *Processor) startMigrationProgressReporter(ctx context.Context, cancel c
 				atomic.StoreInt64(&lastByteNano, time.Now().UnixNano())
 			case <-ticker.C:
 				if bufferedBytes > 0 {
-					_ = db.AddLiveBytes(p.db, ctx, migrationID, bufferedBytes)
+					_ = p.migrations.AddLiveBytes(ctx, migrationID, bufferedBytes)
 					bufferedBytes = 0
 				}
 			}

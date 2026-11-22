@@ -25,7 +25,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	}
 	task.ClaimEpoch = payload.ClaimEpoch
 
-	mig, migErr := db.GetMigration(p.db, payload.MigrationID)
+	mig, migErr := p.migrations.GetMigration(payload.MigrationID)
 	if migErr == nil && mig.Status == "CANCELLED" {
 		processorLogf("[Worker %s] Task %s aborted (Migration cancelled).\n", p.workerID, payload.TaskID)
 		task.Status = "CANCELLED"
@@ -75,7 +75,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 
 	task.Status = "FAILED"
 	task.NextRetryAt = sql.NullTime{}
-	if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, 0, 0, 1, 0); err != nil {
+	if err := p.migrations.UpdateMigrationTaskAndProgress(ctx, task, 1, 0, 0, 1, 0); err != nil {
 		processorLogf("[Worker %s] Failed to record terminal failure for task %s: %v", p.workerID, task.ID, err)
 	}
 	p.clearConnLossTask(task.ID)
@@ -102,7 +102,7 @@ func (p *Processor) handleMigrationConnectionLoss(ctx context.Context, payload *
 		processorLogf("[Worker %s] Connection loss on task %s (migration %s): retrying in %ds (consecutive losses %d/%d, task conn-loss attempts %d)\n", p.workerID, payload.TaskID, payload.MigrationID, int(backoff.Seconds()), lossCount, connLossEscalationThreshold, taskConnLoss)
 		return true
 	}
-	paused, pauseErr := db.PauseMigrationForConnectionLoss(p.db, payload.MigrationID)
+	paused, pauseErr := p.migrations.PauseMigrationForConnectionLoss(payload.MigrationID)
 	if pauseErr != nil {
 		processorLogf("[Worker %s] Failed to pause migration %s after connection loss: %v", p.workerID, payload.MigrationID, pauseErr)
 		return true
@@ -137,7 +137,7 @@ func (p *Processor) handleMigrationAuthenticationFailure(ctx context.Context, pa
 		processorLogf("[Worker %s] OAuth 401 recovery refresh failed for task %s (migration %s, %s): %v\n", p.workerID, payload.TaskID, payload.MigrationID, role, refreshErr)
 	}
 	processorLogf("[Worker %s] Auth error detected for task %s (migration %s) — stopping migration immediately\n", p.workerID, payload.TaskID, payload.MigrationID)
-	finalized, finalizeErr := db.FailMigrationForAuthentication(p.db, ctx, task, "Authentication failed — please check your credentials and start a new migration")
+	finalized, finalizeErr := p.migrations.FailMigrationForAuthentication(ctx, task, "Authentication failed — please check your credentials and start a new migration")
 	p.clearConnLoss(payload.MigrationID)
 	p.clearConnLossTask(payload.TaskID)
 	if finalizeErr != nil || !finalized {
@@ -146,7 +146,7 @@ func (p *Processor) handleMigrationAuthenticationFailure(ctx context.Context, pa
 		}
 		return
 	}
-	if owner, oerr := db.GetMigrationOwnerID(p.db, payload.MigrationID); oerr == nil {
+	if owner, oerr := p.migrations.GetMigrationOwnerID(payload.MigrationID); oerr == nil {
 		db.WriteAuditLog(p.db, db.AuditEntry{UserID: sql.NullString{String: owner, Valid: true}, Action: db.AuditMigrationFailed, Target: payload.MigrationID, Details: json.RawMessage(`{"phase":"transfer","reason":"auth_error"}`)})
 	}
 }
@@ -158,7 +158,7 @@ func (p *Processor) completeMigrationTask(ctx context.Context, migration *db.Mig
 	if err := p.finishMigrationTask(ctx, migration, task, task.FileSize); err != nil {
 		return err
 	}
-	_ = db.ResetLiveBytes(p.db, ctx, migration.ID)
+	_ = p.migrations.ResetLiveBytes(ctx, migration.ID)
 	p.reconcileFileManagerTransferIfDone(migration)
 	return nil
 }
@@ -179,7 +179,7 @@ func (p *Processor) finishMigrationTask(ctx context.Context, migration *db.Migra
 	if fileManagerTransferOperation(migration.PickerSessionID) != "" {
 		task.ChecksumVerified = true
 	}
-	if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, bytes, 0, 0, 0); err != nil {
+	if err := p.migrations.UpdateMigrationTaskAndProgress(ctx, task, 1, bytes, 0, 0, 0); err != nil {
 		return err
 	}
 	p.clearConnLoss(migration.ID)
@@ -198,5 +198,5 @@ func (p *Processor) skipMigrationDirectoryTask(ctx context.Context, task *db.Tas
 func (p *Processor) skipMigrationTaskWithBytes(ctx context.Context, task *db.Task, reason string, bytes int64, skipped int, skippedBytes int64) error {
 	task.Status = "SKIPPED"
 	task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(reason), Valid: true}
-	return db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, bytes, skipped, 0, skippedBytes)
+	return p.migrations.UpdateMigrationTaskAndProgress(ctx, task, 1, bytes, skipped, 0, skippedBytes)
 }

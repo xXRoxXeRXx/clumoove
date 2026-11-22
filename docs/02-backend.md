@@ -121,7 +121,7 @@ Key query helpers include `CreateMigration`, `GetMigration`, `TransitionMigratio
 `VerifyMigrationOwnership`, `VerifySyncOwnership`, `VerifyBackupOwnership`, `IsSetupRequired`, `ListUsers`, `GetGlobalStats`,
 `ListAllMigrations`, `ListAllSyncs`, `ListAuditLog`, and paginated admin views.
 
-Persistence is moving behind feature stores one feature at a time (issue #83). Connection profiles and the API-facing migration queries (creation, owner-scoped reads, lifecycle transitions, task-queue actions and reports, OAuth scans) are unexported: outside `internal/db` they are reached only through `db.ProfileStore` and `db.MigrationStore` (`NewProfileStore`, `NewMigrationStore`), so API tests can inject a fake. The worker-side migration functions (claim-fenced indexing writes, progress counters, `GetMigration`) are still exported until the worker, indexer, processor and scheduler move onto the store.
+Persistence is moving behind feature stores one feature at a time (issue #83). Connection profiles and the migrations table are done: outside `internal/db` they are reached only through `db.ProfileStore` and `db.MigrationStore` (`NewProfileStore`, `NewMigrationStore`), so API handlers take the store through their dependencies and in-package tests of the scheduler, indexer, processor and worker can swap in a fake. Still outside the stores: inline SQL in the scheduler, worker maintenance and queue, and the `tasks`-table functions shared with sync jobs (`GetTask`, `UpdateClaimedTaskStatus`, `TransitionClaimedTask` and similar).
 
 ### `StringArray` & JSONB
 

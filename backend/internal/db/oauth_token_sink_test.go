@@ -118,7 +118,7 @@ func tokenSinkOwners() []tokenSinkOwner {
 			}
 			switch table {
 			case "migrations":
-				owner.sink = func(database *sql.DB) OAuthTokenSink { return NewMigrationTokenSink(database, "owner-1", role) }
+				owner.sink = func(database *sql.DB) OAuthTokenSink { return newMigrationTokenSink(database, "owner-1", role) }
 			case "sync_jobs":
 				owner.sink = func(database *sql.DB) OAuthTokenSink { return NewSyncJobTokenSink(database, "owner-1", role) }
 			default:
@@ -252,7 +252,7 @@ func TestOAuthTokenSinkRejectsInvalidRole(t *testing.T) {
 	// The role is rejected before any statement is built, so no database is needed.
 	var database *sql.DB
 	for name, sink := range map[string]OAuthTokenSink{
-		"migration":  NewMigrationTokenSink(database, "owner-1", "sideways"),
+		"migration":  newMigrationTokenSink(database, "owner-1", "sideways"),
 		"sync job":   NewSyncJobTokenSink(database, "owner-1", "sideways"),
 		"backup job": NewBackupJobTokenSink(database, "owner-1", "sideways"),
 	} {
@@ -309,7 +309,7 @@ func TestOAuthTokenSinksHonorContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	for name, sink := range map[string]OAuthTokenSink{
-		"migration":          NewMigrationTokenSink(database, "id", "source"),
+		"migration":          newMigrationTokenSink(database, "id", "source"),
 		"sync job":           NewSyncJobTokenSink(database, "id", "target"),
 		"backup job":         NewBackupJobTokenSink(database, "id", "source"),
 		"backup repository":  NewBackupRepositoryTokenSink(database, "id"),
@@ -321,7 +321,7 @@ func TestOAuthTokenSinksHonorContext(t *testing.T) {
 		}
 	}
 	for name, sink := range map[string]OAuthReauthSink{
-		"migration": NewMigrationTokenSink(database, "id", "source"),
+		"migration": newMigrationTokenSink(database, "id", "source"),
 		"sync job":  NewSyncJobTokenSink(database, "id", "target"),
 	} {
 		if err := sink.Reauthorize(ctx, rotated("a", "r")); !errors.Is(err, context.Canceled) {

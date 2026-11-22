@@ -56,12 +56,12 @@ func TestChecksumMismatchRetryKeepsMigrationRunnableUntilRecopyIsVerified(t *tes
 		t.Fatal(err)
 	}
 
-	generation, claimed, err := ClaimMigrationVerification(database, ctx, testMigrationID)
+	generation, claimed, err := claimMigrationVerification(database, ctx, testMigrationID)
 	if err != nil || !claimed {
 		t.Fatalf("claim = (%d, %v, %v)", generation, claimed, err)
 	}
 	retryAt := time.Now().Add(time.Minute)
-	wrote, err := MarkMigrationTaskChecksumMismatchWhileVerifying(database, ctx, &Task{
+	wrote, err := markMigrationTaskChecksumMismatchWhileVerifying(database, ctx, &Task{
 		ID:           testTaskID,
 		ErrorMessage: sql.NullString{String: "checksum mismatch", Valid: true},
 		NextRetryAt:  sql.NullTime{Time: retryAt, Valid: true},
@@ -74,7 +74,7 @@ func TestChecksumMismatchRetryKeepsMigrationRunnableUntilRecopyIsVerified(t *tes
 	if got := migrationStatus(t, database, testMigrationID); got != "RUNNING" {
 		t.Fatalf("status immediately after scheduling checksum retry = %q, want RUNNING", got)
 	}
-	if err := ReconcileMigrationProgress(database, testMigrationID); err != nil {
+	if err := reconcileMigrationProgressUnfenced(database, testMigrationID); err != nil {
 		t.Fatalf("reconcile scheduled retry: %v", err)
 	}
 	if got := migrationStatus(t, database, testMigrationID); got != "RUNNING" {
@@ -98,21 +98,21 @@ func TestChecksumMismatchRetryKeepsMigrationRunnableUntilRecopyIsVerified(t *tes
 	if _, err := database.Exec(`UPDATE tasks SET status = 'COMPLETED', checksum_verified = FALSE WHERE id = $1`, testTaskID); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileMigrationProgress(database, testMigrationID); err != nil {
+	if err := reconcileMigrationProgressUnfenced(database, testMigrationID); err != nil {
 		t.Fatal(err)
 	}
 	if got := migrationStatus(t, database, testMigrationID); got != "VERIFYING" {
 		t.Fatalf("status after re-copy = %q, want VERIFYING", got)
 	}
 
-	generation, claimed, err = ClaimMigrationVerification(database, ctx, testMigrationID)
+	generation, claimed, err = claimMigrationVerification(database, ctx, testMigrationID)
 	if err != nil || !claimed {
 		t.Fatalf("claim re-copy verification = (%d, %v, %v)", generation, claimed, err)
 	}
-	if wrote, err := MarkMigrationTaskChecksumVerifiedWhileVerifying(database, ctx, testTaskID, "SHA1:correct", generation); err != nil || !wrote {
+	if wrote, err := markMigrationTaskChecksumVerifiedWhileVerifying(database, ctx, testTaskID, "SHA1:correct", generation); err != nil || !wrote {
 		t.Fatalf("mark re-copy verified = (%v, %v), want (true, nil)", wrote, err)
 	}
-	if reconciled, err := ReconcileMigrationProgressWhileVerifying(database, testMigrationID, generation); err != nil || !reconciled {
+	if reconciled, err := reconcileMigrationProgressWhileVerifying(database, testMigrationID, generation); err != nil || !reconciled {
 		t.Fatalf("reconcile verified re-copy = (%v, %v), want (true, nil)", reconciled, err)
 	}
 	if got := migrationStatus(t, database, testMigrationID); got != "COMPLETED" {
@@ -136,11 +136,11 @@ func TestChecksumMismatchWithoutRetryStaysVerifyingUntilTerminalReconciliation(t
 		t.Fatal(err)
 	}
 
-	generation, claimed, err := ClaimMigrationVerification(database, ctx, testMigrationID)
+	generation, claimed, err := claimMigrationVerification(database, ctx, testMigrationID)
 	if err != nil || !claimed {
 		t.Fatalf("claim = (%d, %v, %v)", generation, claimed, err)
 	}
-	wrote, err := MarkMigrationTaskChecksumMismatchWhileVerifying(database, ctx, &Task{
+	wrote, err := markMigrationTaskChecksumMismatchWhileVerifying(database, ctx, &Task{
 		ID:           testTaskID,
 		ErrorMessage: sql.NullString{String: "permanent checksum mismatch", Valid: true},
 		TargetHash:   sql.NullString{String: "SHA1:wrong", Valid: true},
@@ -151,7 +151,7 @@ func TestChecksumMismatchWithoutRetryStaysVerifyingUntilTerminalReconciliation(t
 	if got := migrationStatus(t, database, testMigrationID); got != "VERIFYING" {
 		t.Fatalf("status after non-retryable mismatch = %q, want VERIFYING", got)
 	}
-	if reconciled, err := ReconcileMigrationProgressWhileVerifying(database, testMigrationID, generation); err != nil || !reconciled {
+	if reconciled, err := reconcileMigrationProgressWhileVerifying(database, testMigrationID, generation); err != nil || !reconciled {
 		t.Fatalf("reconcile permanent mismatch = (%v, %v), want (true, nil)", reconciled, err)
 	}
 	if got := migrationStatus(t, database, testMigrationID); got != "COMPLETED_WITH_ERRORS" {
@@ -169,22 +169,22 @@ func TestMigrationVerificationClaimFencesStaleTaskWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, claimed, err := ClaimMigrationVerification(database, ctx, testMigrationID)
+	first, claimed, err := claimMigrationVerification(database, ctx, testMigrationID)
 	if err != nil || !claimed || first != 1 {
 		t.Fatalf("first claim = (%d, %v, %v), want (1, true, nil)", first, claimed, err)
 	}
 	if _, err := database.Exec(`UPDATE migrations SET verification_lease_until = NOW() - INTERVAL '1 second' WHERE id = $1`, testMigrationID); err != nil {
 		t.Fatal(err)
 	}
-	second, claimed, err := ClaimMigrationVerification(database, ctx, testMigrationID)
+	second, claimed, err := claimMigrationVerification(database, ctx, testMigrationID)
 	if err != nil || !claimed || second != 2 {
 		t.Fatalf("second claim = (%d, %v, %v), want (2, true, nil)", second, claimed, err)
 	}
 
-	if wrote, err := MarkMigrationTaskChecksumVerifiedWhileVerifying(database, ctx, testTaskID, "SHA1:stale", first); err != nil || wrote {
+	if wrote, err := markMigrationTaskChecksumVerifiedWhileVerifying(database, ctx, testTaskID, "SHA1:stale", first); err != nil || wrote {
 		t.Fatalf("stale verifier write = (%v, %v), want (false, nil)", wrote, err)
 	}
-	if wrote, err := MarkMigrationTaskChecksumVerifiedWhileVerifying(database, ctx, testTaskID, "SHA1:current", second); err != nil || !wrote {
+	if wrote, err := markMigrationTaskChecksumVerifiedWhileVerifying(database, ctx, testTaskID, "SHA1:current", second); err != nil || !wrote {
 		t.Fatalf("current verifier write = (%v, %v), want (true, nil)", wrote, err)
 	}
 }
@@ -198,14 +198,14 @@ func TestMigrationVerificationWriteRejectsStateChange(t *testing.T) {
 	if _, err := database.Exec(`INSERT INTO tasks (id, migration_id, status) VALUES ($1, $2, 'COMPLETED')`, testTaskID, testMigrationID); err != nil {
 		t.Fatal(err)
 	}
-	generation, claimed, err := ClaimMigrationVerification(database, ctx, testMigrationID)
+	generation, claimed, err := claimMigrationVerification(database, ctx, testMigrationID)
 	if err != nil || !claimed {
 		t.Fatalf("claim = (%d, %v, %v)", generation, claimed, err)
 	}
 	if _, err := database.Exec(`UPDATE migrations SET status = 'CANCELLED' WHERE id = $1`, testMigrationID); err != nil {
 		t.Fatal(err)
 	}
-	if wrote, err := MarkMigrationTaskChecksumVerifiedWhileVerifying(database, ctx, testTaskID, "SHA1:late", generation); err != nil || wrote {
+	if wrote, err := markMigrationTaskChecksumVerifiedWhileVerifying(database, ctx, testTaskID, "SHA1:late", generation); err != nil || wrote {
 		t.Fatalf("write after cancellation = (%v, %v), want (false, nil)", wrote, err)
 	}
 }

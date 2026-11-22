@@ -31,21 +31,26 @@ type jobOAuthTokenState interface {
 // JobTokenRefresher coordinates inline and forced OAuth access-token refreshes
 // for migration and sync jobs with per-job locking and rotation-lock adoption.
 type JobTokenRefresher struct {
-	db        *sql.DB
-	secretKey string
-	locker    TokenLocker
-	refresh   func(context.Context, string, string) (*TokenResponse, error)
-	locks     KeyLockSet
+	db         *sql.DB
+	migrations db.MigrationStore
+	secretKey  string
+	locker     TokenLocker
+	refresh    func(context.Context, string, string) (*TokenResponse, error)
+	locks      KeyLockSet
 }
 
 // NewJobTokenRefresher builds a JobTokenRefresher using the supplied database,
 // credential encryption key, and optional distributed TokenLocker.
 func NewJobTokenRefresher(database *sql.DB, secretKey string, locker TokenLocker) *JobTokenRefresher {
-	return &JobTokenRefresher{
+	r := &JobTokenRefresher{
 		db:        database,
 		secretKey: secretKey,
 		locker:    locker,
 	}
+	if database != nil {
+		r.migrations = db.NewMigrationStore(database)
+	}
+	return r
 }
 
 func (r *JobTokenRefresher) refresher() *Refresher {
@@ -62,13 +67,13 @@ func (r *JobTokenRefresher) refreshToken(ctx context.Context, provider, refresh 
 // EnsureFreshMigrationToken refreshes a migration's OAuth access token when
 // expired or within 2 minutes of expiry, returning access unchanged otherwise.
 func (r *JobTokenRefresher) EnsureFreshMigrationToken(ctx context.Context, mig *db.Migration, role, access string) (string, error) {
-	return r.refreshLifecycle(ctx, &migrationJobTokenState{db: r.db, migration: mig}, role, access, false)
+	return r.refreshLifecycle(ctx, &migrationJobTokenState{store: r.migrations, migration: mig}, role, access, false)
 }
 
 // ForceRefreshMigrationToken forces a refresh after an OAuth provider rejects
 // the current migration access token.
 func (r *JobTokenRefresher) ForceRefreshMigrationToken(ctx context.Context, mig *db.Migration, role string) (string, error) {
-	return r.refreshLifecycle(ctx, &migrationJobTokenState{db: r.db, migration: mig}, role, "", true)
+	return r.refreshLifecycle(ctx, &migrationJobTokenState{store: r.migrations, migration: mig}, role, "", true)
 }
 
 // EnsureFreshSyncToken refreshes a sync job's OAuth access token when expired
@@ -182,7 +187,7 @@ func (r *JobTokenRefresher) refreshLifecycle(ctx context.Context, state jobOAuth
 }
 
 type migrationJobTokenState struct {
-	db        *sql.DB
+	store     db.MigrationStore
 	migration *db.Migration
 }
 
@@ -208,7 +213,7 @@ func (s *migrationJobTokenState) ApplyOAuthTokens(role, access string, refresh s
 	}
 }
 func (s *migrationJobTokenState) ReloadOAuthTokens(ctx context.Context) error {
-	latest, err := db.GetMigrationContext(ctx, s.db, s.migration.ID)
+	latest, err := s.store.GetMigrationContext(ctx, s.migration.ID)
 	if err != nil {
 		return err
 	}
@@ -218,7 +223,7 @@ func (s *migrationJobTokenState) ReloadOAuthTokens(ctx context.Context) error {
 	return nil
 }
 func (s *migrationJobTokenState) OAuthTokenSink(role string) db.OAuthTokenSink {
-	return db.NewMigrationTokenSink(s.db, s.migration.ID, role)
+	return s.store.TokenSink(s.migration.ID, role)
 }
 
 type syncJobTokenState struct {

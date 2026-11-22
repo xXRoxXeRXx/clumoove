@@ -421,9 +421,9 @@ func TestFailMigrationForAuthentication_FinalizesCountersBeforeOutbox(t *testing
 		t.Fatal(err)
 	}
 
-	finalized, err := FailMigrationForAuthentication(db, context.Background(), &Task{ID: testTaskID, MigrationID: testMigrationID, ClaimEpoch: 7}, "authentication failed")
+	finalized, err := failMigrationForAuthentication(db, context.Background(), &Task{ID: testTaskID, MigrationID: testMigrationID, ClaimEpoch: 7}, "authentication failed")
 	if err != nil || !finalized {
-		t.Fatalf("FailMigrationForAuthentication() = (%v, %v)", finalized, err)
+		t.Fatalf("failMigrationForAuthentication() = (%v, %v)", finalized, err)
 	}
 	var payloadText string
 	if err := db.QueryRow(`SELECT payload::text FROM notification_events WHERE migration_id=$1`, testMigrationID).Scan(&payloadText); err != nil {
@@ -449,9 +449,9 @@ func TestFailMigrationForAuthentication_DoesNotOverwriteCancellation(t *testing.
 	if _, err := db.Exec(`INSERT INTO tasks (id,migration_id,status,claim_epoch) VALUES ($1,$2,'RUNNING',7)`, testTaskID, testMigrationID); err != nil {
 		t.Fatal(err)
 	}
-	finalized, err := FailMigrationForAuthentication(db, context.Background(), &Task{ID: testTaskID, MigrationID: testMigrationID, ClaimEpoch: 7}, "authentication failed")
+	finalized, err := failMigrationForAuthentication(db, context.Background(), &Task{ID: testTaskID, MigrationID: testMigrationID, ClaimEpoch: 7}, "authentication failed")
 	if err != nil || finalized {
-		t.Fatalf("FailMigrationForAuthentication() = (%v, %v), want (false, nil)", finalized, err)
+		t.Fatalf("failMigrationForAuthentication() = (%v, %v), want (false, nil)", finalized, err)
 	}
 	var migrationStatus, taskStatus string
 	if err := db.QueryRow(`SELECT status FROM migrations WHERE id=$1`, testMigrationID).Scan(&migrationStatus); err != nil {
@@ -476,7 +476,7 @@ func TestReconcileMigrationProgress_TerminalStateIsSticky(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO tasks (migration_id,status,file_size,checksum_verified) VALUES ($1,'COMPLETED',10,FALSE)`, testMigrationID); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileMigrationProgress(db, testMigrationID); err != nil {
+	if err := reconcileMigrationProgressUnfenced(db, testMigrationID); err != nil {
 		t.Fatal(err)
 	}
 	var status string

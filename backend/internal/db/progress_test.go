@@ -10,13 +10,13 @@ import (
 )
 
 // setupProgressTestDB connects to a real PostgreSQL (via DATABASE_URL) and
-// creates the minimal schema needed to exercise IncrementMigrationProgress.
+// creates the minimal schema needed to exercise incrementMigrationProgress.
 // The test is skipped when no DATABASE_URL is configured.
 func setupProgressTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		t.Skip("DATABASE_URL not set; skipping IncrementMigrationProgress DB test")
+		t.Skip("DATABASE_URL not set; skipping incrementMigrationProgress DB test")
 	}
 
 	db, err := sql.Open("postgres", dsn)
@@ -94,8 +94,8 @@ func TestIncrementMigrationProgress_Transition(t *testing.T) {
 
 	t.Run("failed==0 -> COMPLETED", func(t *testing.T) {
 		insertProgressMigration(t, db, "m-completed", "u1", 100, 99, 0)
-		if err := IncrementMigrationProgress(db, context.Background(), "m-completed", 1, 0, 0, 0); err != nil {
-			t.Fatalf("IncrementMigrationProgress: %v", err)
+		if err := incrementMigrationProgress(db, context.Background(), "m-completed", 1, 0, 0, 0); err != nil {
+			t.Fatalf("incrementMigrationProgress: %v", err)
 		}
 		if got := migrationStatus(t, db, "m-completed"); got != "COMPLETED" {
 			t.Errorf("status = %q, want COMPLETED", got)
@@ -104,8 +104,8 @@ func TestIncrementMigrationProgress_Transition(t *testing.T) {
 
 	t.Run("0<failed<total -> COMPLETED_WITH_ERRORS", func(t *testing.T) {
 		insertProgressMigration(t, db, "m-partial", "u1", 100, 99, 20)
-		if err := IncrementMigrationProgress(db, context.Background(), "m-partial", 1, 0, 0, 0); err != nil {
-			t.Fatalf("IncrementMigrationProgress: %v", err)
+		if err := incrementMigrationProgress(db, context.Background(), "m-partial", 1, 0, 0, 0); err != nil {
+			t.Fatalf("incrementMigrationProgress: %v", err)
 		}
 		if got := migrationStatus(t, db, "m-partial"); got != "COMPLETED_WITH_ERRORS" {
 			t.Errorf("status = %q, want COMPLETED_WITH_ERRORS", got)
@@ -114,8 +114,8 @@ func TestIncrementMigrationProgress_Transition(t *testing.T) {
 
 	t.Run("failed==total -> FAILED", func(t *testing.T) {
 		insertProgressMigration(t, db, "m-failed", "u1", 100, 99, 100)
-		if err := IncrementMigrationProgress(db, context.Background(), "m-failed", 1, 0, 0, 0); err != nil {
-			t.Fatalf("IncrementMigrationProgress: %v", err)
+		if err := incrementMigrationProgress(db, context.Background(), "m-failed", 1, 0, 0, 0); err != nil {
+			t.Fatalf("incrementMigrationProgress: %v", err)
 		}
 		if got := migrationStatus(t, db, "m-failed"); got != "FAILED" {
 			t.Errorf("status = %q, want FAILED", got)
@@ -149,12 +149,12 @@ func TestClaimScheduledMigrationForIndexing(t *testing.T) {
 				}
 			}
 
-			claimed, err := ClaimScheduledMigrationForIndexing(db, tt.id)
+			claimed, err := claimScheduledMigrationForIndexing(db, tt.id)
 			if err != nil {
-				t.Fatalf("ClaimScheduledMigrationForIndexing() error = %v", err)
+				t.Fatalf("claimScheduledMigrationForIndexing() error = %v", err)
 			}
 			if claimed != tt.wantClaimed {
-				t.Errorf("ClaimScheduledMigrationForIndexing() claimed = %v, want %v", claimed, tt.wantClaimed)
+				t.Errorf("claimScheduledMigrationForIndexing() claimed = %v, want %v", claimed, tt.wantClaimed)
 			}
 			if tt.insert && migrationStatus(t, db, tt.id) != tt.wantStatus {
 				t.Errorf("status = %q, want %q", migrationStatus(t, db, tt.id), tt.wantStatus)
@@ -187,9 +187,9 @@ func TestTransitionMigrationIndexingToRunning(t *testing.T) {
 				}
 			}
 
-			err := TransitionMigrationIndexingToRunning(db, tt.id)
+			err := transitionMigrationIndexingToRunning(db, tt.id)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("TransitionMigrationIndexingToRunning() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("transitionMigrationIndexingToRunning() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if tt.insert && migrationStatus(t, db, tt.id) != tt.wantStatus {
 				t.Errorf("status = %q, want %q", migrationStatus(t, db, tt.id), tt.wantStatus)
