@@ -33,6 +33,27 @@ var (
 	nativeHashHiDrive  = NativeHash{Algorithm: "HIDRIVE", New: NewHiDriveHasher}
 )
 
+// listedSourceHashes are the algorithms a source listing can report and a
+// transfer can verify by streaming the file. QuickXor and HiDrive's chash are
+// native target hashes only: a listing value cannot be matched by streaming.
+var listedSourceHashes = map[string]NativeHash{
+	"SHA1":    defaultNativeHash,
+	"SHA256":  nativeHashSHA256,
+	"MD5":     nativeHashMD5,
+	"DROPBOX": nativeHashDropbox,
+}
+
+// NewListedSourceHasher returns a fresh hasher for an algorithm named by a
+// source listing hash, and false when the algorithm cannot be verified by
+// streaming.
+func NewListedSourceHasher(algorithm string) (hash.Hash, bool) {
+	native, ok := listedSourceHashes[algorithm]
+	if !ok {
+		return nil, false
+	}
+	return native.New(), true
+}
+
 // NativeHashFor returns the native hash declared by providerType's catalogue
 // registration, or the SHA1 default for an undeclared or unknown provider.
 func NativeHashFor(providerType string) NativeHash {

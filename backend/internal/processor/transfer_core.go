@@ -2,9 +2,6 @@ package processor
 
 import (
 	"context"
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"hash"
@@ -116,31 +113,17 @@ type transferResult struct {
 // decides which algorithm is fixed and whether its listed hash is trusted.
 func transferSourceHasher(provider, sourceHash string) (string, string, hash.Hash) {
 	algo, expected := "SHA1", ""
+	hasher, _ := storage.NewListedSourceHasher(algo)
 	if sourceHash != "" && !storage.IgnoresListedSourceHash(provider) {
 		parsed, value := storage.ParseHashString(sourceHash)
-		if parsed == "SHA1" || parsed == "SHA256" || parsed == "MD5" || parsed == "DROPBOX" {
-			algo, expected = parsed, value
+		if listed, ok := storage.NewListedSourceHasher(parsed); ok {
+			algo, expected, hasher = parsed, value, listed
 		}
 	}
 	if native := storage.NativeHashFor(provider); native.FixedOnSource {
 		return native.Algorithm, expected, native.New()
 	}
-	return algo, expected, newListedHasher(algo)
-}
-
-// newListedHasher builds the streaming hasher for an algorithm reported by a
-// source listing. Algorithms outside the listed set stream SHA1.
-func newListedHasher(algo string) hash.Hash {
-	switch algo {
-	case "MD5":
-		return md5.New()
-	case "DROPBOX":
-		return storage.NewDropboxHasher()
-	case "SHA256":
-		return sha256.New()
-	default:
-		return sha1.New()
-	}
+	return algo, expected, hasher
 }
 
 // transferTargetHasher returns the target provider's declared native hash.

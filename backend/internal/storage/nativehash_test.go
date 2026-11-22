@@ -86,3 +86,20 @@ func TestNativeHashNewReturnsFreshHashers(t *testing.T) {
 		t.Fatal("New must return an independent hasher on every call")
 	}
 }
+
+func TestNewListedSourceHasher(t *testing.T) {
+	want := map[string]string{"SHA1": "sha1", "SHA256": "sha256", "MD5": "md5", "DROPBOX": "DropboxHasher"}
+	for algo, hasherType := range want {
+		hasher, ok := NewListedSourceHasher(algo)
+		if !ok || hasher == nil || !strings.Contains(fmt.Sprintf("%T", hasher), hasherType) {
+			t.Errorf("NewListedSourceHasher(%q) = (%T, %v), want a %s hasher", algo, hasher, ok, hasherType)
+		}
+	}
+	// QuickXor and HiDrive's chash are native target hashes but a source listing
+	// cannot be matched against them by streaming, so they are never accepted.
+	for _, algo := range []string{"QUICKXOR", "HIDRIVE", "UNKNOWN", "", "sha1"} {
+		if hasher, ok := NewListedSourceHasher(algo); ok || hasher != nil {
+			t.Errorf("NewListedSourceHasher(%q) = (%T, %v), want rejection", algo, hasher, ok)
+		}
+	}
+}
