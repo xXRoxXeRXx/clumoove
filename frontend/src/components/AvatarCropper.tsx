@@ -30,6 +30,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const canvasTokensRef = useRef<CanvasTokens | null>(null);
+  const activePointerIdRef = useRef<number | null>(null);
   const titleId = useId();
   const descriptionId = useId();
   const [image, setImage] = useState<PreviewImage | null>(null);
@@ -164,18 +165,23 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
   }, [activeImage, zoom, panX, panY]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    // A second finger must not hijack or restart a drag that is already in progress.
+    if (activePointerIdRef.current !== null) return;
+    activePointerIdRef.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
     setIsDragging(true);
     setDragStart({ x: event.clientX - panX, y: event.clientY - panY });
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDragging) return;
+    if (!isDragging || event.pointerId !== activePointerIdRef.current) return;
     setPanX(event.clientX - dragStart.x);
     setPanY(event.clientY - dragStart.y);
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (event.pointerId !== activePointerIdRef.current) return;
+    activePointerIdRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -240,6 +246,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
               onPointerCancel={handlePointerUp}
+              onLostPointerCapture={handlePointerUp}
               onWheel={handleWheel}
               onKeyDown={handleCanvasKeyDown}
               tabIndex={0}
