@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import './i18n'
+import { i18nReady } from './i18n'
 import App from './App.tsx'
 import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 import { isBoundaryError } from './utils/boundaryErrors.ts'
@@ -25,10 +25,16 @@ if (import.meta.env.DEV) {
   })
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  </StrictMode>,
-)
+const root = createRoot(document.getElementById('root')!)
+
+// Render once the active language's catalog is loaded so no raw keys flash on first paint.
+// A failed catalog load must not blank the app, so render regardless.
+void i18nReady.catch(() => undefined).then(() => {
+  root.render(
+    <StrictMode>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    </StrictMode>,
+  )
+})
