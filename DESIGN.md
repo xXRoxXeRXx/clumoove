@@ -247,6 +247,7 @@ the single exception is the 2px selected-tab underline.
 - **Quiet:** No fill or border, `Slate` text.
 - **Icon:** Secondary styling, square padding (6 or 8px); always carries a localized `aria-label` and `title` (the `Button` component enforces this at the type level).
 - **Sizes:** `md` 14px, `sm` 12px with 10px/6px padding.
+- **Checkboxes:** a native checkbox that is not inside a text label sits in a `ui-touch-target` label, so the 13px box keeps its look while the hit area is 32px (44px on touch).
 - **Target size:** icon-only controls (`ui-icon-button`, or `ui-touch-target` on hand-built ones) never fall below 32px with a pointer and 44px on coarse pointers. Controls revealed on hover must also be visible when hover is unavailable (`[@media(hover:none)]`).
 
 ### Badges and Alerts
