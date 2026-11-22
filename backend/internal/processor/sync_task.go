@@ -55,7 +55,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		return fmt.Errorf("failed to fetch sync job: %w", err)
 	}
 	ctx = storage.WithLocalUserScope(ctx, job.UserID)
-	task, err := db.GetTask(p.db, payload.TaskID)
+	task, err := p.tasks.GetTask(payload.TaskID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch task: %w", err)
 	}
@@ -359,7 +359,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 				stale := time.Since(taskStart) > taskHeartbeatGrace &&
 					time.Now().UnixNano()-atomic.LoadInt64(&lastByteNano) > int64(taskHeartbeatByteStale)
 				if !stale {
-					owned, err := db.HeartbeatSyncTaskClaim(p.db, ctx, task.Lease(), task.PassGeneration)
+					owned, err := p.tasks.HeartbeatSyncTaskClaim(ctx, task.Lease(), task.PassGeneration)
 					if err == nil && !owned {
 						cancel() // recovery or a new claim fenced this worker off
 						return
@@ -404,7 +404,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 // handleSyncTaskFailure registers failure and checks retry count for sync tasks.
 func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Payload, procErr error) {
-	task, err := db.GetTask(p.db, payload.TaskID)
+	task, err := p.tasks.GetTask(payload.TaskID)
 	if err != nil {
 		processorLogf("Error fetching task on sync failure handler: %v\n", err)
 		return

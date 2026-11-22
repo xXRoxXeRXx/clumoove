@@ -197,6 +197,7 @@ func TestDomainStoreConstructorsRejectNilDatabase(t *testing.T) {
 		"sync":      func() { NewSyncStore(nil) },
 		"profile":   func() { NewProfileStore(nil) },
 		"migration": func() { NewMigrationStore(nil) },
+		"task":      func() { NewTaskStore(nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			defer func() {
@@ -523,5 +524,60 @@ func TestMigrationStoreWorkerCallsKeepTheirFences(t *testing.T) {
 			t.Errorf("owner = %q, want the scanned user_id", owner)
 		}
 		requireSingleStatement(t, rec, "SELECT user_id FROM migrations WHERE id = $1", "mig-1")
+	})
+}
+
+func TestTaskStoreKeepsItsClaimFences(t *testing.T) {
+	t.Run("an early transition is fenced by status and claim epoch", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		var store TaskStore = NewTaskStore(database)
+
+		if err := store.TransitionClaimedTask(context.Background(), Lease{ID: "task-1", Epoch: 5}, "PENDING"); err != nil {
+			t.Fatalf("TransitionClaimedTask() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3", "PENDING", "task-1", int64(5))
+	})
+
+	t.Run("a claim heartbeat is fenced by status and claim epoch", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		owned, err := NewTaskStore(database).HeartbeatTaskClaim(context.Background(), Lease{ID: "task-1", Epoch: 5})
+		if err != nil {
+			t.Fatalf("HeartbeatTaskClaim() error: %v", err)
+		}
+		if !owned {
+			t.Error("HeartbeatTaskClaim() = false, want true when the claim row matches")
+		}
+		requireSingleStatement(t, rec, "WHERE id = $1 AND status = 'RUNNING' AND claim_epoch = $2", "task-1", int64(5))
+	})
+
+	t.Run("a sync heartbeat also binds the pass generation", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if _, err := NewTaskStore(database).HeartbeatSyncTaskClaim(context.Background(), Lease{ID: "task-1", Epoch: 5}, 9); err != nil {
+			t.Fatalf("HeartbeatSyncTaskClaim() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "t.pass_generation = $3", "task-1", int64(5), int64(9))
+	})
+
+	t.Run("a zero lease is rejected without touching the database", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		store := NewTaskStore(database)
+
+		if err := store.TransitionClaimedTask(context.Background(), Lease{}, "PENDING"); err == nil {
+			t.Error("TransitionClaimedTask() accepted a zero lease")
+		}
+		if _, err := store.HeartbeatTaskClaim(context.Background(), Lease{}); err == nil {
+			t.Error("HeartbeatTaskClaim() accepted a zero lease")
+		}
+		if len(rec.statements) != 0 {
+			t.Fatalf("recorded %d statements, want 0", len(rec.statements))
+		}
+	})
+
+	t.Run("checksum verification marks only the given task", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewTaskStore(database).MarkTaskChecksumVerified(context.Background(), "task-1", "abc"); err != nil {
+			t.Fatalf("MarkTaskChecksumVerified() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "SET checksum_verified = TRUE", "task-1", "abc")
 	})
 }

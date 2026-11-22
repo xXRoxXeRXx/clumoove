@@ -18,7 +18,7 @@ import (
 // migration task. Transfer execution returns an error; this stage decides the
 // durable task and migration state while preserving the claim-epoch fence.
 func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payload, procErr error) {
-	task, err := db.GetTask(p.db, payload.TaskID)
+	task, err := p.tasks.GetTask(payload.TaskID)
 	if err != nil {
 		processorLogf("Error fetching task on failure handler: %v\n", err)
 		return
@@ -29,7 +29,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	if migErr == nil && mig.Status == "CANCELLED" {
 		processorLogf("[Worker %s] Task %s aborted (Migration cancelled).\n", p.workerID, payload.TaskID)
 		task.Status = "CANCELLED"
-		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+		if err := p.tasks.UpdateClaimedTaskStatus(ctx, task); err != nil {
 			processorLogf("[Worker %s] Failed to mark cancelled task %s: %v", p.workerID, task.ID, err)
 		}
 		return
@@ -38,7 +38,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	if errors.Is(procErr, context.Canceled) || ctx.Err() != nil {
 		processorLogf("[Worker %s] Shutdown detected. Requeueing task %s...\n", p.workerID, payload.TaskID)
 		task.Status = "PENDING"
-		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+		if err := p.tasks.UpdateClaimedTaskStatus(ctx, task); err != nil {
 			processorLogf("[Worker %s] Failed to requeue shutdown task %s: %v", p.workerID, task.ID, err)
 		}
 		return
@@ -65,7 +65,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		backoff := retryDelay(procErr, task.Attempts)
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{Time: time.Now().Add(backoff), Valid: true}
-		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+		if err := p.tasks.UpdateClaimedTaskStatus(ctx, task); err != nil {
 			processorLogf("[Worker %s] Failed to record retry state for task %s: %v", p.workerID, task.ID, err)
 			return
 		}
@@ -96,7 +96,7 @@ func (p *Processor) handleMigrationConnectionLoss(ctx context.Context, payload *
 		backoff := retryBackoff(taskConnLoss)
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{Time: time.Now().Add(backoff), Valid: true}
-		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+		if err := p.tasks.UpdateClaimedTaskStatus(ctx, task); err != nil {
 			processorLogf("[Worker %s] Failed to schedule connection-loss retry for task %s: %v", p.workerID, task.ID, err)
 		}
 		processorLogf("[Worker %s] Connection loss on task %s (migration %s): retrying in %ds (consecutive losses %d/%d, task conn-loss attempts %d)\n", p.workerID, payload.TaskID, payload.MigrationID, int(backoff.Seconds()), lossCount, connLossEscalationThreshold, taskConnLoss)
@@ -114,7 +114,7 @@ func (p *Processor) handleMigrationConnectionLoss(ctx context.Context, payload *
 	p.clearConnLoss(payload.MigrationID)
 	p.clearConnLossTask(task.ID)
 	task.Status = "PENDING"
-	if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+	if err := p.tasks.UpdateClaimedTaskStatus(ctx, task); err != nil {
 		processorLogf("[Worker %s] Failed to requeue task %s after pausing migration: %v", p.workerID, task.ID, err)
 	}
 	return true
@@ -128,7 +128,7 @@ func (p *Processor) handleMigrationAuthenticationFailure(ctx context.Context, pa
 			task.Status = "FAILED"
 			task.ErrorMessage = sql.NullString{String: "OAuth access token rejected; refreshed token scheduled for retry", Valid: true}
 			task.NextRetryAt = sql.NullTime{Time: time.Now().Add(backoff), Valid: true}
-			if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+			if err := p.tasks.UpdateClaimedTaskStatus(ctx, task); err != nil {
 				processorLogf("[Worker %s] Failed to schedule OAuth retry for task %s: %v", p.workerID, task.ID, err)
 			}
 			processorLogf("[Worker %s] OAuth 401 for task %s (migration %s, %s) — refreshed token and retrying in %ds\n", p.workerID, payload.TaskID, payload.MigrationID, role, int(backoff.Seconds()))

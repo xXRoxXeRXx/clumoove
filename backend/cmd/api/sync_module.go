@@ -18,6 +18,7 @@ import (
 // stream-pool, and background concerns are injected at module construction.
 type syncDependencies struct {
 	db                     *sql.DB
+	tasks                  db.TaskStore
 	encryptionKey          string
 	backgroundCtx          context.Context
 	rateLimiter            rateLimiter
@@ -50,6 +51,9 @@ func newSyncAPI(deps syncDependencies) *syncAPI {
 	if deps.oauthLocker == nil && deps.profiles != nil {
 		deps.oauthLocker = deps.profiles.oauthLocker
 	}
+	if deps.tasks == nil {
+		deps.tasks = taskStoreFor(deps.db)
+	}
 	if deps.profiles == nil {
 		deps.profiles = newOwnedProfileAccess(deps.db, deps.encryptionKey, nil, deps.oauthLocker, deps.oauthRotations)
 	}
@@ -62,6 +66,15 @@ func newSyncAPI(deps syncDependencies) *syncAPI {
 	return &syncAPI{syncDependencies: deps}
 }
 
+// taskStoreFor returns the PostgreSQL task store, or nil when a module is built
+// without a database handle (route-only tests).
+func taskStoreFor(database *sql.DB) db.TaskStore {
+	if database == nil {
+		return nil
+	}
+	return db.NewTaskStore(database)
+}
+
 func (s *APIServer) syncs() *syncAPI {
 	var publishBandwidth func(context.Context, queue.BandwidthEvent) error
 	var oauthLocker oauth.TokenLocker
@@ -72,6 +85,7 @@ func (s *APIServer) syncs() *syncAPI {
 	return newSyncAPI(syncDependencies{
 		requestEnv:             s.requestEnv(),
 		db:                     s.db,
+		tasks:                  taskStoreFor(s.db),
 		encryptionKey:          s.encryptionKey,
 		backgroundCtx:          s.backgroundCtx,
 		rateLimiter:            s.rateLimiter,

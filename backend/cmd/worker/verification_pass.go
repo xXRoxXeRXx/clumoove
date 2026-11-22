@@ -128,7 +128,7 @@ func (v *checksumVerifier) runPass(ctx context.Context, cfg verificationPassConf
 			}
 			return ok && err == nil
 		}
-		return db.MarkTaskChecksumVerified(v.db, passCtx, task.ID, targetHash) == nil
+		return v.tasks.MarkTaskChecksumVerified(passCtx, task.ID, targetHash) == nil
 	}
 	markMismatch := func(task *db.Task, message, targetHash string) {
 		task.Status = "FAILED"
@@ -145,7 +145,7 @@ func (v *checksumVerifier) runPass(ctx context.Context, cfg verificationPassConf
 			return
 		}
 		task.NextRetryAt = sql.NullTime{Time: time.Now(), Valid: true}
-		_ = db.UpdateTaskStatus(v.db, task)
+		_ = v.tasks.UpdateTaskStatus(task)
 	}
 
 	unverifiedTasks, err := cfg.GetTasks(passCtx)

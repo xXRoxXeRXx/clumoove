@@ -105,7 +105,7 @@ type ErrorListItem struct {
 	OccurredAt   time.Time       `json:"occurred_at"`
 }
 
-func CreateTask(db *sql.DB, t *Task) (string, error) {
+func createTask(db *sql.DB, t *Task) (string, error) {
 	query := `
 		INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata, source_hash)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -122,7 +122,7 @@ func CreateTask(db *sql.DB, t *Task) (string, error) {
 	return t.ID, nil
 }
 
-func GetTask(db *sql.DB, id string) (*Task, error) {
+func getTask(db *sql.DB, id string) (*Task, error) {
 	query := `
 		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), COALESCE(prerequisite_task_id::text, ''), resource_type, file_path, COALESCE(resolved_target_path, ''), file_size, status,
 		       attempts, error_message, next_retry_at, worker_hash, claim_epoch, pass_generation, source_hash, target_hash,
@@ -141,7 +141,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	return &t, nil
 }
 
-func UpdateTaskStatus(db *sql.DB, t *Task) error {
+func updateTaskStatus(db *sql.DB, t *Task) error {
 	query := `
 		UPDATE tasks
 		SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4, worker_hash = $5,
@@ -153,10 +153,10 @@ func UpdateTaskStatus(db *sql.DB, t *Task) error {
 	return err
 }
 
-// UpdateClaimedTaskStatus changes a task only while this exact dequeue claim
+// updateClaimedTaskStatus changes a task only while this exact dequeue claim
 // still owns it. sql.ErrNoRows means the task was recovered or reclaimed and
 // the caller must stop work rather than committing stale results.
-func UpdateClaimedTaskStatus(db *sql.DB, ctx context.Context, t *Task) error {
+func updateClaimedTaskStatus(db *sql.DB, ctx context.Context, t *Task) error {
 	res, err := db.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4, worker_hash = $5,
@@ -175,8 +175,8 @@ func UpdateClaimedTaskStatus(db *sql.DB, ctx context.Context, t *Task) error {
 	return nil
 }
 
-// HeartbeatTaskClaim refreshes only the active fenced claim.
-func HeartbeatTaskClaim(db *sql.DB, ctx context.Context, lease Lease) (bool, error) {
+// heartbeatTaskClaim refreshes only the active fenced claim.
+func heartbeatTaskClaim(db *sql.DB, ctx context.Context, lease Lease) (bool, error) {
 	if err := lease.validate(); err != nil {
 		return false, err
 	}
@@ -188,9 +188,9 @@ func HeartbeatTaskClaim(db *sql.DB, ctx context.Context, lease Lease) (bool, err
 	return n == 1, err
 }
 
-// HeartbeatSyncTaskClaim refreshes only a claim belonging to the active sync
+// heartbeatSyncTaskClaim refreshes only a claim belonging to the active sync
 // generation. A superseded worker observes false and cancels its stream.
-func HeartbeatSyncTaskClaim(db *sql.DB, ctx context.Context, lease Lease, generation int) (bool, error) {
+func heartbeatSyncTaskClaim(db *sql.DB, ctx context.Context, lease Lease, generation int) (bool, error) {
 	if err := lease.validate(); err != nil {
 		return false, err
 	}
@@ -202,9 +202,9 @@ func HeartbeatSyncTaskClaim(db *sql.DB, ctx context.Context, lease Lease, genera
 	return n == 1, err
 }
 
-// TransitionClaimedTask applies an early worker transition before a Task has
+// transitionClaimedTask applies an early worker transition before a Task has
 // been loaded, while still fencing it to the payload's dequeue claim.
-func TransitionClaimedTask(db *sql.DB, ctx context.Context, lease Lease, status string) error {
+func transitionClaimedTask(db *sql.DB, ctx context.Context, lease Lease, status string) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -220,7 +220,7 @@ func TransitionClaimedTask(db *sql.DB, ctx context.Context, lease Lease, status 
 	return nil
 }
 
-func GetUnverifiedCompletedTasks(db *sql.DB, ctx context.Context, migrationID string) ([]*Task, error) {
+func getUnverifiedCompletedTasks(db *sql.DB, ctx context.Context, migrationID string) ([]*Task, error) {
 	query := `
 		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), resource_type, file_path, COALESCE(resolved_target_path, ''), file_size, status,
 		       attempts, error_message, next_retry_at, worker_hash, source_hash, target_hash,
@@ -249,7 +249,7 @@ func GetUnverifiedCompletedTasks(db *sql.DB, ctx context.Context, migrationID st
 	return tasks, rows.Err()
 }
 
-func MarkTaskChecksumVerified(db *sql.DB, ctx context.Context, taskID, targetHash string) error {
+func markTaskChecksumVerified(db *sql.DB, ctx context.Context, taskID, targetHash string) error {
 	query := `
 		UPDATE tasks
 		SET checksum_verified = TRUE,
@@ -261,9 +261,9 @@ func MarkTaskChecksumVerified(db *sql.DB, ctx context.Context, taskID, targetHas
 	return err
 }
 
-// MarkSyncTaskChecksumVerifiedWhileVerifying rejects writes after an engine
+// markSyncTaskChecksumVerifiedWhileVerifying rejects writes after an engine
 // timeout has withdrawn the sync pass from VERIFYING.
-func MarkSyncTaskChecksumVerifiedWhileVerifying(db *sql.DB, ctx context.Context, taskID, targetHash string, runGeneration, verificationGeneration int) (bool, error) {
+func markSyncTaskChecksumVerifiedWhileVerifying(db *sql.DB, ctx context.Context, taskID, targetHash string, runGeneration, verificationGeneration int) (bool, error) {
 	res, err := db.ExecContext(ctx, `
 		WITH verified AS (
 			UPDATE tasks AS t
@@ -291,9 +291,9 @@ func MarkSyncTaskChecksumVerifiedWhileVerifying(db *sql.DB, ctx context.Context,
 	return affected == 1, err
 }
 
-// MarkSyncTaskChecksumMismatchWhileVerifying records a mismatch only while
+// markSyncTaskChecksumMismatchWhileVerifying records a mismatch only while
 // the verifier owns VERIFYING. It does not schedule a retry during finalization.
-func MarkSyncTaskChecksumMismatchWhileVerifying(db *sql.DB, ctx context.Context, task *Task, runGeneration, verificationGeneration int) (bool, error) {
+func markSyncTaskChecksumMismatchWhileVerifying(db *sql.DB, ctx context.Context, task *Task, runGeneration, verificationGeneration int) (bool, error) {
 	res, err := db.ExecContext(ctx, `
 		UPDATE tasks AS t
 		SET status = $1, attempts = $2, error_message = $3, next_retry_at = NULL,
@@ -315,7 +315,7 @@ func MarkSyncTaskChecksumMismatchWhileVerifying(db *sql.DB, ctx context.Context,
 	return affected == 1, err
 }
 
-func MarkAllMigrationTasksVerified(db *sql.DB, ctx context.Context, migrationID string) error {
+func markAllMigrationTasksVerified(db *sql.DB, ctx context.Context, migrationID string) error {
 	query := `
 		UPDATE tasks
 		SET checksum_verified = TRUE, updated_at = CURRENT_TIMESTAMP
@@ -325,9 +325,9 @@ func MarkAllMigrationTasksVerified(db *sql.DB, ctx context.Context, migrationID 
 	return err
 }
 
-// UpdateClaimedTaskResolvedTargetPath persists the destination selected for a
+// updateClaimedTaskResolvedTargetPath persists the destination selected for a
 // migration task without ever changing its source-provider file_path.
-func UpdateClaimedTaskResolvedTargetPath(db *sql.DB, ctx context.Context, lease Lease, targetPath string) error {
+func updateClaimedTaskResolvedTargetPath(db *sql.DB, ctx context.Context, lease Lease, targetPath string) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -343,10 +343,10 @@ func UpdateClaimedTaskResolvedTargetPath(db *sql.DB, ctx context.Context, lease 
 	return nil
 }
 
-// UpdateClaimedTaskMetadata persists task metadata only while this exact
+// updateClaimedTaskMetadata persists task metadata only while this exact
 // worker claim remains RUNNING. It prevents a recovered worker from attaching
 // target identity to a later transfer attempt.
-func UpdateClaimedTaskMetadata(db *sql.DB, ctx context.Context, lease Lease, metadata json.RawMessage) error {
+func updateClaimedTaskMetadata(db *sql.DB, ctx context.Context, lease Lease, metadata json.RawMessage) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -403,7 +403,7 @@ func updateMigrationTaskAndProgress(db *sql.DB, ctx context.Context, t *Task, fi
 	return tx.Commit()
 }
 
-func GetActiveTaskPath(db *sql.DB, ctx context.Context, migrationID string) (string, error) {
+func getActiveTaskPath(db *sql.DB, ctx context.Context, migrationID string) (string, error) {
 	paths, err := getActiveTaskPaths(db, ctx, migrationID)
 	if err != nil || len(paths) == 0 {
 		return "", err
@@ -484,7 +484,7 @@ func displayTaskName(filePath string, meta json.RawMessage) string {
 	return filePath
 }
 
-func CancelRemainingPendingTasks(dbsql *sql.DB, migrationID string) (int, error) {
+func cancelRemainingPendingTasks(dbsql *sql.DB, migrationID string) (int, error) {
 	query := `
 		UPDATE tasks
 		SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
@@ -849,8 +849,8 @@ func getMigrationErrorsContext(ctx context.Context, db *sql.DB, migrationID stri
 	return items, total, rows.Err()
 }
 
-// GetSyncErrorsContext retrieves paginated sync errors while honoring caller cancellation.
-func GetSyncErrorsContext(ctx context.Context, db *sql.DB, syncJobID string, limit, offset int) ([]ErrorListItem, int, error) {
+// getSyncErrorsContext retrieves paginated sync errors while honoring caller cancellation.
+func getSyncErrorsContext(ctx context.Context, db *sql.DB, syncJobID string, limit, offset int) ([]ErrorListItem, int, error) {
 	rows, err := db.QueryContext(ctx, `
 		WITH errors AS MATERIALIZED (
 			SELECT id::text AS id, 'transfer' AS kind, resource_type, file_path AS path, status, attempts,
@@ -894,7 +894,7 @@ func GetSyncErrorsContext(ctx context.Context, db *sql.DB, syncJobID string, lim
 	return items, total, rows.Err()
 }
 
-func DeleteIndexingErrors(db *sql.DB, migrationID string) error {
+func deleteIndexingErrors(db *sql.DB, migrationID string) error {
 	query := `DELETE FROM indexing_errors WHERE migration_id = $1`
 	_, err := db.Exec(query, migrationID)
 	return err

@@ -171,7 +171,7 @@ func TestSyncPassGenerationFencesVerificationReconciliationAndReporting(t *testi
 		t.Fatal(err)
 	}
 
-	verified, err := MarkSyncTaskChecksumVerifiedWhileVerifying(database, context.Background(), "current-completed", "", 2, 7)
+	verified, err := markSyncTaskChecksumVerifiedWhileVerifying(database, context.Background(), "current-completed", "", 2, 7)
 	if err != nil || !verified {
 		t.Fatalf("mark current task verified = %v, %v; want true, nil", verified, err)
 	}

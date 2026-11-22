@@ -31,7 +31,7 @@ type migrationTarget interface {
 func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context.CancelFunc, mig *db.Migration, task *db.Task, sourceClient inspectingTransferSource, targetClient migrationTarget, migrationThrottler *throttle.MigrationThrottler) error {
 	// Update task status to RUNNING in DB.
 	task.Status = "RUNNING"
-	if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+	if err := p.tasks.UpdateClaimedTaskStatus(ctx, task); err != nil {
 		processorLogf("[Worker %s] Failed to mark task %s RUNNING: %v", p.workerID, task.ID, err)
 		return fmt.Errorf("failed to mark task running: %w", err)
 	}
@@ -226,7 +226,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 		// deliberately immutable: retries must continue to download it from the
 		// source while reusing this chosen target, and deferred verification must
 		// not apply TargetDir a second time.
-		if err := db.UpdateClaimedTaskResolvedTargetPath(p.db, ctx, task.Lease(), targetPath); err != nil {
+		if err := p.tasks.UpdateClaimedTaskResolvedTargetPath(ctx, task.Lease(), targetPath); err != nil {
 			return fmt.Errorf("persist resolved target path: %w", err)
 		}
 		task.ResolvedTargetPath = targetPath
@@ -302,7 +302,7 @@ func (p *Processor) executeMigrationTransfer(ctx context.Context, cancel context
 			return fmt.Errorf("marshal immich target asset metadata: %w", err)
 		}
 		task.Metadata = metadata
-		if err := db.UpdateClaimedTaskMetadata(p.db, ctx, task.Lease(), task.Metadata); err != nil {
+		if err := p.tasks.UpdateClaimedTaskMetadata(ctx, task.Lease(), task.Metadata); err != nil {
 			return fmt.Errorf("persist immich target asset ID: %w", err)
 		}
 	}

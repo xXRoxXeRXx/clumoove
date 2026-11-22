@@ -26,18 +26,18 @@ func TestCreateTaskPersistsDirectSelectionSourceHash(t *testing.T) {
 		Metadata:     json.RawMessage(`{}`),
 	}
 
-	if _, err := CreateTask(database, task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if _, err := createTask(database, task); err != nil {
+		t.Fatalf("createTask() error = %v", err)
 	}
 	const wantInsert = "INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata, source_hash) VALUES"
 	if normalized := strings.Join(strings.Fields(state.query), " "); !strings.Contains(normalized, wantInsert) {
-		t.Fatalf("CreateTask() INSERT columns = %q, want ordered source_hash column", normalized)
+		t.Fatalf("createTask() INSERT columns = %q, want ordered source_hash column", normalized)
 	}
 	if len(state.args) != 7 {
-		t.Fatalf("CreateTask() argument count = %d, want 7", len(state.args))
+		t.Fatalf("createTask() argument count = %d, want 7", len(state.args))
 	}
 	if got := state.args[6].Value; got != task.SourceHash.String {
-		t.Fatalf("CreateTask() source_hash argument = %#v, want %#v", got, task.SourceHash.String)
+		t.Fatalf("createTask() source_hash argument = %#v, want %#v", got, task.SourceHash.String)
 	}
 }
 
@@ -52,14 +52,14 @@ func TestCreateTaskWithoutSourceHashPersistsNull(t *testing.T) {
 		Metadata:     json.RawMessage(`{}`),
 	}
 
-	if _, err := CreateTask(database, task); err != nil {
-		t.Fatalf("CreateTask() error = %v", err)
+	if _, err := createTask(database, task); err != nil {
+		t.Fatalf("createTask() error = %v", err)
 	}
 	if len(state.args) != 7 {
-		t.Fatalf("CreateTask() argument count = %d, want 7", len(state.args))
+		t.Fatalf("createTask() argument count = %d, want 7", len(state.args))
 	}
 	if got := state.args[6].Value; got != nil {
-		t.Fatalf("CreateTask() source_hash argument = %#v, want nil", got)
+		t.Fatalf("createTask() source_hash argument = %#v, want nil", got)
 	}
 }
 
@@ -217,9 +217,9 @@ func TestUpdateClaimedTaskMetadataFencesClaimAndPersistsMetadata(t *testing.T) {
 			database, state := newCreateTaskTestDB(t)
 			state.execResult = driver.RowsAffected(tc.affected)
 			metadata := json.RawMessage(`{"custom_props":{"immich_asset_id":"source","immich_target_asset_id":"target"}}`)
-			err := UpdateClaimedTaskMetadata(database, context.Background(), Lease{ID: "task-1", Epoch: 7}, metadata)
+			err := updateClaimedTaskMetadata(database, context.Background(), Lease{ID: "task-1", Epoch: 7}, metadata)
 			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("UpdateClaimedTaskMetadata() error = %v, want %v", err, tc.wantErr)
+				t.Fatalf("updateClaimedTaskMetadata() error = %v, want %v", err, tc.wantErr)
 			}
 			if tc.wantErr == nil {
 				if !strings.Contains(state.execQuery, "status = 'RUNNING' AND claim_epoch = $3") {
@@ -235,8 +235,8 @@ func TestUpdateClaimedTaskMetadataFencesClaimAndPersistsMetadata(t *testing.T) {
 
 func TestUpdateClaimedTaskResolvedTargetPathPreservesSourcePath(t *testing.T) {
 	database, state := newCreateTaskTestDB(t)
-	if err := UpdateClaimedTaskResolvedTargetPath(database, context.Background(), Lease{ID: "task-1", Epoch: 7}, "/dest/a_copy1.txt"); err != nil {
-		t.Fatalf("UpdateClaimedTaskResolvedTargetPath() error = %v", err)
+	if err := updateClaimedTaskResolvedTargetPath(database, context.Background(), Lease{ID: "task-1", Epoch: 7}, "/dest/a_copy1.txt"); err != nil {
+		t.Fatalf("updateClaimedTaskResolvedTargetPath() error = %v", err)
 	}
 	if strings.Contains(state.execQuery, "SET file_path") {
 		t.Fatalf("resolved target update changed source path: %q", state.execQuery)

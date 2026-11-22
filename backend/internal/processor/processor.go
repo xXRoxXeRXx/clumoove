@@ -42,6 +42,7 @@ type activeTaskInfo struct {
 type Processor struct {
 	db                 *sql.DB
 	migrations         db.MigrationStore
+	tasks              db.TaskStore
 	queue              *queue.Queue
 	oauthRefresher     *oauth.JobTokenRefresher
 	oauthRefresherOnce sync.Once
@@ -360,12 +361,15 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 		refresher = oauth.NewJobTokenRefresher(database, cfg.SecretKey, queueTokenLocker(q))
 	}
 	var migrations db.MigrationStore
+	var tasks db.TaskStore
 	if database != nil {
 		migrations = db.NewMigrationStore(database)
+		tasks = db.NewTaskStore(database)
 	}
 	return &Processor{
 		db:              database,
 		migrations:      migrations,
+		tasks:           tasks,
 		queue:           q,
 		oauthRefresher:  refresher,
 		workerID:        cfg.WorkerID,

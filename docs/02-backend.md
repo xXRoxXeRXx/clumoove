@@ -121,7 +121,7 @@ Key query helpers include `CreateMigration`, `GetMigration`, `TransitionMigratio
 `VerifyMigrationOwnership`, `VerifySyncOwnership`, `VerifyBackupOwnership`, `IsSetupRequired`, `ListUsers`, `GetGlobalStats`,
 `ListAllMigrations`, `ListAllSyncs`, `ListAuditLog`, and paginated admin views.
 
-Persistence is moving behind feature stores one feature at a time (issue #83). Connection profiles and the migrations table are done: outside `internal/db` they are reached only through `db.ProfileStore` and `db.MigrationStore` (`NewProfileStore`, `NewMigrationStore`), so API handlers take the store through their dependencies and in-package tests of the scheduler, indexer, processor and worker can swap in a fake. Still outside the stores: inline SQL in the scheduler, worker maintenance and queue, and the `tasks`-table functions shared with sync jobs (`GetTask`, `UpdateClaimedTaskStatus`, `TransitionClaimedTask` and similar).
+Persistence is moving behind feature stores one feature at a time (issue #83). Connection profiles, the migrations table and the task rows are done: outside `internal/db` they are reached only through `db.ProfileStore`, `db.MigrationStore` and `db.TaskStore` (`NewProfileStore`, `NewMigrationStore`, `NewTaskStore`), so API handlers take a store through their dependencies and in-package tests of the scheduler, indexer, processor and worker can swap in a fake. Still outside the stores: inline SQL in the scheduler, worker maintenance, the queue dequeue and the sync engine, the migration notification outbox, and the sync-job progress and task writes that live in `sync.go` (`UpdateClaimedSyncTaskStatus`, `UpdateSyncTaskStatusAndIncrementProgress`, `GetSyncJob` and similar).
 
 ### `StringArray` & JSONB
 

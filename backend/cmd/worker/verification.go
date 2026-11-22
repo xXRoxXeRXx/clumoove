@@ -22,6 +22,7 @@ type verificationWork struct {
 type checksumVerifier struct {
 	db                  *sql.DB
 	migrations          db.MigrationStore
+	tasks               db.TaskStore
 	secretKey           string
 	oauthRefresher      *oauth.JobTokenRefresher
 	providerSlots       chan struct{}
@@ -47,12 +48,15 @@ func newChecksumVerifier(database *sql.DB, secretKey string, maxThreads int, pro
 		refresher = oauth.NewJobTokenRefresher(database, secretKey, nil)
 	}
 	var migrations db.MigrationStore
+	var tasks db.TaskStore
 	if database != nil {
 		migrations = db.NewMigrationStore(database)
+		tasks = db.NewTaskStore(database)
 	}
 	return &checksumVerifier{
 		db:                  database,
 		migrations:          migrations,
+		tasks:               tasks,
 		secretKey:           secretKey,
 		oauthRefresher:      refresher,
 		providerSlots:       providerSlots,

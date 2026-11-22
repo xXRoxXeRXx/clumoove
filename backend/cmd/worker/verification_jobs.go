@@ -62,7 +62,7 @@ func (v *checksumVerifier) verifyMigrationChecksums(ctx context.Context, migrati
 		TargetDir:        mig.TargetDir,
 		Threads:          mig.Threads,
 		GetTasks: func(ctx context.Context) ([]*db.Task, error) {
-			return db.GetUnverifiedCompletedTasks(v.db, ctx, migrationID)
+			return v.tasks.GetUnverifiedCompletedTasks(ctx, migrationID)
 		},
 		MarkVerified: func(ctx context.Context, task *db.Task, targetHash string) (bool, error) {
 			return v.migrations.MarkMigrationTaskChecksumVerifiedWhileVerifying(ctx, task.ID, targetHash, generation)
@@ -150,10 +150,10 @@ func (v *checksumVerifier) verifySyncJobChecksums(ctx context.Context, syncJobID
 			return db.GetUnverifiedCompletedSyncTasks(v.db, ctx, syncJobID, job.RunGeneration)
 		},
 		MarkVerified: func(ctx context.Context, task *db.Task, targetHash string) (bool, error) {
-			return db.MarkSyncTaskChecksumVerifiedWhileVerifying(v.db, ctx, task.ID, targetHash, job.RunGeneration, verificationGeneration)
+			return v.tasks.MarkSyncTaskChecksumVerifiedWhileVerifying(ctx, task.ID, targetHash, job.RunGeneration, verificationGeneration)
 		},
 		MarkMismatch: func(ctx context.Context, task *db.Task) (bool, error) {
-			return db.MarkSyncTaskChecksumMismatchWhileVerifying(v.db, ctx, task, job.RunGeneration, verificationGeneration)
+			return v.tasks.MarkSyncTaskChecksumMismatchWhileVerifying(ctx, task, job.RunGeneration, verificationGeneration)
 		},
 		ReconcileProgress: func() error {
 			return nil

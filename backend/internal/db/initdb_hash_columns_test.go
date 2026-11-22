@@ -65,13 +65,13 @@ func TestInitDBFreshSchemaSupportsTaskHashRuntimeQueries(t *testing.T) {
 	if _, err := createMigrationTaskWhileIndexing(initializedDB, migrationTask); err != nil {
 		t.Fatalf("insert indexed task: %v", err)
 	}
-	if _, err := GetTask(initializedDB, migrationTask.ID); err != nil {
-		t.Fatalf("GetTask(): %v", err)
+	if _, err := getTask(initializedDB, migrationTask.ID); err != nil {
+		t.Fatalf("getTask(): %v", err)
 	}
 	if _, err := initializedDB.Exec(`UPDATE tasks SET status = 'COMPLETED', target_hash = 'SHA256:target' WHERE id = $1`, migrationTask.ID); err != nil {
 		t.Fatalf("complete migration task: %v", err)
 	}
-	if tasks, err := GetUnverifiedCompletedTasks(initializedDB, ctx, migrationID); err != nil || len(tasks) != 1 {
+	if tasks, err := getUnverifiedCompletedTasks(initializedDB, ctx, migrationID); err != nil || len(tasks) != 1 {
 		t.Fatalf("migration verification query = %d tasks, %v; want 1, nil", len(tasks), err)
 	}
 

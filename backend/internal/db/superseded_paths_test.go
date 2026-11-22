@@ -40,7 +40,7 @@ var supersededPersistencePaths = map[string]string{
 	// sync
 	"CreateSyncJob":             "unused",
 	"GetSyncJobsForUser":        "GetSyncJobsForUserContext",
-	"GetSyncErrors":             "GetSyncErrorsContext",
+	"GetSyncErrors":             "TaskStore.GetSyncErrorsContext",
 	"PauseSyncJob":              "PauseSyncJobAndDeactivateSchedules",
 	"ResumeSyncJob":             "ResumeSyncJobAndReactivateSchedules",
 	"AddSyncJobLiveBytes":       "unused",

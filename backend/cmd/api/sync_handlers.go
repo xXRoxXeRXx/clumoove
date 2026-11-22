@@ -643,7 +643,7 @@ func (api *syncAPI) handleSyncErrors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, offset := parseErrorListPagination(r)
-	items, total, err := db.GetSyncErrorsContext(r.Context(), api.db, id, limit, offset)
+	items, total, err := api.tasks.GetSyncErrorsContext(r.Context(), id, limit, offset)
 	if err != nil {
 		api.logf(r, "Error fetching sync job %s errors: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
