@@ -8,6 +8,20 @@ import { createDownloadTicket, getFileThumbnailResult, type FileEntry } from '..
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+// jsdom's Blob has no stream(), and Node 22's Response requires it for Blob bodies
+// (Node 24 does not). Shim it so `new Response(blob)` works on both.
+if (typeof Blob.prototype.stream !== 'function') {
+  Blob.prototype.stream = function stream(this: Blob): ReadableStream<Uint8Array<ArrayBuffer>> {
+    const bytes = this.arrayBuffer();
+    return new ReadableStream({
+      async start(controller) {
+        controller.enqueue(new Uint8Array(await bytes));
+        controller.close();
+      },
+    });
+  };
+}
+
 vi.mock('../../api/files', () => ({
   createDownloadTicket: vi.fn(),
   getFileThumbnailResult: vi.fn(),
