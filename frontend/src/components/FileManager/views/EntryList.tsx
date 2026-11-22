@@ -72,7 +72,7 @@ export function EntryList({ rows, selection, sort, onActivate, onToggleSelect, o
       <table className="ui-table w-full table-fixed text-sm">
         <thead className="bg-[var(--color-bg-tertiary)] text-left text-xs text-[var(--color-text-secondary)]">
           <tr>
-            <th scope="col" className="w-10 px-3 py-2 font-medium"><input ref={selectAllRef} type="checkbox" checked={selection.allSelected} onChange={selection.onToggleAll} aria-label={t('files.selectAll')} /></th>
+            <th scope="col" className="w-10 px-1 py-0 font-medium"><label className="ui-touch-target cursor-pointer"><input ref={selectAllRef} type="checkbox" checked={selection.allSelected} onChange={selection.onToggleAll} aria-label={t('files.selectAll')} /></label></th>
             <th scope="col" aria-sort={ariaSortFor('name')} className="px-3 py-2 font-medium">
               <SortHeader field="name" label={t('files.name')} sortLabel={t('files.sortByName')} sort={sort} />
             </th>
@@ -100,7 +100,7 @@ export function EntryList({ rows, selection, sort, onActivate, onToggleSelect, o
                   row.selected ? 'bg-[var(--color-selection-bg)]/20 hover:bg-[var(--color-selection-bg)]/30' : 'hover:bg-[var(--color-hover)]'
                 } ${row.clickable ? 'cursor-pointer' : ''}`}
               >
-                <td className="w-10 px-3 py-2"><input type="checkbox" checked={row.selected} onClick={(event) => event.stopPropagation()} onChange={() => onToggleSelect(row.ref)} aria-label={t('files.selectEntry', { name: row.name })} /></td>
+                <td className="w-10 px-1 py-0"><label className="ui-touch-target cursor-pointer" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={row.selected} onClick={(event) => event.stopPropagation()} onChange={() => onToggleSelect(row.ref)} aria-label={t('files.selectEntry', { name: row.name })} /></label></td>
                 <td data-label={t('files.name')} className="px-3 py-2 min-w-0 max-w-0">
                   <button
                     type="button"

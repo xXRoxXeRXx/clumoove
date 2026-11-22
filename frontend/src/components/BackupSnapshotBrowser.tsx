@@ -359,7 +359,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
     {!loading && !error && items.length === 0 && <p className="text-sm text-[var(--color-text-muted)]">{t('backup.emptyFolder')}</p>}
     <ul className="divide-y divide-[var(--color-border-light)]">
       {items.map((item) => <li key={item.relative_path} className="flex items-center">
-        <input type="checkbox" className="ml-2" checked={selectedPaths.includes(item.relative_path) || selectedPaths.includes('')} disabled={selectedPaths.includes('')} onChange={() => togglePath(item.relative_path)} aria-label={item.name} />
+        <label className="ui-touch-target shrink-0"><input type="checkbox" checked={selectedPaths.includes(item.relative_path) || selectedPaths.includes('')} disabled={selectedPaths.includes('')} onChange={() => togglePath(item.relative_path)} aria-label={item.name} /></label>
         {item.is_dir ? <button type="button" onClick={() => { setLoading(true); setError(''); setDirectory(item.relative_path); }} className="flex w-full items-center gap-3 px-2 py-3 text-left hover:bg-[var(--color-hover)]"><FileIcon name={item.name} isDir className="size-5" /><span className="flex-1 text-sm">{item.name}</span><span className="text-xs text-[var(--color-text-muted)]">{t('backup.folder')}</span></button>
           : <div className="flex items-center gap-3 px-2 py-3"><FileIcon name={item.name} className="size-5" /><span className="flex-1 truncate text-sm">{item.name}</span><span className="text-xs text-[var(--color-text-muted)]">{formatBytes(item.size_bytes)}{item.mtime ? ` · ${formatDateTime(item.mtime)}` : ''}</span></div>}
       </li>)}

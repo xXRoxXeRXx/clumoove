@@ -36,15 +36,16 @@ export function EntryGrid({ rows, selectionActive, onActivate, onToggleSelect, o
             } ${row.clickable ? '' : 'opacity-70'}`}
             title={row.name}
           >
-            <input
-              type="checkbox"
-              className="absolute left-2 top-2 z-10"
-              checked={row.selected}
-              onClick={(event) => event.stopPropagation()}
-              onKeyDown={(event) => event.stopPropagation()}
-              onChange={() => onToggleSelect(row.ref)}
-              aria-label={t('files.selectEntry', { name: row.name })}
-            />
+            <label className="ui-touch-target absolute left-0 top-0 z-10 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={row.selected}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+                onChange={() => onToggleSelect(row.ref)}
+                aria-label={t('files.selectEntry', { name: row.name })}
+              />
+            </label>
             {row.hasActions && (
               <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                 <button
