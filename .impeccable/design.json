@@ -7,7 +7,8 @@
       "ink": { "role": "primary", "displayName": "Ink", "canonical": "#18181b", "tonalRamp": ["#09090b", "#18181b", "#27272a", "#3f3f46", "#52525b", "#71717a", "#a1a1aa", "#e4e4e7"] },
       "graphite": { "role": "primary", "displayName": "Graphite", "canonical": "#27272a", "tonalRamp": ["#09090b", "#18181b", "#27272a", "#3f3f46", "#52525b", "#71717a", "#a1a1aa", "#e4e4e7"] },
       "slate": { "role": "neutral", "displayName": "Slate", "canonical": "#52525b", "tonalRamp": ["#18181b", "#27272a", "#3f3f46", "#52525b", "#71717a", "#a1a1aa", "#d4d4d8", "#f4f4f5"] },
-      "ash": { "role": "neutral", "displayName": "Ash", "canonical": "#71717a", "tonalRamp": ["#18181b", "#27272a", "#3f3f46", "#52525b", "#71717a", "#a1a1aa", "#d4d4d8", "#f4f4f5"] },
+      "ash": { "role": "neutral", "displayName": "Ash", "canonical": "#656570", "tonalRamp": ["#18181b", "#27272a", "#3f3f46", "#52525b", "#656570", "#a1a1aa", "#d4d4d8", "#f4f4f5"] },
+      "control-edge": { "role": "neutral", "displayName": "Control Edge", "canonical": "#80808a", "tonalRamp": ["#27272a", "#3f3f46", "#52525b", "#656570", "#80808a", "#a1a1aa", "#d4d4d8", "#e4e4e7"] },
       "paper": { "role": "neutral", "displayName": "Paper", "canonical": "#fafafa", "tonalRamp": ["#18181b", "#27272a", "#3f3f46", "#71717a", "#a1a1aa", "#d4d4d8", "#f4f4f5", "#fafafa"] },
       "sheet": { "role": "neutral", "displayName": "Sheet", "canonical": "#ffffff", "tonalRamp": ["#27272a", "#3f3f46", "#71717a", "#a1a1aa", "#d4d4d8", "#e4e4e7", "#f4f4f5", "#ffffff"] },
       "wash": { "role": "neutral", "displayName": "Wash", "canonical": "#f4f4f5", "tonalRamp": ["#27272a", "#3f3f46", "#71717a", "#a1a1aa", "#d4d4d8", "#e4e4e7", "#f4f4f5", "#fafafa"] },
@@ -75,7 +76,7 @@
       "refersTo": "input",
       "description": "Labelled field with hint text.",
       "html": "<div class=\"ds-field\"><label class=\"ds-field-label\" for=\"ds-in\">Server URL</label><input id=\"ds-in\" class=\"ds-input\" placeholder=\"https://cloud.example.org\"><p class=\"ds-field-hint\">HTTPS only.</p></div>",
-      "css": ".ds-field { display: grid; gap: 6px; font-family: 'Open Sans', system-ui, sans-serif; } .ds-field-label { color: #52525b; font-size: 14px; font-weight: 600; } .ds-input { background: #ffffff; color: #18181b; border: 1px solid #e4e4e7; border-radius: 4px; padding: 8px 12px; font: 400 14px/20px 'Open Sans', system-ui, sans-serif; } .ds-input::placeholder { color: #71717a; opacity: 1; } .ds-input:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; } .ds-field-hint { margin: 0; color: #71717a; font-size: 14px; }"
+      "css": ".ds-field { display: grid; gap: 6px; font-family: 'Open Sans', system-ui, sans-serif; } .ds-field-label { color: #52525b; font-size: 14px; font-weight: 600; } .ds-input { background: #ffffff; color: #18181b; border: 1px solid #80808a; border-radius: 4px; padding: 8px 12px; font: 400 14px/20px 'Open Sans', system-ui, sans-serif; } .ds-input::placeholder { color: #656570; opacity: 1; } .ds-input:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; } .ds-field-hint { margin: 0; color: #656570; font-size: 14px; }"
     },
     {
       "name": "Status Badges",
@@ -91,7 +92,7 @@
       "refersTo": "card",
       "description": "Flat bordered container, no shadow.",
       "html": "<div class=\"ds-card\"><h3 class=\"ds-card-title\">Nightly backup</h3><p class=\"ds-card-meta\">Next run 02:00 · 4 snapshots</p></div>",
-      "css": ".ds-card { background: #ffffff; border: 1px solid #e4e4e7; border-radius: 6px; padding: 24px; font-family: 'Open Sans', system-ui, sans-serif; } .ds-card-title { margin: 0; font: 600 18px/28px Poppins, system-ui, sans-serif; letter-spacing: -0.025em; color: #18181b; } .ds-card-meta { margin: 4px 0 0; color: #71717a; font-size: 12px; }"
+      "css": ".ds-card { background: #ffffff; border: 1px solid #e4e4e7; border-radius: 6px; padding: 24px; font-family: 'Open Sans', system-ui, sans-serif; } .ds-card-title { margin: 0; font: 600 18px/28px Poppins, system-ui, sans-serif; letter-spacing: -0.025em; color: #18181b; } .ds-card-meta { margin: 4px 0 0; color: #656570; font-size: 12px; }"
     },
     {
       "name": "Tabs",

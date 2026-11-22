@@ -5,7 +5,8 @@ colors:
   ink: "#18181b"
   graphite: "#27272a"
   slate: "#52525b"
-  ash: "#71717a"
+  ash: "#656570"
+  control-edge: "#80808a"
   paper: "#fafafa"
   sheet: "#ffffff"
   wash: "#f4f4f5"
@@ -153,8 +154,9 @@ same semantic tokens (`--color-*` in `frontend/src/index.css`).
 
 ### Primary
 - **Ink** (#18181b): The primary action fill, body text, the brand mark and the selected-tab underline. It is the system's
-  only "accent", and it is black. In dark mode the same role is played by near-white text on `#18181b`/`#27272a`.
-- **Graphite** (#27272a): Hover state for primary buttons and the `--color-primary` theme token.
+  only "accent", and it is black. In dark mode the role inverts: the primary fill, active tab and progress fill become near-white
+  (#fafafa) with `#18181b` text, so the main action is always the highest-contrast element on screen.
+- **Graphite** (#27272a): Hover state for primary buttons in light mode (dark mode hovers to #e4e4e7) and the `--color-primary` theme token.
 
 ### Secondary
 - **Focus Blue** (#2563eb, dark: #93c5fd): Keyboard focus ring only (2px solid, 2px offset), plus the `Toggle` switch's
@@ -166,12 +168,13 @@ same semantic tokens (`--color-*` in `frontend/src/index.css`).
 - **Wash** (#f4f4f5): Hover fill, table headers, muted badges, toggle off-track. Dark: #3f3f46.
 - **Rule** (#e4e4e7): Every 1px border, divider and progress track. Dark: #3f3f46.
 - **Slate** (#52525b): Secondary text and secondary-button labels. Dark: #d4d4d8.
-- **Ash** (#71717a): Muted text, placeholders, metadata. Dark: #a1a1aa.
+- **Ash** (#656570): Muted text, placeholders, metadata; 4.5:1 or better on every light surface including `Wash` and selected rows. Dark: #b0b0b8.
+- **Control Edge** (#80808a): The 1px border of inputs, selects and the toggle's off-track (3.5:1 or better against the page and cards, WCAG 1.4.11). Dark: #8a8a94. Decorative dividers and cards stay on `Rule`.
 
 ### State
 - **Verified Green** (#15803d on #f0fdf4): Success, completed, verified integrity.
 - **Caution Amber** (#a16207 on #fffbeb): Warnings and paused-with-reason states; badge text stays `ink` on the amber wash.
-- **Failure Red** (#b91c1c on #fef2f2): Errors, failed transfers, destructive button fill.
+- **Failure Red** (#b91c1c on #fef2f2): Errors, failed transfers. The destructive button fill is its own pair, `--color-danger-bg` (#b91c1c light, #dc2626 dark, hover #991b1b / #b91c1c) with white text, never the error-text token.
 - **Info Blue** (#1d4ed8 on #eff6ff): Neutral informational notices.
 
 File-type icons have their own small semantic set (`--color-file-image`, `-video`, `-audio`, `-document`, `-archive`,
@@ -240,7 +243,7 @@ the single exception is the 2px selected-tab underline.
 - **Shape:** Square-ish, 4px radius.
 - **Primary:** `Ink` fill, white text, 8px 12px padding (`px-3 py-2`), 14px weight 500, icon + label at 8px gap. Hover shifts to `Graphite` via the utility itself; never add `hover:opacity-*`. Disabled: 55% opacity, `not-allowed`. Loading shows an inline spinner and sets `aria-busy`.
 - **Secondary:** `Sheet` fill, 1px `Rule` border, `Slate` text; hover fills `Wash` and promotes text to `Ink`. The default variant.
-- **Danger:** `Failure Red` fill, white text; reserved for destructive confirmation.
+- **Danger:** `--color-danger-bg` fill, white text, darker hover; reserved for destructive confirmation (4.8:1 or better in both themes).
 - **Quiet:** No fill or border, `Slate` text.
 - **Icon:** Secondary styling, square padding (6 or 8px); always carries a localized `aria-label` and `title` (the `Button` component enforces this at the type level).
 - **Sizes:** `md` 14px, `sm` 12px with 10px/6px padding.
@@ -257,7 +260,7 @@ the single exception is the 2px selected-tab underline.
 - **Internal Padding:** 24px for primary cards, 16px for dense ones.
 
 ### Inputs / Fields
-- **Style:** `Sheet` fill, 1px `Rule` border, 4px radius, `Ink` text, `Ash` placeholder at full opacity.
+- **Style:** `Sheet` fill, 1px `Control Edge` border, 4px radius, `Ink` text, `Ash` placeholder at full opacity.
 - **Focus:** 2px `Focus Blue` outline with 2px offset (global `:focus-visible`).
 - **Error / Disabled:** `Field` wires label, hint and error to the control (`aria-describedby`, `aria-errormessage`, `aria-invalid`); errors are 14px `Failure Red` text with `role="alert"`. Disabled controls drop to 50% opacity.
 
