@@ -69,7 +69,7 @@ func (api *migrationAPI) handleMigrationReauth(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
-	err = persistReauthTokens(context.WithoutCancel(r.Context()), db.NewMigrationTokenSink(api.db, id, req.Role), db.EncryptedOAuthTokens{Access: access, Refresh: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}, expected)
+	err = persistReauthTokens(context.WithoutCancel(r.Context()), api.store.TokenSink(id, req.Role), db.EncryptedOAuthTokens{Access: access, Refresh: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}, expected)
 	if err != nil {
 		if errors.Is(err, db.ErrOAuthTokenConflict) {
 			writeError(w, http.StatusConflict, ErrMigrationInvalidState)
@@ -78,7 +78,7 @@ func (api *migrationAPI) handleMigrationReauth(w http.ResponseWriter, r *http.Re
 		}
 		return
 	}
-	count, err := db.ResetFailedTasksForRetry(api.db, r.Context(), id)
+	count, err := api.store.ResetFailedTasksForRetry(r.Context(), id)
 	if errors.Is(err, db.ErrMigrationNotRetryable) {
 		// Tokens were refreshed; a migration that is not finished simply has
 		// nothing to requeue.

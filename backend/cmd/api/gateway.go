@@ -285,12 +285,13 @@ func (server *APIServer) backgroundDaemons() []backgroundDaemon {
 	return []backgroundDaemon{
 		&oauthRotationDaemon{
 			db:            server.db,
+			migrations:    migrationStoreFor(server.db),
 			queue:         server.queue,
 			encryptionKey: server.encryptionKey,
 			cache:         server.oauthRotations.get(),
 		},
 		&migrationGarbageCollector{
-			db:           server.db,
+			store:        migrationStoreFor(server.db),
 			loglnContext: server.loglnContext,
 			logfContext:  server.logfContext,
 		},

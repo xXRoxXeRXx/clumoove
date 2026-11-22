@@ -16,6 +16,7 @@ import (
 // and background concerns are injected at module construction.
 type migrationDependencies struct {
 	db                     *sql.DB
+	store                  db.MigrationStore
 	encryptionKey          string
 	backgroundCtx          context.Context
 	rateLimiter            rateLimiter
@@ -28,6 +29,15 @@ type migrationDependencies struct {
 	requestEnv
 }
 
+// migrationStoreFor returns the PostgreSQL migration store, or nil when a module
+// is built without a database handle (route-only tests).
+func migrationStoreFor(database *sql.DB) db.MigrationStore {
+	if database == nil {
+		return nil
+	}
+	return db.NewMigrationStore(database)
+}
+
 type migrationAPI struct {
 	migrationDependencies
 }
@@ -36,6 +46,9 @@ func newMigrationAPI(deps migrationDependencies) *migrationAPI {
 	deps.requestEnv = deps.requestEnv.withDefaults("migration")
 	if deps.backgroundCtx == nil {
 		deps.backgroundCtx = context.Background()
+	}
+	if deps.store == nil {
+		deps.store = migrationStoreFor(deps.db)
 	}
 	if deps.profiles == nil {
 		deps.profiles = newOwnedProfileAccess(deps.db, deps.encryptionKey, nil, nil, nil)
@@ -63,6 +76,7 @@ func (s *APIServer) migrations() *migrationAPI {
 	return newMigrationAPI(migrationDependencies{
 		requestEnv:             s.requestEnv(),
 		db:                     s.db,
+		store:                  migrationStoreFor(s.db),
 		encryptionKey:          s.encryptionKey,
 		backgroundCtx:          s.backgroundCtx,
 		rateLimiter:            s.rateLimiter,
@@ -148,7 +162,7 @@ func (api *migrationAPI) loadOwnedMigrationRow(w http.ResponseWriter, r *http.Re
 		return nil, "", false
 	}
 
-	mig, err := db.GetOwnedMigrationContext(r.Context(), api.db, id, userID)
+	mig, err := api.store.GetOwnedMigrationContext(r.Context(), id, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
@@ -175,12 +189,12 @@ func (api *migrationAPI) loadOwnedMigrationRow(w http.ResponseWriter, r *http.Re
 // never loaded. Only when that finds nothing does a row-less existence check
 // pick between 404 and 403.
 func (api *migrationAPI) lookupOwnedMigrationDetail(w http.ResponseWriter, r *http.Request, id, userID, errorLabel string) (*db.Migration, bool) {
-	mig, err := db.GetOwnedMigrationContext(r.Context(), api.db, id, userID)
+	mig, err := api.store.GetOwnedMigrationContext(r.Context(), id, userID)
 	if err == nil {
 		return mig, true
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		exists, existsErr := db.MigrationExistsContext(r.Context(), api.db, id)
+		exists, existsErr := api.store.MigrationExistsContext(r.Context(), id)
 		if existsErr == nil {
 			if exists {
 				writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
@@ -201,7 +215,7 @@ func (api *migrationAPI) lookupOwnedMigrationDetail(w http.ResponseWriter, r *ht
 // migrationGarbageCollector owns the hourly deletion of old terminal migrations
 // and their task histories.
 type migrationGarbageCollector struct {
-	db           *sql.DB
+	store        db.MigrationStore
 	loglnContext func(context.Context, ...any)
 	logfContext  func(context.Context, string, ...any)
 }
@@ -218,7 +232,7 @@ func (gc *migrationGarbageCollector) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			gc.loglnContext(ctx, "Running Garbage Collector for old migrations...")
-			count, err := db.DeleteOldMigrations(gc.db)
+			count, err := gc.store.DeleteOldMigrations()
 			if err != nil {
 				gc.logfContext(ctx, "Garbage Collector error: %v\n", err)
 			} else if count > 0 {

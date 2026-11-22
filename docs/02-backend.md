@@ -121,7 +121,7 @@ Key query helpers include `CreateMigration`, `GetMigration`, `TransitionMigratio
 `VerifyMigrationOwnership`, `VerifySyncOwnership`, `VerifyBackupOwnership`, `IsSetupRequired`, `ListUsers`, `GetGlobalStats`,
 `ListAllMigrations`, `ListAllSyncs`, `ListAuditLog`, and paginated admin views.
 
-Connection profiles are the first table whose queries are unexported: outside `internal/db` they are reached only through `db.ProfileStore` (`NewProfileStore`), so API tests can inject a fake. The other tables migrate feature by feature (issue #83).
+Persistence is moving behind feature stores one feature at a time (issue #83). Connection profiles and the API-facing migration queries (creation, owner-scoped reads, lifecycle transitions, task-queue actions and reports, OAuth scans) are unexported: outside `internal/db` they are reached only through `db.ProfileStore` and `db.MigrationStore` (`NewProfileStore`, `NewMigrationStore`), so API tests can inject a fake. The worker-side migration functions (claim-fenced indexing writes, progress counters, `GetMigration`) are still exported until the worker, indexer, processor and scheduler move onto the store.
 
 ### `StringArray` & JSONB
 

@@ -37,9 +37,9 @@ func lifecycleStatus(t *testing.T, database *sql.DB) (status string, generation 
 func TestTransitionMigration_PauseDoesNotOverwriteConcurrentCompletion(t *testing.T) {
 	database := newLifecycleMigration(t, "COMPLETED")
 
-	applied, err := TransitionMigration(context.Background(), database, testMigrationID, MigrationEventPause, nil)
+	applied, err := transitionMigration(context.Background(), database, testMigrationID, MigrationEventPause, nil)
 	if err != nil {
-		t.Fatalf("TransitionMigration() error = %v", err)
+		t.Fatalf("transitionMigration() error = %v", err)
 	}
 	if applied {
 		t.Fatal("pause of a COMPLETED migration reported applied")
@@ -66,9 +66,9 @@ func TestTransitionMigration_Pause(t *testing.T) {
 	} {
 		t.Run(tc.from, func(t *testing.T) {
 			database := newLifecycleMigration(t, tc.from)
-			applied, err := TransitionMigration(context.Background(), database, testMigrationID, MigrationEventPause, nil)
+			applied, err := transitionMigration(context.Background(), database, testMigrationID, MigrationEventPause, nil)
 			if err != nil {
-				t.Fatalf("TransitionMigration() error = %v", err)
+				t.Fatalf("transitionMigration() error = %v", err)
 			}
 			if applied != tc.wantApplied {
 				t.Fatalf("applied = %v, want %v", applied, tc.wantApplied)
@@ -101,9 +101,9 @@ func TestTransitionMigration_Cancel(t *testing.T) {
 		t.Run(tc.from, func(t *testing.T) {
 			database := newLifecycleMigration(t, tc.from)
 			_, generationBefore := lifecycleStatus(t, database)
-			applied, err := TransitionMigration(context.Background(), database, testMigrationID, MigrationEventCancel, nil)
+			applied, err := transitionMigration(context.Background(), database, testMigrationID, MigrationEventCancel, nil)
 			if err != nil {
-				t.Fatalf("TransitionMigration() error = %v", err)
+				t.Fatalf("transitionMigration() error = %v", err)
 			}
 			if applied != tc.wantApplied {
 				t.Fatalf("applied = %v, want %v", applied, tc.wantApplied)
@@ -140,9 +140,9 @@ func TestTransitionMigration_Fail(t *testing.T) {
 		t.Run(tc.from, func(t *testing.T) {
 			database := newLifecycleMigration(t, tc.from)
 			errMsg := "OAuth token refresh failed (dropbox)"
-			applied, err := TransitionMigration(context.Background(), database, testMigrationID, MigrationEventFail, &errMsg)
+			applied, err := transitionMigration(context.Background(), database, testMigrationID, MigrationEventFail, &errMsg)
 			if err != nil {
-				t.Fatalf("TransitionMigration() error = %v", err)
+				t.Fatalf("transitionMigration() error = %v", err)
 			}
 			if applied != tc.wantApplied {
 				t.Fatalf("applied = %v, want %v", applied, tc.wantApplied)
@@ -225,9 +225,9 @@ func TestFailSyncJobIfActive(t *testing.T) {
 
 func TestTransitionMigration_UnknownEventIsAnError(t *testing.T) {
 	database := newLifecycleMigration(t, "RUNNING")
-	applied, err := TransitionMigration(context.Background(), database, testMigrationID, MigrationEvent("BOGUS"), nil)
+	applied, err := transitionMigration(context.Background(), database, testMigrationID, MigrationEvent("BOGUS"), nil)
 	if err == nil || applied {
-		t.Fatalf("TransitionMigration(unknown) = (%v, %v), want (false, error)", applied, err)
+		t.Fatalf("transitionMigration(unknown) = (%v, %v), want (false, error)", applied, err)
 	}
 	if status, _ := lifecycleStatus(t, database); status != "RUNNING" {
 		t.Fatalf("status = %q, want RUNNING", status)

@@ -170,7 +170,7 @@ const createMigrationQuery = `
 		RETURNING id, created_at, updated_at
 	`
 
-func CreateMigration(db *sql.DB, m *Migration) (string, error) {
+func createMigration(db *sql.DB, m *Migration) (string, error) {
 	if err := insertMigration(context.Background(), db, m); err != nil {
 		return "", err
 	}
@@ -189,9 +189,9 @@ func insertMigration(ctx context.Context, database queryExecerContext, m *Migrat
 	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 
-// CreateMigrationAndSchedule creates a scheduled migration and its one-shot
+// createMigrationAndSchedule creates a scheduled migration and its one-shot
 // schedule atomically, preventing scheduled migrations without a trigger.
-func CreateMigrationAndSchedule(db *sql.DB, migration *Migration, schedule *Schedule) (string, error) {
+func createMigrationAndSchedule(db *sql.DB, migration *Migration, schedule *Schedule) (string, error) {
 	resetMigrationAndSchedule(migration, schedule)
 	tx, err := db.Begin()
 	if err != nil {
@@ -238,10 +238,10 @@ func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration
 	return queryMigration(ctx, db, `WHERE id = $1`, id)
 }
 
-// GetOwnedMigrationContext loads a migration only if it belongs to userID, in a
+// getOwnedMigrationContext loads a migration only if it belongs to userID, in a
 // single owner-scoped query. A missing migration and one owned by another user
 // are indistinguishable: both return sql.ErrNoRows.
-func GetOwnedMigrationContext(ctx context.Context, db *sql.DB, id, userID string) (*Migration, error) {
+func getOwnedMigrationContext(ctx context.Context, db *sql.DB, id, userID string) (*Migration, error) {
 	return queryMigration(ctx, db, `WHERE id = $1 AND user_id = $2`, id, userID)
 }
 
@@ -277,12 +277,8 @@ func queryMigration(ctx context.Context, db *sql.DB, where string, args ...any) 
 	return &m, nil
 }
 
-func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
-	return GetMigrationsForUserContext(context.Background(), db, userID)
-}
-
-// GetMigrationsForUserContext lists migrations while honoring caller cancellation.
-func GetMigrationsForUserContext(ctx context.Context, db *sql.DB, userID string) ([]Migration, error) {
+// getMigrationsForUserContext lists migrations while honoring caller cancellation.
+func getMigrationsForUserContext(ctx context.Context, db *sql.DB, userID string) ([]Migration, error) {
 	query := `
 		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_provider,
 		       target_url, target_username, target_provider, status,
@@ -317,12 +313,8 @@ func GetMigrationsForUserContext(ctx context.Context, db *sql.DB, userID string)
 	return list, rows.Err()
 }
 
-func ListAllMigrations(database *sql.DB, p MigrationListParams) ([]AdminMigrationView, int, error) {
-	return ListAllMigrationsContext(context.Background(), database, p)
-}
-
-// ListAllMigrationsContext lists migrations for administration while honoring caller cancellation.
-func ListAllMigrationsContext(ctx context.Context, database *sql.DB, p MigrationListParams) ([]AdminMigrationView, int, error) {
+// listAllMigrationsContext lists migrations for administration while honoring caller cancellation.
+func listAllMigrationsContext(ctx context.Context, database *sql.DB, p MigrationListParams) ([]AdminMigrationView, int, error) {
 	var total int
 	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM migrations`).Scan(&total); err != nil {
 		return nil, 0, err
@@ -408,11 +400,11 @@ func RecoverConnectionLostMigration(db *sql.DB, id string) (recovered bool, need
 	return err == nil, needsDiscovery, err
 }
 
-// ResumeMigration continues execution when discovery is complete, otherwise it
+// resumeMigration continues execution when discovery is complete, otherwise it
 // creates a new fenced discovery attempt.  resumed reports whether the
 // status guard (the resume sources of the migration action table) applied, and
 // needsDiscovery whether the caller must start an indexer.
-func ResumeMigration(db *sql.DB, id string) (resumed bool, needsDiscovery bool, err error) {
+func resumeMigration(db *sql.DB, id string) (resumed bool, needsDiscovery bool, err error) {
 	err = db.QueryRow(`
 		UPDATE migrations
 		SET status = CASE WHEN discovery_complete THEN 'RUNNING' ELSE 'INDEXING' END,
@@ -775,7 +767,7 @@ func bulkCreateMigrationTasksWhileIndexing(ctx context.Context, db *sql.DB, migr
 	return true, nil
 }
 
-func UpdateMigrationBandwidthLimit(db *sql.DB, id string, limitMbps int) error {
+func updateMigrationBandwidthLimit(db *sql.DB, id string, limitMbps int) error {
 	query := `
 		UPDATE migrations
 		SET bandwidth_limit_mbps = $1, updated_at = CURRENT_TIMESTAMP
@@ -785,7 +777,7 @@ func UpdateMigrationBandwidthLimit(db *sql.DB, id string, limitMbps int) error {
 	return err
 }
 
-func UpdateMigrationThreads(db *sql.DB, id string, threads int) error {
+func updateMigrationThreads(db *sql.DB, id string, threads int) error {
 	query := `
 		UPDATE migrations
 		SET threads = $1, updated_at = CURRENT_TIMESTAMP
@@ -1004,7 +996,7 @@ func reconcileMigrationProgress(dbsql *sql.DB, migrationID string, generation *i
 	return true, tx.Commit()
 }
 
-func CountActiveMigrationsForUser(db *sql.DB, userID string) (int, error) {
+func countActiveMigrationsForUser(db *sql.DB, userID string) (int, error) {
 	query := `
 		SELECT COUNT(*) FROM migrations
 		WHERE user_id = $1
@@ -1027,10 +1019,10 @@ func VerifyMigrationOwnershipContext(ctx context.Context, db *sql.DB, migrationI
 	return exists, err
 }
 
-// MigrationExistsContext reports whether a migration with this id exists,
+// migrationExistsContext reports whether a migration with this id exists,
 // whoever owns it. It reads no row data; it only lets a caller whose
 // owner-scoped lookup found nothing tell a missing id from a foreign one.
-func MigrationExistsContext(ctx context.Context, db *sql.DB, migrationID string) (bool, error) {
+func migrationExistsContext(ctx context.Context, db *sql.DB, migrationID string) (bool, error) {
 	var exists bool
 	err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM migrations WHERE id = $1)`, migrationID).Scan(&exists)
 	return exists, err
@@ -1048,14 +1040,14 @@ func GetMigrationOwnerID(database queryExecerContext, migrationID string) (strin
 	return owner.String, nil
 }
 
-func DeleteMigrationCascade(db *sql.DB, migrationID string) error {
+func deleteMigrationCascade(db *sql.DB, migrationID string) error {
 	_ = DeleteSchedulesForTask(db, "migration", migrationID)
 	query := `DELETE FROM migrations WHERE id = $1`
 	_, err := db.Exec(query, migrationID)
 	return err
 }
 
-func DeleteOldMigrations(db *sql.DB) (int64, error) {
+func deleteOldMigrations(db *sql.DB) (int64, error) {
 	query := `
 		DELETE FROM migrations
 		WHERE status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'COMPLETED_WITH_ERRORS')
@@ -1068,7 +1060,7 @@ func DeleteOldMigrations(db *sql.DB) (int64, error) {
 	return res.RowsAffected()
 }
 
-func GetMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResourceStats, error) {
+func getMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResourceStats, error) {
 	query := `
 		SELECT resource_type, status, COUNT(*)
 		FROM tasks
@@ -1112,7 +1104,7 @@ func GetMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResour
 	return stats, rows.Err()
 }
 
-func GetExpiringOAuthMigrations(db *sql.DB) ([]ExpiringOAuthMigration, error) {
+func getExpiringOAuthMigrations(db *sql.DB) ([]ExpiringOAuthMigration, error) {
 	threshold := time.Now().Add(15 * time.Minute)
 	query := `
 		SELECT id, 'source' AS role, source_provider, source_refresh_token_encrypted

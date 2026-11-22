@@ -41,7 +41,7 @@ func (s actionSources) allowed(status string) []JobAction {
 // migrationActionSources is the user-facing slice of the migration transition
 // table. Pause and cancel are shared with migrationTransitions; resume is the
 // only action whose target state depends on the row (RUNNING or INDEXING), so
-// it lives in ResumeMigration. A user may resume PAUSED_CONNECTION_LOSS early
+// it lives in resumeMigration. A user may resume PAUSED_CONNECTION_LOSS early
 // instead of waiting for the connection-recovery scheduler.
 var migrationActionSources = actionSources{
 	JobActionPause:  migrationTransitions[MigrationEventPause].from,

@@ -136,7 +136,7 @@ func TestCreateMigrationPersistsOAuthTokens(t *testing.T) {
 		TargetDir:                   "/",
 		Threads:                     1,
 	}
-	if _, err := CreateMigration(database, migration); err != nil {
+	if _, err := createMigration(database, migration); err != nil {
 		t.Fatalf("create migration: %v", err)
 	}
 

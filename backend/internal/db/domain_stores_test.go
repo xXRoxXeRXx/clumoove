@@ -192,10 +192,11 @@ func TestSharedBackupRepositoryCredentialsAreReachableFromBothDomains(t *testing
 
 func TestDomainStoreConstructorsRejectNilDatabase(t *testing.T) {
 	for name, construct := range map[string]func(){
-		"backup":  func() { NewBackupStore(nil) },
-		"restore": func() { NewRestoreStore(nil) },
-		"sync":    func() { NewSyncStore(nil) },
-		"profile": func() { NewProfileStore(nil) },
+		"backup":    func() { NewBackupStore(nil) },
+		"restore":   func() { NewRestoreStore(nil) },
+		"sync":      func() { NewSyncStore(nil) },
+		"profile":   func() { NewProfileStore(nil) },
+		"migration": func() { NewMigrationStore(nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			defer func() {
@@ -431,6 +432,62 @@ func TestProfileStoreDelegatesToProfilePersistence(t *testing.T) {
 		}
 		if len(rec.statements) != 1 || !strings.Contains(rec.statements[0].query, "UPDATE connection_profiles") || !strings.Contains(rec.statements[0].query, "refresh_token_encrypted = $5") {
 			t.Fatalf("statements = %+v", rec.statements)
+		}
+	})
+}
+
+func TestMigrationStoreDelegatesToMigrationPersistence(t *testing.T) {
+	t.Run("threads update is keyed by migration id", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		var store MigrationStore = NewMigrationStore(database)
+
+		if err := store.UpdateMigrationThreads("mig-1", 8); err != nil {
+			t.Fatalf("UpdateMigrationThreads() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "SET threads = $1", int64(8), "mig-1")
+	})
+
+	t.Run("bandwidth update is keyed by migration id", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewMigrationStore(database).UpdateMigrationBandwidthLimit("mig-1", 25); err != nil {
+			t.Fatalf("UpdateMigrationBandwidthLimit() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "SET bandwidth_limit_mbps = $1", int64(25), "mig-1")
+	})
+
+	t.Run("cancelling pending tasks only touches PENDING rows of that migration", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewMigrationStore(database).CancelPendingTasks("mig-1"); err != nil {
+			t.Fatalf("CancelPendingTasks() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "WHERE migration_id = $1 AND status = 'PENDING'", "mig-1")
+	})
+
+	t.Run("owned lookup binds both the migration and the owner", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		_, _ = NewMigrationStore(database).GetOwnedMigrationContext(context.Background(), "mig-1", "user-1")
+		if len(rec.statements) != 1 {
+			t.Fatalf("recorded %d statements, want 1", len(rec.statements))
+		}
+		got := rec.statements[0]
+		if len(got.args) != 2 || got.args[0] != driver.Value("mig-1") || got.args[1] != driver.Value("user-1") {
+			t.Fatalf("args = %v, want [mig-1 user-1]", got.args)
+		}
+	})
+
+	t.Run("file manager transfers are selected by the caller's marker", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		rec.queryColumns = []string{"id", "picker_session_id", "status", "source", "target", "total", "processed", "failed", "skipped"}
+		rec.queryRow = []driver.Value{"mig-1", "file-manager-transfer:copy", "RUNNING", "src", "dst", int64(4), int64(2), int64(1), int64(0)}
+
+		transfers, err := NewMigrationStore(database).ListFileManagerTransfers(context.Background(), "user-1", "profile-1", "file-manager-transfer:")
+		if err != nil {
+			t.Fatalf("ListFileManagerTransfers() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "m.picker_session_id LIKE $3", "user-1", "profile-1", "file-manager-transfer:")
+		want := FileManagerTransfer{ID: "mig-1", Marker: "file-manager-transfer:copy", Status: "RUNNING", SourceProfileName: "src", TargetProfileName: "dst", TotalFiles: 4, ProcessedFiles: 2, FailedFiles: 1}
+		if len(transfers) != 1 || transfers[0] != want {
+			t.Fatalf("transfers = %+v, want [%+v]", transfers, want)
 		}
 	})
 }

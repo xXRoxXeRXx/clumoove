@@ -387,7 +387,7 @@ func (api *adminAPI) handleAdminListMigrations(w http.ResponseWriter, r *http.Re
 		limit = 20
 	}
 
-	migrations, total, err := db.ListAllMigrationsContext(r.Context(), api.db, db.MigrationListParams{Page: page, Limit: limit})
+	migrations, total, err := api.migrations.ListAllMigrationsContext(r.Context(), db.MigrationListParams{Page: page, Limit: limit})
 	if err != nil {
 		api.logf(r, "Admin list migrations: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

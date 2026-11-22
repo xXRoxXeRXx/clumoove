@@ -404,14 +404,14 @@ func UpdateMigrationTaskAndProgress(db *sql.DB, ctx context.Context, t *Task, fi
 }
 
 func GetActiveTaskPath(db *sql.DB, ctx context.Context, migrationID string) (string, error) {
-	paths, err := GetActiveTaskPaths(db, ctx, migrationID)
+	paths, err := getActiveTaskPaths(db, ctx, migrationID)
 	if err != nil || len(paths) == 0 {
 		return "", err
 	}
 	return paths[0], nil
 }
 
-func GetActiveTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]string, error) {
+func getActiveTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]string, error) {
 	query := `
 		SELECT file_path, metadata
 		FROM tasks
@@ -436,8 +436,8 @@ func GetActiveTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]
 	return paths, rows.Err()
 }
 
-// GetVerifyingTaskPaths returns paths of completed tasks awaiting checksum verification.
-func GetVerifyingTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]string, error) {
+// getVerifyingTaskPaths returns paths of completed tasks awaiting checksum verification.
+func getVerifyingTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]string, error) {
 	query := `
 		SELECT file_path, metadata
 		FROM tasks
@@ -548,13 +548,13 @@ func FailMigrationForAuthentication(db *sql.DB, ctx context.Context, t *Task, er
 	return true, tx.Commit()
 }
 
-func CancelPendingTasks(db *sql.DB, migrationID string) error {
-	return CancelPendingTasksCtx(context.Background(), db, migrationID)
+func cancelPendingTasks(db *sql.DB, migrationID string) error {
+	return cancelPendingTasksCtx(context.Background(), db, migrationID)
 }
 
-// CancelPendingTasksCtx cancels queued migration tasks with a caller-provided
+// cancelPendingTasksCtx cancels queued migration tasks with a caller-provided
 // deadline, for cleanup paths that must not wait indefinitely on the DB.
-func CancelPendingTasksCtx(ctx context.Context, db *sql.DB, migrationID string) error {
+func cancelPendingTasksCtx(ctx context.Context, db *sql.DB, migrationID string) error {
 	query := `
 		UPDATE tasks
 		SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
@@ -564,12 +564,12 @@ func CancelPendingTasksCtx(ctx context.Context, db *sql.DB, migrationID string) 
 	return err
 }
 
-// ResetFailedTasksForRetry requeues a finished migration's failed and cancelled
+// resetFailedTasksForRetry requeues a finished migration's failed and cancelled
 // tasks. The status guard (migrationRetryFailedFrom) is enforced in SQL: the
 // migration row is locked in the same transaction as the writes, so a status
 // read before the call cannot go stale. A migration in any other state is left
 // untouched and ErrMigrationNotRetryable is returned.
-func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID string) (int, error) {
+func resetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID string) (int, error) {
 	// Authentication failures used to cancel the untouched queue after marking
 	// the migration terminal.  Include those tasks so a successful reauth can
 	// resume the same migration instead of requiring a full re-index.
@@ -647,11 +647,11 @@ func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID strin
 	return count, nil
 }
 
-// ResetMigrationForReindex wipes a failed migration's task queue and restarts
+// resetMigrationForReindex wipes a failed migration's task queue and restarts
 // discovery. The status guard (migrationReindexFrom) is part of the UPDATE, and
 // that UPDATE runs first so nothing is deleted for a migration in any other
 // state: it returns ErrMigrationNotFailed instead.
-func ResetMigrationForReindex(db *sql.DB, ctx context.Context, migrationID string) error {
+func resetMigrationForReindex(db *sql.DB, ctx context.Context, migrationID string) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -684,7 +684,7 @@ func ResetMigrationForReindex(db *sql.DB, ctx context.Context, migrationID strin
 	return tx.Commit()
 }
 
-func GetFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
+func getFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
 	query := `
 		SELECT id, migration_id, resource_type, file_path, COALESCE(resolved_target_path, ''), file_size, status, attempts, error_message, metadata, created_at, updated_at
 		FROM tasks
@@ -771,7 +771,7 @@ func indexingErrorMessage(e IndexingErrorInput) string {
 	return ""
 }
 
-func GetIndexingErrorsForReport(db *sql.DB, migrationID string) ([]IndexingError, error) {
+func getIndexingErrorsForReport(db *sql.DB, migrationID string) ([]IndexingError, error) {
 	query := `
 		SELECT id, migration_id, resource_type, path, error_message, created_at
 		FROM indexing_errors
@@ -798,11 +798,11 @@ func GetIndexingErrorsForReport(db *sql.DB, migrationID string) ([]IndexingError
 // GetMigrationErrors returns final transfer failures and non-fatal indexing
 // errors in one chronologically ordered, paginated list.
 func GetMigrationErrors(db *sql.DB, migrationID string, limit, offset int) ([]ErrorListItem, int, error) {
-	return GetMigrationErrorsContext(context.Background(), db, migrationID, limit, offset)
+	return getMigrationErrorsContext(context.Background(), db, migrationID, limit, offset)
 }
 
-// GetMigrationErrorsContext retrieves paginated migration errors while honoring caller cancellation.
-func GetMigrationErrorsContext(ctx context.Context, db *sql.DB, migrationID string, limit, offset int) ([]ErrorListItem, int, error) {
+// getMigrationErrorsContext retrieves paginated migration errors while honoring caller cancellation.
+func getMigrationErrorsContext(ctx context.Context, db *sql.DB, migrationID string, limit, offset int) ([]ErrorListItem, int, error) {
 	rows, err := db.QueryContext(ctx, `
 		WITH errors AS MATERIALIZED (
 			SELECT id::text AS id, 'transfer' AS kind, resource_type, file_path AS path, status, attempts,

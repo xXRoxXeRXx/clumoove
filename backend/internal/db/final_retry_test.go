@@ -212,20 +212,20 @@ func TestTransitionResetsFailedRetryDoneFlag(t *testing.T) {
 		t.Fatalf("failed to update migration status: %v", err)
 	}
 
-	// ResetFailedTasksForRetry should also reset failed_retry_done to false
+	// resetFailedTasksForRetry should also reset failed_retry_done to false
 	_, err = database.Exec(`INSERT INTO tasks (migration_id, status) VALUES ($1, 'FAILED')`, migID)
 	if err != nil {
 		t.Fatalf("failed to insert task: %v", err)
 	}
 
-	if _, err := ResetFailedTasksForRetry(database, ctx, migID); err != nil {
-		t.Fatalf("ResetFailedTasksForRetry error: %v", err)
+	if _, err := resetFailedTasksForRetry(database, ctx, migID); err != nil {
+		t.Fatalf("resetFailedTasksForRetry error: %v", err)
 	}
 
 	if err := database.QueryRow(`SELECT failed_retry_done FROM migrations WHERE id = $1`, migID).Scan(&flagDone); err != nil {
 		t.Fatalf("failed to read failed_retry_done: %v", err)
 	}
 	if flagDone {
-		t.Fatalf("expected failed_retry_done=false after ResetFailedTasksForRetry")
+		t.Fatalf("expected failed_retry_done=false after resetFailedTasksForRetry")
 	}
 }

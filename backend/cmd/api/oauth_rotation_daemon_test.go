@@ -23,7 +23,7 @@ func TestRotationDaemonFailMigrationDoesNotOverwriteTerminalOrCancelled(t *testi
 			database, state := newMigrationModuleTestDB(t, nil)
 			now := time.Now().UTC()
 			state.setMigration(&migrationModuleRecord{id: "m-1", userID: "user-1", status: tc.from, createdAt: now, updatedAt: now})
-			d := &oauthRotationDaemon{db: database}
+			d := &oauthRotationDaemon{db: database, migrations: migrationStoreFor(database)}
 
 			d.failMigrationAfterRefreshFailure(context.Background(), "m-1", "dropbox")
 

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"backend/internal/db"
 )
 
 type fileSessionStore interface {
@@ -82,6 +84,7 @@ func (s *redisFileSessionStore) RenewStream(ctx context.Context, userID, kind, s
 // concerns are injected at module construction.
 type fileDependencies struct {
 	db                   *sql.DB
+	migrations           db.MigrationStore
 	encryptionKey        string
 	backgroundCtx        context.Context
 	rateLimiter          rateLimiter
@@ -100,6 +103,9 @@ func newFileAPI(deps fileDependencies) *fileAPI {
 	deps.requestEnv = deps.requestEnv.withDefaults("file")
 	if deps.backgroundCtx == nil {
 		deps.backgroundCtx = context.Background()
+	}
+	if deps.migrations == nil {
+		deps.migrations = migrationStoreFor(deps.db)
 	}
 	if deps.profiles == nil {
 		deps.profiles = newOwnedProfileAccess(deps.db, deps.encryptionKey, nil, nil, nil)
@@ -121,6 +127,7 @@ func (s *APIServer) files() *fileAPI {
 	return newFileAPI(fileDependencies{
 		requestEnv:           s.requestEnv(),
 		db:                   s.db,
+		migrations:           migrationStoreFor(s.db),
 		encryptionKey:        s.encryptionKey,
 		backgroundCtx:        s.backgroundCtx,
 		rateLimiter:          s.rateLimiter,

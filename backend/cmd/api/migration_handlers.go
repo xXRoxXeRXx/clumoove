@@ -267,7 +267,7 @@ func (api *migrationAPI) handlePause(w http.ResponseWriter, r *http.Request) {
 
 	// The allowed source state is enforced by the UPDATE itself: a worker can
 	// finish the migration between any earlier read and this write.
-	applied, err := db.TransitionMigration(r.Context(), api.db, id, db.MigrationEventPause, nil)
+	applied, err := api.store.TransitionMigration(r.Context(), id, db.MigrationEventPause, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -289,7 +289,7 @@ func (api *migrationAPI) handleResume(w http.ResponseWriter, r *http.Request) {
 	id := mig.ID
 
 	// The status guard is part of the UPDATE, so a state read here could go stale.
-	resumed, needsDiscovery, err := db.ResumeMigration(api.db, id)
+	resumed, needsDiscovery, err := api.store.ResumeMigration(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -314,7 +314,7 @@ func (api *migrationAPI) handleRetryFailed(w http.ResponseWriter, r *http.Reques
 	id := mig.ID
 
 	// The status guard is part of the SQL, so a state read here could go stale.
-	count, err := db.ResetFailedTasksForRetry(api.db, r.Context(), id)
+	count, err := api.store.ResetFailedTasksForRetry(r.Context(), id)
 	if errors.Is(err, db.ErrMigrationNotRetryable) {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
@@ -336,7 +336,7 @@ func (api *migrationAPI) handleReindex(w http.ResponseWriter, r *http.Request) {
 	id := mig.ID
 
 	// The status guard is part of the SQL, so a state read here could go stale.
-	if err := db.ResetMigrationForReindex(api.db, r.Context(), id); err != nil {
+	if err := api.store.ResetMigrationForReindex(r.Context(), id); err != nil {
 		if errors.Is(err, db.ErrMigrationNotFailed) {
 			writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 			return
@@ -361,7 +361,7 @@ func (api *migrationAPI) handleCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	id := owned.ID
 
-	applied, err := db.TransitionMigration(r.Context(), api.db, id, db.MigrationEventCancel, nil)
+	applied, err := api.store.TransitionMigration(r.Context(), id, db.MigrationEventCancel, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -371,7 +371,7 @@ func (api *migrationAPI) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.CancelPendingTasks(api.db, id)
+	err = api.store.CancelPendingTasks(id)
 	if err != nil {
 		api.logf(r, "Warning: failed to cancel pending tasks for migration %s: %v", id, err)
 	}
@@ -412,7 +412,7 @@ func (api *migrationAPI) handleSetThreads(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := db.UpdateMigrationThreads(api.db, id, threads); err != nil {
+	if err := api.store.UpdateMigrationThreads(id, threads); err != nil {
 		api.logf(r, "Error updating threads for migration %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -438,7 +438,7 @@ func (api *migrationAPI) handleSetBandwidth(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := db.UpdateMigrationBandwidthLimit(api.db, id, req.LimitMbps); err != nil {
+	if err := api.store.UpdateMigrationBandwidthLimit(id, req.LimitMbps); err != nil {
 		api.logf(r, "Error updating bandwidth limit for migration %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -802,7 +802,7 @@ func (api *migrationAPI) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	active, err := db.CountActiveMigrationsForUser(api.db, userID)
+	active, err := api.store.CountActiveMigrationsForUser(userID)
 	if err != nil {
 		api.logf(r, "handleStart: failed to count active migrations for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -883,9 +883,9 @@ func (api *migrationAPI) handleStart(w http.ResponseWriter, r *http.Request) {
 			NextRunAt: sql.NullTime{Time: scheduledAt, Valid: true},
 			IsActive:  true,
 		}
-		migrationID, err = db.CreateMigrationAndSchedule(api.db, m, schedule)
+		migrationID, err = api.store.CreateMigrationAndSchedule(m, schedule)
 	} else {
-		migrationID, err = db.CreateMigration(api.db, m)
+		migrationID, err = api.store.CreateMigration(m)
 	}
 	if err != nil {
 		api.logf(r, "Start migration error: failed to create migration or schedule: %v\n", err)
@@ -926,7 +926,7 @@ func (api *migrationAPI) handleListMigrations(w http.ResponseWriter, r *http.Req
 	if !authenticated {
 		return
 	}
-	list, err := db.GetMigrationsForUserContext(r.Context(), api.db, userID)
+	list, err := api.store.GetMigrationsForUserContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "Error listing migrations for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -975,7 +975,7 @@ func (api *migrationAPI) handleMigrationStream(w http.ResponseWriter, r *http.Re
 		return nil
 	}
 
-	initial, err := db.GetMigrationsForUserContext(r.Context(), api.db, userID)
+	initial, err := api.store.GetMigrationsForUserContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "Migration stream initial load error for user %s: %v\n", userID, err)
 		writeErrorEvent(ErrInternalError)
@@ -1008,7 +1008,7 @@ func (api *migrationAPI) handleMigrationStream(w http.ResponseWriter, r *http.Re
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			list, err := db.GetMigrationsForUserContext(r.Context(), api.db, userID)
+			list, err := api.store.GetMigrationsForUserContext(r.Context(), userID)
 			if err != nil {
 				api.logf(r, "Migration stream reload error for user %s: %v\n", userID, err)
 				return
@@ -1042,13 +1042,13 @@ func (api *migrationAPI) handleDeleteMigration(w http.ResponseWriter, r *http.Re
 	// A migration that already finished (or was already cancelled) has nothing
 	// left to cancel but must still be deletable, so a transition that does not
 	// apply is not an error here.
-	cancelled, err := db.TransitionMigration(r.Context(), api.db, id, db.MigrationEventCancel, nil)
+	cancelled, err := api.store.TransitionMigration(r.Context(), id, db.MigrationEventCancel, nil)
 	if err != nil {
 		api.logf(r, "Error cancelling migration %s before deletion: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if err := db.CancelPendingTasks(api.db, id); err != nil {
+	if err := api.store.CancelPendingTasks(id); err != nil {
 		// Once the migration row is removed, workers cannot observe its CANCELLED
 		// status. Do not delete until all not-yet-running tasks are cancelled.
 		api.logf(r, "Failed to cancel pending tasks for migration %s before deletion: %v", id, err)
@@ -1071,7 +1071,7 @@ func (api *migrationAPI) handleDeleteMigration(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := db.DeleteMigrationCascade(api.db, id); err != nil {
+	if err := api.store.DeleteMigrationCascade(id); err != nil {
 		api.logf(r, "Error deleting migration %s: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -1117,7 +1117,7 @@ func (api *migrationAPI) handleDownloadReport(w http.ResponseWriter, r *http.Req
 	}
 	id := mig.ID
 
-	tasks, err := db.GetFailedTasksForReport(api.db, id)
+	tasks, err := api.store.GetFailedTasksForReport(id)
 	if err != nil {
 		api.logf(r, "Download report error: failed to get report: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -1149,7 +1149,7 @@ func (api *migrationAPI) handleDownloadReport(w http.ResponseWriter, r *http.Req
 		})
 	}
 
-	indexErrs, err := db.GetIndexingErrorsForReport(api.db, id)
+	indexErrs, err := api.store.GetIndexingErrorsForReport(id)
 	if err != nil {
 		api.logf(r, "Download report error: failed to get indexing errors: %v\n", err)
 	} else {
@@ -1189,7 +1189,7 @@ func (api *migrationAPI) handleMigrationErrors(w http.ResponseWriter, r *http.Re
 	}
 	id := mig.ID
 	limit, offset := parseErrorListPagination(r)
-	items, total, err := db.GetMigrationErrorsContext(r.Context(), api.db, id, limit, offset)
+	items, total, err := api.store.GetMigrationErrorsContext(r.Context(), id, limit, offset)
 	if err != nil {
 		api.logf(r, "Error fetching migration %s errors: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -1207,13 +1207,13 @@ func (api *migrationAPI) handleMigrationErrors(w http.ResponseWriter, r *http.Re
 // migrationDetailPayload is the canonical, sanitized live migration payload
 // shared by the detail API and its SSE stream.
 func (api *migrationAPI) migrationDetailPayload(ctx context.Context, mig *db.Migration) map[string]interface{} {
-	activeFiles, err := db.GetActiveTaskPaths(api.db, ctx, mig.ID)
+	activeFiles, err := api.store.GetActiveTaskPaths(ctx, mig.ID)
 	if err != nil {
 		api.logfContext(ctx, "Migration detail active paths error for %s: %v", mig.ID, err)
 		activeFiles = nil
 	}
 	if mig.Status == "VERIFYING" && len(activeFiles) == 0 {
-		verifyingFiles, vErr := db.GetVerifyingTaskPaths(api.db, ctx, mig.ID)
+		verifyingFiles, vErr := api.store.GetVerifyingTaskPaths(ctx, mig.ID)
 		if vErr == nil && len(verifyingFiles) > 0 {
 			activeFiles = verifyingFiles
 		}
@@ -1254,7 +1254,7 @@ func (api *migrationAPI) migrationDetailPayload(ctx context.Context, mig *db.Mig
 		payload["error_message"] = sanitize.SanitizeError(mig.ErrorMessage.String)
 	}
 
-	stats, err := db.GetMigrationResourceStats(api.db, mig.ID)
+	stats, err := api.store.GetMigrationResourceStats(mig.ID)
 	if err != nil {
 		api.logfContext(ctx, "Migration detail resource stats error for %s: %v", mig.ID, err)
 		return payload
@@ -1349,7 +1349,7 @@ func (api *migrationAPI) handleMigrationDetailStream(w http.ResponseWriter, r *h
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			mig, err := db.GetMigrationContext(r.Context(), api.db, id)
+			mig, err := api.store.GetMigrationContext(r.Context(), id)
 			if err != nil {
 				return
 			}

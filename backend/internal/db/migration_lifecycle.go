@@ -40,7 +40,7 @@ var unfinishedMigrationStates = []string{"PENDING", "SCHEDULED", "INDEXING", "RU
 
 // Source states of the two recovery operations on a finished migration. Like
 // migrationTransitions, they are bound into the UPDATE that performs the
-// operation (see ResetFailedTasksForRetry and ResetMigrationForReindex), never
+// operation (see resetFailedTasksForRetry and resetMigrationForReindex), never
 // checked against a status read beforehand.
 var (
 	// migrationRetryFailedFrom: requeue failed and cancelled tasks.
@@ -49,10 +49,10 @@ var (
 	migrationReindexFrom = []string{"FAILED", "COMPLETED_WITH_ERRORS"}
 )
 
-// TransitionMigration applies event to the migration if, and only if, its
+// transitionMigration applies event to the migration if, and only if, its
 // current status allows it. It reports whether the transition applied; a
 // migration in any other state is left untouched.
-func TransitionMigration(ctx context.Context, database *sql.DB, id string, event MigrationEvent, errMsg *string) (bool, error) {
+func transitionMigration(ctx context.Context, database *sql.DB, id string, event MigrationEvent, errMsg *string) (bool, error) {
 	transition, ok := migrationTransitions[event]
 	if !ok {
 		return false, fmt.Errorf("unknown migration event %q", event)

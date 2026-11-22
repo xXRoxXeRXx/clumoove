@@ -12,7 +12,6 @@ import (
 // by the root server and are injected as narrow functions.
 type profileDependencies struct {
 	db            *sql.DB
-	// store defaults to the PostgreSQL store on db; tests inject a fake.
 	store         db.ProfileStore
 	encryptionKey string
 	profiles      *ownedProfileAccess

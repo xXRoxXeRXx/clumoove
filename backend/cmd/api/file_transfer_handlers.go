@@ -44,39 +44,25 @@ func (api *fileAPI) handleFileTransfersList(w http.ResponseWriter, r *http.Reque
 		api.writeFileProfileError(w, err)
 		return
 	}
-	rows, err := api.db.QueryContext(r.Context(), `
-		SELECT m.id::text, m.picker_session_id, m.status, COALESCE(source.name, ''), COALESCE(target.name, ''),
-		       m.total_files, m.processed_files, m.failed_files, m.skipped_files
-		FROM migrations m
-		LEFT JOIN connection_profiles source ON source.id = m.source_profile_id
-		LEFT JOIN connection_profiles target ON target.id = m.target_profile_id
-		WHERE m.user_id = $1 AND (m.source_profile_id = $2 OR m.target_profile_id = $2)
-		  AND m.picker_session_id LIKE 'file-manager-transfer:%'
-		  AND (
-		       m.status IN ('PENDING', 'INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED', 'PAUSED_CONNECTION_LOSS')
-		       OR (m.status IN ('COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED') AND m.updated_at > NOW() - INTERVAL '1 minute')
-		  )
-		ORDER BY m.created_at DESC LIMIT 20`, userID, profileID)
+	rows, err := api.migrations.ListFileManagerTransfers(r.Context(), userID, profileID, fileManagerTransferMarker)
 	if err != nil {
 		api.logf(r, "file transfer list: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	defer rows.Close()
-	transfers := make([]fileTransferSummary, 0)
-	for rows.Next() {
-		var transfer fileTransferSummary
-		var marker string
-		if err := rows.Scan(&transfer.ID, &marker, &transfer.Status, &transfer.SourceProfileName, &transfer.TargetProfileName, &transfer.TotalFiles, &transfer.ProcessedFiles, &transfer.FailedFiles, &transfer.SkippedFiles); err != nil {
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
-		transfer.Operation = strings.TrimPrefix(marker, fileManagerTransferMarker)
-		transfers = append(transfers, transfer)
-	}
-	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
+	transfers := make([]fileTransferSummary, 0, len(rows))
+	for _, row := range rows {
+		transfers = append(transfers, fileTransferSummary{
+			ID:                row.ID,
+			Operation:         strings.TrimPrefix(row.Marker, fileManagerTransferMarker),
+			Status:            row.Status,
+			SourceProfileName: row.SourceProfileName,
+			TargetProfileName: row.TargetProfileName,
+			TotalFiles:        row.TotalFiles,
+			ProcessedFiles:    row.ProcessedFiles,
+			FailedFiles:       row.FailedFiles,
+			SkippedFiles:      row.SkippedFiles,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "transfers": transfers})
 }
@@ -87,12 +73,12 @@ func (api *fileAPI) handleFileTransferCancel(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	id := r.PathValue("id")
-	migration, err := db.GetMigrationContext(r.Context(), api.db, id)
+	migration, err := api.migrations.GetMigrationContext(r.Context(), id)
 	if err != nil || !migration.UserID.Valid || migration.UserID.String != userID || !strings.HasPrefix(migration.PickerSessionID, fileManagerTransferMarker) {
 		writeError(w, http.StatusNotFound, ErrFilesNotFound)
 		return
 	}
-	applied, err := db.TransitionMigration(r.Context(), api.db, id, db.MigrationEventCancel, nil)
+	applied, err := api.migrations.TransitionMigration(r.Context(), id, db.MigrationEventCancel, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -101,7 +87,7 @@ func (api *fileAPI) handleFileTransferCancel(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
-	if err := db.CancelPendingTasks(api.db, id); err != nil {
+	if err := api.migrations.CancelPendingTasks(id); err != nil {
 		api.logf(r, "file transfer cancel pending tasks %s: %v", id, err)
 	}
 	if api.publishCancelEvent != nil {
@@ -196,7 +182,7 @@ func (api *fileAPI) handleFileTransferCreate(w http.ResponseWriter, r *http.Requ
 		Status: "INDEXING", ConflictStrategy: strategy, TargetDir: targetDir, SelectedPaths: db.StringArray(selectedPaths), Threads: 4,
 		PickerSessionID: fileManagerTransferMarker + strings.ToLower(operation),
 	}
-	id, err := db.CreateMigration(api.db, migration)
+	id, err := api.migrations.CreateMigration(migration)
 	if err != nil {
 		api.logf(r, "file transfer create: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

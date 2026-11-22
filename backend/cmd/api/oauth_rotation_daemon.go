@@ -26,6 +26,7 @@ type backgroundDaemon interface {
 // migrations, sync jobs, and restore runs.
 type oauthRotationDaemon struct {
 	db            *sql.DB
+	migrations    db.MigrationStore
 	queue         *queue.Queue
 	encryptionKey string
 	cache         *oauth.RotationCache
@@ -39,7 +40,7 @@ func (d *oauthRotationDaemon) Name() string { return "oauth_rotation" }
 // rotation tick re-evaluates the job.
 func (d *oauthRotationDaemon) failMigrationAfterRefreshFailure(ctx context.Context, migrationID, provider string) {
 	errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", provider)
-	if _, err := db.TransitionMigration(ctx, d.db, migrationID, db.MigrationEventFail, &errMsg); err != nil {
+	if _, err := d.migrations.TransitionMigration(ctx, migrationID, db.MigrationEventFail, &errMsg); err != nil {
 		oauthRotationLogger(ctx).ErrorContext(ctx, "oauth_rotation_mark_failed_error", slog.String("job_type", "migration"), slog.String("job_id", migrationID), observability.Error(err))
 	}
 }
@@ -93,7 +94,7 @@ func isOAuthRotationAlreadyResolved(currentRefreshEnc, freshRefreshEnc string) b
 
 func (d *oauthRotationDaemon) rotateExpiringOAuthTokens(ctx context.Context) {
 	logger := oauthRotationLogger(ctx)
-	expiringMig, err := db.GetExpiringOAuthMigrations(d.db)
+	expiringMig, err := d.migrations.GetExpiringOAuthMigrations()
 	if err != nil {
 		logger.ErrorContext(ctx, "oauth_rotation_scan_failed", slog.String("job_type", "migration"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 	}
@@ -117,7 +118,7 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthTokens(ctx context.Context) {
 				role:     entry.Role,
 				provider: entry.Provider,
 				loadSnapshot: func(loadCtx context.Context) (string, string, time.Time, bool, string, error) {
-					mig, loadErr := db.GetMigrationContext(loadCtx, d.db, entry.MigrationID)
+					mig, loadErr := d.migrations.GetMigrationContext(loadCtx, entry.MigrationID)
 					if loadErr != nil {
 						return "", "", time.Time{}, false, "", loadErr
 					}
@@ -137,7 +138,7 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthTokens(ctx context.Context) {
 					}
 					return mig.UserID.String, refreshEnc, expiresAt, active, mig.Status, nil
 				},
-				sink: db.NewMigrationTokenSink(d.db, entry.MigrationID, entry.Role),
+				sink: d.migrations.TokenSink(entry.MigrationID, entry.Role),
 				markFailed: func() {
 					d.failMigrationAfterRefreshFailure(ctx, entry.MigrationID, entry.Provider)
 				},

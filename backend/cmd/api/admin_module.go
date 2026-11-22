@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+
+	"backend/internal/db"
 )
 
 // adminDependencies contains only the infrastructure required by the
@@ -13,6 +15,7 @@ import (
 // audit log. Cross-cutting request helpers are injected at module construction.
 type adminDependencies struct {
 	db             *sql.DB
+	migrations     db.MigrationStore
 	encryptionKey  string
 	cancelSyncJob  func(context.Context, string) error
 	getRedirectURI func(*http.Request) string
@@ -30,6 +33,9 @@ func newAdminAPI(deps adminDependencies) *adminAPI {
 			return errors.New("sync cancellation unavailable")
 		}
 	}
+	if deps.migrations == nil {
+		deps.migrations = migrationStoreFor(deps.db)
+	}
 	if deps.getRedirectURI == nil {
 		deps.getRedirectURI = defaultRedirectURI
 	}
@@ -40,6 +46,7 @@ func (s *APIServer) administration() *adminAPI {
 	return newAdminAPI(adminDependencies{
 		requestEnv:    s.requestEnv(),
 		db:            s.db,
+		migrations:    migrationStoreFor(s.db),
 		encryptionKey: s.encryptionKey,
 		cancelSyncJob: func(ctx context.Context, syncJobID string) error {
 			return s.syncPass.Cancel(ctx, syncJobID)
