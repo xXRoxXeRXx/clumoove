@@ -231,13 +231,9 @@ type expiringOAuthJobSpec struct {
 }
 
 // refresher binds the daemon's shared rotation infrastructure. The queue is the
-// distributed token locker when present; a nil queue must stay a nil interface.
+// distributed token locker when present.
 func (d *oauthRotationDaemon) refresher() *oauth.Refresher {
-	cfg := oauth.RefresherConfig{DB: d.db, Cache: d.cache, EncryptionKey: d.encryptionKey}
-	if d.queue != nil {
-		cfg.Locker = d.queue
-	}
-	return oauth.NewRefresher(cfg)
+	return oauth.NewRefresher(oauth.RefresherConfig{DB: d.db, Cache: d.cache, Locker: d.queue, EncryptionKey: d.encryptionKey})
 }
 
 func (d *oauthRotationDaemon) rotateExpiringOAuthJob(ctx context.Context, logger *slog.Logger, spec expiringOAuthJobSpec) {
@@ -270,6 +266,7 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthJob(ctx context.Context, logger
 		UserID:       userID,
 		Provider:     spec.provider,
 		RefreshToken: refreshToken,
+		Label:        spec.jobType + " " + spec.role,
 		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
 			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
 			defer cancel()
@@ -305,6 +302,12 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthJob(ctx context.Context, logger
 		},
 	})
 	if err != nil {
+		switch {
+		case errors.Is(err, oauth.ErrRotatedTokenEncrypt):
+			logger.ErrorContext(ctx, "oauth_rotation_encrypt_failed", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		case errors.Is(err, oauth.ErrRotatedTokenPersist):
+			logger.ErrorContext(ctx, "oauth_rotation_persist_failed", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), slog.String("role", spec.role), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		}
 		logger.ErrorContext(ctx, "oauth_rotation_refresh_failed", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), slog.String("role", spec.role), slog.String("provider", spec.provider), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		if errors.Is(err, oauth.ErrRefreshTokenInvalid) && spec.markFailed != nil {
 			if _, freshRefreshEnc, _, _, _, ferr := spec.loadSnapshot(ctx); ferr == nil && isOAuthRotationAlreadyResolved(currentRefreshEnc, freshRefreshEnc) {

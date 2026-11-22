@@ -14,12 +14,26 @@ import (
 // Callers adopt the stored winner instead of treating it as a failure.
 var ErrOAuthTokenConflict = errors.New("oauth token update conflict: persisted token changed concurrently")
 
+// ErrInvalidOAuthTokenRole is returned by a sink built for a role that is neither
+// "source" nor "target". It is a programming error, never a lost race.
+var ErrInvalidOAuthTokenRole = errors.New("invalid oauth token role")
+
 // EncryptedOAuthTokens is a rotated token pair as persisted. Both secrets are
 // already encrypted with ENCRYPTION_SECRET_KEY; a sink never sees plaintext.
 type EncryptedOAuthTokens struct {
 	Access    string
 	Refresh   string
 	ExpiresAt time.Time
+}
+
+// NullRefresh is the refresh token in the nullable form the credential row structs use.
+func (t EncryptedOAuthTokens) NullRefresh() sql.NullString {
+	return sql.NullString{String: t.Refresh, Valid: true}
+}
+
+// NullExpiresAt is the expiry in the nullable form the credential row structs use.
+func (t EncryptedOAuthTokens) NullExpiresAt() sql.NullTime {
+	return sql.NullTime{Time: t.ExpiresAt, Valid: true}
 }
 
 // OAuthTokenSink is where one owner's rotated OAuth tokens are persisted. There
@@ -117,7 +131,7 @@ func roleCredentialQueries(table, role string) (persist, reauth string, ok bool)
 func newRoleReauthSink(database *sql.DB, table, id, role string) OAuthReauthSink {
 	persist, reauth, ok := roleCredentialQueries(table, role)
 	if !ok {
-		return reauthTokenSink{casTokenSink: casTokenSink{db: database, id: id, setupErr: fmt.Errorf("invalid oauth token role %q", role)}}
+		return reauthTokenSink{casTokenSink: casTokenSink{db: database, id: id, setupErr: fmt.Errorf("%w %q", ErrInvalidOAuthTokenRole, role)}}
 	}
 	return reauthTokenSink{casTokenSink: casTokenSink{db: database, id: id, persistQuery: persist}, reauthQuery: reauth}
 }
@@ -143,7 +157,7 @@ func backupCredentialQuery(prefix string) string {
 func NewBackupJobTokenSink(database *sql.DB, backupJobID, role string) OAuthTokenSink {
 	prefix, ok := credentialColumns(role)
 	if !ok {
-		return casTokenSink{db: database, id: backupJobID, setupErr: ErrOAuthTokenConflict}
+		return casTokenSink{db: database, id: backupJobID, setupErr: fmt.Errorf("%w %q", ErrInvalidOAuthTokenRole, role)}
 	}
 	return casTokenSink{db: database, id: backupJobID, persistQuery: backupCredentialQuery(prefix)}
 }
@@ -152,7 +166,7 @@ func NewBackupJobTokenSink(database *sql.DB, backupJobID, role string) OAuthToke
 // repository. Restore rows never copy these source secrets; concurrent workers
 // adopt the CAS winner instead of persisting a stale token.
 func NewBackupRepositoryTokenSink(database *sql.DB, backupJobID string) OAuthTokenSink {
-	return casTokenSink{db: database, id: backupJobID, persistQuery: backupCredentialQuery("target")}
+	return NewBackupJobTokenSink(database, backupJobID, "target")
 }
 
 // NewRestoreRunTokenSink persists the target token snapshot owned by an active

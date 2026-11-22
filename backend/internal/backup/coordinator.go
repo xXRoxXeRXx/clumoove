@@ -1090,6 +1090,7 @@ func (c *Coordinator) ensureFreshOAuthToken(ctx context.Context, job *db.BackupJ
 		UserID:       job.UserID,
 		Provider:     provider,
 		RefreshToken: refresh,
+		Label:        "backup job " + job.ID + " " + role,
 		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
 			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
 			defer cancel()
@@ -1125,8 +1126,8 @@ func (c *Coordinator) ensureFreshOAuthToken(ctx context.Context, job *db.BackupJ
 		ExpectedRefresh: func() string { return expectedRefreshEnc },
 		OnPersisted: func(tokens db.EncryptedOAuthTokens) {
 			*accessEncrypted = tokens.Access
-			*refreshEncrypted = sql.NullString{String: tokens.Refresh, Valid: true}
-			*expiresAt = sql.NullTime{Time: tokens.ExpiresAt, Valid: true}
+			*refreshEncrypted = tokens.NullRefresh()
+			*expiresAt = tokens.NullExpiresAt()
 		},
 	})
 	if err != nil {

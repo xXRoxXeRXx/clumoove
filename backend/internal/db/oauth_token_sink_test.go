@@ -249,14 +249,16 @@ func TestOAuthTokenSinkContract(t *testing.T) {
 }
 
 func TestOAuthTokenSinkRejectsInvalidRole(t *testing.T) {
-	database := setupTokenSinkDB(t)
+	// The role is rejected before any statement is built, so no database is needed.
+	var database *sql.DB
 	for name, sink := range map[string]OAuthTokenSink{
 		"migration":  NewMigrationTokenSink(database, "owner-1", "sideways"),
 		"sync job":   NewSyncJobTokenSink(database, "owner-1", "sideways"),
 		"backup job": NewBackupJobTokenSink(database, "owner-1", "sideways"),
 	} {
-		if err := sink.Persist(context.Background(), rotated("a", "r"), "old-refresh"); err == nil {
-			t.Errorf("%s: Persist() with an invalid role succeeded", name)
+		err := sink.Persist(context.Background(), rotated("a", "r"), "old-refresh")
+		if !errors.Is(err, ErrInvalidOAuthTokenRole) {
+			t.Errorf("%s: Persist() with an invalid role error = %v, want ErrInvalidOAuthTokenRole (never a lost race)", name, err)
 		}
 	}
 }

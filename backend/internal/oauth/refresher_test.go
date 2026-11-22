@@ -238,3 +238,91 @@ func TestRefresherWithoutSinkOnlyRecordsRotationHistory(t *testing.T) {
 		t.Fatalf("Refresh() token = %+v, want the refreshed token", res.Token)
 	}
 }
+
+type typedNilLocker struct{}
+
+func (*typedNilLocker) TryClaimOAuthLock(context.Context, string, string, string, time.Duration) (string, bool, error) {
+	panic("a nil locker must never be claimed")
+}
+func (*typedNilLocker) ReleaseOAuthLock(context.Context, string, string, string, string) error {
+	panic("a nil locker must never be released")
+}
+
+// An optional dependency such as an unconfigured *queue.Queue is a nil pointer
+// inside a non-nil interface; the refresher must treat it as "no locker".
+func TestNewRefresherTreatsTypedNilLockerAsAbsent(t *testing.T) {
+	var unconfigured *typedNilLocker
+	refresher := newTestRefresher(t, unconfigured, time.Now())
+
+	res, err := refresher.Refresh(context.Background(), OwnerRefresh{
+		UserID: "u1", Provider: "google", RefreshToken: "T1",
+		Refresh: providerReturning("a", "r", 3600),
+	})
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if res.Token == nil {
+		t.Fatal("Refresh() returned no token")
+	}
+}
+
+func TestRefresherNamesThePersistStageAndOwner(t *testing.T) {
+	refresher := newTestRefresher(t, nil, time.Now())
+
+	_, err := refresher.Refresh(context.Background(), OwnerRefresh{
+		UserID: "u1", Provider: "google", RefreshToken: "T1", Label: "sync job j1 source",
+		Refresh:         providerReturning("a", "r", 3600),
+		Sink:            &recordingSink{err: errors.New("connection reset")},
+		ExpectedRefresh: func() string { return "enc" },
+	})
+	if !errors.Is(err, ErrRotatedTokenPersist) || errors.Is(err, ErrRotatedTokenEncrypt) {
+		t.Fatalf("Refresh() error = %v, want the persist stage only", err)
+	}
+	if !strings.Contains(err.Error(), "sync job j1 source") {
+		t.Fatalf("Refresh() error = %q, want it to name the owner", err)
+	}
+}
+
+func TestAdoptDecryptedWinner(t *testing.T) {
+	refresher := newTestRefresher(t, nil, time.Now())
+	winner, err := crypto.EncryptWithDomain("winner-access", refresherTestKey, crypto.DomainOAuthAccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, tc := range map[string]struct {
+		load       func(context.Context) (string, error)
+		wantAccess string
+		wantOK     bool
+	}{
+		"decrypts the winner":    {load: func(context.Context) (string, error) { return winner, nil }, wantAccess: "winner-access", wantOK: true},
+		"load failure declines":  {load: func(context.Context) (string, error) { return "", errors.New("gone") }},
+		"undecryptable declines": {load: func(context.Context) (string, error) { return "not-ciphertext", nil }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			access, ok := refresher.AdoptDecryptedWinner(tc.load)(context.Background())
+			if access != tc.wantAccess || ok != tc.wantOK {
+				t.Fatalf("adopt = %q, %v; want %q, %v", access, ok, tc.wantAccess, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestRefresherAdoptsDecryptedWinnerThroughTheHook(t *testing.T) {
+	refresher := newTestRefresher(t, nil, time.Now())
+	winner, _ := crypto.EncryptWithDomain("winner-access", refresherTestKey, crypto.DomainOAuthAccessToken)
+
+	res, err := refresher.Refresh(context.Background(), OwnerRefresh{
+		UserID: "u1", Provider: "google", RefreshToken: "T1",
+		Refresh:         providerReturning("a", "r", 3600),
+		Sink:            &recordingSink{err: db.ErrOAuthTokenConflict},
+		ExpectedRefresh: func() string { return "enc" },
+		AdoptSuperseded: refresher.AdoptDecryptedWinner(func(context.Context) (string, error) { return winner, nil }),
+	})
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if !res.Adopted || res.AdoptedAccess != "winner-access" {
+		t.Fatalf("Refresh() = %+v, want the decrypted winner adopted", res)
+	}
+}

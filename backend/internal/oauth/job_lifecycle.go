@@ -108,10 +108,12 @@ func (r *JobTokenRefresher) refreshLifecycle(ctx context.Context, state jobOAuth
 	jobRelease := r.locks.Lock(fmt.Sprintf("%s:%s:%s", state.OAuthWorkKind(), state.OAuthJobID(), role))
 	defer jobRelease()
 
-	res, err := r.refresher().Refresh(ctx, OwnerRefresh{
+	refresher := r.refresher()
+	res, err := refresher.Refresh(ctx, OwnerRefresh{
 		UserID:       state.OAuthUserID(),
 		Provider:     initial.provider,
 		RefreshToken: refresh,
+		Label:        fmt.Sprintf("%s %s %s", state.OAuthWorkKind(), state.OAuthJobID(), role),
 		Refresh: func(refreshCtx context.Context, provider, tok string) (*TokenResponse, error) {
 			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
 			defer cancel()
@@ -163,16 +165,14 @@ func (r *JobTokenRefresher) refreshLifecycle(ctx context.Context, state jobOAuth
 		Sink:            state.OAuthTokenSink(role),
 		ExpectedRefresh: func() string { return expectedRefreshEnc },
 		OnPersisted: func(tokens db.EncryptedOAuthTokens) {
-			state.ApplyOAuthTokens(role, tokens.Access, sql.NullString{String: tokens.Refresh, Valid: true}, sql.NullTime{Time: tokens.ExpiresAt, Valid: true})
+			state.ApplyOAuthTokens(role, tokens.Access, tokens.NullRefresh(), tokens.NullExpiresAt())
 		},
-		AdoptSuperseded: func(persistCtx context.Context) (string, bool) {
-			if state.ReloadOAuthTokens(persistCtx) != nil {
-				return "", false
+		AdoptSuperseded: refresher.AdoptDecryptedWinner(func(persistCtx context.Context) (string, error) {
+			if err := state.ReloadOAuthTokens(persistCtx); err != nil {
+				return "", err
 			}
-			winner := state.OAuthTokens(role)
-			decrypted, decryptErr := crypto.DecryptWithDomain(winner.accessEnc, r.secretKey, crypto.DomainOAuthAccessToken)
-			return decrypted, decryptErr == nil
-		},
+			return state.OAuthTokens(role).accessEnc, nil
+		}),
 	})
 	if err != nil {
 		return "", err

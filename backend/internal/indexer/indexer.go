@@ -492,10 +492,12 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 	defer crypto.ZeroString(&refreshToken)
 
 	var emptyRefresh bool
-	res, err := idx.refresher().Refresh(ctx, oauth.OwnerRefresh{
+	refresher := idx.refresher()
+	res, err := refresher.Refresh(ctx, oauth.OwnerRefresh{
 		UserID:       mig.UserID.String,
 		Provider:     mig.SourceProvider,
 		RefreshToken: refreshToken,
+		Label:        "migration " + migID + " source",
 		Refresh: func(refreshCtx context.Context, provider, tok string) (*oauth.TokenResponse, error) {
 			tokenResp, rerr := oauth.RefreshToken(refreshCtx, provider, tok)
 			if rerr != nil {
@@ -543,15 +545,14 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 		},
 		Sink:            db.NewMigrationTokenSink(idx.db, migID, "source"),
 		ExpectedRefresh: func() string { return expectedRefreshEnc },
-		AdoptSuperseded: func(persistCtx context.Context) (string, bool) {
+		AdoptSuperseded: refresher.AdoptDecryptedWinner(func(persistCtx context.Context) (string, error) {
 			logger.Info("indexing_source_token_update_conflict")
 			latestMig, lerr := db.GetMigrationContext(persistCtx, idx.db, migID)
 			if lerr != nil {
-				return "", false
+				return "", lerr
 			}
-			latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken)
-			return latestAccess, derr == nil
-		},
+			return latestMig.SourcePasswordEncrypted, nil
+		}),
 	})
 	if err != nil {
 		return "", err
@@ -566,13 +567,9 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 }
 
 // refresher binds the indexer's shared rotation infrastructure. The queue is the
-// distributed token locker when present; a nil queue must stay a nil interface.
+// distributed token locker when present.
 func (idx *Indexer) refresher() *oauth.Refresher {
-	cfg := oauth.RefresherConfig{DB: idx.db, EncryptionKey: idx.encryptionKey}
-	if idx.queue != nil {
-		cfg.Locker = idx.queue
-	}
-	return oauth.NewRefresher(cfg)
+	return oauth.NewRefresher(oauth.RefresherConfig{DB: idx.db, Locker: idx.queue, EncryptionKey: idx.encryptionKey})
 }
 
 func (idx *Indexer) newSource(ctx context.Context, providerType, urlStr, username, password string, opts ...storage.ProviderOption) (IndexSource, error) {

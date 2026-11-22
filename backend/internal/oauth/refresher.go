@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"backend/internal/crypto"
@@ -13,6 +14,13 @@ import (
 
 // defaultAccessTokenLifetime applies when a provider omits expires_in.
 const defaultAccessTokenLifetime = time.Hour
+
+// Failure stages of persisting a rotated pair. Refresh wraps them so callers can
+// tell an encryption failure from a storage failure without parsing messages.
+var (
+	ErrRotatedTokenEncrypt = errors.New("encrypt rotated OAuth tokens")
+	ErrRotatedTokenPersist = errors.New("persist rotated OAuth tokens")
+)
 
 // RefresherConfig is the infrastructure every OAuth refresh shares. It is wired
 // once per component, so call sites describe only what differs per owner.
@@ -35,8 +43,13 @@ type Refresher struct {
 	cfg RefresherConfig
 }
 
-// NewRefresher returns a Refresher bound to cfg.
+// NewRefresher returns a Refresher bound to cfg. A Locker holding a nil pointer
+// (for example an unconfigured *queue.Queue) is treated as no locker, so callers
+// can pass an optional dependency straight through.
 func NewRefresher(cfg RefresherConfig) *Refresher {
+	if v := reflect.ValueOf(cfg.Locker); v.Kind() == reflect.Pointer && v.IsNil() {
+		cfg.Locker = nil
+	}
 	return &Refresher{cfg: cfg}
 }
 
@@ -47,6 +60,8 @@ type OwnerRefresh struct {
 	Provider string
 	// RefreshToken is the owner's current plaintext refresh token.
 	RefreshToken string
+	// Label names the owner in persistence errors, for example "migration source".
+	Label string
 
 	Refresh      func(ctx context.Context, provider, refreshToken string) (*TokenResponse, error)
 	ExtraAliases func() []string
@@ -86,7 +101,7 @@ func (r *Refresher) Refresh(ctx context.Context, req OwnerRefresh) (RotationRefr
 		UserID:        req.UserID,
 		Provider:      req.Provider,
 		RefreshToken:  req.RefreshToken,
-		Now:           r.cfg.Now,
+		Now:           r.now,
 		Refresh:       req.Refresh,
 		ExtraAliases:  req.ExtraAliases,
 		OnWait:        req.OnWait,
@@ -113,11 +128,11 @@ func (r *Refresher) persistRotation(ctx context.Context, req OwnerRefresh, resp 
 	}
 	access, err := crypto.EncryptWithDomain(resp.AccessToken, r.cfg.EncryptionKey, crypto.DomainOAuthAccessToken)
 	if err != nil {
-		return "", false, fmt.Errorf("encrypt rotated OAuth access token: %w", err)
+		return "", false, fmt.Errorf("%w: %s access token: %w", ErrRotatedTokenEncrypt, req.Label, err)
 	}
 	refresh, err := crypto.EncryptWithDomain(resp.RefreshToken, r.cfg.EncryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
-		return "", false, fmt.Errorf("encrypt rotated OAuth refresh token: %w", err)
+		return "", false, fmt.Errorf("%w: %s refresh token: %w", ErrRotatedTokenEncrypt, req.Label, err)
 	}
 	lifetime := time.Duration(resp.ExpiresIn) * time.Second
 	if resp.ExpiresIn <= 0 {
@@ -135,10 +150,25 @@ func (r *Refresher) persistRotation(ctx context.Context, req OwnerRefresh, resp 
 				return winner, true, nil
 			}
 		}
-		return "", false, fmt.Errorf("persist rotated OAuth tokens: %w", err)
+		return "", false, fmt.Errorf("%w: %s: %w", ErrRotatedTokenPersist, req.Label, err)
 	}
 	if req.OnPersisted != nil {
 		req.OnPersisted(tokens)
 	}
 	return "", false, nil
+}
+
+// AdoptDecryptedWinner builds an AdoptSuperseded hook for owners whose callers
+// work with plaintext access tokens: it loads the encrypted access token the
+// winning rotation stored and decrypts it. Any load or decrypt failure declines
+// adoption, which surfaces the superseded error instead.
+func (r *Refresher) AdoptDecryptedWinner(load func(ctx context.Context) (accessEncrypted string, err error)) func(ctx context.Context) (string, bool) {
+	return func(ctx context.Context) (string, bool) {
+		accessEncrypted, err := load(ctx)
+		if err != nil {
+			return "", false
+		}
+		access, err := crypto.DecryptWithDomain(accessEncrypted, r.cfg.EncryptionKey, crypto.DomainOAuthAccessToken)
+		return access, err == nil
+	}
 }

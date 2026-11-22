@@ -645,6 +645,7 @@ func (a *ownedProfileAccess) resolveAndRefreshOAuth(
 		UserID:       userID,
 		Provider:     creds.Provider,
 		RefreshToken: creds.RefreshToken,
+		Label:        "connection profile " + profile.ID,
 		Refresh:      a.refreshToken,
 		ExtraAliases: func() []string {
 			aliases := []string{initialRefresh, suppliedRefresh}
@@ -680,7 +681,7 @@ func (a *ownedProfileAccess) resolveAndRefreshOAuth(
 		OnPersisted: func(tokens db.EncryptedOAuthTokens) {
 			profile.PasswordEncrypted = tokens.Access
 			profile.RefreshTokenEncrypted = tokens.Refresh
-			profile.TokenExpiresAt = sql.NullTime{Time: tokens.ExpiresAt, Valid: true}
+			profile.TokenExpiresAt = tokens.NullExpiresAt()
 		},
 	})
 	if err != nil {

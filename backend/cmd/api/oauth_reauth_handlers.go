@@ -69,7 +69,7 @@ func (api *migrationAPI) handleMigrationReauth(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
-	err = persistReauthTokens(r.Context(), db.NewMigrationTokenSink(api.db, id, req.Role), db.EncryptedOAuthTokens{Access: access, Refresh: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}, expected)
+	err = persistReauthTokens(context.WithoutCancel(r.Context()), db.NewMigrationTokenSink(api.db, id, req.Role), db.EncryptedOAuthTokens{Access: access, Refresh: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}, expected)
 	if err != nil {
 		if errors.Is(err, db.ErrOAuthTokenConflict) {
 			writeError(w, http.StatusConflict, ErrMigrationInvalidState)
@@ -127,7 +127,7 @@ func (api *syncAPI) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
-	err = persistReauthTokens(r.Context(), db.NewSyncJobTokenSink(api.db, id, req.Role), db.EncryptedOAuthTokens{Access: access, Refresh: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}, expected)
+	err = persistReauthTokens(context.WithoutCancel(r.Context()), db.NewSyncJobTokenSink(api.db, id, req.Role), db.EncryptedOAuthTokens{Access: access, Refresh: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}, expected)
 	if err != nil {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return

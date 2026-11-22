@@ -112,7 +112,8 @@ func TestOwnedProfileAccessRefreshAndPersistFailures(t *testing.T) {
 		spyDB, spyState := newProfileSpyDB(t, map[string][]driver.Value{
 			"with-refresh": withRefreshRow,
 		})
-		spyState.execErr = errors.New("persist failed")
+		persistErr := errors.New("persist failed")
+		spyState.execErr = persistErr
 		access := &ownedProfileAccess{
 			db:            spyDB,
 			encryptionKey: key,
@@ -120,8 +121,9 @@ func TestOwnedProfileAccessRefreshAndPersistFailures(t *testing.T) {
 				return &oauth.TokenResponse{AccessToken: "fresh-access", RefreshToken: "fresh-refresh", ExpiresIn: 3600}, nil
 			},
 		}
-		if _, err := access.TestOwned(context.Background(), "user-1", "with-refresh"); err == nil {
-			t.Fatal("TestOwned() error = nil, want persist failure")
+		_, err := access.TestOwned(context.Background(), "user-1", "with-refresh")
+		if !errors.Is(err, persistErr) || !errors.Is(err, oauth.ErrRotatedTokenPersist) {
+			t.Fatalf("TestOwned() error = %v, want the storage failure reported as the persist stage", err)
 		}
 	})
 }

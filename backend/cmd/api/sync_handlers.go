@@ -104,10 +104,12 @@ func openSyncJobEndpoint[T any](api *syncAPI, ctx context.Context, id, userID, r
 		}
 		defer crypto.ZeroString(&refreshToken)
 		if refreshToken != "" {
-			res, rerr := api.refresher().Refresh(ctx, oauth.OwnerRefresh{
+			refresher := api.refresher()
+			res, rerr := refresher.Refresh(ctx, oauth.OwnerRefresh{
 				UserID:       userID,
 				Provider:     creds.provider,
 				RefreshToken: refreshToken,
+				Label:        "sync job " + id + " " + role,
 				Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
 					token, rerr := oauth.RefreshToken(refreshCtx, prov, tok)
 					if rerr != nil {
@@ -148,18 +150,16 @@ func openSyncJobEndpoint[T any](api *syncAPI, ctx context.Context, id, userID, r
 				},
 				Sink:            db.NewSyncJobTokenSink(api.db, id, role),
 				ExpectedRefresh: func() string { return expectedRefreshEnc },
-				AdoptSuperseded: func(persistCtx context.Context) (string, bool) {
+				AdoptSuperseded: refresher.AdoptDecryptedWinner(func(persistCtx context.Context) (string, error) {
 					latestJob, lerr := db.GetSyncJobContext(persistCtx, api.db, id)
 					if lerr != nil {
-						return "", false
+						return "", lerr
 					}
-					latestPassEnc := latestJob.SourcePasswordEncrypted
 					if role == "target" {
-						latestPassEnc = latestJob.TargetPasswordEncrypted
+						return latestJob.TargetPasswordEncrypted, nil
 					}
-					plain, derr := crypto.DecryptWithDomain(latestPassEnc, api.encryptionKey, crypto.DomainOAuthAccessToken)
-					return plain, derr == nil
-				},
+					return latestJob.SourcePasswordEncrypted, nil
+				}),
 			})
 			if rerr == nil {
 				if res.Adopted {

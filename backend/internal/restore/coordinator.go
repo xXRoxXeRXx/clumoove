@@ -449,6 +449,7 @@ func (c *Coordinator) ensureFreshRestoreTargetOAuthToken(ctx context.Context, us
 		UserID:       userID,
 		Provider:     provider,
 		RefreshToken: refresh,
+		Label:        "restore run " + runID,
 		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
 			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
 			defer cancel()
@@ -521,6 +522,7 @@ func (c *Coordinator) ensureFreshRepositoryOAuthToken(ctx context.Context, conne
 		UserID:       connection.UserID,
 		Provider:     connection.Provider,
 		RefreshToken: refresh,
+		Label:        "backup repository " + connection.BackupJobID,
 		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
 			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
 			defer cancel()

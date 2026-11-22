@@ -1082,13 +1082,9 @@ func shouldRefreshToken(expiry sql.NullTime) bool {
 }
 
 // refresher binds the engine's shared rotation infrastructure. The queue is the
-// distributed token locker when present; a nil queue must stay a nil interface.
+// distributed token locker when present.
 func (e *Engine) refresher() *oauth.Refresher {
-	cfg := oauth.RefresherConfig{DB: e.db, EncryptionKey: e.encryptionKey}
-	if e.queue != nil {
-		cfg.Locker = e.queue
-	}
-	return oauth.NewRefresher(cfg)
+	return oauth.NewRefresher(oauth.RefresherConfig{DB: e.db, Locker: e.queue, EncryptionKey: e.encryptionKey})
 }
 
 // ensureFreshToken refreshes OAuth credentials for a sync job if they are expired or near expiry.
@@ -1114,10 +1110,12 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 	defer crypto.ZeroString(&refreshToken)
 
 	var emptyRefresh bool
-	res, err := e.refresher().Refresh(ctx, oauth.OwnerRefresh{
+	refresher := e.refresher()
+	res, err := refresher.Refresh(ctx, oauth.OwnerRefresh{
 		UserID:       job.UserID,
 		Provider:     provider,
 		RefreshToken: refreshToken,
+		Label:        "sync job " + syncJobID + " " + role,
 		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
 			tokenResp, rerr := oauth.RefreshToken(refreshCtx, prov, tok)
 			if rerr != nil {
@@ -1167,16 +1165,15 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 		},
 		Sink:            e.syncs.SyncJobTokenSink(syncJobID, role),
 		ExpectedRefresh: func() string { return expectedRefreshEnc },
-		AdoptSuperseded: func(persistCtx context.Context) (string, bool) {
+		AdoptSuperseded: refresher.AdoptDecryptedWinner(func(persistCtx context.Context) (string, error) {
 			slog.Info("sync OAuth token update conflicted; adopting stored winner", "sync_job_id", syncJobID, "role", role)
 			latestJob, lerr := e.syncs.GetSyncJobContext(persistCtx, syncJobID)
 			if lerr != nil {
-				return "", false
+				return "", lerr
 			}
 			_, _, _, latestAccessEnc := tokenSet(latestJob)
-			latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken)
-			return latestAccess, derr == nil
-		},
+			return latestAccessEnc, nil
+		}),
 	})
 	if err != nil {
 		return "", err
