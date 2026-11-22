@@ -142,7 +142,6 @@ export function ConfirmationDialog({
           <Button
             variant="danger"
             onClick={onConfirm}
-            className="hover:opacity-90"
           >
             {confirmLabel ?? t('common.confirm')}
           </Button>

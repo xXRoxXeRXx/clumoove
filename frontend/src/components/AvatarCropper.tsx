@@ -231,7 +231,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
         {validationError ? (
           <p role="alert" className="ui-alert ui-alert-error w-full mb-4 text-sm">{validationError}</p>
         ) : (
-          <div className="relative overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-inverse)] group">
+          <div className="relative overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-media-bg)] group">
             <canvas
               ref={canvasRef}
               width={300}
@@ -247,7 +247,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
               aria-label={`${t('settings.avatarCropperHint')} (${Math.round(zoom * 100)}%)`}
               className="cursor-move block touch-none"
             />
-            <div className="absolute bottom-2 left-2 right-2 text-center text-[9px] font-mono text-[var(--color-text-inverse)]/50 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="absolute bottom-2 left-2 right-2 text-center text-[9px] font-mono text-[var(--color-media-fg)]/50 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
               {t('settings.avatarCropperHint')}
             </div>
           </div>

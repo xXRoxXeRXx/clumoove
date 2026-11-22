@@ -47,7 +47,7 @@ export function Toggle({
           className={`block h-5 w-9 rounded-full border transition-colors duration-200 ease-in-out peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--color-focus)] peer-focus-visible:ring-offset-2 ${
             checked
               ? 'bg-[var(--color-toggle-on)] border-[var(--color-toggle-on)]'
-              : 'bg-[var(--color-bg-tertiary)] border-[var(--color-border)]'
+              : 'bg-[var(--color-bg-tertiary)] border-[var(--color-border-control)]'
           }`}
         />
         {/* Switch thumb/knob */}
