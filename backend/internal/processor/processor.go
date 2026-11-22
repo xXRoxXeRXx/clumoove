@@ -43,6 +43,7 @@ type Processor struct {
 	db                 *sql.DB
 	migrations         db.MigrationStore
 	tasks              db.TaskStore
+	syncs              db.SyncStore
 	queue              *queue.Queue
 	oauthRefresher     *oauth.JobTokenRefresher
 	oauthRefresherOnce sync.Once
@@ -362,14 +363,17 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 	}
 	var migrations db.MigrationStore
 	var tasks db.TaskStore
+	var syncs db.SyncStore
 	if database != nil {
 		migrations = db.NewMigrationStore(database)
 		tasks = db.NewTaskStore(database)
+		syncs = db.NewSyncStore(database)
 	}
 	return &Processor{
 		db:              database,
 		migrations:      migrations,
 		tasks:           tasks,
+		syncs:           syncs,
 		queue:           q,
 		oauthRefresher:  refresher,
 		workerID:        cfg.WorkerID,
@@ -414,7 +418,7 @@ func (p *Processor) pruneProviderPool(ctx context.Context, pool *providerPool) {
 			mig, err := p.migrations.GetMigration(key.entityID)
 			return err == nil && (mig.Status == "COMPLETED" || mig.Status == "COMPLETED_WITH_ERRORS" || mig.Status == "FAILED" || mig.Status == "CANCELLED")
 		case "sync":
-			job, err := db.GetSyncJob(p.db, key.entityID)
+			job, err := p.syncs.GetSyncJob(key.entityID)
 			return err == nil && (job.RunGeneration != key.generation || job.Status == "COMPLETED" || job.Status == "FAILED")
 		default:
 			return false
@@ -645,7 +649,7 @@ func (p *Processor) cleanupThrottlers() {
 		id := key.(string)
 		mig, err := p.migrations.GetMigration(id)
 		if shouldEvictThrottler(migStatusOrEmpty(mig, err), err, func() (string, error) {
-			job, jerr := db.GetSyncJob(p.db, id)
+			job, jerr := p.syncs.GetSyncJob(id)
 			if jerr != nil {
 				return "", jerr
 			}

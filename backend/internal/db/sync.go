@@ -208,8 +208,8 @@ func resetSyncJobAndSchedule(job *SyncJob, schedule *Schedule) {
 	schedule.UpdatedAt = time.Time{}
 }
 
-// GetSyncJob retrieves a sync job by ID
-func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
+// getSyncJob retrieves a sync job by ID
+func getSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 	return GetSyncJobContext(context.Background(), db, id)
 }
 
@@ -259,8 +259,8 @@ func querySyncJob(ctx context.Context, db *sql.DB, where string, args ...any) (*
 	return &s, nil
 }
 
-// GetSyncJobOwnerID returns the owning user_id for a sync job.
-func GetSyncJobOwnerID(database queryExecerContext, syncJobID string) (string, error) {
+// getSyncJobOwnerID returns the owning user_id for a sync job.
+func getSyncJobOwnerID(database queryExecerContext, syncJobID string) (string, error) {
 	var owner sql.NullString
 	err := database.QueryRowContext(context.Background(), `SELECT user_id FROM sync_jobs WHERE id = $1`, syncJobID).Scan(&owner)
 	if err != nil {
@@ -345,9 +345,9 @@ func FailSyncJobIfActive(ctx context.Context, database *sql.DB, id string, errMs
 	return affected > 0, err
 }
 
-// UpdateSyncJobStatusForGeneration prevents a late worker from changing a
+// updateSyncJobStatusForGeneration prevents a late worker from changing a
 // successor pass's lifecycle state.
-func UpdateSyncJobStatusForGeneration(db *sql.DB, id string, generation int, status string, errMsg *string) error {
+func updateSyncJobStatusForGeneration(db *sql.DB, id string, generation int, status string, errMsg *string) error {
 	var errVal sql.NullString
 	if errMsg != nil {
 		errVal = sql.NullString{String: *errMsg, Valid: true}
@@ -377,10 +377,10 @@ func UpdateSyncJobBandwidthLimit(db *sql.DB, id string, limitMbps int) error {
 	return nil
 }
 
-// PauseSyncJobAndDeactivateSchedules serializes the user-pause lifecycle with
+// pauseSyncJobAndDeactivateSchedules serializes the user-pause lifecycle with
 // its schedule and task mutations. The returned generation is the pass that
 // was paused and must be used to fence asynchronous cancellation signals.
-func PauseSyncJobAndDeactivateSchedules(ctx context.Context, database *sql.DB, id string, errMsg *string) (generation int, paused bool, err error) {
+func pauseSyncJobAndDeactivateSchedules(ctx context.Context, database *sql.DB, id string, errMsg *string) (generation int, paused bool, err error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, false, err
@@ -444,10 +444,10 @@ func PauseSyncJobAndDeactivateSchedules(ctx context.Context, database *sql.DB, i
 	return generation, true, nil
 }
 
-// ResumeSyncJobAndReactivateSchedules serializes the user-resume lifecycle
+// resumeSyncJobAndReactivateSchedules serializes the user-resume lifecycle
 // with its schedule mutation, preventing a preceding pause from disabling a
 // successfully resumed job after it starts a new pass.
-func ResumeSyncJobAndReactivateSchedules(ctx context.Context, database *sql.DB, id string, errMsg *string, nextRunAt time.Time) (bool, error) {
+func resumeSyncJobAndReactivateSchedules(ctx context.Context, database *sql.DB, id string, errMsg *string, nextRunAt time.Time) (bool, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -493,9 +493,9 @@ func ResumeSyncJobAndReactivateSchedules(ctx context.Context, database *sql.DB, 
 	return true, nil
 }
 
-// TransitionSyncJobToRunning atomically starts task processing for an indexed
+// transitionSyncJobToRunning atomically starts task processing for an indexed
 // pass. It prevents a superseded INDEXING pass from reviving another status.
-func TransitionSyncJobToRunning(db *sql.DB, id string, generation int) (bool, error) {
+func transitionSyncJobToRunning(db *sql.DB, id string, generation int) (bool, error) {
 	var transitionedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
@@ -512,10 +512,10 @@ func TransitionSyncJobToRunning(db *sql.DB, id string, generation int) (bool, er
 	return true, nil
 }
 
-// TransitionSyncJobToVerifying atomically hands an active pass to checksum
+// transitionSyncJobToVerifying atomically hands an active pass to checksum
 // verification. It must only transition from RUNNING so a task-worker failure
 // cannot be revived as VERIFYING.
-func TransitionSyncJobToVerifying(db *sql.DB, id string, generation int) (bool, error) {
+func transitionSyncJobToVerifying(db *sql.DB, id string, generation int) (bool, error) {
 	var transitionedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
@@ -532,11 +532,11 @@ func TransitionSyncJobToVerifying(db *sql.DB, id string, generation int) (bool, 
 	return true, nil
 }
 
-// AbortSyncJobVerification withdraws a sync pass from the worker verifier while
+// abortSyncJobVerification withdraws a sync pass from the worker verifier while
 // keeping the engine as the sole owner of final run statistics and the eventual
 // RUNNING -> IDLE transition. RUNNING is safe here because all transfer tasks
 // were already observed as terminal before verification began.
-func AbortSyncJobVerification(db *sql.DB, id string, generation int) (bool, error) {
+func abortSyncJobVerification(db *sql.DB, id string, generation int) (bool, error) {
 	var transitionedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
@@ -596,9 +596,9 @@ func GetExpiringOAuthSyncJobs(db *sql.DB) ([]ExpiringOAuthSyncJob, error) {
 	return result, rows.Err()
 }
 
-// ClaimSyncJobPass atomically reserves a manually runnable sync job for a new
+// claimSyncJobPass atomically reserves a manually runnable sync job for a new
 // pass. A successful claim moves the job to INDEXING before its pass starts.
-func ClaimSyncJobPass(database *sql.DB, id string) (generation int, claimed bool, err error) {
+func claimSyncJobPass(database *sql.DB, id string) (generation int, claimed bool, err error) {
 	err = database.QueryRow(`
 		UPDATE sync_jobs
 		SET status = 'INDEXING', run_generation = run_generation + 1, updated_at = CURRENT_TIMESTAMP
@@ -614,10 +614,10 @@ func ClaimSyncJobPass(database *sql.DB, id string) (generation int, claimed bool
 	return generation, true, nil
 }
 
-// ReleaseUnstartedSyncPass prevents a failed coordinator startup from leaving
+// releaseUnstartedSyncPass prevents a failed coordinator startup from leaving
 // an otherwise runnable job permanently in INDEXING. It deliberately only
 // releases INDEXING: a concurrent pause or lifecycle transition is preserved.
-func ReleaseUnstartedSyncPass(database *sql.DB, id string, generation int) (bool, error) {
+func releaseUnstartedSyncPass(database *sql.DB, id string, generation int) (bool, error) {
 	var releasedID string
 	err := database.QueryRow(`
 		UPDATE sync_jobs
@@ -634,10 +634,10 @@ func ReleaseUnstartedSyncPass(database *sql.DB, id string, generation int) (bool
 	return true, nil
 }
 
-// RecoverConnectionLostSyncJob atomically releases a connection-loss-paused
+// recoverConnectionLostSyncJob atomically releases a connection-loss-paused
 // sync job and makes its active schedule due now. Workers intentionally do
 // not start a pass: the API scheduler is the sole sync-pass coordinator.
-func RecoverConnectionLostSyncJob(database *sql.DB, ctx context.Context, id string) (bool, error) {
+func recoverConnectionLostSyncJob(database *sql.DB, ctx context.Context, id string) (bool, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -672,9 +672,9 @@ func RecoverConnectionLostSyncJob(database *sql.DB, ctx context.Context, id stri
 	return true, nil
 }
 
-// UpdateSyncJobTotals updates counters for its INDEXING pass. A false result
+// updateSyncJobTotals updates counters for its INDEXING pass. A false result
 // means the pass was superseded or otherwise left INDEXING before the update.
-func UpdateSyncJobTotals(db *sql.DB, id string, generation, totalFiles int, totalBytes int64) (bool, error) {
+func updateSyncJobTotals(db *sql.DB, id string, generation, totalFiles int, totalBytes int64) (bool, error) {
 	var updatedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
@@ -691,9 +691,9 @@ func UpdateSyncJobTotals(db *sql.DB, id string, generation, totalFiles int, tota
 	return true, nil
 }
 
-// AddSyncJobLiveBytesForGeneration prevents a late worker from changing the
+// addSyncJobLiveBytesForGeneration prevents a late worker from changing the
 // live counter after its sync pass has been superseded.
-func AddSyncJobLiveBytesForGeneration(db *sql.DB, ctx context.Context, id string, generation int, bytesDelta int64) error {
+func addSyncJobLiveBytesForGeneration(db *sql.DB, ctx context.Context, id string, generation int, bytesDelta int64) error {
 	if bytesDelta <= 0 {
 		return nil
 	}
@@ -701,16 +701,16 @@ func AddSyncJobLiveBytesForGeneration(db *sql.DB, ctx context.Context, id string
 	return err
 }
 
-// FinalizeSyncJobPassWithStates atomically stores the next delta baseline and
+// finalizeRunningSyncPassWithStates atomically stores the next delta baseline and
 // exposes the completed pass. A state-write failure therefore leaves the job
 // active instead of reporting a success that cannot be reconciled next pass.
-func FinalizeSyncJobPassWithStates(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, upserts []*SyncState, deletes []SyncStateDelete) (bool, error) {
+func finalizeRunningSyncPassWithStates(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, upserts []*SyncState, deletes []SyncStateDelete) (bool, error) {
 	return finalizeSyncJobPassWithStates(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, upserts, deletes, finalizeRunningSyncPass)
 }
 
-// FinalizeEmptySyncJobPassWithStates is the index-only equivalent of
-// FinalizeSyncJobPassWithStates.
-func FinalizeEmptySyncJobPassWithStates(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, upserts []*SyncState, deletes []SyncStateDelete) (bool, error) {
+// finalizeEmptySyncJobPassWithStates is the index-only equivalent of
+// finalizeRunningSyncPassWithStates.
+func finalizeEmptySyncJobPassWithStates(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, upserts []*SyncState, deletes []SyncStateDelete) (bool, error) {
 	return finalizeSyncJobPassWithStates(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, upserts, deletes, finalizeEmptySyncPass)
 }
 
@@ -772,10 +772,10 @@ func finalizeSyncJobPassTx(tx *sql.Tx, id string, generation int, lastRunStatus 
 	return true, nil
 }
 
-// FailSyncJobPass records an engine failure without overwriting a concurrent
+// failSyncJobPass records an engine failure without overwriting a concurrent
 // FAILED or PAUSED_* decision made elsewhere. Engine indexing failures remain
 // FAILED so the UI exposes the hard failure until a later pass claims the job.
-func FailSyncJobPass(db *sql.DB, id string, generation int, errMsg string) (bool, error) {
+func failSyncJobPass(db *sql.DB, id string, generation int, errMsg string) (bool, error) {
 	var failedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
@@ -815,15 +815,15 @@ func VerifySyncJobOwnershipContext(ctx context.Context, db *sql.DB, syncJobID, u
 	return exists, nil
 }
 
-// DeleteSyncJobCascade deletes a sync job and all related tasks / state / schedules
-func DeleteSyncJobCascade(db *sql.DB, syncJobID string) error {
+// deleteSyncJobCascade deletes a sync job and all related tasks / state / schedules
+func deleteSyncJobCascade(db *sql.DB, syncJobID string) error {
 	_ = DeleteSchedulesForTask(db, "sync", syncJobID)
 	query := `DELETE FROM sync_jobs WHERE id = $1`
 	_, err := db.Exec(query, syncJobID)
 	return err
 }
 
-func CancelRemainingPendingSyncTasksForGeneration(dbsql *sql.DB, syncJobID string, generation int) (int, error) {
+func cancelRemainingPendingSyncTasksForGeneration(dbsql *sql.DB, syncJobID string, generation int) (int, error) {
 	res, err := dbsql.Exec(`UPDATE tasks SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'PENDING'`, syncJobID, generation)
 	if err != nil {
 		return 0, err
@@ -832,11 +832,11 @@ func CancelRemainingPendingSyncTasksForGeneration(dbsql *sql.DB, syncJobID strin
 	return int(n), err
 }
 
-// ReconcileSyncJobProgress repairs progress counter drift for an active sync
+// reconcileSyncJobProgress repairs progress counter drift for an active sync
 // pass. It deliberately does not finalize the pass: the coordinator alone
 // owns checksum-verification handoff and the atomic sync_state-plus-IDLE
 // transition.
-func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) error {
+func reconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) error {
 	tx, err := dbsql.Begin()
 	if err != nil {
 		return err
@@ -913,7 +913,7 @@ func GetFailedSyncTasksForReport(db *sql.DB, syncJobID string, generation int) (
 	return tasks, rows.Err()
 }
 
-func IncrementSyncJobProgressForGeneration(db *sql.DB, ctx context.Context, id string, generation, filesDelta, changedDelta, deletedDelta, failedDelta int, bytesDelta int64) error {
+func incrementSyncJobProgressForGeneration(db *sql.DB, ctx context.Context, id string, generation, filesDelta, changedDelta, deletedDelta, failedDelta int, bytesDelta int64) error {
 	res, err := db.ExecContext(ctx, `UPDATE sync_jobs SET processed_files = processed_files + $1, processed_bytes = processed_bytes + $2, live_bytes = GREATEST(live_bytes, processed_bytes + $2), changed_files = changed_files + $3, deleted_files = deleted_files + $4, failed_files = failed_files + $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6 AND run_generation = $7 AND status = 'RUNNING'`, filesDelta, bytesDelta, changedDelta, deletedDelta, failedDelta, id, generation)
 	if err != nil {
 		return err
@@ -926,10 +926,10 @@ func IncrementSyncJobProgressForGeneration(db *sql.DB, ctx context.Context, id s
 	return nil
 }
 
-// UpdateSyncTaskStatusAndIncrementProgress persists a sync task's terminal
+// updateSyncTaskStatusAndIncrementProgress persists a sync task's terminal
 // status and its job counters as one logical transition.  A task must never be
 // left RUNNING while its job reports that it has been processed.
-func UpdateSyncTaskStatusAndIncrementProgress(db *sql.DB, ctx context.Context, t *Task, filesDelta, changedDelta, deletedDelta, failedDelta int, bytesDelta int64) error {
+func updateSyncTaskStatusAndIncrementProgress(db *sql.DB, ctx context.Context, t *Task, filesDelta, changedDelta, deletedDelta, failedDelta int, bytesDelta int64) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -988,9 +988,9 @@ func UpdateSyncTaskStatusAndIncrementProgress(db *sql.DB, ctx context.Context, t
 	return tx.Commit()
 }
 
-// UpdateClaimedSyncTaskStatus records a worker acknowledgement only for the
+// updateClaimedSyncTaskStatus records a worker acknowledgement only for the
 // coordinator pass that created the task.
-func UpdateClaimedSyncTaskStatus(db *sql.DB, ctx context.Context, t *Task) error {
+func updateClaimedSyncTaskStatus(db *sql.DB, ctx context.Context, t *Task) error {
 	res, err := db.ExecContext(ctx, `
 		UPDATE tasks SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4,
 			worker_hash = $5, source_hash = $6, target_hash = $7, checksum_verified = $8, updated_at = CURRENT_TIMESTAMP
@@ -1008,8 +1008,8 @@ func UpdateClaimedSyncTaskStatus(db *sql.DB, ctx context.Context, t *Task) error
 	return nil
 }
 
-// ListSyncStateByJob lists all sync states for a job
-func ListSyncStateByJob(db *sql.DB, syncJobID string) ([]SyncState, error) {
+// listSyncStateByJob lists all sync states for a job
+func listSyncStateByJob(db *sql.DB, syncJobID string) ([]SyncState, error) {
 	query := `
 		SELECT id, sync_job_id, side, rel_path, size, mtime, source_hash, target_hash, etag
 		FROM sync_state WHERE sync_job_id = $1
@@ -1036,10 +1036,10 @@ func ListSyncStateByJob(db *sql.DB, syncJobID string) ([]SyncState, error) {
 	return states, rows.Err()
 }
 
-// BulkCreateSyncTasks inserts sync tasks in batches of batchSize rows per statement.
+// bulkCreateSyncTasks inserts sync tasks in batches of batchSize rows per statement.
 // This is dramatically faster than N individual INSERTs for large sync passes with
 // many files (e.g. 1000 files → 2 DB round-trips instead of 1000).
-func BulkCreateSyncTasks(ctx context.Context, db *sql.DB, tasks []*Task) error {
+func bulkCreateSyncTasks(ctx context.Context, db *sql.DB, tasks []*Task) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -1266,8 +1266,8 @@ func ListAllSyncJobsContext(ctx context.Context, database *sql.DB, p SyncListPar
 	return views, total, nil
 }
 
-// GetUnverifiedCompletedSyncTasks fetches tasks for a sync job that completed but have checksum_verified = FALSE.
-func GetUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID string, generation int) ([]*Task, error) {
+// getUnverifiedCompletedSyncTasks fetches tasks for a sync job that completed but have checksum_verified = FALSE.
+func getUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID string, generation int) ([]*Task, error) {
 	query := `
 		SELECT id, sync_job_id, pass_generation, resource_type, file_path, COALESCE(resolved_target_path, ''), file_size, status,
 		       attempts, error_message, next_retry_at, worker_hash, source_hash, target_hash,
@@ -1298,8 +1298,8 @@ func GetUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID 
 
 var ErrSyncInvalidState = errors.New("sync job is in a state that does not allow this change")
 
-// DeleteSyncStateForJob removes all cached sync_state entries for a sync job (used on scope changes to prevent false deletions).
-func DeleteSyncStateForJob(exec queryExecerContext, syncJobID string) error {
+// deleteSyncStateForJob removes all cached sync_state entries for a sync job (used on scope changes to prevent false deletions).
+func deleteSyncStateForJob(exec queryExecerContext, syncJobID string) error {
 	_, err := exec.ExecContext(context.Background(), `DELETE FROM sync_state WHERE sync_job_id = $1`, syncJobID)
 	return err
 }
@@ -1364,7 +1364,7 @@ func UpdateSyncJobScope(db *sql.DB, syncJobID string, selectedPaths []string, ta
 		return sql.ErrNoRows
 	}
 
-	if err := DeleteSyncStateForJob(tx, syncJobID); err != nil {
+	if err := deleteSyncStateForJob(tx, syncJobID); err != nil {
 		return fmt.Errorf("failed to delete sync state: %w", err)
 	}
 

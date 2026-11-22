@@ -91,7 +91,7 @@ func (v *checksumVerifier) verifyMigrationChecksums(ctx context.Context, migrati
 }
 
 func (v *checksumVerifier) verifySyncJobChecksums(ctx context.Context, syncJobID string, guardAlreadyHeld bool) {
-	verificationGeneration, claimed, err := db.ClaimSyncJobVerification(v.db, ctx, syncJobID)
+	verificationGeneration, claimed, err := v.syncs.ClaimSyncJobVerification(ctx, syncJobID)
 	if err != nil {
 		workerLogf("verifier", "[VERIFIER] Cannot claim verification for sync job %s: %v", syncJobID, err)
 		return
@@ -99,9 +99,9 @@ func (v *checksumVerifier) verifySyncJobChecksums(ctx context.Context, syncJobID
 	if !claimed {
 		return
 	}
-	job, err := db.GetSyncJob(v.db, syncJobID)
+	job, err := v.syncs.GetSyncJob(syncJobID)
 	if err != nil || job.Status != "VERIFYING" {
-		if releaseErr := db.ReleaseSyncJobVerificationLease(v.db, context.Background(), syncJobID, verificationGeneration); releaseErr != nil {
+		if releaseErr := v.syncs.ReleaseSyncJobVerificationLease(context.Background(), syncJobID, verificationGeneration); releaseErr != nil {
 			workerLogf("verifier", "[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, releaseErr)
 		}
 		return
@@ -119,7 +119,7 @@ func (v *checksumVerifier) verifySyncJobChecksums(ctx context.Context, syncJobID
 	targetPass, err = v.tokenRefresher().EnsureFreshSyncToken(ctx, job, "target", targetPass)
 	if err != nil {
 		workerLogf("verifier", "[VERIFIER] Failed to refresh target OAuth token for sync job %s: %v\n", syncJobID, err)
-		if releaseErr := db.ReleaseSyncJobVerificationLease(v.db, context.Background(), syncJobID, verificationGeneration); releaseErr != nil {
+		if releaseErr := v.syncs.ReleaseSyncJobVerificationLease(context.Background(), syncJobID, verificationGeneration); releaseErr != nil {
 			workerLogf("verifier", "[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, releaseErr)
 		}
 		return
@@ -127,7 +127,7 @@ func (v *checksumVerifier) verifySyncJobChecksums(ctx context.Context, syncJobID
 	targetMegaSession, err := megasecret.DecodeProviderMegaSession(job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, v.secretKey)
 	if err != nil {
 		workerLogf("verifier", "[VERIFIER] Failed to decode target MEGA session for sync job %s: %v\n", syncJobID, err)
-		if releaseErr := db.ReleaseSyncJobVerificationLease(v.db, context.Background(), syncJobID, verificationGeneration); releaseErr != nil {
+		if releaseErr := v.syncs.ReleaseSyncJobVerificationLease(context.Background(), syncJobID, verificationGeneration); releaseErr != nil {
 			workerLogf("verifier", "[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, releaseErr)
 		}
 		return
@@ -147,7 +147,7 @@ func (v *checksumVerifier) verifySyncJobChecksums(ctx context.Context, syncJobID
 		MegaSession:      targetMegaSession,
 		TargetDir:        job.TargetDir,
 		GetTasks: func(ctx context.Context) ([]*db.Task, error) {
-			return db.GetUnverifiedCompletedSyncTasks(v.db, ctx, syncJobID, job.RunGeneration)
+			return v.syncs.GetUnverifiedCompletedSyncTasks(ctx, syncJobID, job.RunGeneration)
 		},
 		MarkVerified: func(ctx context.Context, task *db.Task, targetHash string) (bool, error) {
 			return v.tasks.MarkSyncTaskChecksumVerifiedWhileVerifying(ctx, task.ID, targetHash, job.RunGeneration, verificationGeneration)
@@ -159,13 +159,13 @@ func (v *checksumVerifier) verifySyncJobChecksums(ctx context.Context, syncJobID
 			return nil
 		},
 		RenewLease: func(ctx context.Context) (bool, error) {
-			owned, err := db.RenewSyncJobVerificationLease(v.db, ctx, syncJobID, job.RunGeneration, verificationGeneration)
+			owned, err := v.syncs.RenewSyncJobVerificationLease(ctx, syncJobID, job.RunGeneration, verificationGeneration)
 			leaseOwned.Store(owned && err == nil)
 			return owned, err
 		},
 		CanWrite: leaseOwned.Load,
 		Release: func(ctx context.Context) {
-			if err := db.ReleaseSyncJobVerificationLease(v.db, ctx, syncJobID, verificationGeneration); err != nil {
+			if err := v.syncs.ReleaseSyncJobVerificationLease(ctx, syncJobID, verificationGeneration); err != nil {
 				workerLogf("verifier", "[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, err)
 			}
 		},

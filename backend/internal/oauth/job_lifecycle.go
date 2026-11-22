@@ -33,6 +33,7 @@ type jobOAuthTokenState interface {
 type JobTokenRefresher struct {
 	db         *sql.DB
 	migrations db.MigrationStore
+	syncs      db.SyncStore
 	secretKey  string
 	locker     TokenLocker
 	refresh    func(context.Context, string, string) (*TokenResponse, error)
@@ -49,6 +50,7 @@ func NewJobTokenRefresher(database *sql.DB, secretKey string, locker TokenLocker
 	}
 	if database != nil {
 		r.migrations = db.NewMigrationStore(database)
+		r.syncs = db.NewSyncStore(database)
 	}
 	return r
 }
@@ -79,13 +81,13 @@ func (r *JobTokenRefresher) ForceRefreshMigrationToken(ctx context.Context, mig 
 // EnsureFreshSyncToken refreshes a sync job's OAuth access token when expired
 // or within 2 minutes of expiry, returning access unchanged otherwise.
 func (r *JobTokenRefresher) EnsureFreshSyncToken(ctx context.Context, job *db.SyncJob, role, access string) (string, error) {
-	return r.refreshLifecycle(ctx, &syncJobTokenState{db: r.db, job: job}, role, access, false)
+	return r.refreshLifecycle(ctx, &syncJobTokenState{store: r.syncs, job: job}, role, access, false)
 }
 
 // ForceRefreshSyncToken forces a refresh after an OAuth provider rejects the
 // current sync-job access token.
 func (r *JobTokenRefresher) ForceRefreshSyncToken(ctx context.Context, job *db.SyncJob, role string) (string, error) {
-	return r.refreshLifecycle(ctx, &syncJobTokenState{db: r.db, job: job}, role, "", true)
+	return r.refreshLifecycle(ctx, &syncJobTokenState{store: r.syncs, job: job}, role, "", true)
 }
 
 func (r *JobTokenRefresher) refreshLifecycle(ctx context.Context, state jobOAuthTokenState, role, access string, force bool) (string, error) {
@@ -227,8 +229,8 @@ func (s *migrationJobTokenState) OAuthTokenSink(role string) db.OAuthTokenSink {
 }
 
 type syncJobTokenState struct {
-	db  *sql.DB
-	job *db.SyncJob
+	store db.SyncStore
+	job   *db.SyncJob
 }
 
 func (s *syncJobTokenState) OAuthWorkKind() string     { return "sync" }
@@ -253,7 +255,7 @@ func (s *syncJobTokenState) ApplyOAuthTokens(role, access string, refresh sql.Nu
 	}
 }
 func (s *syncJobTokenState) ReloadOAuthTokens(ctx context.Context) error {
-	latest, err := db.GetSyncJobContext(ctx, s.db, s.job.ID)
+	latest, err := s.store.GetSyncJobContext(ctx, s.job.ID)
 	if err != nil {
 		return err
 	}
@@ -263,5 +265,5 @@ func (s *syncJobTokenState) ReloadOAuthTokens(ctx context.Context) error {
 	return nil
 }
 func (s *syncJobTokenState) OAuthTokenSink(role string) db.OAuthTokenSink {
-	return db.NewSyncJobTokenSink(s.db, s.job.ID, role)
+	return s.store.SyncJobTokenSink(s.job.ID, role)
 }

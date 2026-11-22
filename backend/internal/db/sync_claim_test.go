@@ -126,7 +126,7 @@ func TestPauseResumeSyncLifecycleFencesScheduleAndTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	generation, paused, err := PauseSyncJobAndDeactivateSchedules(context.Background(), database, "pause-resume-fence", nil)
+	generation, paused, err := pauseSyncJobAndDeactivateSchedules(context.Background(), database, "pause-resume-fence", nil)
 	if err != nil || !paused || generation != 4 {
 		t.Fatalf("pause lifecycle = generation %d, paused %v, err %v; want 4, true, nil", generation, paused, err)
 	}
@@ -142,7 +142,7 @@ func TestPauseResumeSyncLifecycleFencesScheduleAndTasks(t *testing.T) {
 		t.Fatalf("preserved other pass tasks = %d, err %v; want 1, nil", preserved, err)
 	}
 
-	resumed, err := ResumeSyncJobAndReactivateSchedules(context.Background(), database, "pause-resume-fence", nil, time.Now())
+	resumed, err := resumeSyncJobAndReactivateSchedules(context.Background(), database, "pause-resume-fence", nil, time.Now())
 	if err != nil || !resumed || syncClaimStatus(t, database, "pause-resume-fence") != "IDLE" {
 		t.Fatalf("resume lifecycle = %v, %v, status %s; want true, nil, IDLE", resumed, err, syncClaimStatus(t, database, "pause-resume-fence"))
 	}
@@ -186,7 +186,7 @@ func TestSyncPassGenerationFencesVerificationReconciliationAndReporting(t *testi
 		t.Fatalf("verification fence = historical %v, current %v; want false, true", historicalVerified, currentVerified)
 	}
 
-	unverified, err := GetUnverifiedCompletedSyncTasks(database, context.Background(), "generation-fence", 2)
+	unverified, err := getUnverifiedCompletedSyncTasks(database, context.Background(), "generation-fence", 2)
 	if err != nil || len(unverified) != 0 {
 		t.Fatalf("current unverified tasks = %d, %v; want 0, nil", len(unverified), err)
 	}
@@ -194,7 +194,7 @@ func TestSyncPassGenerationFencesVerificationReconciliationAndReporting(t *testi
 	if _, err := database.Exec(`UPDATE sync_jobs SET status = 'RUNNING' WHERE id = 'generation-fence'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileSyncJobProgress(database, "generation-fence", 2); err != nil {
+	if err := reconcileSyncJobProgress(database, "generation-fence", 2); err != nil {
 		t.Fatalf("reconcile current pass: %v", err)
 	}
 	var status string
@@ -225,7 +225,7 @@ func TestReconcileSyncJobProgressDoesNotFinalizeUnverifiedPass(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ReconcileSyncJobProgress(database, "unverified-reconcile", 0); err != nil {
+	if err := reconcileSyncJobProgress(database, "unverified-reconcile", 0); err != nil {
 		t.Fatalf("reconcile unverified pass: %v", err)
 	}
 
@@ -258,7 +258,7 @@ func TestReconcileSyncJobProgressDoesNotTouchVerifyingPass(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ReconcileSyncJobProgress(database, "verifying-reconcile", 0); err != nil {
+	if err := reconcileSyncJobProgress(database, "verifying-reconcile", 0); err != nil {
 		t.Fatalf("reconcile verifying pass: %v", err)
 	}
 
@@ -278,7 +278,7 @@ func TestFinalizeSyncJobPassWithStatesRollsBackLifecycleOnStateFailure(t *testin
 
 	// The test table rejects this state row. The lifecycle update must roll back
 	// too, leaving the pass recoverable instead of falsely exposing SUCCESS.
-	finalized, err := FinalizeSyncJobPassWithStates(database, "atomic-state-failure", 0, "SUCCESS", nil, 1, 1, 1, 0, 0,
+	finalized, err := finalizeRunningSyncPassWithStates(database, "atomic-state-failure", 0, "SUCCESS", nil, 1, 1, 1, 0, 0,
 		[]*SyncState{{SyncJobID: "atomic-state-failure", Side: "source", RelPath: "/dir", Size: -1}}, nil)
 	if err == nil || finalized {
 		t.Fatalf("atomic finalization = finalized=%v, err=%v; want false, error", finalized, err)
@@ -299,7 +299,7 @@ func TestFinalizeSyncJobPass(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 
 	insertSyncClaimJob(t, database, "empty-indexing", "INDEXING")
-	finalized, err := FinalizeEmptySyncJobPassWithStates(database, "empty-indexing", 0, "SUCCESS", nil, 0, 0, 0, 0, 0, nil, nil)
+	finalized, err := finalizeEmptySyncJobPassWithStates(database, "empty-indexing", 0, "SUCCESS", nil, 0, 0, 0, 0, 0, nil, nil)
 	if err != nil || !finalized || syncClaimStatus(t, database, "empty-indexing") != "IDLE" {
 		t.Fatalf("finalize empty INDEXING pass: finalized=%v, err=%v", finalized, err)
 	}
@@ -307,7 +307,7 @@ func TestFinalizeSyncJobPass(t *testing.T) {
 	for _, status := range []string{"RUNNING", "VERIFYING"} {
 		id := "finalize-" + status
 		insertSyncClaimJob(t, database, id, status)
-		finalized, err := FinalizeSyncJobPassWithStates(database, id, 0, "SUCCESS", nil, 2, 2, 1, 0, 0, nil, nil)
+		finalized, err := finalizeRunningSyncPassWithStates(database, id, 0, "SUCCESS", nil, 2, 2, 1, 0, 0, nil, nil)
 		if err != nil || !finalized {
 			t.Fatalf("finalize %s: finalized=%v, err=%v", status, finalized, err)
 		}
@@ -330,7 +330,7 @@ func TestFinalizeSyncJobPass(t *testing.T) {
 	for _, status := range []string{"INDEXING", "FAILED", "PAUSED", "PAUSED_CONNECTION_LOSS", "IDLE"} {
 		id := "preserve-" + status
 		insertSyncClaimJob(t, database, id, status)
-		finalized, err := FinalizeSyncJobPassWithStates(database, id, 0, "SUCCESS", nil, 2, 2, 1, 0, 0, nil, nil)
+		finalized, err := finalizeRunningSyncPassWithStates(database, id, 0, "SUCCESS", nil, 2, 2, 1, 0, 0, nil, nil)
 		if err != nil || finalized {
 			t.Errorf("finalize %s: finalized=%v, err=%v; want false, nil", status, finalized, err)
 		}
@@ -343,7 +343,7 @@ func TestFinalizeSyncJobPass(t *testing.T) {
 	if _, err := database.Exec(`UPDATE sync_jobs SET run_generation = 2 WHERE id = 'superseded'`); err != nil {
 		t.Fatalf("set superseded pass generation: %v", err)
 	}
-	finalized, err = FinalizeSyncJobPassWithStates(database, "superseded", 1, "SUCCESS", nil, 2, 2, 1, 0, 0, nil, nil)
+	finalized, err = finalizeRunningSyncPassWithStates(database, "superseded", 1, "SUCCESS", nil, 2, 2, 1, 0, 0, nil, nil)
 	if err != nil || finalized || syncClaimStatus(t, database, "superseded") != "RUNNING" {
 		t.Errorf("superseded pass finalization: finalized=%v, err=%v; want false and unchanged", finalized, err)
 	}
@@ -355,7 +355,7 @@ func TestFailSyncJobPass(t *testing.T) {
 	for _, status := range []string{"INDEXING", "RUNNING", "VERIFYING"} {
 		id := "fail-" + status
 		insertSyncClaimJob(t, database, id, status)
-		failed, err := FailSyncJobPass(database, id, 0, "indexing failed")
+		failed, err := failSyncJobPass(database, id, 0, "indexing failed")
 		if err != nil || !failed {
 			t.Fatalf("fail %s: failed=%v, err=%v", status, failed, err)
 		}
@@ -369,7 +369,7 @@ func TestFailSyncJobPass(t *testing.T) {
 	}
 
 	insertSyncClaimJob(t, database, "preserve-paused", "PAUSED")
-	failed, err := FailSyncJobPass(database, "preserve-paused", 0, "indexing failed")
+	failed, err := failSyncJobPass(database, "preserve-paused", 0, "indexing failed")
 	if err != nil || failed {
 		t.Errorf("fail paused: failed=%v, err=%v; want false, nil", failed, err)
 	}
@@ -378,7 +378,7 @@ func TestFailSyncJobPass(t *testing.T) {
 	if _, err := database.Exec(`UPDATE sync_jobs SET run_generation = 2 WHERE id = 'preserve-newer-pass'`); err != nil {
 		t.Fatalf("set newer pass generation: %v", err)
 	}
-	failed, err = FailSyncJobPass(database, "preserve-newer-pass", 1, "stale failure")
+	failed, err = failSyncJobPass(database, "preserve-newer-pass", 1, "stale failure")
 	if err != nil || failed || syncClaimStatus(t, database, "preserve-newer-pass") != "INDEXING" {
 		t.Errorf("stale failure: failed=%v, err=%v; want false and unchanged", failed, err)
 	}
@@ -388,11 +388,11 @@ func TestUpdateSyncJobTotals(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 	insertSyncClaimJob(t, database, "totals", "INDEXING")
 
-	updated, err := UpdateSyncJobTotals(database, "totals", 0, 4, 99)
+	updated, err := updateSyncJobTotals(database, "totals", 0, 4, 99)
 	if err != nil || !updated {
 		t.Fatalf("update matching pass totals: updated=%v, err=%v", updated, err)
 	}
-	updated, err = UpdateSyncJobTotals(database, "totals", 1, 8, 199)
+	updated, err = updateSyncJobTotals(database, "totals", 1, 8, 199)
 	if err != nil || updated {
 		t.Errorf("update stale pass totals: updated=%v, err=%v; want false, nil", updated, err)
 	}
@@ -402,12 +402,12 @@ func TestSyncJobLifecycleTransitions(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 
 	insertSyncClaimJob(t, database, "indexing", "INDEXING")
-	transitioned, err := TransitionSyncJobToRunning(database, "indexing", 0)
+	transitioned, err := transitionSyncJobToRunning(database, "indexing", 0)
 	if err != nil || !transitioned || syncClaimStatus(t, database, "indexing") != "RUNNING" {
 		t.Fatalf("INDEXING -> RUNNING: transitioned=%v, err=%v", transitioned, err)
 	}
 
-	transitioned, err = TransitionSyncJobToVerifying(database, "indexing", 0)
+	transitioned, err = transitionSyncJobToVerifying(database, "indexing", 0)
 	if err != nil || !transitioned || syncClaimStatus(t, database, "indexing") != "VERIFYING" {
 		t.Fatalf("RUNNING -> VERIFYING: transitioned=%v, err=%v", transitioned, err)
 	}
@@ -415,7 +415,7 @@ func TestSyncJobLifecycleTransitions(t *testing.T) {
 	for _, status := range []string{"FAILED", "PAUSED", "PAUSED_CONNECTION_LOSS"} {
 		id := "do-not-revive-" + status
 		insertSyncClaimJob(t, database, id, status)
-		transitioned, err := TransitionSyncJobToVerifying(database, id, 0)
+		transitioned, err := transitionSyncJobToVerifying(database, id, 0)
 		if err != nil || transitioned {
 			t.Errorf("%s -> VERIFYING: transitioned=%v, err=%v; want false, nil", status, transitioned, err)
 		}
@@ -445,13 +445,13 @@ func TestAbortSyncJobVerification(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 	insertSyncClaimJob(t, database, "verifying", "VERIFYING")
 
-	aborted, err := AbortSyncJobVerification(database, "verifying", 0)
+	aborted, err := abortSyncJobVerification(database, "verifying", 0)
 	if err != nil || !aborted || syncClaimStatus(t, database, "verifying") != "RUNNING" {
 		t.Fatalf("VERIFYING -> RUNNING abort: aborted=%v, err=%v", aborted, err)
 	}
 
 	insertSyncClaimJob(t, database, "idle", "IDLE")
-	aborted, err = AbortSyncJobVerification(database, "idle", 0)
+	aborted, err = abortSyncJobVerification(database, "idle", 0)
 	if err != nil || aborted || syncClaimStatus(t, database, "idle") != "IDLE" {
 		t.Fatalf("IDLE abort: aborted=%v, err=%v", aborted, err)
 	}
@@ -461,27 +461,27 @@ func TestSyncVerificationClaimLeaseAndGeneration(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 	insertSyncClaimJob(t, database, "verifying-lease", "VERIFYING")
 
-	first, claimed, err := ClaimSyncJobVerification(database, context.Background(), "verifying-lease")
+	first, claimed, err := claimSyncJobVerification(database, context.Background(), "verifying-lease")
 	if err != nil || !claimed || first != 1 {
 		t.Fatalf("first claim = (%d, %v, %v), want (1, true, nil)", first, claimed, err)
 	}
-	if _, claimed, err = ClaimSyncJobVerification(database, context.Background(), "verifying-lease"); err != nil || claimed {
+	if _, claimed, err = claimSyncJobVerification(database, context.Background(), "verifying-lease"); err != nil || claimed {
 		t.Fatalf("live lease second claim = (%v, %v), want (false, nil)", claimed, err)
 	}
-	if renewed, err := RenewSyncJobVerificationLease(database, context.Background(), "verifying-lease", 0, first); err != nil || !renewed {
+	if renewed, err := renewSyncJobVerificationLease(database, context.Background(), "verifying-lease", 0, first); err != nil || !renewed {
 		t.Fatalf("renew = (%v, %v), want (true, nil)", renewed, err)
 	}
 	if _, err := database.Exec(`UPDATE sync_jobs SET verification_lease_until = NOW() - INTERVAL '1 second' WHERE id = 'verifying-lease'`); err != nil {
 		t.Fatal(err)
 	}
-	second, claimed, err := ClaimSyncJobVerification(database, context.Background(), "verifying-lease")
+	second, claimed, err := claimSyncJobVerification(database, context.Background(), "verifying-lease")
 	if err != nil || !claimed || second != 2 {
 		t.Fatalf("expired lease claim = (%d, %v, %v), want (2, true, nil)", second, claimed, err)
 	}
-	if renewed, err := RenewSyncJobVerificationLease(database, context.Background(), "verifying-lease", 0, first); err != nil || renewed {
+	if renewed, err := renewSyncJobVerificationLease(database, context.Background(), "verifying-lease", 0, first); err != nil || renewed {
 		t.Fatalf("stale renew = (%v, %v), want (false, nil)", renewed, err)
 	}
-	if aborted, err := AbortSyncJobVerification(database, "verifying-lease", 0); err != nil || !aborted {
+	if aborted, err := abortSyncJobVerification(database, "verifying-lease", 0); err != nil || !aborted {
 		t.Fatalf("abort = (%v, %v), want (true, nil)", aborted, err)
 	}
 	var lease sql.NullTime
@@ -499,7 +499,7 @@ func TestClaimSyncJobPass(t *testing.T) {
 	for _, status := range []string{"IDLE", "FAILED"} {
 		id := "runnable-" + status
 		insertSyncClaimJob(t, database, id, status)
-		generation, claimed, err := ClaimSyncJobPass(database, id)
+		generation, claimed, err := claimSyncJobPass(database, id)
 		if err != nil || !claimed {
 			t.Fatalf("claim %s: claimed=%v, err=%v", status, claimed, err)
 		}
@@ -514,7 +514,7 @@ func TestClaimSyncJobPass(t *testing.T) {
 	for _, status := range []string{"RUNNING", "INDEXING", "PAUSED", "PAUSED_CONNECTION_LOSS", "VERIFYING"} {
 		id := "blocked-" + status
 		insertSyncClaimJob(t, database, id, status)
-		_, claimed, err := ClaimSyncJobPass(database, id)
+		_, claimed, err := claimSyncJobPass(database, id)
 		if err != nil || claimed {
 			t.Errorf("claim %s: claimed=%v, err=%v; want false, nil", status, claimed, err)
 		}
@@ -527,7 +527,7 @@ func TestManualSyncPauseResumeTransitions(t *testing.T) {
 	for _, status := range []string{"IDLE", "INDEXING", "RUNNING", "VERIFYING"} {
 		id := "pause-" + status
 		insertSyncClaimJob(t, database, id, status)
-		_, paused, err := PauseSyncJobAndDeactivateSchedules(context.Background(), database, id, nil)
+		_, paused, err := pauseSyncJobAndDeactivateSchedules(context.Background(), database, id, nil)
 		if err != nil || !paused || syncClaimStatus(t, database, id) != "PAUSED" {
 			t.Errorf("pause %s: paused=%v, err=%v, status=%s", status, paused, err, syncClaimStatus(t, database, id))
 		}
@@ -536,14 +536,14 @@ func TestManualSyncPauseResumeTransitions(t *testing.T) {
 	for _, status := range []string{"PAUSED", "PAUSED_CONNECTION_LOSS", "FAILED"} {
 		id := "pause-blocked-" + status
 		insertSyncClaimJob(t, database, id, status)
-		_, paused, err := PauseSyncJobAndDeactivateSchedules(context.Background(), database, id, nil)
+		_, paused, err := pauseSyncJobAndDeactivateSchedules(context.Background(), database, id, nil)
 		if err != nil || paused || syncClaimStatus(t, database, id) != status {
 			t.Errorf("pause %s: paused=%v, err=%v; want false and unchanged", status, paused, err)
 		}
 	}
 
 	insertSyncClaimJob(t, database, "resume-paused", "PAUSED")
-	resumed, err := ResumeSyncJobAndReactivateSchedules(context.Background(), database, "resume-paused", nil, time.Now())
+	resumed, err := resumeSyncJobAndReactivateSchedules(context.Background(), database, "resume-paused", nil, time.Now())
 	if err != nil || !resumed || syncClaimStatus(t, database, "resume-paused") != "IDLE" {
 		t.Errorf("resume PAUSED: resumed=%v, err=%v", resumed, err)
 	}
@@ -551,7 +551,7 @@ func TestManualSyncPauseResumeTransitions(t *testing.T) {
 	for _, status := range []string{"IDLE", "RUNNING", "PAUSED_CONNECTION_LOSS"} {
 		id := "resume-blocked-" + status
 		insertSyncClaimJob(t, database, id, status)
-		resumed, err := ResumeSyncJobAndReactivateSchedules(context.Background(), database, id, nil, time.Now())
+		resumed, err := resumeSyncJobAndReactivateSchedules(context.Background(), database, id, nil, time.Now())
 		if err != nil || resumed || syncClaimStatus(t, database, id) != status {
 			t.Errorf("resume %s: resumed=%v, err=%v; want false and unchanged", status, resumed, err)
 		}
@@ -561,13 +561,13 @@ func TestManualSyncPauseResumeTransitions(t *testing.T) {
 func TestReleaseUnstartedSyncPass(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 	insertSyncClaimJob(t, database, "stuck-indexing", "INDEXING")
-	released, err := ReleaseUnstartedSyncPass(database, "stuck-indexing", 0)
+	released, err := releaseUnstartedSyncPass(database, "stuck-indexing", 0)
 	if err != nil || !released || syncClaimStatus(t, database, "stuck-indexing") != "IDLE" {
 		t.Errorf("release INDEXING: released=%v, err=%v", released, err)
 	}
 
 	insertSyncClaimJob(t, database, "running", "RUNNING")
-	released, err = ReleaseUnstartedSyncPass(database, "running", 0)
+	released, err = releaseUnstartedSyncPass(database, "running", 0)
 	if err != nil || released || syncClaimStatus(t, database, "running") != "RUNNING" {
 		t.Errorf("release RUNNING: released=%v, err=%v; want false and unchanged", released, err)
 	}
@@ -576,7 +576,7 @@ func TestReleaseUnstartedSyncPass(t *testing.T) {
 	if _, err := database.Exec(`UPDATE sync_jobs SET run_generation = 3 WHERE id = 'release-stale'`); err != nil {
 		t.Fatalf("set stale release generation: %v", err)
 	}
-	released, err = ReleaseUnstartedSyncPass(database, "release-stale", 2)
+	released, err = releaseUnstartedSyncPass(database, "release-stale", 2)
 	if err != nil || released || syncClaimStatus(t, database, "release-stale") != "INDEXING" {
 		t.Errorf("stale release: released=%v, err=%v; want false and unchanged", released, err)
 	}
@@ -592,7 +592,7 @@ func TestRecoverConnectionLostSyncJob(t *testing.T) {
 		t.Fatalf("insert schedules: %v", err)
 	}
 
-	recovered, err := RecoverConnectionLostSyncJob(database, context.Background(), "connection-loss")
+	recovered, err := recoverConnectionLostSyncJob(database, context.Background(), "connection-loss")
 	if err != nil || !recovered {
 		t.Fatalf("recover connection-loss job: recovered=%v, err=%v", recovered, err)
 	}
@@ -605,13 +605,13 @@ func TestRecoverConnectionLostSyncJob(t *testing.T) {
 	}
 	// The compare-and-set recovery is idempotent: a second worker that probes
 	// the same restored connection must not claim it again.
-	recovered, err = RecoverConnectionLostSyncJob(database, context.Background(), "connection-loss")
+	recovered, err = recoverConnectionLostSyncJob(database, context.Background(), "connection-loss")
 	if err != nil || recovered {
 		t.Errorf("second recovery: recovered=%v, err=%v; want false, nil", recovered, err)
 	}
 
 	insertSyncClaimJob(t, database, "without-schedule", "PAUSED_CONNECTION_LOSS")
-	recovered, err = RecoverConnectionLostSyncJob(database, context.Background(), "without-schedule")
+	recovered, err = recoverConnectionLostSyncJob(database, context.Background(), "without-schedule")
 	if err != nil || !recovered || syncClaimStatus(t, database, "without-schedule") != "IDLE" {
 		t.Errorf("recover without active schedule: recovered=%v, err=%v, status=%s", recovered, err, syncClaimStatus(t, database, "without-schedule"))
 	}
@@ -621,7 +621,7 @@ func TestRecoverConnectionLostSyncJob(t *testing.T) {
 		VALUES ('sync', 'inactive-schedule', FALSE, NOW() + INTERVAL '1 hour')`); err != nil {
 		t.Fatalf("insert inactive schedule: %v", err)
 	}
-	recovered, err = RecoverConnectionLostSyncJob(database, context.Background(), "inactive-schedule")
+	recovered, err = recoverConnectionLostSyncJob(database, context.Background(), "inactive-schedule")
 	if err != nil || !recovered {
 		t.Fatalf("recover inactive schedule: recovered=%v, err=%v", recovered, err)
 	}
@@ -629,7 +629,7 @@ func TestRecoverConnectionLostSyncJob(t *testing.T) {
 		t.Errorf("inactive schedule was made due: remainsFuture=%v, err=%v", due, err)
 	}
 
-	recovered, err = RecoverConnectionLostSyncJob(database, context.Background(), "manually-paused")
+	recovered, err = recoverConnectionLostSyncJob(database, context.Background(), "manually-paused")
 	if err != nil || recovered {
 		t.Errorf("recover manually paused job: recovered=%v, err=%v; want false, nil", recovered, err)
 	}
@@ -656,7 +656,7 @@ func TestRecoverConnectionLostSyncJobConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			recovered, err := RecoverConnectionLostSyncJob(database, context.Background(), "concurrent-recovery")
+			recovered, err := recoverConnectionLostSyncJob(database, context.Background(), "concurrent-recovery")
 			results <- recovered
 			errs <- err
 		}()
@@ -695,7 +695,7 @@ func TestClaimSyncJobPassConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, claimed, err := ClaimSyncJobPass(database, "concurrent")
+			_, claimed, err := claimSyncJobPass(database, "concurrent")
 			results <- claimed
 			errs <- err
 		}()

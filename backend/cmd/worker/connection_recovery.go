@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"backend/internal/crypto"
-	"backend/internal/db"
 	"backend/internal/oauth"
 	"backend/internal/storage"
 )
@@ -190,7 +189,7 @@ func (m *workerMaintenance) recoverPausedSyncJobs(ctx context.Context) {
 		LIMIT $2
 	`
 	m.recoverPausedEntities(ctx, true, query, maxSyncRecoveryProbesPerTick, func(candidate recoveryCandidate) bool {
-		recovered, recoverErr := db.RecoverConnectionLostSyncJob(m.db, ctx, candidate.id)
+		recovered, recoverErr := m.syncs.RecoverConnectionLostSyncJob(ctx, candidate.id)
 		if recoverErr != nil {
 			workerLogf("maintenance", "[RecoveryScheduler] Error recovering sync job %s: %v\n", candidate.id, recoverErr)
 			return false

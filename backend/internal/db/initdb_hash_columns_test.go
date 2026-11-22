@@ -81,7 +81,7 @@ func TestInitDBFreshSchemaSupportsTaskHashRuntimeQueries(t *testing.T) {
 	`, userID, "https://source.example.test", "source", "source-secret", "https://target.example.test", "target", "target-secret").Scan(&syncJobID); err != nil {
 		t.Fatalf("create sync job: %v", err)
 	}
-	if err := BulkCreateSyncTasks(ctx, initializedDB, []*Task{{
+	if err := bulkCreateSyncTasks(ctx, initializedDB, []*Task{{
 		SyncJobID:      syncJobID,
 		PassGeneration: 1,
 		ResourceType:   "files",
@@ -93,7 +93,7 @@ func TestInitDBFreshSchemaSupportsTaskHashRuntimeQueries(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("insert sync task: %v", err)
 	}
-	if tasks, err := GetUnverifiedCompletedSyncTasks(initializedDB, ctx, syncJobID, 1); err != nil || len(tasks) != 1 {
+	if tasks, err := getUnverifiedCompletedSyncTasks(initializedDB, ctx, syncJobID, 1); err != nil || len(tasks) != 1 {
 		t.Fatalf("sync verification query = %d tasks, %v; want 1, nil", len(tasks), err)
 	}
 }

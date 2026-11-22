@@ -527,7 +527,7 @@ func TestFinalizeAndFailSyncJobPass_NotificationEvents(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		finalized, err := FinalizeSyncJobPassWithStates(db, syncJob1, 1, "COMPLETED", nil, 5, 5, 1, 0, 0, nil, nil)
+		finalized, err := finalizeRunningSyncPassWithStates(db, syncJob1, 1, "COMPLETED", nil, 5, 5, 1, 0, 0, nil, nil)
 		if err != nil || !finalized {
 			t.Fatalf("FinalizeSyncJobPass failed = (%v, %v), want (true, nil)", finalized, err)
 		}
@@ -564,7 +564,7 @@ func TestFinalizeAndFailSyncJobPass_NotificationEvents(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		failed, err := FailSyncJobPass(db, syncJob2, 1, "disk quota exceeded")
+		failed, err := failSyncJobPass(db, syncJob2, 1, "disk quota exceeded")
 		if err != nil || !failed {
 			t.Fatalf("FailSyncJobPass failed = (%v, %v), want (true, nil)", failed, err)
 		}

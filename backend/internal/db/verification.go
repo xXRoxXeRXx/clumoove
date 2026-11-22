@@ -50,9 +50,9 @@ func releaseMigrationVerificationLease(db *sql.DB, ctx context.Context, migratio
 	return err
 }
 
-// ClaimSyncJobVerification grants one worker a fenced verification pass for a
+// claimSyncJobVerification grants one worker a fenced verification pass for a
 // specific sync run. A new lease generation invalidates stale verifier writes.
-func ClaimSyncJobVerification(db *sql.DB, ctx context.Context, syncJobID string) (int, bool, error) {
+func claimSyncJobVerification(db *sql.DB, ctx context.Context, syncJobID string) (int, bool, error) {
 	var generation int
 	err := db.QueryRowContext(ctx, `
 		UPDATE sync_jobs
@@ -69,7 +69,7 @@ func ClaimSyncJobVerification(db *sql.DB, ctx context.Context, syncJobID string)
 	return generation, err == nil, err
 }
 
-func RenewSyncJobVerificationLease(db *sql.DB, ctx context.Context, syncJobID string, runGeneration, verificationGeneration int) (bool, error) {
+func renewSyncJobVerificationLease(db *sql.DB, ctx context.Context, syncJobID string, runGeneration, verificationGeneration int) (bool, error) {
 	res, err := db.ExecContext(ctx, `
 		UPDATE sync_jobs
 		SET verification_lease_until = NOW() + INTERVAL '2 minutes', updated_at = CURRENT_TIMESTAMP
@@ -83,7 +83,7 @@ func RenewSyncJobVerificationLease(db *sql.DB, ctx context.Context, syncJobID st
 	return n == 1, err
 }
 
-func ReleaseSyncJobVerificationLease(db *sql.DB, ctx context.Context, syncJobID string, verificationGeneration int) error {
+func releaseSyncJobVerificationLease(db *sql.DB, ctx context.Context, syncJobID string, verificationGeneration int) error {
 	_, err := db.ExecContext(ctx, `
 		UPDATE sync_jobs SET verification_lease_until = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1 AND status = 'VERIFYING' AND verification_generation = $2

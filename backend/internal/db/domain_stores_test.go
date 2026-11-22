@@ -581,3 +581,54 @@ func TestTaskStoreKeepsItsClaimFences(t *testing.T) {
 		requireSingleStatement(t, rec, "SET checksum_verified = TRUE", "task-1", "abc")
 	})
 }
+
+func TestSyncStoreWorkerCallsKeepTheirGenerationFences(t *testing.T) {
+	t.Run("a status change is scoped to the run generation", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		var store SyncStore = NewSyncStore(database)
+
+		msg := "auth failed"
+		if err := store.UpdateSyncJobStatusForGeneration("sync-1", 3, "FAILED", &msg); err != nil {
+			t.Fatalf("UpdateSyncJobStatusForGeneration() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "WHERE id = $3 AND run_generation = $4", "FAILED", sql.NullString{String: msg, Valid: true}.String, "sync-1", int64(3))
+	})
+
+	t.Run("live bytes only count while the generation is running", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewSyncStore(database).AddSyncJobLiveBytesForGeneration(context.Background(), "sync-1", 3, 256); err != nil {
+			t.Fatalf("AddSyncJobLiveBytesForGeneration() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "run_generation = $3 AND status = 'RUNNING'", int64(256), "sync-1", int64(3))
+	})
+
+	t.Run("a non-positive byte delta never reaches the database", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewSyncStore(database).AddSyncJobLiveBytesForGeneration(context.Background(), "sync-1", 3, 0); err != nil {
+			t.Fatalf("AddSyncJobLiveBytesForGeneration() error: %v", err)
+		}
+		if len(rec.statements) != 0 {
+			t.Fatalf("recorded %d statements, want 0", len(rec.statements))
+		}
+	})
+
+	t.Run("verification lease renewal is fenced by both generations", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		renewed, err := NewSyncStore(database).RenewSyncJobVerificationLease(context.Background(), "sync-1", 3, 8)
+		if err != nil {
+			t.Fatalf("RenewSyncJobVerificationLease() error: %v", err)
+		}
+		if !renewed {
+			t.Error("RenewSyncJobVerificationLease() = false, want true when one row matches")
+		}
+		requireSingleStatement(t, rec, "AND verification_generation = $3 AND verification_lease_until > NOW()", "sync-1", int64(3), int64(8))
+	})
+
+	t.Run("verification lease release is fenced by the verification generation", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewSyncStore(database).ReleaseSyncJobVerificationLease(context.Background(), "sync-1", 8); err != nil {
+			t.Fatalf("ReleaseSyncJobVerificationLease() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "status = 'VERIFYING' AND verification_generation = $2", "sync-1", int64(8))
+	})
+}

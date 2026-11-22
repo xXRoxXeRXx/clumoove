@@ -14,6 +14,7 @@ import (
 type workerMaintenance struct {
 	db                      *sql.DB
 	migrations              db.MigrationStore
+	syncs                   db.SyncStore
 	queue                   *queue.Queue
 	indexer                 *indexer.Indexer
 	workerID                string
@@ -27,11 +28,14 @@ type workerMaintenance struct {
 
 func newWorkerMaintenance(database *sql.DB, q *queue.Queue, idx *indexer.Indexer, workerID, secretKey string) *workerMaintenance {
 	var migrations db.MigrationStore
+	var syncs db.SyncStore
 	if database != nil {
 		migrations = db.NewMigrationStore(database)
+		syncs = db.NewSyncStore(database)
 	}
 	return &workerMaintenance{
 		migrations: migrations,
+		syncs:      syncs,
 		db:         database,
 		queue:      q,
 		indexer:    idx,
@@ -269,7 +273,7 @@ func (m *workerMaintenance) reconcileActiveSyncJobs(ctx context.Context) {
 	}
 
 	for _, pass := range passes {
-		if err := db.ReconcileSyncJobProgress(m.db, pass.id, pass.generation); err != nil {
+		if err := m.syncs.ReconcileSyncJobProgress(pass.id, pass.generation); err != nil {
 			workerLogf("maintenance", "[ProgressReconciler] error reconciling sync job %s: %v\n", pass.id, err)
 		}
 	}
