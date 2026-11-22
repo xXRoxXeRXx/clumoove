@@ -7,8 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "npm run locale:check && vitest run",
+    "test": "npm run locale:check && npm run css:check && vitest run",
     "locale:check": "node scripts/check-locales.mjs",
+    "css:check": "node scripts/check-css-variables.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
