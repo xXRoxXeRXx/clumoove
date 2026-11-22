@@ -145,7 +145,7 @@ gradient overlays, heavy backdrop blur, oversized shadows and scaling hover effe
 - Poppins for headings, Open Sans for everything else; 12px is the floor.
 - Dense but breathable: 8px base rhythm, 24px card padding, `max-w-6xl` page column.
 - Two themes (`data-theme="light|dark"`), one set of semantic tokens.
-- Motion is minimal (a 180ms fade on view change, 500ms progress-width) and fully removed under `prefers-reduced-motion`.
+- Motion is minimal (a 180ms fade on view change, 500ms progress-width). Under `prefers-reduced-motion` all movement collapses, except loading indicators, which turn into a slow opacity pulse so a busy state never looks frozen.
 
 ## Colors
 
@@ -291,7 +291,7 @@ logos (via `react-icons`) appear only in the connection flow.
 - **Do** use `@heroicons/react` for interface icons, with a localized `aria-label` and `title` on icon-only buttons.
 - **Do** format numbers, dates and sizes through `src/utils/format.ts` with the active locale.
 - **Do** keep `de` and `en` strings in parity and allow roughly 30% extra width for German.
-- **Do** honor `prefers-reduced-motion`; new animation must collapse to none.
+- **Do** honor `prefers-reduced-motion`; new animation must collapse to none, except a busy indicator, which should keep a non-spatial (opacity-only) loop.
 
 ### Don't:
 - **Don't** reintroduce `portal-*`, `glass-*`, `shadow-portal*`, decorative gradient overlays or heavy backdrop blur.

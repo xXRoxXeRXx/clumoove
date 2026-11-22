@@ -38,7 +38,7 @@
       { "name": "view-enter", "value": "180ms ease-out opacity 0 to 1", "purpose": "Fade when switching views (.ui-view-enter)." },
       { "name": "progress-width", "value": "500ms ease-out", "purpose": "Progress bar fill width." },
       { "name": "toggle", "value": "200ms ease-in-out", "purpose": "Switch track color and thumb translate." },
-      { "name": "reduced-motion", "value": "0.01ms", "purpose": "All animation and transition durations collapse under prefers-reduced-motion." }
+      { "name": "reduced-motion", "value": "0.01ms", "purpose": "All animation and transition durations collapse under prefers-reduced-motion, except .animate-spin (becomes ui-busy-pulse, 1.6s opacity) and .animate-pulse (kept)." }
     ],
     "breakpoints": [
       { "name": "sm", "value": "640px" },
@@ -120,7 +120,7 @@
       "Poppins for headings, Open Sans for everything else; 12px is the floor.",
       "Dense but breathable: 8px base rhythm, 24px card padding, max-w-6xl page column.",
       "Two themes (data-theme light or dark), one set of semantic tokens.",
-      "Motion is minimal and fully removed under prefers-reduced-motion."
+      "Motion is minimal; under prefers-reduced-motion everything collapses except busy indicators, which become a slow opacity pulse."
     ],
     "rules": [
       { "name": "The Color-Means-State Rule", "body": "Chromatic color appears only to report status or mark focus. Decoration is neutral.", "section": "colors" },
@@ -136,7 +136,7 @@
       "Do use @heroicons/react for interface icons, with a localized aria-label and title on icon-only buttons.",
       "Do format numbers, dates and sizes through src/utils/format.ts with the active locale.",
       "Do keep de and en strings in parity and allow roughly 30% extra width for German.",
-      "Do honor prefers-reduced-motion; new animation must collapse to none."
+      "Do honor prefers-reduced-motion; new animation must collapse to none, except a busy indicator, which should keep a non-spatial (opacity-only) loop."
     ],
     "donts": [
       "Don't reintroduce portal-*, glass-*, shadow-portal*, decorative gradient overlays or heavy backdrop blur.",
