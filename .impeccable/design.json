@@ -132,6 +132,7 @@
     "dos": [
       "Do use the semantic tokens (var(--color-bg-secondary), var(--color-text-muted), ...) and the ui-* utilities from frontend/src/index.css for every new surface.",
       "Do express state with a text label plus color (badge, alert); never color alone.",
+      "Do style text links as Ink (--color-text-link) with a persistent underline at a 2px offset; hue is never the only link cue.",
       "Do keep 4px radius on controls, 6px on cards, and 1px Rule borders on every raised surface.",
       "Do use @heroicons/react for interface icons, with a localized aria-label and title on icon-only buttons.",
       "Do format numbers, dates and sizes through src/utils/format.ts with the active locale.",
