@@ -14,6 +14,22 @@ describe('document language', () => {
     expect(document.documentElement.lang).toBe('en');
   });
 
+  it('localizes the tab title and meta description', async () => {
+    const description = document.createElement('meta');
+    description.name = 'description';
+    document.head.append(description);
+
+    await i18n.changeLanguage('de');
+    expect(document.title).toBe('Clumoove // Einfacher Cloud-Umzug');
+    expect(description.content).toContain('Datenmigration');
+
+    await i18n.changeLanguage('en');
+    expect(document.title).toBe('Clumoove // Easy cloud move');
+    expect(description.content).toContain('data migration');
+
+    description.remove();
+  });
+
   it('serves translations for the bundled and the lazily loaded catalog', async () => {
     await i18n.changeLanguage('de');
     expect(i18n.t('common.save')).toBe('Speichern');

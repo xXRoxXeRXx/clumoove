@@ -4,10 +4,14 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 
 import translationDE from './locales/de/translation.json';
 
-// Keep <html lang> in step with the active UI language so screen readers pick the right voice.
+// Keep <html lang>, the tab title and the meta description in step with the active UI language
+// so screen readers pick the right voice and the page is named in the language being used.
 function syncDocumentLanguage(language?: string): void {
   if (typeof document === 'undefined' || !language) return;
   document.documentElement.lang = language.startsWith('de') ? 'de' : 'en';
+  if (!i18n.exists('meta.title')) return;
+  document.title = i18n.t('meta.title');
+  document.querySelector('meta[name="description"]')?.setAttribute('content', i18n.t('meta.description'));
 }
 
 i18n.on('languageChanged', syncDocumentLanguage);

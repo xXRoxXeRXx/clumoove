@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "Clumoove // Easy cloud move",
+    "description": "Easy cloud move – data migration, synchronization and backup between different cloud systems."
+  },
   "common": {
     "loading": "Loading...",
     "processing": "Processing...",
