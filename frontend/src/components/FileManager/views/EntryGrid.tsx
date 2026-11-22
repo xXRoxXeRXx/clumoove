@@ -46,7 +46,7 @@ export function EntryGrid({ rows, selectionActive, onActivate, onToggleSelect, o
               aria-label={t('files.selectEntry', { name: row.name })}
             />
             {row.hasActions && (
-              <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                 <button
                   type="button"
                   className="ui-icon-button p-1.5 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] hover:bg-[var(--color-hover)]"

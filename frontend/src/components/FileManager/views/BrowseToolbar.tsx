@@ -27,7 +27,7 @@ function ViewModeButton({ mode, active, label, onSelect, children }: { mode: Vie
       aria-pressed={active}
       aria-label={label}
       title={label}
-      className={`p-1.5 rounded-md transition-colors ${
+      className={`ui-touch-target p-1.5 rounded-md transition-colors ${
         active ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] shadow-xs' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
       }`}
     >

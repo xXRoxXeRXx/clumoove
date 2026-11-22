@@ -656,7 +656,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
                   type="button"
                   ref={targetCloseButtonRef}
                   onClick={closeTargetBrowser}
-                  className="ui-button-secondary p-1.5 hover:bg-[var(--color-bg-tertiary)]"
+                  className="ui-button-secondary ui-touch-target p-1.5 hover:bg-[var(--color-bg-tertiary)]"
                   aria-label={t("paths.close")}
                   title={t("paths.close")}
                 >

@@ -97,7 +97,7 @@ export const EditBackupModal: React.FC<EditBackupModalProps> = ({
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="p-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
+            className="ui-touch-target p-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
             aria-label={t('common.close')}
           >
             <X className="size-5" />

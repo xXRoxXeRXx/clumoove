@@ -331,18 +331,18 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
                   <div className="flex justify-end gap-1.5">
                     {u.active ? (
                       <button type="button" aria-label={t('admin.users.suspend')} title={t('admin.users.suspend')} onClick={() => act(() => adminApi.suspendUser(apiUrl, token, u.id!), 'admin.users.suspendedOk')}
-                        className="ui-button-secondary p-1.5 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"><Ban className="w-3.5 h-3.5" /></button>
+                        className="ui-button-secondary ui-touch-target p-1.5 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"><Ban className="w-3.5 h-3.5" /></button>
                     ) : (
                       <button type="button" aria-label={t('admin.users.reactivate')} title={t('admin.users.reactivate')} onClick={() => act(() => adminApi.reactivateUser(apiUrl, token, u.id!), 'admin.users.reactivatedOk')}
-                        className="ui-button-secondary p-1.5 text-[var(--color-success-text)] hover:bg-[var(--color-success-bg)]"><CheckCircle2 className="w-3.5 h-3.5" /></button>
+                        className="ui-button-secondary ui-touch-target p-1.5 text-[var(--color-success-text)] hover:bg-[var(--color-success-bg)]"><CheckCircle2 className="w-3.5 h-3.5" /></button>
                     )}
                     <button type="button" aria-label={t('admin.users.toggleRole')} title={t('admin.users.toggleRole')} onClick={() => act(() => adminApi.updateRole(apiUrl, token, u.id!, u.role === 'ADMIN' ? 'USER' : 'ADMIN'), 'admin.users.roleChanged')}
-                      className="ui-button-secondary p-1.5">
+                      className="ui-button-secondary ui-touch-target p-1.5">
                       {u.role === 'ADMIN' ? <ShieldOff className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
                     </button>
                     {u.id !== currentUserID && (
                       <button type="button" aria-label={t('admin.users.delete')} title={t('admin.users.delete')} onClick={() => { void (async () => { if (await confirm({ message: t('admin.users.deleteConfirm') })) act(() => adminApi.deleteUser(apiUrl, token, u.id!), 'admin.users.deletedOk'); })(); }}
-                        className="ui-button-secondary p-1.5 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"><Trash2 className="w-3.5 h-3.5" /></button>
+                        className="ui-button-secondary ui-touch-target p-1.5 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"><Trash2 className="w-3.5 h-3.5" /></button>
                     )}
                   </div>
                 </td>
@@ -610,7 +610,7 @@ function AuditTab({ apiUrl, token, formatDateTime }: {
           className={selectCls} />
         <input type="date" aria-label={t('admin.audit.when')} value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }}
           className={selectCls} />
-        <button type="button" aria-label={t('common.refresh')} title={t('common.refresh')} onClick={() => { setPage(1); }} className="ui-button-secondary p-1.5"><RefreshCw className="w-3.5 h-3.5" /></button>
+        <button type="button" aria-label={t('common.refresh')} title={t('common.refresh')} onClick={() => { setPage(1); }} className="ui-button-secondary ui-touch-target p-1.5"><RefreshCw className="w-3.5 h-3.5" /></button>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">

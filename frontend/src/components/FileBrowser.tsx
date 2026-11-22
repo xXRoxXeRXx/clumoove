@@ -1993,7 +1993,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <button
                   type="button"
                   onClick={() => void fetchTargetChildren("/", 0, true)}
-                  className="ui-button-secondary p-1.5 hover:bg-[var(--color-bg-tertiary)]"
+                  className="ui-button-secondary ui-touch-target p-1.5 hover:bg-[var(--color-bg-tertiary)]"
                   aria-label={t("common.refresh")}
                   title={t("common.refresh")}
                 >
@@ -2003,7 +2003,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   type="button"
                   ref={targetCloseButtonRef}
                   onClick={closeTargetBrowser}
-                  className="ui-button-secondary p-1.5 hover:bg-[var(--color-bg-tertiary)]"
+                  className="ui-button-secondary ui-touch-target p-1.5 hover:bg-[var(--color-bg-tertiary)]"
                   aria-label={t("paths.close")}
                 >
                   <X className="w-5 h-5" />

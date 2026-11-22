@@ -229,6 +229,26 @@ html {
   border-radius: var(--radius-md);
   display: inline-flex;
   justify-content: center;
+  min-height: 2rem;
+  min-width: 2rem;
+}
+
+/* Target-size floor for icon-only controls that are not built on ui-icon-button. */
+@utility ui-touch-target {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  min-height: 2rem;
+  min-width: 2rem;
+}
+
+/* Touch screens: 44px, the platform minimum, instead of the 32px pointer floor. */
+@media (pointer: coarse) {
+  .ui-icon-button,
+  .ui-touch-target {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+  }
 }
 
 @utility ui-link {

@@ -372,7 +372,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                 type="button"
                 ref={closeButtonRef}
                 onClick={() => setIsModalOpen(false)}
-                className="ui-button-secondary p-1.5 hover:bg-[var(--color-bg-tertiary)]"
+                className="ui-button-secondary ui-touch-target p-1.5 hover:bg-[var(--color-bg-tertiary)]"
                 aria-label={t('paths.close')}
               >
                 <X className="w-5 h-5" />
@@ -411,7 +411,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                     type="button"
                     onClick={() => setViewMode('tree')}
                     aria-pressed={viewMode === 'tree'}
-                    className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                    className={`ui-touch-target p-1.5 rounded-lg transition-colors cursor-pointer ${
                       viewMode === 'tree'
                         ? 'ui-button-primary text-[var(--color-text-inverse)]'
                         : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
@@ -425,7 +425,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                     type="button"
                     onClick={() => setViewMode('list')}
                     aria-pressed={viewMode === 'list'}
-                    className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                    className={`ui-touch-target p-1.5 rounded-lg transition-colors cursor-pointer ${
                       viewMode === 'list'
                         ? 'ui-button-primary text-[var(--color-text-inverse)]'
                         : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
