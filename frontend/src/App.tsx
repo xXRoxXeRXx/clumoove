@@ -16,6 +16,7 @@ import { useAppHistory } from './hooks/useAppHistory';
 import { useSession } from './hooks/useSession';
 import type { MigrationConfig, CloudFile } from './types';
 import { safeAvatarUrl } from './utils/avatar';
+import { associateUnlinkedFormLabels } from './utils/formLabels';
 import { resolveFilePath, type FileBreadcrumb } from './api/files';
 
 function parseSettingsTab(tab: string): SettingsTab {
@@ -75,26 +76,6 @@ function getApiUrl(): string {
 }
 
 const API_URL = getApiUrl();
-
-let nextFormControlId = 0;
-
-// Provider-specific fields mount dynamically; retain native label semantics
-// without duplicating IDs across every provider branch.
-function associateUnlinkedFormLabels(root: ParentNode) {
-  const labels = root instanceof HTMLLabelElement
-    ? [root]
-    : Array.from(root.querySelectorAll<HTMLLabelElement>('label:not([for])'));
-  labels.forEach((label) => {
-    if (label.control || label.closest('[role="group"], [role="radiogroup"]')) return;
-    const control = label.parentElement?.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input:not([type="hidden"]), select, textarea');
-    if (!control) return;
-    if (!control.id) {
-      nextFormControlId += 1;
-      control.id = `ui-field-${nextFormControlId}`;
-    }
-    label.htmlFor = control.id;
-  });
-}
 
 // Security: warn when the API is reached over plaintext HTTP on a non-loopback
 // host, since access tokens and connection credentials would then transit in clear (A04).
