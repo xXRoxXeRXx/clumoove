@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-22T00:00:00.000Z",
+  "title": "Design System: Clumoove",
+  "extensions": {
+    "colorMeta": {
+      "ink": { "role": "primary", "displayName": "Ink", "canonical": "#18181b", "tonalRamp": ["#09090b", "#18181b", "#27272a", "#3f3f46", "#52525b", "#71717a", "#a1a1aa", "#e4e4e7"] },
+      "graphite": { "role": "primary", "displayName": "Graphite", "canonical": "#27272a", "tonalRamp": ["#09090b", "#18181b", "#27272a", "#3f3f46", "#52525b", "#71717a", "#a1a1aa", "#e4e4e7"] },
+      "slate": { "role": "neutral", "displayName": "Slate", "canonical": "#52525b", "tonalRamp": ["#18181b", "#27272a", "#3f3f46", "#52525b", "#71717a", "#a1a1aa", "#d4d4d8", "#f4f4f5"] },
+      "ash": { "role": "neutral", "displayName": "Ash", "canonical": "#71717a", "tonalRamp": ["#18181b", "#27272a", "#3f3f46", "#52525b", "#71717a", "#a1a1aa", "#d4d4d8", "#f4f4f5"] },
+      "paper": { "role": "neutral", "displayName": "Paper", "canonical": "#fafafa", "tonalRamp": ["#18181b", "#27272a", "#3f3f46", "#71717a", "#a1a1aa", "#d4d4d8", "#f4f4f5", "#fafafa"] },
+      "sheet": { "role": "neutral", "displayName": "Sheet", "canonical": "#ffffff", "tonalRamp": ["#27272a", "#3f3f46", "#71717a", "#a1a1aa", "#d4d4d8", "#e4e4e7", "#f4f4f5", "#ffffff"] },
+      "wash": { "role": "neutral", "displayName": "Wash", "canonical": "#f4f4f5", "tonalRamp": ["#27272a", "#3f3f46", "#71717a", "#a1a1aa", "#d4d4d8", "#e4e4e7", "#f4f4f5", "#fafafa"] },
+      "rule": { "role": "neutral", "displayName": "Rule", "canonical": "#e4e4e7", "tonalRamp": ["#27272a", "#3f3f46", "#71717a", "#a1a1aa", "#d4d4d8", "#e4e4e7", "#f4f4f5", "#fafafa"] },
+      "focus-blue": { "role": "secondary", "displayName": "Focus Blue", "canonical": "#2563eb", "tonalRamp": ["#1e3a8a", "#1e40af", "#1d4ed8", "#2563eb", "#3b82f6", "#93c5fd", "#bfdbfe", "#eff6ff"] },
+      "success": { "role": "state", "displayName": "Verified Green", "canonical": "#15803d", "tonalRamp": ["#14532d", "#166534", "#15803d", "#16a34a", "#22c55e", "#86efac", "#bbf7d0", "#f0fdf4"] },
+      "success-wash": { "role": "state", "displayName": "Verified Green Wash", "canonical": "#f0fdf4", "tonalRamp": ["#15803d", "#16a34a", "#22c55e", "#86efac", "#bbf7d0", "#dcfce7", "#f0fdf4", "#f7fef9"] },
+      "warning": { "role": "state", "displayName": "Caution Amber", "canonical": "#a16207", "tonalRamp": ["#713f12", "#854d0e", "#a16207", "#ca8a04", "#eab308", "#fde047", "#fde68a", "#fffbeb"] },
+      "warning-wash": { "role": "state", "displayName": "Caution Amber Wash", "canonical": "#fffbeb", "tonalRamp": ["#a16207", "#ca8a04", "#eab308", "#fbbf24", "#fde68a", "#fef3c7", "#fffbeb", "#fffdf5"] },
+      "error": { "role": "state", "displayName": "Failure Red", "canonical": "#b91c1c", "tonalRamp": ["#7f1d1d", "#991b1b", "#b91c1c", "#dc2626", "#ef4444", "#fca5a5", "#fecaca", "#fef2f2"] },
+      "error-wash": { "role": "state", "displayName": "Failure Red Wash", "canonical": "#fef2f2", "tonalRamp": ["#b91c1c", "#dc2626", "#ef4444", "#fca5a5", "#fecaca", "#fee2e2", "#fef2f2", "#fff8f8"] },
+      "info": { "role": "state", "displayName": "Info Blue", "canonical": "#1d4ed8", "tonalRamp": ["#1e3a8a", "#1e40af", "#1d4ed8", "#2563eb", "#3b82f6", "#93c5fd", "#bfdbfe", "#eff6ff"] },
+      "info-wash": { "role": "state", "displayName": "Info Blue Wash", "canonical": "#eff6ff", "tonalRamp": ["#1d4ed8", "#2563eb", "#3b82f6", "#93c5fd", "#bfdbfe", "#dbeafe", "#eff6ff", "#f7faff"] }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Screen titles on auth and error surfaces." },
+      "title": { "displayName": "Title", "purpose": "Brand wordmark, section and card titles." },
+      "body": { "displayName": "Body", "purpose": "Default UI text, buttons, table cells." },
+      "label": { "displayName": "Label", "purpose": "Field labels, stat-group headings, tab text." },
+      "meta": { "displayName": "Meta", "purpose": "Timestamps, hints, badge text, secondary figures." }
+    },
+    "shadows": [
+      { "name": "none", "value": "none", "purpose": "All Tailwind shadow tokens (sm to 2xl) are set to none. Depth is 1px border plus tonal fill." },
+      { "name": "overlay-scrim", "value": "rgb(24 24 27 / 0.55)", "purpose": "Dialog backdrop (dark theme: rgb(9 9 11 / 0.72))." }
+    ],
+    "motion": [
+      { "name": "view-enter", "value": "180ms ease-out opacity 0 to 1", "purpose": "Fade when switching views (.ui-view-enter)." },
+      { "name": "progress-width", "value": "500ms ease-out", "purpose": "Progress bar fill width." },
+      { "name": "toggle", "value": "200ms ease-in-out", "purpose": "Switch track color and thumb translate." },
+      { "name": "reduced-motion", "value": "0.01ms", "purpose": "All animation and transition durations collapse under prefers-reduced-motion." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main action. Ink fill, white text.",
+      "html": "<button class=\"ds-btn-primary\">Start migration</button>",
+      "css": ".ds-btn-primary { background: #18181b; color: #ffffff; border: 0; border-radius: 4px; padding: 8px 12px; font: 500 14px/20px 'Open Sans', system-ui, sans-serif; cursor: pointer; } .ds-btn-primary:hover { background: #27272a; } .ds-btn-primary:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; } .ds-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Default button. White fill, 1px rule border.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary { background: #ffffff; color: #52525b; border: 1px solid #e4e4e7; border-radius: 4px; padding: 8px 12px; font: 500 14px/20px 'Open Sans', system-ui, sans-serif; cursor: pointer; } .ds-btn-secondary:hover { background: #f4f4f5; color: #18181b; } .ds-btn-secondary:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive confirmation only.",
+      "html": "<button class=\"ds-btn-danger\">Delete</button>",
+      "css": ".ds-btn-danger { background: #b91c1c; color: #ffffff; border: 0; border-radius: 4px; padding: 8px 12px; font: 500 14px/20px 'Open Sans', system-ui, sans-serif; cursor: pointer; } .ds-btn-danger:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Labelled field with hint text.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-field-label\" for=\"ds-in\">Server URL</label><input id=\"ds-in\" class=\"ds-input\" placeholder=\"https://cloud.example.org\"><p class=\"ds-field-hint\">HTTPS only.</p></div>",
+      "css": ".ds-field { display: grid; gap: 6px; font-family: 'Open Sans', system-ui, sans-serif; } .ds-field-label { color: #52525b; font-size: 14px; font-weight: 600; } .ds-input { background: #ffffff; color: #18181b; border: 1px solid #e4e4e7; border-radius: 4px; padding: 8px 12px; font: 400 14px/20px 'Open Sans', system-ui, sans-serif; } .ds-input::placeholder { color: #71717a; opacity: 1; } .ds-input:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; } .ds-field-hint { margin: 0; color: #71717a; font-size: 14px; }"
+    },
+    {
+      "name": "Status Badges",
+      "kind": "chip",
+      "refersTo": "badge-success",
+      "description": "Compact semantic status labels.",
+      "html": "<span class=\"ds-badge ds-badge-success\">Verified</span> <span class=\"ds-badge ds-badge-warning\">Paused</span> <span class=\"ds-badge ds-badge-error\">Failed</span> <span class=\"ds-badge ds-badge-muted\">Queued</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; border: 1px solid #e4e4e7; border-radius: 4px; padding: 4px 10px; font: 500 12px/16px 'Open Sans', system-ui, sans-serif; } .ds-badge-success { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; } .ds-badge-warning { background: #fffbeb; border-color: #fde68a; color: #18181b; } .ds-badge-error { background: #fef2f2; border-color: #fecaca; color: #b91c1c; } .ds-badge-muted { background: #f4f4f5; color: #52525b; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat bordered container, no shadow.",
+      "html": "<div class=\"ds-card\"><h3 class=\"ds-card-title\">Nightly backup</h3><p class=\"ds-card-meta\">Next run 02:00 · 4 snapshots</p></div>",
+      "css": ".ds-card { background: #ffffff; border: 1px solid #e4e4e7; border-radius: 6px; padding: 24px; font-family: 'Open Sans', system-ui, sans-serif; } .ds-card-title { margin: 0; font: 600 18px/28px Poppins, system-ui, sans-serif; letter-spacing: -0.025em; color: #18181b; } .ds-card-meta { margin: 4px 0 0; color: #71717a; font-size: 12px; }"
+    },
+    {
+      "name": "Tabs",
+      "kind": "nav",
+      "refersTo": "tab",
+      "description": "Text tabs with a 2px ink underline for the active tab.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\"><button class=\"ds-tab ds-tab-active\" role=\"tab\">Migrations</button><button class=\"ds-tab\" role=\"tab\">Sync</button><button class=\"ds-tab\" role=\"tab\">Backup</button></div>",
+      "css": ".ds-tabs { display: flex; gap: 4px; border-bottom: 1px solid #e4e4e7; } .ds-tab { background: none; border: 0; border-bottom: 2px solid transparent; color: #52525b; padding: 8px 12px; font: 400 14px/20px 'Open Sans', system-ui, sans-serif; cursor: pointer; } .ds-tab:hover { color: #18181b; } .ds-tab:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; } .ds-tab-active { border-bottom-color: #18181b; color: #18181b; font-weight: 600; }"
+    },
+    {
+      "name": "Progress Bar",
+      "kind": "custom",
+      "refersTo": "progress",
+      "description": "Rounded track with an ink fill; state colors for terminal results.",
+      "html": "<div class=\"ds-progress\"><div class=\"ds-progress-fill\" style=\"width:62%\"></div></div>",
+      "css": ".ds-progress { height: 8px; background: #e4e4e7; border-radius: 9999px; overflow: hidden; } .ds-progress-fill { height: 100%; background: #18181b; transition: width 500ms ease-out; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Operations Ledger",
+    "overview": "Clumoove is a record of work being done, and the interface reads like one: hairline rules, tabular figures, plain status words, and surfaces that stay still while the numbers move. An operator leaves a migration running overnight and comes back to a page that tells them exactly what happened. The system is sober, exact and trustworthy. It does not perform confidence; it shows evidence.\n\nThe palette is a single zinc neutral ramp, with color reserved for state: green for verified, amber for needs attention, red for failed, blue for \"your keyboard is here\". Depth comes from borders and tonal fills, never shadows. Corners are barely rounded (2 to 8px) so the product feels like infrastructure rather than a consumer app. Light and dark themes are equal citizens and share one token vocabulary.",
+    "keyCharacteristics": [
+      "Flat by default: 1px borders and tonal fills carry all structure.",
+      "One neutral ramp; chromatic color only ever means state or focus.",
+      "Poppins for headings, Open Sans for everything else; 12px is the floor.",
+      "Dense but breathable: 8px base rhythm, 24px card padding, max-w-6xl page column.",
+      "Two themes (data-theme light or dark), one set of semantic tokens.",
+      "Motion is minimal and fully removed under prefers-reduced-motion."
+    ],
+    "rules": [
+      { "name": "The Color-Means-State Rule", "body": "Chromatic color appears only to report status or mark focus. Decoration is neutral.", "section": "colors" },
+      { "name": "The Token-Only Rule", "body": "Use var(--color-*) semantic tokens, never raw Tailwind palette colors, so both themes stay in lockstep. The switch \"on\" track is --color-toggle-on.", "section": "colors" },
+      { "name": "The Twelve-Pixel Floor Rule", "body": "Nothing renders below 0.75rem. A global rule lifts legacy text-[9px] to text-[11px] values to 12px.", "section": "typography" },
+      { "name": "The Locale-Length Rule", "body": "Every string exists in de and en; layouts must tolerate German being roughly a third longer.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Surfaces are flat at rest and flat on hover. State is a fill change or an underline, never a shadow, glow or scale.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use the semantic tokens (var(--color-bg-secondary), var(--color-text-muted), ...) and the ui-* utilities from frontend/src/index.css for every new surface.",
+      "Do express state with a text label plus color (badge, alert); never color alone.",
+      "Do keep 4px radius on controls, 6px on cards, and 1px Rule borders on every raised surface.",
+      "Do use @heroicons/react for interface icons, with a localized aria-label and title on icon-only buttons.",
+      "Do format numbers, dates and sizes through src/utils/format.ts with the active locale.",
+      "Do keep de and en strings in parity and allow roughly 30% extra width for German.",
+      "Do honor prefers-reduced-motion; new animation must collapse to none."
+    ],
+    "donts": [
+      "Don't reintroduce portal-*, glass-*, shadow-portal*, decorative gradient overlays or heavy backdrop blur.",
+      "Don't add shadows, glows or scale-on-hover; depth is border plus tonal fill.",
+      "Don't use raw Tailwind palette colors (blue-600, green-500) where a semantic token exists.",
+      "Don't introduce a decorative accent hue; chromatic color is reserved for state and focus.",
+      "Don't render text below 12px.",
+      "Don't use react-icons outside provider brand logos.",
+      "Don't round beyond 8px, except avatars, the progress track and the toggle."
+    ]
+  }
+}
