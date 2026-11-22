@@ -415,6 +415,13 @@ body {
   font-size: 0.75rem;
 }
 
+/* Busy cue for reduced motion: a rotating ring becomes a slow opacity pulse, because a
+   frozen ring reads as a hung request. Opacity only, under one cycle per second and a half. */
+@keyframes ui-busy-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after {
     animation-duration: 0.01ms !important;
@@ -425,5 +432,15 @@ body {
 
   .ui-view-enter {
     animation: none;
+  }
+
+  /* Loading indicators are the exception: they keep a gentle, non-spatial loop. */
+  .animate-spin {
+    animation: ui-busy-pulse 1.6s ease-in-out infinite !important;
+  }
+
+  .animate-pulse {
+    animation-duration: 2s !important;
+    animation-iteration-count: infinite !important;
   }
 }
