@@ -247,6 +247,7 @@ the single exception is the 2px selected-tab underline.
 - **Quiet:** No fill or border, `Slate` text.
 - **Icon:** Secondary styling, square padding (6 or 8px); always carries a localized `aria-label` and `title` (the `Button` component enforces this at the type level).
 - **Sizes:** `md` 14px, `sm` 12px with 10px/6px padding.
+- **Target size:** icon-only controls (`ui-icon-button`, or `ui-touch-target` on hand-built ones) never fall below 32px with a pointer and 44px on coarse pointers. Controls revealed on hover must also be visible when hover is unavailable (`[@media(hover:none)]`).
 
 ### Badges and Alerts
 - **Badge:** 4px radius, 1px border, 12px weight 500 on the state wash. Variants: success, error, warning, info, muted. An optional `pulse` marks live work.
@@ -291,6 +292,7 @@ logos (via `react-icons`) appear only in the connection flow.
 - **Do** use `@heroicons/react` for interface icons, with a localized `aria-label` and `title` on icon-only buttons.
 - **Do** format numbers, dates and sizes through `src/utils/format.ts` with the active locale.
 - **Do** keep `de` and `en` strings in parity and allow roughly 30% extra width for German.
+- **Do** give every icon-only control `ui-icon-button` or `ui-touch-target`, and never hide a control behind hover alone.
 - **Do** honor `prefers-reduced-motion`; new animation must collapse to none, except a busy indicator, which should keep a non-spatial (opacity-only) loop.
 
 ### Don't:

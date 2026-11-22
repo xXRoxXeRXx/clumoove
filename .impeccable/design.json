@@ -136,6 +136,7 @@
       "Do use @heroicons/react for interface icons, with a localized aria-label and title on icon-only buttons.",
       "Do format numbers, dates and sizes through src/utils/format.ts with the active locale.",
       "Do keep de and en strings in parity and allow roughly 30% extra width for German.",
+      "Do give every icon-only control ui-icon-button or ui-touch-target (32px pointer, 44px coarse), and never hide a control behind hover alone.",
       "Do honor prefers-reduced-motion; new animation must collapse to none, except a busy indicator, which should keep a non-spatial (opacity-only) loop."
     ],
     "donts": [
