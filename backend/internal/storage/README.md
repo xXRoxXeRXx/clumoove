@@ -27,6 +27,7 @@ type StorageProvider interface {
 3. **Data Integrity & Hashes**:
    - Return native cryptographic hashes (`SHA-1`, `MD5`, `SHA-256`, `QuickXor`, etc.) via `GetFileHash`.
    - Implement `VerificationMode()` returning `VerificationCryptographicHash` when hash verification is available, or `VerificationSizeOnly` otherwise.
+   - Declare the provider's streaming hash on its catalogue entry with `NativeHash` (`nativehash.go`); omitting it means SHA1. Set `IgnoresListedSourceHash` when the indexed hash is not a content digest (WebDAV). `processor` reads these through `NativeHashFor`/`IgnoresListedSourceHash` and must not switch on provider names. Add a row to `TestNativeHashDeclarations` for every new provider.
 4. **Provider Factory Registration**:
    - Add one authoritative `providerRegistration` entry to `providerCatalogueEntries` in `factory.go` supplying validation rules, construction, migration traits, and file-manager capabilities (`ValidProviders` is derived from it in order).
 5. **Zero-Disk Retention**: File transfers must be streamed through RAM buffers without writing intermediate data to local disk.

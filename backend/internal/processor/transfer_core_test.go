@@ -134,6 +134,70 @@ func TestTransferHashersHandleKoofrMixedAlgorithms(t *testing.T) {
 	}
 }
 
+// TestTransferSourceHasherRules pins the source-side hash selection, including
+// the WebDAV listing-hash exclusion and HiDrive's chash, which cannot be
+// recomputed by streaming and therefore never becomes an expected hash.
+func TestTransferSourceHasherRules(t *testing.T) {
+	cases := []struct {
+		name         string
+		provider     string
+		listedHash   string
+		wantAlgo     string
+		wantExpected string
+		wantHasher   string
+	}{
+		{"no listed hash streams SHA1", "nextcloud", "", "SHA1", "", "sha1"},
+		{"listed SHA256 is honoured", "nextcloud", "SHA256:AB", "SHA256", "ab", "sha256"},
+		{"listed MD5 is honoured", "nextcloud", "MD5:AB", "MD5", "ab", "md5"},
+		{"listed Dropbox hash is honoured", "nextcloud", "DROPBOX:ab", "DROPBOX", "ab", "DropboxHasher"},
+		{"listed HiDrive chash is not recomputable", "nextcloud", "HIDRIVE:ab", "SHA1", "", "sha1"},
+		{"hidrive source never streams chash", "hidrive", "HIDRIVE:ab", "SHA1", "", "sha1"},
+		{"webdav listed hash is excluded", "webdav", "SHA1:AB", "SHA1", "", "sha1"},
+		{"s3 source follows its listing", "s3", "SHA256:AB", "SHA256", "ab", "sha256"},
+		{"s3 source without listing streams SHA1", "s3", "", "SHA1", "", "sha1"},
+		{"dropbox is always Dropbox", "dropbox", "", "DROPBOX", "", "DropboxHasher"},
+		{"dropbox keeps a listed value", "dropbox", "SHA1:ab", "DROPBOX", "ab", "DropboxHasher"},
+		{"google is always MD5", "google", "", "MD5", "", "md5"},
+		{"koofr is always MD5", "koofr", "MD5:ABCDEF", "MD5", "abcdef", "md5"},
+		{"onedrive is always QuickXor", "onedrive", "QUICKXOR:Ab", "QUICKXOR", "", "QuickXorHasher"},
+		{"unknown provider streams SHA1", "not-a-provider", "", "SHA1", "", "sha1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			algo, expected, hasher := transferSourceHasher(tc.provider, tc.listedHash)
+			if algo != tc.wantAlgo || expected != tc.wantExpected {
+				t.Fatalf("transferSourceHasher(%q, %q) = (%q, %q), want (%q, %q)", tc.provider, tc.listedHash, algo, expected, tc.wantAlgo, tc.wantExpected)
+			}
+			if got := fmt.Sprintf("%T", hasher); !strings.Contains(got, tc.wantHasher) {
+				t.Fatalf("hasher type = %s, want %q", got, tc.wantHasher)
+			}
+		})
+	}
+}
+
+// TestTransferTargetHasherRules pins the target-side algorithms recorded for
+// existing transfers, independent of the catalogue declarations.
+func TestTransferTargetHasherRules(t *testing.T) {
+	cases := map[string]struct{ algo, hasher string }{
+		"dropbox":   {"DROPBOX", "DropboxHasher"},
+		"s3":        {"SHA256", "sha256"},
+		"google":    {"MD5", "md5"},
+		"koofr":     {"MD5", "md5"},
+		"hidrive":   {"HIDRIVE", "HiDriveHasher"},
+		"onedrive":  {"QUICKXOR", "QuickXorHasher"},
+		"nextcloud": {"SHA1", "sha1"},
+		"webdav":    {"SHA1", "sha1"},
+		"box":       {"SHA1", "sha1"},
+		"":          {"SHA1", "sha1"},
+	}
+	for provider, want := range cases {
+		algo, hasher := transferTargetHasher(provider)
+		if algo != want.algo || !strings.Contains(fmt.Sprintf("%T", hasher), want.hasher) {
+			t.Errorf("transferTargetHasher(%q) = (%q, %T), want (%q, %s)", provider, algo, hasher, want.algo, want.hasher)
+		}
+	}
+}
+
 var _ transferSource = (*memoryTransferProvider)(nil)
 var _ transferTarget = (*memoryTransferProvider)(nil)
 var _ transferSource = (storage.StorageProvider)(nil)

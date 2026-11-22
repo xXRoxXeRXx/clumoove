@@ -44,7 +44,7 @@ Never pass unvalidated provider strings to `storage.NewProvider`.
 ## Streaming Transfers & Integrity (3-Way Hash Check)
 - **Zero Disk Retention**: Streams transfers via RAM buffers; files > 50 MB use chunked upload.
 - **Integrity Verification**:
-  - `io.TeeReader` computes streaming hash (`SHA1` default; `MD5`, `SHA256`, `DROPBOX`, `QUICKXOR`, or HiDrive `chash`).
+  - `io.TeeReader` computes streaming hash (`SHA1` default; `MD5`, `SHA256`, `DROPBOX`, `QUICKXOR`, or HiDrive `chash`). Each provider declares its algorithm via `NativeHash` (and `IgnoresListedSourceHash` for WebDAV) on its `providerCatalogueEntries` entry; `processor` never switches on provider names.
   - Target server hash is compared with computed streaming hash. HiDrive source-to-target compares native hashes directly.
   - Decodes URL-escaped API paths before indexing to avoid double-escaped 404s.
   - If target hashes cannot be compared, falls back to size comparison to prevent false corruption errors.

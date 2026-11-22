@@ -111,51 +111,42 @@ type transferResult struct {
 	MetadataErr error
 }
 
+// transferSourceHasher picks the hash streamed over the source bytes and the
+// expected value to check it against. The provider's catalogue registration
+// decides which algorithm is fixed and whether its listed hash is trusted.
 func transferSourceHasher(provider, sourceHash string) (string, string, hash.Hash) {
 	algo, expected := "SHA1", ""
-	if sourceHash != "" && provider != "webdav" {
+	if sourceHash != "" && !storage.IgnoresListedSourceHash(provider) {
 		parsed, value := storage.ParseHashString(sourceHash)
 		if parsed == "SHA1" || parsed == "SHA256" || parsed == "MD5" || parsed == "DROPBOX" {
 			algo, expected = parsed, value
 		}
 	}
-	switch provider {
-	case "dropbox":
-		algo = "DROPBOX"
-	case "google", "koofr":
-		algo = "MD5"
-	case "onedrive":
-		algo = "QUICKXOR"
+	if native := storage.NativeHashFor(provider); native.FixedOnSource {
+		return native.Algorithm, expected, native.New()
 	}
+	return algo, expected, newListedHasher(algo)
+}
+
+// newListedHasher builds the streaming hasher for an algorithm reported by a
+// source listing. Algorithms outside the listed set stream SHA1.
+func newListedHasher(algo string) hash.Hash {
 	switch algo {
 	case "MD5":
-		return algo, expected, md5.New()
+		return md5.New()
 	case "DROPBOX":
-		return algo, expected, storage.NewDropboxHasher()
+		return storage.NewDropboxHasher()
 	case "SHA256":
-		return algo, expected, sha256.New()
-	case "QUICKXOR":
-		return algo, expected, storage.NewQuickXorHasher()
+		return sha256.New()
 	default:
-		return "SHA1", expected, sha1.New()
+		return sha1.New()
 	}
 }
 
+// transferTargetHasher returns the target provider's declared native hash.
 func transferTargetHasher(provider string) (string, hash.Hash) {
-	switch provider {
-	case "dropbox":
-		return "DROPBOX", storage.NewDropboxHasher()
-	case "s3":
-		return "SHA256", sha256.New()
-	case "google", "koofr":
-		return "MD5", md5.New()
-	case "hidrive":
-		return "HIDRIVE", storage.NewHiDriveHasher()
-	case "onedrive":
-		return "QUICKXOR", storage.NewQuickXorHasher()
-	default:
-		return "SHA1", sha1.New()
-	}
+	native := storage.NativeHashFor(provider)
+	return native.Algorithm, native.New()
 }
 
 func streamUploadWithOptions(ctx context.Context, target uploadTarget, resourceType, targetPath string, reader io.Reader, fileSize int64, progress chan<- int64, opts storage.UploadOptions) (storage.UploadResult, error) {

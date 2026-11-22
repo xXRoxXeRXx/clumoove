@@ -76,6 +76,8 @@ type providerRegistration struct {
 	SupportedResourceTypes    map[string]bool
 	SupportsAtomicRename      bool
 	VerificationMode          VerificationMode
+	NativeHash                *NativeHash
+	IgnoresListedSourceHash   bool
 	ManagerCapabilities       ManagerCapabilities
 	WindowsManagerBlocked     bool
 	ManagerPathMutation       bool
@@ -401,6 +403,7 @@ var providerCatalogueEntries = []providerRegistration{
 	},
 	{
 		Type:                     "webdav",
+		IgnoresListedSourceHash:  true,
 		RequiresHost:             true,
 		RequiresHTTPS:            true,
 		RequiresEgressValidation: true,
@@ -415,6 +418,7 @@ var providerCatalogueEntries = []providerRegistration{
 	},
 	{
 		Type:                      "dropbox",
+		NativeHash:                &nativeHashDropbox,
 		SupportedResourceTypes:    map[string]bool{"files": true},
 		SupportsAtomicRename:      true,
 		VerificationMode:          VerificationCryptographicHash,
@@ -427,6 +431,7 @@ var providerCatalogueEntries = []providerRegistration{
 	},
 	{
 		Type:                   "google",
+		NativeHash:             &nativeHashMD5,
 		SupportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
 		SupportsAtomicRename:   true,
 		VerificationMode:       VerificationCryptographicHash,
@@ -439,6 +444,7 @@ var providerCatalogueEntries = []providerRegistration{
 	},
 	{
 		Type:                   "onedrive",
+		NativeHash:             &nativeHashQuickXor,
 		SupportedResourceTypes: map[string]bool{"files": true},
 		SupportsAtomicRename:   true,
 		VerificationMode:       VerificationCryptographicHash,
@@ -450,6 +456,7 @@ var providerCatalogueEntries = []providerRegistration{
 	},
 	{
 		Type:                   "hidrive",
+		NativeHash:             &nativeHashHiDrive,
 		SupportedResourceTypes: map[string]bool{"files": true},
 		SupportsAtomicRename:   true,
 		VerificationMode:       VerificationCryptographicHash,
@@ -474,6 +481,7 @@ var providerCatalogueEntries = []providerRegistration{
 	},
 	{
 		Type:                   "s3",
+		NativeHash:             &nativeHashSHA256,
 		RequiresHost:           true,
 		SupportedResourceTypes: map[string]bool{"files": true},
 		SupportsAtomicRename:   false,
@@ -526,6 +534,7 @@ var providerCatalogueEntries = []providerRegistration{
 	},
 	{
 		Type:                   "koofr",
+		NativeHash:             &nativeHashMD5,
 		SupportedResourceTypes: map[string]bool{"files": true},
 		SupportsAtomicRename:   false,
 		VerificationMode:       VerificationCryptographicHash,
