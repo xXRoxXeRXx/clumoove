@@ -192,7 +192,8 @@ func (c *ownedProfileConnection) SyncJobOAuthTokens(syncJobID, role, expectedRef
 	if !c.profile.TokenExpiresAt.Valid {
 		expiresAt = c.access.currentTime().Add(time.Hour)
 	}
-	if err := db.UpdateSyncJobOAuthTokens(c.access.db, syncJobID, role, accessEncrypted, refreshEncrypted, expiresAt, expectedRefreshEncrypted); err != nil && !errors.Is(err, db.ErrOAuthTokenConflict) {
+	rotated := db.EncryptedOAuthTokens{Access: accessEncrypted, Refresh: refreshEncrypted, ExpiresAt: expiresAt}
+	if err := db.NewSyncJobTokenSink(c.access.db, syncJobID, role).Persist(context.Background(), rotated, expectedRefreshEncrypted); err != nil && !errors.Is(err, db.ErrOAuthTokenConflict) {
 		return err
 	}
 	return nil
@@ -472,27 +473,9 @@ func (a *ownedProfileAccess) encryptCreds(creds profileCreds) (persistedProfileC
 	return persisted, nil
 }
 
-func (a *ownedProfileAccess) persistOAuthTokens(ctx context.Context, profile *db.ConnectionProfile, token *oauth.TokenResponse) error {
-	accessEncrypted, err := crypto.EncryptWithDomain(token.AccessToken, a.encryptionKey, crypto.DomainOAuthAccessToken)
-	if err != nil {
-		return err
-	}
-	refreshEncrypted, err := crypto.EncryptWithDomain(token.RefreshToken, a.encryptionKey, crypto.DomainOAuthRefreshToken)
-	if err != nil {
-		return err
-	}
-	expiresIn := token.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 3600
-	}
-	expiresAt := a.currentTime().Add(time.Duration(expiresIn) * time.Second)
-	if err := db.UpdateConnectionProfileOAuthTokensContext(ctx, a.db, profile.ID, accessEncrypted, refreshEncrypted, expiresAt, profile.RefreshTokenEncrypted); err != nil {
-		return err
-	}
-	profile.PasswordEncrypted = accessEncrypted
-	profile.RefreshTokenEncrypted = refreshEncrypted
-	profile.TokenExpiresAt = sql.NullTime{Time: expiresAt, Valid: true}
-	return nil
+// refresher binds the profile access's shared rotation infrastructure.
+func (a *ownedProfileAccess) refresher() *oauth.Refresher {
+	return oauth.NewRefresher(oauth.RefresherConfig{DB: a.db, Cache: a.oauthRotations, Locker: a.oauthLocker, EncryptionKey: a.encryptionKey, Now: a.currentTime})
 }
 
 func (a *ownedProfileAccess) newProvider(ctx context.Context, provider, url, username, password string, opts ...storage.ProviderOption) (profileProvider, error) {
@@ -658,16 +641,11 @@ func (a *ownedProfileAccess) resolveAndRefreshOAuth(
 	}
 
 	var isProfileToken bool
-	result, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
-		DB:            a.db,
-		Cache:         a.oauthRotations,
-		Locker:        a.oauthLocker,
-		EncryptionKey: a.encryptionKey,
-		UserID:        userID,
-		Provider:      creds.Provider,
-		RefreshToken:  creds.RefreshToken,
-		Now:           a.currentTime,
-		Refresh:       a.refreshToken,
+	result, err := a.refresher().Refresh(ctx, oauth.OwnerRefresh{
+		UserID:       userID,
+		Provider:     creds.Provider,
+		RefreshToken: creds.RefreshToken,
+		Refresh:      a.refreshToken,
 		ExtraAliases: func() []string {
 			aliases := []string{initialRefresh, suppliedRefresh}
 			if isProfileToken {
@@ -696,14 +674,13 @@ func (a *ownedProfileAccess) resolveAndRefreshOAuth(
 			isProfileToken = suppliedRefresh == "" || (storedRefresh != "" && (subtle.ConstantTimeCompare([]byte(suppliedRefresh), []byte(storedRefresh)) == 1 || subtle.ConstantTimeCompare([]byte(target), []byte(storedRefresh)) == 1))
 			return "", false, "", nil
 		},
-		Persist: func(persistCtx context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
-			if !isProfileToken {
-				return "", false, nil
-			}
-			if err := a.persistOAuthTokens(persistCtx, profile, token); err != nil {
-				return "", false, err
-			}
-			return "", false, nil
+		Sink:            db.NewConnectionProfileTokenSink(a.db, profile.ID),
+		ExpectedRefresh: func() string { return profile.RefreshTokenEncrypted },
+		SkipPersist:     func() bool { return !isProfileToken },
+		OnPersisted: func(tokens db.EncryptedOAuthTokens) {
+			profile.PasswordEncrypted = tokens.Access
+			profile.RefreshTokenEncrypted = tokens.Refresh
+			profile.TokenExpiresAt = sql.NullTime{Time: tokens.ExpiresAt, Valid: true}
 		},
 	})
 	if err != nil {

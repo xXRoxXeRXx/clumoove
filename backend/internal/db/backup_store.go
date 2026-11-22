@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"time"
 )
 
 // BackupStore is the backup domain's persistence seam: the operations the
@@ -27,7 +26,7 @@ type BackupStore interface {
 	FailBackupRunContext(ctx context.Context, jobID string, generation int, runID, expectedState, errorCode string) (bool, error)
 	GetBackupScheduleInfoContext(ctx context.Context, jobID string) (BackupScheduleInfo, error)
 	GetBackupJobForOwnerContext(ctx context.Context, jobID, userID string) (*BackupJob, error)
-	UpdateBackupJobOAuthTokens(ctx context.Context, backupJobID, role, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error
+	BackupJobTokenSink(backupJobID, role string) OAuthTokenSink
 	BackupProfilesSameOAuthAccountContext(ctx context.Context, sourceProfileID, targetProfileID sql.NullString) (bool, error)
 	DeleteBackupJobAfterRepositoryCleanupContext(ctx context.Context, jobID string) (bool, error)
 
@@ -122,8 +121,8 @@ func (s postgresBackupStore) GetBackupJobForOwnerContext(ctx context.Context, jo
 	return GetBackupJobForOwnerContext(ctx, s.db, jobID, userID)
 }
 
-func (s postgresBackupStore) UpdateBackupJobOAuthTokens(ctx context.Context, backupJobID, role, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error {
-	return UpdateBackupJobOAuthTokens(ctx, s.db, backupJobID, role, accessEncrypted, refreshEncrypted, expiresAt, expectedRefreshEncrypted)
+func (s postgresBackupStore) BackupJobTokenSink(backupJobID, role string) OAuthTokenSink {
+	return NewBackupJobTokenSink(s.db, backupJobID, role)
 }
 
 func (s postgresBackupStore) BackupProfilesSameOAuthAccountContext(ctx context.Context, sourceProfileID, targetProfileID sql.NullString) (bool, error) {

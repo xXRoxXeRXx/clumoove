@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"testing"
@@ -168,9 +169,9 @@ func TestConditionalOAuthTokenUpdate(t *testing.T) {
 
 	// 1. Updating with matching expected refresh token should succeed and overwrite tokens
 	laterExp := now.Add(2 * time.Hour)
-	err = UpdateSyncJobOAuthTokens(database, "sync-1", "source", "new-pass-1", "new-refresh-1", laterExp, "old-refresh")
+	err = NewSyncJobTokenSink(database, "sync-1", "source").Persist(context.Background(), EncryptedOAuthTokens{Access: "new-pass-1", Refresh: "new-refresh-1", ExpiresAt: laterExp}, "old-refresh")
 	if err != nil {
-		t.Fatalf("UpdateSyncJobOAuthTokens failed: %v", err)
+		t.Fatalf("sync job token sink Persist failed: %v", err)
 	}
 
 	var curPass, curRefresh string
@@ -186,7 +187,7 @@ func TestConditionalOAuthTokenUpdate(t *testing.T) {
 
 	// 2. Updating with mismatched expected refresh token (concurrent update occurred) must return ErrOAuthTokenConflict
 	earlierExp := now.Add(30 * time.Minute)
-	err = UpdateSyncJobOAuthTokens(database, "sync-1", "source", "stale-pass", "stale-refresh", earlierExp, "stale-old-token")
+	err = NewSyncJobTokenSink(database, "sync-1", "source").Persist(context.Background(), EncryptedOAuthTokens{Access: "stale-pass", Refresh: "stale-refresh", ExpiresAt: earlierExp}, "stale-old-token")
 	if err == nil {
 		t.Fatalf("expected ErrOAuthTokenConflict when expectedRefreshTokenEncrypted mismatches, got nil")
 	}
@@ -216,7 +217,7 @@ func TestConditionalConnectionProfileOAuthTokenUpdate(t *testing.T) {
 	}
 
 	expiresAt := now.Add(time.Hour)
-	if err := UpdateConnectionProfileOAuthTokens(database, "onedrive-profile", "new-access", "new-refresh", expiresAt, "old-refresh"); err != nil {
+	if err := NewConnectionProfileTokenSink(database, "onedrive-profile").Persist(context.Background(), EncryptedOAuthTokens{Access: "new-access", Refresh: "new-refresh", ExpiresAt: expiresAt}, "old-refresh"); err != nil {
 		t.Fatal(err)
 	}
 	var access, refresh string
@@ -226,7 +227,7 @@ func TestConditionalConnectionProfileOAuthTokenUpdate(t *testing.T) {
 	if access != "new-access" || refresh != "new-refresh" {
 		t.Fatalf("persisted tokens = %q, %q; want new values", access, refresh)
 	}
-	if err := UpdateConnectionProfileOAuthTokens(database, "onedrive-profile", "stale-access", "stale-refresh", expiresAt, "old-refresh"); err != ErrOAuthTokenConflict {
+	if err := NewConnectionProfileTokenSink(database, "onedrive-profile").Persist(context.Background(), EncryptedOAuthTokens{Access: "stale-access", Refresh: "stale-refresh", ExpiresAt: expiresAt}, "old-refresh"); err != ErrOAuthTokenConflict {
 		t.Fatalf("stale update error = %v, want ErrOAuthTokenConflict", err)
 	}
 }

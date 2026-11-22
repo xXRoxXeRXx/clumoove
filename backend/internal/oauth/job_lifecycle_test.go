@@ -259,13 +259,18 @@ func (s *testJobTokenState) ReloadOAuthTokens(context.Context) error {
 	}
 	return nil
 }
-func (s *testJobTokenState) PersistOAuthTokens(_ context.Context, _ string, access, refresh string, expires time.Time, _ string) error {
+func (s *testJobTokenState) OAuthTokenSink(string) db.OAuthTokenSink { return testJobTokenSink{s} }
+
+type testJobTokenSink struct{ state *testJobTokenState }
+
+func (k testJobTokenSink) Persist(_ context.Context, rotated db.EncryptedOAuthTokens, _ string) error {
+	s := k.state
 	if s.conflict {
 		s.snapshot = s.winner
 		s.conflict = false
 		return db.ErrOAuthTokenConflict
 	}
-	s.ApplyOAuthTokens("source", access, sql.NullString{String: refresh, Valid: true}, sql.NullTime{Time: expires, Valid: true})
+	s.ApplyOAuthTokens("source", rotated.Access, sql.NullString{String: rotated.Refresh, Valid: true}, sql.NullTime{Time: rotated.ExpiresAt, Valid: true})
 	return nil
 }
 

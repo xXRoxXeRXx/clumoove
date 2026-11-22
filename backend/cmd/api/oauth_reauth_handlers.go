@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"time"
@@ -22,6 +24,17 @@ func oauthExpiry(seconds int) time.Time {
 		seconds = 3600
 	}
 	return time.Now().Add(time.Duration(seconds) * time.Second)
+}
+
+// persistReauthTokens stores tokens the user just obtained by re-authorizing. When
+// the owner already holds a refresh token the swap is anchored to it, so a
+// concurrent rotation is reported as db.ErrOAuthTokenConflict instead of being
+// overwritten; an owner without one is simply given the new pair.
+func persistReauthTokens(ctx context.Context, sink db.OAuthReauthSink, tokens db.EncryptedOAuthTokens, expected sql.NullString) error {
+	if expected.Valid && expected.String != "" {
+		return sink.Persist(ctx, tokens, expected.String)
+	}
+	return sink.Reauthorize(ctx, tokens)
 }
 
 func (api *migrationAPI) handleMigrationReauth(w http.ResponseWriter, r *http.Request) {
@@ -56,12 +69,7 @@ func (api *migrationAPI) handleMigrationReauth(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
-	update := db.OAuthTokenUpdate{MigrationID: id, Role: req.Role, AccessTokenEncrypted: access, RefreshTokenEncrypted: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}
-	if expected.Valid && expected.String != "" {
-		err = db.UpdateMigrationOAuthTokens(api.db, update, expected.String)
-	} else {
-		err = db.UpdateMigrationOAuthTokensForReauth(api.db, update)
-	}
+	err = persistReauthTokens(r.Context(), db.NewMigrationTokenSink(api.db, id, req.Role), db.EncryptedOAuthTokens{Access: access, Refresh: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}, expected)
 	if err != nil {
 		if errors.Is(err, db.ErrOAuthTokenConflict) {
 			writeError(w, http.StatusConflict, ErrMigrationInvalidState)
@@ -119,11 +127,7 @@ func (api *syncAPI) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
-	if expected.Valid && expected.String != "" {
-		err = db.UpdateSyncJobOAuthTokens(api.db, id, req.Role, access, refresh, oauthExpiry(req.ExpiresIn), expected.String)
-	} else {
-		err = db.UpdateSyncJobOAuthTokensForReauth(api.db, id, req.Role, access, refresh, oauthExpiry(req.ExpiresIn))
-	}
+	err = persistReauthTokens(r.Context(), db.NewSyncJobTokenSink(api.db, id, req.Role), db.EncryptedOAuthTokens{Access: access, Refresh: refresh, ExpiresAt: oauthExpiry(req.ExpiresIn)}, expected)
 	if err != nil {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return

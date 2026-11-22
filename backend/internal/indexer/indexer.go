@@ -491,19 +491,11 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 	}
 	defer crypto.ZeroString(&refreshToken)
 
-	var locker oauth.TokenLocker
-	if idx.queue != nil {
-		locker = idx.queue
-	}
-
 	var emptyRefresh bool
-	res, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
-		DB:            idx.db,
-		Locker:        locker,
-		EncryptionKey: idx.encryptionKey,
-		UserID:        mig.UserID.String,
-		Provider:      mig.SourceProvider,
-		RefreshToken:  refreshToken,
+	res, err := idx.refresher().Refresh(ctx, oauth.OwnerRefresh{
+		UserID:       mig.UserID.String,
+		Provider:     mig.SourceProvider,
+		RefreshToken: refreshToken,
 		Refresh: func(refreshCtx context.Context, provider, tok string) (*oauth.TokenResponse, error) {
 			tokenResp, rerr := oauth.RefreshToken(refreshCtx, provider, tok)
 			if rerr != nil {
@@ -549,39 +541,16 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 			}
 			return "", false, "", nil
 		},
-		Persist: func(persistCtx context.Context, _ string, tokenResp *oauth.TokenResponse) (string, bool, error) {
-			newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, idx.encryptionKey, crypto.DomainOAuthAccessToken)
-			if err != nil {
-				return "", false, fmt.Errorf("failed to encrypt refreshed source access token: %w", err)
+		Sink:            db.NewMigrationTokenSink(idx.db, migID, "source"),
+		ExpectedRefresh: func() string { return expectedRefreshEnc },
+		AdoptSuperseded: func(persistCtx context.Context) (string, bool) {
+			logger.Info("indexing_source_token_update_conflict")
+			latestMig, lerr := db.GetMigrationContext(persistCtx, idx.db, migID)
+			if lerr != nil {
+				return "", false
 			}
-			newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, idx.encryptionKey, crypto.DomainOAuthRefreshToken)
-			if err != nil {
-				return "", false, fmt.Errorf("failed to encrypt refreshed source refresh token: %w", err)
-			}
-			expiresIn := tokenResp.ExpiresIn
-			if expiresIn <= 0 {
-				expiresIn = 3600
-			}
-			err = db.UpdateMigrationOAuthTokensContext(persistCtx, idx.db, db.OAuthTokenUpdate{
-				MigrationID:           migID,
-				Role:                  "source",
-				AccessTokenEncrypted:  newAccessEnc,
-				RefreshTokenEncrypted: newRefreshEnc,
-				ExpiresAt:             time.Now().Add(time.Duration(expiresIn) * time.Second),
-			}, expectedRefreshEnc)
-			if errors.Is(err, db.ErrOAuthTokenConflict) {
-				logger.Info("indexing_source_token_update_conflict")
-				if latestMig, lerr := db.GetMigrationContext(persistCtx, idx.db, migID); lerr == nil {
-					if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
-						return latestAccess, true, nil
-					}
-				}
-				return "", false, fmt.Errorf("token update conflict for migration %s (source): %w", migID, err)
-			}
-			if err != nil {
-				return "", false, fmt.Errorf("failed to persist refreshed source tokens: %w", err)
-			}
-			return "", false, nil
+			latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken)
+			return latestAccess, derr == nil
 		},
 	})
 	if err != nil {
@@ -594,6 +563,16 @@ func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID stri
 		return res.AdoptedAccess, nil
 	}
 	return res.Token.AccessToken, nil
+}
+
+// refresher binds the indexer's shared rotation infrastructure. The queue is the
+// distributed token locker when present; a nil queue must stay a nil interface.
+func (idx *Indexer) refresher() *oauth.Refresher {
+	cfg := oauth.RefresherConfig{DB: idx.db, EncryptionKey: idx.encryptionKey}
+	if idx.queue != nil {
+		cfg.Locker = idx.queue
+	}
+	return oauth.NewRefresher(cfg)
 }
 
 func (idx *Indexer) newSource(ctx context.Context, providerType, urlStr, username, password string, opts ...storage.ProviderOption) (IndexSource, error) {

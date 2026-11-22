@@ -194,53 +194,6 @@ func GetBackupRepositoryConnectionContext(ctx context.Context, database *sql.DB,
 	return connection, nil
 }
 
-// UpdateBackupRepositoryOAuthTokens conditionally rotates the credentials of
-// the backup repository itself. Restore rows never copy these source secrets;
-// concurrent workers adopt the CAS winner instead of persisting a stale token.
-func UpdateBackupRepositoryOAuthTokens(ctx context.Context, database *sql.DB, backupJobID, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error {
-	if expectedRefreshEncrypted == "" {
-		return ErrOAuthTokenConflict
-	}
-	result, err := database.ExecContext(ctx, `UPDATE backup_jobs SET target_password_encrypted = $2, target_refresh_token_encrypted = $3, target_token_expires_at = $4 WHERE id = $1 AND target_refresh_token_encrypted = $5 AND deletion_state = 'ACTIVE'`, backupJobID, accessEncrypted, refreshEncrypted, expiresAt, expectedRefreshEncrypted)
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count != 1 {
-		return ErrOAuthTokenConflict
-	}
-	return nil
-}
-
-// UpdateBackupJobOAuthTokens conditionally rotates either credential snapshot.
-// The role is fixed to an allowlist so column names never derive from input.
-func UpdateBackupJobOAuthTokens(ctx context.Context, database *sql.DB, backupJobID, role, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error {
-	if expectedRefreshEncrypted == "" {
-		return ErrOAuthTokenConflict
-	}
-	if role == "target" {
-		return UpdateBackupRepositoryOAuthTokens(ctx, database, backupJobID, accessEncrypted, refreshEncrypted, expiresAt, expectedRefreshEncrypted)
-	}
-	if role != "source" {
-		return ErrOAuthTokenConflict
-	}
-	result, err := database.ExecContext(ctx, `UPDATE backup_jobs SET source_password_encrypted = $2, source_refresh_token_encrypted = $3, source_token_expires_at = $4 WHERE id = $1 AND source_refresh_token_encrypted = $5 AND deletion_state = 'ACTIVE'`, backupJobID, accessEncrypted, refreshEncrypted, expiresAt, expectedRefreshEncrypted)
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count != 1 {
-		return ErrOAuthTokenConflict
-	}
-	return nil
-}
-
 func UpdateBackupRepositoryMegaSessionContext(ctx context.Context, database *sql.DB, backupJobID, sessionIDEncrypted, masterKeyEncrypted string) error {
 	_, err := database.ExecContext(ctx, `UPDATE backup_jobs SET target_mega_session_id_encrypted = $2, target_mega_master_key_encrypted = $3 WHERE id = $1 AND deletion_state = 'ACTIVE'`, backupJobID, nullableBackupString(sessionIDEncrypted), nullableBackupString(masterKeyEncrypted))
 	return err

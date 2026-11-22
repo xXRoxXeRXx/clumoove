@@ -50,6 +50,11 @@ func (e *openedSyncEndpoint[T]) Close() {
 	}
 }
 
+// refresher binds the API's shared rotation infrastructure.
+func (api *syncAPI) refresher() *oauth.Refresher {
+	return oauth.NewRefresher(oauth.RefresherConfig{DB: api.db, Cache: api.oauthRotations, Locker: api.oauthLocker, EncryptionKey: api.encryptionKey})
+}
+
 func openSyncJobEndpoint[T any](api *syncAPI, ctx context.Context, id, userID, role string, job *db.SyncJob) (*openedSyncEndpoint[T], error) {
 	profileID := job.SourceProfileID
 	if role == "target" {
@@ -99,14 +104,10 @@ func openSyncJobEndpoint[T any](api *syncAPI, ctx context.Context, id, userID, r
 		}
 		defer crypto.ZeroString(&refreshToken)
 		if refreshToken != "" {
-			res, rerr := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
-				DB:            api.db,
-				Cache:         api.oauthRotations,
-				Locker:        api.oauthLocker,
-				EncryptionKey: api.encryptionKey,
-				UserID:        userID,
-				Provider:      creds.provider,
-				RefreshToken:  refreshToken,
+			res, rerr := api.refresher().Refresh(ctx, oauth.OwnerRefresh{
+				UserID:       userID,
+				Provider:     creds.provider,
+				RefreshToken: refreshToken,
 				Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
 					token, rerr := oauth.RefreshToken(refreshCtx, prov, tok)
 					if rerr != nil {
@@ -145,32 +146,19 @@ func openSyncJobEndpoint[T any](api *syncAPI, ctx context.Context, id, userID, r
 					}
 					return "", false, "", nil
 				},
-				Persist: func(persistCtx context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
-					accessEncrypted, accessErr := crypto.EncryptWithDomain(token.AccessToken, api.encryptionKey, crypto.DomainOAuthAccessToken)
-					if accessErr != nil {
-						return "", false, accessErr
+				Sink:            db.NewSyncJobTokenSink(api.db, id, role),
+				ExpectedRefresh: func() string { return expectedRefreshEnc },
+				AdoptSuperseded: func(persistCtx context.Context) (string, bool) {
+					latestJob, lerr := db.GetSyncJobContext(persistCtx, api.db, id)
+					if lerr != nil {
+						return "", false
 					}
-					newRefreshEncrypted, refreshErr := crypto.EncryptWithDomain(token.RefreshToken, api.encryptionKey, crypto.DomainOAuthRefreshToken)
-					if refreshErr != nil {
-						return "", false, refreshErr
+					latestPassEnc := latestJob.SourcePasswordEncrypted
+					if role == "target" {
+						latestPassEnc = latestJob.TargetPasswordEncrypted
 					}
-					expiresIn := token.ExpiresIn
-					if expiresIn <= 0 {
-						expiresIn = 3600
-					}
-					err := db.UpdateSyncJobOAuthTokensContext(persistCtx, api.db, id, role, accessEncrypted, newRefreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), expectedRefreshEnc)
-					if errors.Is(err, db.ErrOAuthTokenConflict) {
-						if latestJob, lerr := db.GetSyncJobContext(persistCtx, api.db, id); lerr == nil {
-							latestPassEnc := latestJob.SourcePasswordEncrypted
-							if role == "target" {
-								latestPassEnc = latestJob.TargetPasswordEncrypted
-							}
-							if plain, derr := crypto.DecryptWithDomain(latestPassEnc, api.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
-								return plain, true, nil
-							}
-						}
-					}
-					return "", false, err
+					plain, derr := crypto.DecryptWithDomain(latestPassEnc, api.encryptionKey, crypto.DomainOAuthAccessToken)
+					return plain, derr == nil
 				},
 			})
 			if rerr == nil {

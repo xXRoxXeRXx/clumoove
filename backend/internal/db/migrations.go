@@ -138,14 +138,6 @@ type MigrationListParams struct {
 	Limit int
 }
 
-type OAuthTokenUpdate struct {
-	MigrationID           string
-	Role                  string
-	AccessTokenEncrypted  string
-	RefreshTokenEncrypted string
-	ExpiresAt             time.Time
-}
-
 type ExpiringOAuthMigration struct {
 	MigrationID           string
 	Role                  string
@@ -1118,72 +1110,6 @@ func GetMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResour
 		}
 	}
 	return stats, rows.Err()
-}
-
-var ErrOAuthTokenConflict = errors.New("oauth token update conflict: persisted token changed concurrently")
-
-func UpdateMigrationOAuthTokens(db *sql.DB, u OAuthTokenUpdate, expectedRefreshTokenEncrypted string) error {
-	return UpdateMigrationOAuthTokensContext(context.Background(), db, u, expectedRefreshTokenEncrypted)
-}
-
-// UpdateMigrationOAuthTokensContext atomically persists a rotated OAuth token
-// pair for a migration while honoring ctx cancellation and deadlines.
-func UpdateMigrationOAuthTokensContext(ctx context.Context, db *sql.DB, u OAuthTokenUpdate, expectedRefreshTokenEncrypted string) error {
-	if u.Role != "source" && u.Role != "target" {
-		return fmt.Errorf("invalid oauth token role %q", u.Role)
-	}
-	// OAuth rotation must always be anchored to an existing encrypted refresh
-	// token. An empty expected value would turn the SQL NULL/empty branch into
-	// an unconditional credential upsert for non-OAuth migrations.
-	if expectedRefreshTokenEncrypted == "" {
-		return ErrOAuthTokenConflict
-	}
-	var query string
-	if u.Role == "source" {
-		query = `
-			UPDATE migrations
-			SET source_password_encrypted        = $1,
-			    source_refresh_token_encrypted   = $2,
-			    source_token_expires_at          = $3,
-			    updated_at                       = CURRENT_TIMESTAMP
-			WHERE id = $4
-			  AND source_refresh_token_encrypted = $5
-		`
-	} else {
-		query = `
-			UPDATE migrations
-			SET target_password_encrypted        = $1,
-			    target_refresh_token_encrypted   = $2,
-			    target_token_expires_at          = $3,
-			    updated_at                       = CURRENT_TIMESTAMP
-			WHERE id = $4
-			  AND target_refresh_token_encrypted = $5
-		`
-	}
-	res, err := db.ExecContext(ctx, query, u.AccessTokenEncrypted, u.RefreshTokenEncrypted, u.ExpiresAt, u.MigrationID, expectedRefreshTokenEncrypted)
-	if err != nil {
-		return err
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return ErrOAuthTokenConflict
-	}
-	return nil
-}
-
-func UpdateMigrationOAuthTokensForReauth(db *sql.DB, u OAuthTokenUpdate) error {
-	if u.Role != "source" && u.Role != "target" {
-		return fmt.Errorf("invalid oauth token role %q", u.Role)
-	}
-	columns := "source_password_encrypted = $1, source_refresh_token_encrypted = $2, source_token_expires_at = $3"
-	if u.Role == "target" {
-		columns = "target_password_encrypted = $1, target_refresh_token_encrypted = $2, target_token_expires_at = $3"
-	}
-	_, err := db.Exec("UPDATE migrations SET "+columns+", updated_at = CURRENT_TIMESTAMP WHERE id = $4", u.AccessTokenEncrypted, u.RefreshTokenEncrypted, u.ExpiresAt, u.MigrationID)
-	return err
 }
 
 func GetExpiringOAuthMigrations(db *sql.DB) ([]ExpiringOAuthMigration, error) {

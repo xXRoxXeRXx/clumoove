@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"time"
 )
 
 // BackupRepositoryCredentials is the persistence shared by the backup and
@@ -12,7 +11,7 @@ import (
 // copy the source secrets into their own rows.
 type BackupRepositoryCredentials interface {
 	GetBackupRepositoryConnectionContext(ctx context.Context, jobID string) (*BackupRepositoryConnection, error)
-	UpdateBackupRepositoryOAuthTokens(ctx context.Context, backupJobID, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error
+	BackupRepositoryTokenSink(backupJobID string) OAuthTokenSink
 	UpdateBackupRepositoryMegaSessionContext(ctx context.Context, backupJobID, sessionIDEncrypted, masterKeyEncrypted string) error
 }
 
@@ -22,8 +21,8 @@ func (s backupRepositoryCredentials) GetBackupRepositoryConnectionContext(ctx co
 	return GetBackupRepositoryConnectionContext(ctx, s.db, jobID)
 }
 
-func (s backupRepositoryCredentials) UpdateBackupRepositoryOAuthTokens(ctx context.Context, backupJobID, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error {
-	return UpdateBackupRepositoryOAuthTokens(ctx, s.db, backupJobID, accessEncrypted, refreshEncrypted, expiresAt, expectedRefreshEncrypted)
+func (s backupRepositoryCredentials) BackupRepositoryTokenSink(backupJobID string) OAuthTokenSink {
+	return NewBackupRepositoryTokenSink(s.db, backupJobID)
 }
 
 func (s backupRepositoryCredentials) UpdateBackupRepositoryMegaSessionContext(ctx context.Context, backupJobID, sessionIDEncrypted, masterKeyEncrypted string) error {

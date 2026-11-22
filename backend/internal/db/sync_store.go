@@ -33,7 +33,7 @@ type SyncStore interface {
 	// Delta baseline, task fan-out and credential rotation.
 	ListSyncStateByJob(syncJobID string) ([]SyncState, error)
 	BulkCreateSyncTasks(ctx context.Context, tasks []*Task) error
-	UpdateSyncJobOAuthTokensContext(ctx context.Context, id, role, accessTokenEncrypted, refreshTokenEncrypted string, expiresAt time.Time, expectedRefreshTokenEncrypted string) error
+	SyncJobTokenSink(id, role string) OAuthReauthSink
 }
 
 type postgresSyncStore struct{ db *sql.DB }
@@ -115,6 +115,6 @@ func (s postgresSyncStore) BulkCreateSyncTasks(ctx context.Context, tasks []*Tas
 	return BulkCreateSyncTasks(ctx, s.db, tasks)
 }
 
-func (s postgresSyncStore) UpdateSyncJobOAuthTokensContext(ctx context.Context, id, role, accessTokenEncrypted, refreshTokenEncrypted string, expiresAt time.Time, expectedRefreshTokenEncrypted string) error {
-	return UpdateSyncJobOAuthTokensContext(ctx, s.db, id, role, accessTokenEncrypted, refreshTokenEncrypted, expiresAt, expectedRefreshTokenEncrypted)
+func (s postgresSyncStore) SyncJobTokenSink(id, role string) OAuthReauthSink {
+	return NewSyncJobTokenSink(s.db, id, role)
 }

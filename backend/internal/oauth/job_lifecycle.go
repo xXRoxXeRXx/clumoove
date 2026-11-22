@@ -3,7 +3,6 @@ package oauth
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
@@ -26,7 +25,7 @@ type jobOAuthTokenState interface {
 	OAuthUpdatedAt() time.Time
 	ApplyOAuthTokens(role, access string, refresh sql.NullString, expires sql.NullTime)
 	ReloadOAuthTokens(context.Context) error
-	PersistOAuthTokens(ctx context.Context, role, access, refresh string, expires time.Time, expectedRefresh string) error
+	OAuthTokenSink(role string) db.OAuthTokenSink
 }
 
 // JobTokenRefresher coordinates inline and forced OAuth access-token refreshes
@@ -47,6 +46,10 @@ func NewJobTokenRefresher(database *sql.DB, secretKey string, locker TokenLocker
 		secretKey: secretKey,
 		locker:    locker,
 	}
+}
+
+func (r *JobTokenRefresher) refresher() *Refresher {
+	return NewRefresher(RefresherConfig{DB: r.db, Locker: r.locker, EncryptionKey: r.secretKey})
 }
 
 func (r *JobTokenRefresher) refreshToken(ctx context.Context, provider, refresh string) (*TokenResponse, error) {
@@ -105,13 +108,10 @@ func (r *JobTokenRefresher) refreshLifecycle(ctx context.Context, state jobOAuth
 	jobRelease := r.locks.Lock(fmt.Sprintf("%s:%s:%s", state.OAuthWorkKind(), state.OAuthJobID(), role))
 	defer jobRelease()
 
-	res, err := RefreshWithRotationLock(ctx, RotationRefreshRequest{
-		DB:            r.db,
-		Locker:        r.locker,
-		EncryptionKey: r.secretKey,
-		UserID:        state.OAuthUserID(),
-		Provider:      initial.provider,
-		RefreshToken:  refresh,
+	res, err := r.refresher().Refresh(ctx, OwnerRefresh{
+		UserID:       state.OAuthUserID(),
+		Provider:     initial.provider,
+		RefreshToken: refresh,
 		Refresh: func(refreshCtx context.Context, provider, tok string) (*TokenResponse, error) {
 			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
 			defer cancel()
@@ -160,31 +160,18 @@ func (r *JobTokenRefresher) refreshLifecycle(ctx context.Context, state jobOAuth
 			}
 			return "", false, "", nil
 		},
-		Persist: func(persistCtx context.Context, _ string, response *TokenResponse) (string, bool, error) {
-			accessEnc, err := crypto.EncryptWithDomain(response.AccessToken, r.secretKey, crypto.DomainOAuthAccessToken)
-			if err != nil {
-				return "", false, fmt.Errorf("encrypt OAuth access token: %w", err)
+		Sink:            state.OAuthTokenSink(role),
+		ExpectedRefresh: func() string { return expectedRefreshEnc },
+		OnPersisted: func(tokens db.EncryptedOAuthTokens) {
+			state.ApplyOAuthTokens(role, tokens.Access, sql.NullString{String: tokens.Refresh, Valid: true}, sql.NullTime{Time: tokens.ExpiresAt, Valid: true})
+		},
+		AdoptSuperseded: func(persistCtx context.Context) (string, bool) {
+			if state.ReloadOAuthTokens(persistCtx) != nil {
+				return "", false
 			}
-			refreshEnc, err := crypto.EncryptWithDomain(response.RefreshToken, r.secretKey, crypto.DomainOAuthRefreshToken)
-			if err != nil {
-				return "", false, fmt.Errorf("encrypt OAuth refresh token: %w", err)
-			}
-			expiresIn := response.ExpiresIn
-			if expiresIn <= 0 {
-				expiresIn = 3600
-			}
-			expires := time.Now().Add(time.Duration(expiresIn) * time.Second)
-			if err := state.PersistOAuthTokens(persistCtx, role, accessEnc, refreshEnc, expires, expectedRefreshEnc); err != nil {
-				if errors.Is(err, db.ErrOAuthTokenConflict) && state.ReloadOAuthTokens(persistCtx) == nil {
-					winner := state.OAuthTokens(role)
-					if decrypted, decryptErr := crypto.DecryptWithDomain(winner.accessEnc, r.secretKey, crypto.DomainOAuthAccessToken); decryptErr == nil {
-						return decrypted, true, nil
-					}
-				}
-				return "", false, fmt.Errorf("persist OAuth tokens: %w", err)
-			}
-			state.ApplyOAuthTokens(role, accessEnc, sql.NullString{String: refreshEnc, Valid: true}, sql.NullTime{Time: expires, Valid: true})
-			return "", false, nil
+			winner := state.OAuthTokens(role)
+			decrypted, decryptErr := crypto.DecryptWithDomain(winner.accessEnc, r.secretKey, crypto.DomainOAuthAccessToken)
+			return decrypted, decryptErr == nil
 		},
 	})
 	if err != nil {
@@ -232,8 +219,8 @@ func (s *migrationJobTokenState) ReloadOAuthTokens(ctx context.Context) error {
 	s.migration.UpdatedAt = latest.UpdatedAt
 	return nil
 }
-func (s *migrationJobTokenState) PersistOAuthTokens(ctx context.Context, role, access, refresh string, expires time.Time, expected string) error {
-	return db.UpdateMigrationOAuthTokensContext(ctx, s.db, db.OAuthTokenUpdate{MigrationID: s.migration.ID, Role: role, AccessTokenEncrypted: access, RefreshTokenEncrypted: refresh, ExpiresAt: expires}, expected)
+func (s *migrationJobTokenState) OAuthTokenSink(role string) db.OAuthTokenSink {
+	return db.NewMigrationTokenSink(s.db, s.migration.ID, role)
 }
 
 type syncJobTokenState struct {
@@ -272,6 +259,6 @@ func (s *syncJobTokenState) ReloadOAuthTokens(ctx context.Context) error {
 	s.job.UpdatedAt = latest.UpdatedAt
 	return nil
 }
-func (s *syncJobTokenState) PersistOAuthTokens(ctx context.Context, role, access, refresh string, expires time.Time, expected string) error {
-	return db.UpdateSyncJobOAuthTokensContext(ctx, s.db, s.job.ID, role, access, refresh, expires, expected)
+func (s *syncJobTokenState) OAuthTokenSink(role string) db.OAuthTokenSink {
+	return db.NewSyncJobTokenSink(s.db, s.job.ID, role)
 }

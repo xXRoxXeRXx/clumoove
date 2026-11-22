@@ -137,15 +137,7 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthTokens(ctx context.Context) {
 					}
 					return mig.UserID.String, refreshEnc, expiresAt, active, mig.Status, nil
 				},
-				persist: func(persistCtx context.Context, accessEnc, refreshEnc string, expiresAt time.Time, expectedRefreshEnc string) error {
-					return db.UpdateMigrationOAuthTokensContext(persistCtx, d.db, db.OAuthTokenUpdate{
-						MigrationID:           entry.MigrationID,
-						Role:                  entry.Role,
-						AccessTokenEncrypted:  accessEnc,
-						RefreshTokenEncrypted: refreshEnc,
-						ExpiresAt:             expiresAt,
-					}, expectedRefreshEnc)
-				},
+				sink: db.NewMigrationTokenSink(d.db, entry.MigrationID, entry.Role),
 				markFailed: func() {
 					d.failMigrationAfterRefreshFailure(ctx, entry.MigrationID, entry.Provider)
 				},
@@ -182,9 +174,7 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthTokens(ctx context.Context) {
 					}
 					return job.UserID, refreshEnc, expiresAt, active, job.Status, nil
 				},
-				persist: func(persistCtx context.Context, accessEnc, refreshEnc string, expiresAt time.Time, expectedRefreshEnc string) error {
-					return db.UpdateSyncJobOAuthTokensContext(persistCtx, d.db, entry.SyncJobID, entry.Role, accessEnc, refreshEnc, expiresAt, expectedRefreshEnc)
-				},
+				sink: db.NewSyncJobTokenSink(d.db, entry.SyncJobID, entry.Role),
 				markFailed: func() {
 					d.failSyncJobAfterRefreshFailure(ctx, entry.SyncJobID, entry.Provider)
 				},
@@ -211,9 +201,7 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthTokens(ctx context.Context) {
 					}
 					return entry.UserID, refreshEnc.String, exp, true, "", nil
 				},
-				persist: func(persistCtx context.Context, accessEnc, refreshEnc string, expiresAt time.Time, expectedRefreshEnc string) error {
-					return db.UpdateRestoreRunOAuthTokens(persistCtx, d.db, entry.RestoreRunID, accessEnc, refreshEnc, expiresAt, expectedRefreshEnc)
-				},
+				sink: db.NewRestoreRunTokenSink(d.db, entry.RestoreRunID),
 			})
 		}
 	}
@@ -238,8 +226,18 @@ type expiringOAuthJobSpec struct {
 	role         string
 	provider     string
 	loadSnapshot func(ctx context.Context) (userID, refreshEnc string, expiresAt time.Time, active bool, status string, err error)
-	persist      func(ctx context.Context, accessEnc, refreshEnc string, expiresAt time.Time, expectedRefreshEnc string) error
+	sink         db.OAuthTokenSink
 	markFailed   func()
+}
+
+// refresher binds the daemon's shared rotation infrastructure. The queue is the
+// distributed token locker when present; a nil queue must stay a nil interface.
+func (d *oauthRotationDaemon) refresher() *oauth.Refresher {
+	cfg := oauth.RefresherConfig{DB: d.db, Cache: d.cache, EncryptionKey: d.encryptionKey}
+	if d.queue != nil {
+		cfg.Locker = d.queue
+	}
+	return oauth.NewRefresher(cfg)
 }
 
 func (d *oauthRotationDaemon) rotateExpiringOAuthJob(ctx context.Context, logger *slog.Logger, spec expiringOAuthJobSpec) {
@@ -267,20 +265,11 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthJob(ctx context.Context, logger
 	}
 	defer crypto.ZeroString(&refreshToken)
 
-	var locker oauth.TokenLocker
-	if d.queue != nil {
-		locker = d.queue
-	}
-
 	var rotatedExpiresAt time.Time
-	res, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
-		DB:            d.db,
-		Cache:         d.cache,
-		Locker:        locker,
-		EncryptionKey: d.encryptionKey,
-		UserID:        userID,
-		Provider:      spec.provider,
-		RefreshToken:  refreshToken,
+	res, err := d.refresher().Refresh(ctx, oauth.OwnerRefresh{
+		UserID:       userID,
+		Provider:     spec.provider,
+		RefreshToken: refreshToken,
 		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
 			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
 			defer cancel()
@@ -307,32 +296,12 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthJob(ctx context.Context, logger
 			}
 			return "", false, "", nil
 		},
-		Persist: func(persistCtx context.Context, _ string, tokenResp *oauth.TokenResponse) (string, bool, error) {
-			newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, d.encryptionKey, crypto.DomainOAuthAccessToken)
-			if err != nil {
-				logger.ErrorContext(persistCtx, "oauth_rotation_encrypt_failed", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), slog.String("token_type", "access"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-				return "", false, err
-			}
-			newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, d.encryptionKey, crypto.DomainOAuthRefreshToken)
-			if err != nil {
-				logger.ErrorContext(persistCtx, "oauth_rotation_encrypt_failed", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), slog.String("token_type", "refresh"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-				return "", false, err
-			}
-			expiresIn := tokenResp.ExpiresIn
-			if expiresIn <= 0 {
-				expiresIn = 3600
-			}
-			rotatedExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
-			err = spec.persist(persistCtx, newAccessEnc, newRefreshEnc, rotatedExpiresAt, currentRefreshEnc)
-			if errors.Is(err, db.ErrOAuthTokenConflict) {
-				logger.InfoContext(persistCtx, "oauth_rotation_update_conflict", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), slog.String("role", spec.role))
-				return "", true, nil
-			}
-			if err != nil {
-				logger.ErrorContext(persistCtx, "oauth_rotation_persist_failed", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), slog.String("role", spec.role), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-				return "", false, err
-			}
-			return "", false, nil
+		Sink:            spec.sink,
+		ExpectedRefresh: func() string { return currentRefreshEnc },
+		OnPersisted:     func(tokens db.EncryptedOAuthTokens) { rotatedExpiresAt = tokens.ExpiresAt },
+		AdoptSuperseded: func(persistCtx context.Context) (string, bool) {
+			logger.InfoContext(persistCtx, "oauth_rotation_update_conflict", slog.String("job_type", spec.jobType), slog.String("job_id", spec.jobID), slog.String("role", spec.role))
+			return "", true
 		},
 	})
 	if err != nil {

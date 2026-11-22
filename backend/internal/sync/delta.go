@@ -1081,6 +1081,16 @@ func shouldRefreshToken(expiry sql.NullTime) bool {
 	return expiry.Valid && !time.Now().Before(expiry.Time.Add(-2*time.Minute))
 }
 
+// refresher binds the engine's shared rotation infrastructure. The queue is the
+// distributed token locker when present; a nil queue must stay a nil interface.
+func (e *Engine) refresher() *oauth.Refresher {
+	cfg := oauth.RefresherConfig{DB: e.db, EncryptionKey: e.encryptionKey}
+	if e.queue != nil {
+		cfg.Locker = e.queue
+	}
+	return oauth.NewRefresher(cfg)
+}
+
 // ensureFreshToken refreshes OAuth credentials for a sync job if they are expired or near expiry.
 func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db.SyncJob, role string, currentToken string) (string, error) {
 	tokenSet := func(j *db.SyncJob) (sql.NullTime, string, string, string) {
@@ -1103,19 +1113,11 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 	}
 	defer crypto.ZeroString(&refreshToken)
 
-	var locker oauth.TokenLocker
-	if e.queue != nil {
-		locker = e.queue
-	}
-
 	var emptyRefresh bool
-	res, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
-		DB:            e.db,
-		Locker:        locker,
-		EncryptionKey: e.encryptionKey,
-		UserID:        job.UserID,
-		Provider:      provider,
-		RefreshToken:  refreshToken,
+	res, err := e.refresher().Refresh(ctx, oauth.OwnerRefresh{
+		UserID:       job.UserID,
+		Provider:     provider,
+		RefreshToken: refreshToken,
 		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
 			tokenResp, rerr := oauth.RefreshToken(refreshCtx, prov, tok)
 			if rerr != nil {
@@ -1163,35 +1165,17 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 			}
 			return "", false, "", nil
 		},
-		Persist: func(persistCtx context.Context, _ string, tokenResp *oauth.TokenResponse) (string, bool, error) {
-			newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, e.encryptionKey, crypto.DomainOAuthAccessToken)
-			if err != nil {
-				return "", false, fmt.Errorf("failed to encrypt new access token: %w", err)
+		Sink:            e.syncs.SyncJobTokenSink(syncJobID, role),
+		ExpectedRefresh: func() string { return expectedRefreshEnc },
+		AdoptSuperseded: func(persistCtx context.Context) (string, bool) {
+			slog.Info("sync OAuth token update conflicted; adopting stored winner", "sync_job_id", syncJobID, "role", role)
+			latestJob, lerr := e.syncs.GetSyncJobContext(persistCtx, syncJobID)
+			if lerr != nil {
+				return "", false
 			}
-			newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, e.encryptionKey, crypto.DomainOAuthRefreshToken)
-			if err != nil {
-				return "", false, fmt.Errorf("failed to encrypt new refresh token: %w", err)
-			}
-			expiresIn := tokenResp.ExpiresIn
-			if expiresIn <= 0 {
-				expiresIn = 3600
-			}
-			newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
-			err = e.syncs.UpdateSyncJobOAuthTokensContext(persistCtx, syncJobID, role, newAccessEnc, newRefreshEnc, newExpiresAt, expectedRefreshEnc)
-			if errors.Is(err, db.ErrOAuthTokenConflict) {
-				slog.Info("sync OAuth token update conflicted; adopting stored winner", "sync_job_id", syncJobID, "role", role)
-				if latestJob, lerr := e.syncs.GetSyncJobContext(persistCtx, syncJobID); lerr == nil {
-					_, _, _, latestAccessEnc := tokenSet(latestJob)
-					if latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
-						return latestAccess, true, nil
-					}
-				}
-				return "", false, fmt.Errorf("token update conflict for sync job %s (%s): %w", syncJobID, role, err)
-			}
-			if err != nil {
-				return "", false, fmt.Errorf("failed to persist refreshed tokens: %w", err)
-			}
-			return "", false, nil
+			_, _, _, latestAccessEnc := tokenSet(latestJob)
+			latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken)
+			return latestAccess, derr == nil
 		},
 	})
 	if err != nil {

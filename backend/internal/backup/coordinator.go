@@ -1086,14 +1086,10 @@ func (c *Coordinator) ensureFreshOAuthToken(ctx context.Context, job *db.BackupJ
 	}
 	defer crypto.ZeroString(&refresh)
 
-	var persistedAccess string
-	res, err := oauth.RefreshWithRotationLock(ctx, oauth.RotationRefreshRequest{
-		DB:            c.db,
-		Locker:        c.oauthLocker,
-		EncryptionKey: c.encryptionKey,
-		UserID:        job.UserID,
-		Provider:      provider,
-		RefreshToken:  refresh,
+	res, err := c.refresher().Refresh(ctx, oauth.OwnerRefresh{
+		UserID:       job.UserID,
+		Provider:     provider,
+		RefreshToken: refresh,
 		Refresh: func(refreshCtx context.Context, prov, tok string) (*oauth.TokenResponse, error) {
 			tCtx, cancel := context.WithTimeout(refreshCtx, 15*time.Second)
 			defer cancel()
@@ -1125,28 +1121,12 @@ func (c *Coordinator) ensureFreshOAuthToken(ctx context.Context, job *db.BackupJ
 			}
 			return "", false, "", nil
 		},
-		Persist: func(persistCtx context.Context, _ string, token *oauth.TokenResponse) (string, bool, error) {
-			access, err := crypto.EncryptWithDomain(token.AccessToken, c.encryptionKey, crypto.DomainOAuthAccessToken)
-			if err != nil {
-				return "", false, err
-			}
-			rotatedRefresh, err := crypto.EncryptWithDomain(token.RefreshToken, c.encryptionKey, crypto.DomainOAuthRefreshToken)
-			if err != nil {
-				return "", false, err
-			}
-			expiresIn := token.ExpiresIn
-			if expiresIn <= 0 {
-				expiresIn = 3600
-			}
-			newExpiry := time.Now().Add(time.Duration(expiresIn) * time.Second)
-			if err := c.store.UpdateBackupJobOAuthTokens(persistCtx, job.ID, role, access, rotatedRefresh, newExpiry, expectedRefreshEnc); err != nil {
-				return "", false, fmt.Errorf("persist backup OAuth token: %w", err)
-			}
-			persistedAccess = access
-			*accessEncrypted = access
-			*refreshEncrypted = sql.NullString{String: rotatedRefresh, Valid: true}
-			*expiresAt = sql.NullTime{Time: newExpiry, Valid: true}
-			return "", false, nil
+		Sink:            c.store.BackupJobTokenSink(job.ID, role),
+		ExpectedRefresh: func() string { return expectedRefreshEnc },
+		OnPersisted: func(tokens db.EncryptedOAuthTokens) {
+			*accessEncrypted = tokens.Access
+			*refreshEncrypted = sql.NullString{String: tokens.Refresh, Valid: true}
+			*expiresAt = sql.NullTime{Time: tokens.ExpiresAt, Valid: true}
 		},
 	})
 	if err != nil {
@@ -1154,10 +1134,13 @@ func (c *Coordinator) ensureFreshOAuthToken(ctx context.Context, job *db.BackupJ
 	}
 	if res.Adopted {
 		*accessEncrypted = res.AdoptedAccess
-	} else {
-		_ = persistedAccess
 	}
 	return nil
+}
+
+// refresher binds the coordinator's shared rotation infrastructure.
+func (c *Coordinator) refresher() *oauth.Refresher {
+	return oauth.NewRefresher(oauth.RefresherConfig{DB: c.db, Locker: c.oauthLocker, EncryptionKey: c.encryptionKey})
 }
 
 func (c *Coordinator) backupFile(ctx context.Context, job *db.BackupJob, source fileBackupSource, file scannedFile, stats *runStats, builder *packBuilder) (pendingFile, bool, error) {

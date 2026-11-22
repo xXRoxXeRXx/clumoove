@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"time"
 )
 
 // RestoreStore is the restore domain's persistence seam for previews, runs and
@@ -45,7 +44,7 @@ type RestoreStore interface {
 	// Target credential snapshot owned by the restore run.
 	GetRestoreRunTargetConnectionContext(ctx context.Context, runID string) (*RestoreRunTargetConnection, error)
 	GetRestoreRunCredentialSnapshotContext(ctx context.Context, runID string) (accessEncrypted string, refreshEncrypted sql.NullString, expiresAt sql.NullTime, err error)
-	UpdateRestoreRunOAuthTokens(ctx context.Context, runID, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error
+	RestoreRunTokenSink(runID string) OAuthTokenSink
 	UpdateRestoreRunMegaSessionContext(ctx context.Context, runID, sessionIDEncrypted, masterKeyEncrypted string) error
 }
 
@@ -179,8 +178,8 @@ func (s postgresRestoreStore) GetRestoreRunCredentialSnapshotContext(ctx context
 	return GetRestoreRunCredentialSnapshotContext(ctx, s.db, runID)
 }
 
-func (s postgresRestoreStore) UpdateRestoreRunOAuthTokens(ctx context.Context, runID, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error {
-	return UpdateRestoreRunOAuthTokens(ctx, s.db, runID, accessEncrypted, refreshEncrypted, expiresAt, expectedRefreshEncrypted)
+func (s postgresRestoreStore) RestoreRunTokenSink(runID string) OAuthTokenSink {
+	return NewRestoreRunTokenSink(s.db, runID)
 }
 
 func (s postgresRestoreStore) UpdateRestoreRunMegaSessionContext(ctx context.Context, runID, sessionIDEncrypted, masterKeyEncrypted string) error {

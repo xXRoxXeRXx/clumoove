@@ -508,31 +508,6 @@ func HeartbeatRestoreItemContext(ctx context.Context, database *sql.DB, lease Le
 	return err
 }
 
-// UpdateRestoreRunOAuthTokens conditionally stores a refreshed target token
-// snapshot. The encrypted refresh-token compare is the durable CAS fence: a
-// stale worker adopts the winner instead of overwriting a newer rotation.
-func UpdateRestoreRunOAuthTokens(ctx context.Context, database *sql.DB, runID, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error {
-	if expectedRefreshEncrypted == "" {
-		return ErrOAuthTokenConflict
-	}
-	result, err := database.ExecContext(ctx, `
-		UPDATE restore_runs
-		SET target_password_encrypted = $2, target_refresh_token_encrypted = $3, target_token_expires_at = $4
-		WHERE id = $1 AND target_refresh_token_encrypted = $5
-			AND status IN ('QUEUED','PLANNING','RUNNING','VERIFYING','CANCELLING')`, runID, accessEncrypted, refreshEncrypted, expiresAt, expectedRefreshEncrypted)
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count != 1 {
-		return ErrOAuthTokenConflict
-	}
-	return nil
-}
-
 func GetRestoreRunCredentialSnapshotContext(ctx context.Context, database *sql.DB, runID string) (accessEncrypted string, refreshEncrypted sql.NullString, expiresAt sql.NullTime, err error) {
 	err = database.QueryRowContext(ctx, `SELECT target_password_encrypted, target_refresh_token_encrypted, target_token_expires_at FROM restore_runs WHERE id = $1`, runID).Scan(&accessEncrypted, &refreshEncrypted, &expiresAt)
 	return
