@@ -1,16 +1,8 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
-import { SyncDashboard } from './components/SyncDashboard';
-import { BackupDashboard } from './components/BackupDashboard';
-import { ConnectForm } from './components/ConnectForm';
-import { FileBrowser } from './components/FileBrowser';
-import { Dashboard } from './components/Dashboard';
 import { AuthForm } from './components/AuthForm';
 import { MigrationsDashboard } from './components/MigrationsDashboard';
-import { ResetPasswordForm } from './components/ResetPasswordForm';
-import { ConfirmEmailChangeForm } from './components/ConfirmEmailChangeForm';
-import { SettingsPage, type SettingsTab } from './components/SettingsPage';
+import type { SettingsTab } from './components/SettingsPage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
-import { AdminPanel } from './components/AdminPanel';
 import { LoadingIndicator } from './components/LoadingIndicator';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -33,7 +25,34 @@ function parseSettingsTab(tab: string): SettingsTab {
   return 'account';
 }
 
+// Everything except the sign-in screen and the home dashboard loads on demand so the first
+// paint ships a fraction of the app. Likely next screens are prefetched when the browser is idle.
+const loadConnectForm = () => import('./components/ConnectForm').then((m) => ({ default: m.ConnectForm }));
+const loadFileBrowser = () => import('./components/FileBrowser').then((m) => ({ default: m.FileBrowser }));
+const loadDashboard = () => import('./components/Dashboard').then((m) => ({ default: m.Dashboard }));
+const loadSyncDashboard = () => import('./components/SyncDashboard').then((m) => ({ default: m.SyncDashboard }));
+const loadBackupDashboard = () => import('./components/BackupDashboard').then((m) => ({ default: m.BackupDashboard }));
+const loadSettingsPage = () => import('./components/SettingsPage').then((m) => ({ default: m.SettingsPage }));
+
+const ConnectForm = lazy(loadConnectForm);
+const FileBrowser = lazy(loadFileBrowser);
+const Dashboard = lazy(loadDashboard);
+const SyncDashboard = lazy(loadSyncDashboard);
+const BackupDashboard = lazy(loadBackupDashboard);
+const SettingsPage = lazy(loadSettingsPage);
+const AdminPanel = lazy(() => import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel })));
+const ResetPasswordForm = lazy(() => import('./components/ResetPasswordForm').then((m) => ({ default: m.ResetPasswordForm })));
+const ConfirmEmailChangeForm = lazy(() => import('./components/ConfirmEmailChangeForm').then((m) => ({ default: m.ConfirmEmailChangeForm })));
 const FileManager = lazy(() => import('./components/FileManager/FileManager').then((m) => ({ default: m.FileManager })));
+
+function prefetchLikelyScreens(): void {
+  void loadConnectForm();
+  void loadFileBrowser();
+  void loadDashboard();
+  void loadSyncDashboard();
+  void loadBackupDashboard();
+  void loadSettingsPage();
+}
 
 function getApiUrl(): string {
   // Production nginx injects a validated runtime origin before this bundle
@@ -196,6 +215,18 @@ function App() {
     replaceNav,
     onLogout: clearCreationState,
   });
+
+  // Once signed in, fetch the likely next screens while the browser is idle.
+  const signedIn = Boolean(token && user);
+  useEffect(() => {
+    if (!signedIn) return;
+    if (typeof window.requestIdleCallback === 'function') {
+      const handle = window.requestIdleCallback(prefetchLikelyScreens, { timeout: 4000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const timer = window.setTimeout(prefetchLikelyScreens, 1500);
+    return () => window.clearTimeout(timer);
+  }, [signedIn]);
 
   // Click outside / Escape to close user menu
   useEffect(() => {
@@ -441,6 +472,13 @@ function App() {
 
       <main ref={mainRef} id="main-content" tabIndex={-1} className={`focus:outline-none mx-auto flex w-full max-w-6xl flex-grow flex-col px-4 py-6 sm:px-6 sm:py-8 ${step === 'login' || step === 'reset-password' || step === 'confirm-email' ? 'justify-center' : 'justify-start'}`}>
         <div key={`${step}:${migrationId}:${syncId}:${backupId}:${profileId}`} className="ui-view-enter w-full">
+          <Suspense
+            fallback={(
+              <div className="flex min-h-[50vh] items-center justify-center p-8">
+                <LoadingIndicator label={t('common.loading')} />
+              </div>
+            )}
+          >
           {step === 'login' && (
             <AuthForm apiUrl={API_URL} onAuthSuccess={handleAuthSuccess} />
           )}
@@ -482,13 +520,7 @@ function App() {
           )}
 
           {step === 'files' && (
-            <Suspense
-              fallback={(
-                <div className="flex min-h-[50vh] items-center justify-center p-8">
-                  <LoadingIndicator label={t('common.loading')} />
-                </div>
-              )}
-            >
+            <>
               <FileManager
                 apiUrl={API_URL}
                 token={token}
@@ -499,7 +531,7 @@ function App() {
                 onOpenManager={() => navigate('settings', 'connections')}
                 onBack={handleBack}
               />
-            </Suspense>
+            </>
           )}
 
           {step === 'syncdetail' && (
@@ -594,6 +626,7 @@ function App() {
               onBack={handleBack}
             />
           )}
+          </Suspense>
         </div>
       </main>
 
