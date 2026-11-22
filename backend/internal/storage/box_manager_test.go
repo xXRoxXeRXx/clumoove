@@ -528,11 +528,11 @@ func TestBoxFileManagerCreateDirectory(t *testing.T) {
 	}
 }
 
-type failingReader struct {
+type boxFailingReader struct {
 	err error
 }
 
-func (r failingReader) Read([]byte) (int, error) {
+func (r boxFailingReader) Read([]byte) (int, error) {
 	return 0, r.err
 }
 
@@ -564,13 +564,13 @@ func TestBoxFileManagerUpload(t *testing.T) {
 	}
 
 	// 2. SKIP on case-insensitive match does not consume stream or overwrite.
-	resSkip, err := fm.UploadManager(ctx, ManagerLocator{NativeID: docsID}, "report.txt", failingReader{err: errors.New("stream must not be read on SKIP")}, 5, ManagerUploadOptions{ConflictStrategy: "SKIP"})
+	resSkip, err := fm.UploadManager(ctx, ManagerLocator{NativeID: docsID}, "report.txt", boxFailingReader{err: errors.New("stream must not be read on SKIP")}, 5, ManagerUploadOptions{ConflictStrategy: "SKIP"})
 	if err != nil || resSkip.Status != "skipped" || resSkip.FinalName != "report.txt" {
 		t.Fatalf("UploadManager(SKIP) = (%+v, %v)", resSkip, err)
 	}
 
 	// 3. Failed OVERWRITE leaves original intact.
-	if _, err := fm.UploadManager(ctx, ManagerLocator{NativeID: docsID}, "Report.txt", failingReader{err: errors.New("stream drop")}, 10, ManagerUploadOptions{ConflictStrategy: "OVERWRITE"}); err == nil {
+	if _, err := fm.UploadManager(ctx, ManagerLocator{NativeID: docsID}, "Report.txt", boxFailingReader{err: errors.New("stream drop")}, 10, ManagerUploadOptions{ConflictStrategy: "OVERWRITE"}); err == nil {
 		t.Fatal("expected error on failing overwrite stream")
 	}
 	dlOrig, err := fm.DownloadManager(ctx, ManagerLocator{NativeID: existingID})
