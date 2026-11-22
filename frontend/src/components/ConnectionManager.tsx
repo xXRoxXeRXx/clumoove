@@ -34,7 +34,7 @@ export interface ConnectionManagerProps {
   oauthProviders?: Record<string, boolean>;
 }
 
-const primaryBtnCls = 'ui-button-primary py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50';
+const primaryBtnCls = 'ui-button-primary py-2 text-sm font-medium disabled:opacity-50';
 const secondaryBtnCls = 'ui-button-secondary px-3 py-2 text-sm hover:bg-[var(--color-bg-tertiary)]';
 
 const isAbortError = (error: unknown) => error instanceof DOMException && error.name === 'AbortError';

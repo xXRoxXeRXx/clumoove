@@ -332,7 +332,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             setServerUnreachable(false);
             setReconnectNonce((n) => n + 1);
           }}
-          className="ui-button-primary mt-2 px-4 py-2 text-xs font-bold hover:opacity-90"
+          className="ui-button-primary mt-2 px-4 py-2 text-xs font-bold"
         >
           {t('common.retry')}
         </button>
@@ -374,7 +374,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <button
                 onClick={() => handleMigrationControl('resume')}
                 disabled={controlLoading !== null}
-                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
+                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold disabled:opacity-50"
               >
                 {t('dashboard.resume')}
               </button>
@@ -416,7 +416,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                     if (selectedReauthRole) void handleRetryFailed(selectedReauthRole);
                   }}
                   disabled={controlLoading !== null || !selectedReauthRole}
-                  className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
+                  className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold disabled:opacity-50"
                 >
                   {controlLoading === 'retry' && `${t('common.loading')} `}
                   {t('settings.connections.reauthenticate')}
@@ -426,7 +426,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <button
                 onClick={() => void handleRetryFailed()}
                 disabled={controlLoading !== null}
-                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
+                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold disabled:opacity-50"
               >
                 {controlLoading === 'retry' && `${t('common.loading')} `}
                 {t('dashboard.retryFailed')}

@@ -273,7 +273,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
           <button ref={cancelRef} type="button" onClick={onCancel} className="ui-button-secondary py-2 text-sm hover:bg-[var(--color-bg-tertiary)]">
             {t('common.cancel')}
           </button>
-          <button type="button" onClick={handleSave} disabled={!activeImage || !!validationError} className="ui-button-primary py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50">
+          <button type="button" onClick={handleSave} disabled={!activeImage || !!validationError} className="ui-button-primary py-2 text-sm font-medium disabled:opacity-50">
             {t('common.confirm')}
           </button>
         </div>

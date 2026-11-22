@@ -310,7 +310,7 @@ export function MigrationsDashboard({
           <div className="shrink-0">
             <button
               onClick={onStartNewMigration}
-              className="ui-button-primary px-4 py-2 text-sm font-medium hover:opacity-90"
+              className="ui-button-primary px-4 py-2 text-sm font-medium"
             >
               {t('migrations.newMigration')}
             </button>
@@ -517,7 +517,7 @@ export function MigrationsDashboard({
                 <p className="text-xs text-[var(--color-text-muted)] mt-1 mb-5 leading-relaxed max-w-md mx-auto">{t('migrations.noMigrationsSub')}</p>
                 <button
                   onClick={onStartNewMigration}
-                  className="ui-button-primary px-5 py-2.5 text-xs font-bold font-mono uppercase tracking-wider hover:opacity-90"
+                  className="ui-button-primary px-5 py-2.5 text-xs font-bold font-mono uppercase tracking-wider"
                 >
                   {t('migrations.startFirst')}
                 </button>
@@ -884,7 +884,7 @@ function SyncList({
         <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1 mb-5">{t('sync.noSyncSub')}</p>
         <button
           onClick={onStartNewSync}
-          className="ui-button-primary px-5 py-2.5 text-xs font-bold font-mono uppercase tracking-wider hover:opacity-90"
+          className="ui-button-primary px-5 py-2.5 text-xs font-bold font-mono uppercase tracking-wider"
         >
           {t('sync.startFirst')}
         </button>

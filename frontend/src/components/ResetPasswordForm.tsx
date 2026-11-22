@@ -175,7 +175,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
           <button
             type="submit"
             disabled={loading || password.length < 12 || password !== confirmPassword}
-            className="ui-button-primary mt-2 w-full px-4 py-2.5 text-sm font-medium hover:opacity-90 disabled:opacity-50"
+            className="ui-button-primary mt-2 w-full px-4 py-2.5 text-sm font-medium disabled:opacity-50"
           >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">

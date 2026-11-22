@@ -347,7 +347,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               <button
                 onClick={handleResume}
                 disabled={actionLoading}
-                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
+                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold disabled:opacity-50"
               >
                 {t('sync.resume')}
               </button>
@@ -389,7 +389,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                     if (selectedReauthRole) handleReauth(selectedReauthRole);
                   }}
                   disabled={actionLoading || !selectedReauthRole}
-                  className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
+                  className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold disabled:opacity-50"
                 >
                   {actionLoading && `${t('common.loading')} `}
                   {t('settings.connections.reauthenticate')}
@@ -399,7 +399,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               <button
                 onClick={handleTriggerStart}
                 disabled={actionLoading}
-                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
+                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold disabled:opacity-50"
               >
                 {actionLoading && `${t('common.loading')} `}
                 {t('sync.syncNow')}

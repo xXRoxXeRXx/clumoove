@@ -54,7 +54,7 @@ export function OAuthConnectFields({
         <button
           type="button"
           onClick={onConnect}
-          className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider hover:opacity-90 flex items-center justify-center gap-2"
+          className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider flex items-center justify-center gap-2"
         >
           <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: providerName })}
         </button>

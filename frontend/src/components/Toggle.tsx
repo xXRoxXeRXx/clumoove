@@ -46,7 +46,7 @@ export function Toggle({
           aria-hidden="true"
           className={`block h-5 w-9 rounded-full border transition-colors duration-200 ease-in-out peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--color-focus)] peer-focus-visible:ring-offset-2 ${
             checked
-              ? 'bg-blue-600 border-blue-600 dark:bg-blue-500 dark:border-blue-500'
+              ? 'bg-[var(--color-toggle-on)] border-[var(--color-toggle-on)]'
               : 'bg-[var(--color-bg-tertiary)] border-[var(--color-border)]'
           }`}
         />

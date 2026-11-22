@@ -772,7 +772,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
                     <button
                       type="submit"
                       disabled={!newFolderName.trim() || creatingFolder}
-                      className="ui-button-primary px-3.5 py-2 text-xs font-mono font-bold uppercase hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="ui-button-primary px-3.5 py-2 text-xs font-mono font-bold uppercase disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {t("common.create")}
                     </button>
@@ -813,7 +813,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
                   <button
                     type="button"
                     onClick={closeTargetBrowser}
-                    className="ui-button-primary px-4 py-2 text-[11px] font-mono font-bold uppercase hover:opacity-90"
+                    className="ui-button-primary px-4 py-2 text-[11px] font-mono font-bold uppercase"
                   >
                     {t("common.select")}
                   </button>

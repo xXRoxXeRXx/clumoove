@@ -1655,7 +1655,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             type="button"
             onClick={handleStartMigration}
             disabled={starting}
-            className="ui-button-primary inline-flex w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 sm:w-auto"
+            className="ui-button-primary inline-flex w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium disabled:opacity-50 sm:w-auto"
           >
             {starting ? (
               <>
@@ -2146,7 +2146,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   <button
                     type="submit"
                     disabled={!newFolderName.trim()}
-                    className="ui-button-primary px-3.5 py-2 text-xs font-mono font-bold uppercase hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="ui-button-primary px-3.5 py-2 text-xs font-mono font-bold uppercase disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {t("common.create")}
                   </button>
@@ -2187,7 +2187,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <button
                   type="button"
                   onClick={closeTargetBrowser}
-                  className="ui-button-primary px-4 py-2 text-[11px] font-mono font-bold uppercase hover:opacity-90"
+                  className="ui-button-primary px-4 py-2 text-[11px] font-mono font-bold uppercase"
                 >
                   {t("common.select")}
                 </button>

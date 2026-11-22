@@ -17,7 +17,7 @@
   --shadow-xl: none;
   --shadow-2xl: none;
   --color-primary: #27272a;
-  --color-primary-hover: #18181b;
+  --color-primary-hover: #27272a;
 }
 
 :root {
@@ -70,6 +70,7 @@
   --color-info-bg: #eff6ff;
   --color-info-border: #bfdbfe;
   --color-info-text: #1d4ed8;
+  --color-toggle-on: #2563eb;
 }
 
 html {
@@ -95,6 +96,8 @@ html {
   --color-bg-tertiary: #3f3f46;
   --color-bg-elevated: #27272a;
   --color-bg-inverse: #09090b;
+  --color-primary-hover: #18181b;
+  --color-toggle-on: #3b82f6;
   --color-text-primary: #fafafa;
   --color-text-secondary: #d4d4d8;
   --color-text-muted: #a1a1aa;
