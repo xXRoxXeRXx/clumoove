@@ -219,8 +219,8 @@ func getUserByIDContext(ctx context.Context, db *sql.DB, id string) (*User, erro
 	return &u, nil
 }
 
-// GetUserByIDTx is the transaction-scoped counterpart of getUserByID.
-func GetUserByIDTx(tx *sql.Tx, id string) (*User, error) {
+// getUserByIDTx is the transaction-scoped counterpart of getUserByID.
+func getUserByIDTx(tx *sql.Tx, id string) (*User, error) {
 	query := `
 		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,

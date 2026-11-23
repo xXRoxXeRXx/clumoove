@@ -45,7 +45,7 @@ type EmailChangeToken struct {
 
 var ErrEmailTaken = errors.New("email already taken")
 
-func GetSetting(db *sql.DB, key string) (string, error) {
+func getSetting(db *sql.DB, key string) (string, error) {
 	var val string
 	query := `SELECT value FROM settings WHERE key = $1`
 	err := db.QueryRow(query, key).Scan(&val)
@@ -55,7 +55,7 @@ func GetSetting(db *sql.DB, key string) (string, error) {
 	return val, err
 }
 
-func SetSetting(db *sql.DB, key, value string) error {
+func setSetting(db *sql.DB, key, value string) error {
 	query := `
 		INSERT INTO settings (key, value, updated_at)
 		VALUES ($1, $2, CURRENT_TIMESTAMP)
@@ -66,9 +66,9 @@ func SetSetting(db *sql.DB, key, value string) error {
 	return err
 }
 
-// StoreRefreshToken persists a renewable login session. The token itself is
+// storeRefreshToken persists a renewable login session. The token itself is
 // represented only by its hash; userAgent is display metadata.
-func StoreRefreshToken(ctx context.Context, db *sql.DB, tokenHash string, userID string, expiresAt time.Time, userAgent string) error {
+func storeRefreshToken(ctx context.Context, db *sql.DB, tokenHash string, userID string, expiresAt time.Time, userAgent string) error {
 	query := `
 		INSERT INTO refresh_tokens (token_hash, user_id, user_agent, expires_at)
 		VALUES ($1, $2, $3, $4)
@@ -85,7 +85,7 @@ type RefreshSession struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-func ListRefreshSessions(ctx context.Context, db *sql.DB, userID string) ([]RefreshSession, error) {
+func listRefreshSessions(ctx context.Context, db *sql.DB, userID string) ([]RefreshSession, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, user_agent, created_at, expires_at
 		FROM refresh_tokens
@@ -108,9 +108,9 @@ func ListRefreshSessions(ctx context.Context, db *sql.DB, userID string) ([]Refr
 	return sessions, rows.Err()
 }
 
-// DeleteRefreshSessionForUser revokes one session without revealing whether a
+// deleteRefreshSessionForUser revokes one session without revealing whether a
 // non-matching ID belongs to another account.
-func DeleteRefreshSessionForUser(ctx context.Context, db *sql.DB, sessionID, userID string) (bool, error) {
+func deleteRefreshSessionForUser(ctx context.Context, db *sql.DB, sessionID, userID string) (bool, error) {
 	result, err := db.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE id = $1 AND user_id = $2`, sessionID, userID)
 	if err != nil {
 		return false, err
@@ -119,34 +119,21 @@ func DeleteRefreshSessionForUser(ctx context.Context, db *sql.DB, sessionID, use
 	return count > 0, err
 }
 
-func DeleteRefreshToken(db *sql.DB, tokenHash string) error {
+func deleteRefreshToken(db *sql.DB, tokenHash string) error {
 	query := `DELETE FROM refresh_tokens WHERE token_hash = $1`
 	_, err := db.Exec(query, tokenHash)
 	return err
 }
 
-func DeleteAllRefreshTokensForUser(db *sql.DB, userID string) error {
+func deleteAllRefreshTokensForUser(db *sql.DB, userID string) error {
 	query := `DELETE FROM refresh_tokens WHERE user_id = $1`
 	_, err := db.Exec(query, userID)
 	return err
 }
 
-func GetUserIDByRefreshToken(db *sql.DB, tokenHash string) (string, error) {
-	query := `
-		SELECT user_id FROM refresh_tokens 
-		WHERE token_hash = $1 AND expires_at > $2
-	`
-	var userID string
-	err := db.QueryRow(query, tokenHash, time.Now()).Scan(&userID)
-	if err != nil {
-		return "", err
-	}
-	return userID, nil
-}
-
-// GetInstanceSMTPSettings returns the singleton mailer, including its encrypted password.
+// getInstanceSMTPSettings returns the singleton mailer, including its encrypted password.
 // Callers must never serialize SMTPPasswordEnc.
-func GetInstanceSMTPSettings(db *sql.DB) (*InstanceSMTPSettings, error) {
+func getInstanceSMTPSettings(db *sql.DB) (*InstanceSMTPSettings, error) {
 	query := `
 		SELECT smtp_host, smtp_port, smtp_username, smtp_password_encrypted,
 		       smtp_from_email, smtp_from_name, smtp_encryption, created_at, updated_at
@@ -163,7 +150,7 @@ func GetInstanceSMTPSettings(db *sql.DB) (*InstanceSMTPSettings, error) {
 	return &s, nil
 }
 
-func UpsertInstanceSMTPSettings(db *sql.DB, s *InstanceSMTPSettings) error {
+func upsertInstanceSMTPSettings(db *sql.DB, s *InstanceSMTPSettings) error {
 	query := `
 		INSERT INTO instance_smtp_settings (
 			id, smtp_host, smtp_port, smtp_username, smtp_password_encrypted,
@@ -186,18 +173,18 @@ func UpsertInstanceSMTPSettings(db *sql.DB, s *InstanceSMTPSettings) error {
 	return err
 }
 
-func DeleteInstanceSMTPSettings(db *sql.DB) error {
+func deleteInstanceSMTPSettings(db *sql.DB) error {
 	_, err := db.Exec(`DELETE FROM instance_smtp_settings WHERE id = 1`)
 	return err
 }
 
-func IsInstanceSMTPConfigured(db *sql.DB) (bool, error) {
+func isInstanceSMTPConfigured(db *sql.DB) (bool, error) {
 	var configured bool
 	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM instance_smtp_settings WHERE id = 1)`).Scan(&configured)
 	return configured, err
 }
 
-func CreatePasswordResetToken(db *sql.DB, tokenHash, userID string, expiresAt time.Time) error {
+func createPasswordResetToken(db *sql.DB, tokenHash, userID string, expiresAt time.Time) error {
 	query := `
 		INSERT INTO password_reset_tokens (token_hash, user_id, expires_at)
 		VALUES ($1, $2, $3)
@@ -206,20 +193,7 @@ func CreatePasswordResetToken(db *sql.DB, tokenHash, userID string, expiresAt ti
 	return err
 }
 
-func GetPasswordResetToken(db *sql.DB, tokenHash string) (*PasswordResetToken, error) {
-	query := `
-		SELECT token_hash, user_id, expires_at, used, created_at
-		FROM password_reset_tokens WHERE token_hash = $1
-	`
-	var t PasswordResetToken
-	err := db.QueryRow(query, tokenHash).Scan(&t.TokenHash, &t.UserID, &t.ExpiresAt, &t.Used, &t.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &t, nil
-}
-
-func ClaimPasswordResetToken(db *sql.DB, ctx context.Context, tokenHash, newPasswordHash string) (string, error) {
+func claimPasswordResetToken(db *sql.DB, ctx context.Context, tokenHash, newPasswordHash string) (string, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
@@ -251,13 +225,13 @@ func ClaimPasswordResetToken(db *sql.DB, ctx context.Context, tokenHash, newPass
 	return userID, nil
 }
 
-func DeleteExpiredPasswordResetTokens(db *sql.DB) error {
+func deleteExpiredPasswordResetTokens(db *sql.DB) error {
 	query := `DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used = TRUE`
 	_, err := db.Exec(query)
 	return err
 }
 
-func CreateEmailChangeToken(db *sql.DB, tokenHash, userID, newEmail string, expiresAt time.Time) error {
+func createEmailChangeToken(db *sql.DB, tokenHash, userID, newEmail string, expiresAt time.Time) error {
 	if _, err := db.Exec(`DELETE FROM email_change_tokens WHERE user_id = $1`, userID); err != nil {
 		return err
 	}
@@ -269,7 +243,7 @@ func CreateEmailChangeToken(db *sql.DB, tokenHash, userID, newEmail string, expi
 	return err
 }
 
-func ClaimEmailChangeToken(db *sql.DB, ctx context.Context, tokenHash string) (userID, newEmail string, err error) {
+func claimEmailChangeToken(db *sql.DB, ctx context.Context, tokenHash string) (userID, newEmail string, err error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", "", err
@@ -317,7 +291,7 @@ func ClaimEmailChangeToken(db *sql.DB, ctx context.Context, tokenHash string) (u
 	return uid, newMail, nil
 }
 
-func DeleteExpiredEmailChangeTokens(db *sql.DB) error {
+func deleteExpiredEmailChangeTokens(db *sql.DB) error {
 	query := `DELETE FROM email_change_tokens WHERE expires_at < NOW() OR used = TRUE`
 	_, err := db.Exec(query)
 	return err

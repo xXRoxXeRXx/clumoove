@@ -26,7 +26,7 @@ func (api *adminAPI) handleAdminGetSMTP(w http.ResponseWriter, r *http.Request) 
 	if _, ok := api.adminActorID(w, r); !ok {
 		return
 	}
-	cfg, err := db.GetInstanceSMTPSettings(api.db)
+	cfg, err := api.settings.GetInstanceSMTPSettings()
 	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusOK, map[string]any{"configured": false, "smtp_password_set": false})
 		return
@@ -68,7 +68,7 @@ func (api *adminAPI) handleAdminPutSMTP(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, ErrSettingInvalid)
 		return
 	}
-	existing, err := db.GetInstanceSMTPSettings(api.db)
+	existing, err := api.settings.GetInstanceSMTPSettings()
 	if err != nil && err != sql.ErrNoRows {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -92,7 +92,7 @@ func (api *adminAPI) handleAdminPutSMTP(w http.ResponseWriter, r *http.Request) 
 	if fromName == "" {
 		fromName = "Clumoove"
 	}
-	if err := db.UpsertInstanceSMTPSettings(api.db, &db.InstanceSMTPSettings{SMTPHost: req.SMTPHost, SMTPPort: req.SMTPPort, SMTPUsername: req.SMTPUsername, SMTPPasswordEnc: encrypted, SMTPFromEmail: req.SMTPFromEmail, SMTPFromName: fromName, SMTPEncryption: req.SMTPEncryption}); err != nil {
+	if err := api.settings.UpsertInstanceSMTPSettings(&db.InstanceSMTPSettings{SMTPHost: req.SMTPHost, SMTPPort: req.SMTPPort, SMTPUsername: req.SMTPUsername, SMTPPasswordEnc: encrypted, SMTPFromEmail: req.SMTPFromEmail, SMTPFromName: fromName, SMTPEncryption: req.SMTPEncryption}); err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -105,7 +105,7 @@ func (api *adminAPI) handleAdminTestSMTP(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	cfg, err := db.GetInstanceSMTPSettings(api.db)
+	cfg, err := api.settings.GetInstanceSMTPSettings()
 	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrSmtpNotConfigured})
 		return
@@ -139,7 +139,7 @@ func (api *adminAPI) handleAdminDeleteSMTP(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if err := db.DeleteInstanceSMTPSettings(api.db); err != nil {
+	if err := api.settings.DeleteInstanceSMTPSettings(); err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

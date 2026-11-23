@@ -200,6 +200,8 @@ func TestDomainStoreConstructorsRejectNilDatabase(t *testing.T) {
 		"task":      func() { NewTaskStore(nil) },
 		"schedule":  func() { NewScheduleStore(nil) },
 		"user":      func() { NewUserStore(nil) },
+		"settings":  func() { NewSettingsStore(nil) },
+		"token":     func() { NewAuthTokenStore(nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			defer func() {
@@ -788,4 +790,88 @@ func TestUserStoreKeepsItsCredentialGuards(t *testing.T) {
 		}
 		requireSingleStatement(t, rec, "must_change_password = FALSE", "new-hash", "user-1")
 	})
+}
+
+func TestAuthTokenStoreScopesAndSequencesItsWrites(t *testing.T) {
+	t.Run("revoking a session binds the session and its owner", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		var store AuthTokenStore = NewAuthTokenStore(database)
+
+		removed, err := store.DeleteRefreshSessionForUser(context.Background(), "session-1", "user-1")
+		if err != nil {
+			t.Fatalf("DeleteRefreshSessionForUser() error: %v", err)
+		}
+		if !removed {
+			t.Error("DeleteRefreshSessionForUser() = false, want true when a row was removed")
+		}
+		requireSingleStatement(t, rec, "DELETE FROM refresh_tokens WHERE id = $1 AND user_id = $2", "session-1", "user-1")
+	})
+
+	t.Run("sessions are listed for one user and skip expired tokens", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		rec.queryColumns = []string{"id", "user_agent", "created_at", "expires_at"}
+		rec.queryRow = []driver.Value{"session-1", "Firefox", time.Now(), time.Now().Add(time.Hour)}
+		sessions, err := NewAuthTokenStore(database).ListRefreshSessions(context.Background(), "user-1")
+		if err != nil || len(sessions) != 1 || sessions[0].ID != "session-1" {
+			t.Fatalf("ListRefreshSessions() = (%+v, %v), want one session", sessions, err)
+		}
+		requireSingleStatement(t, rec, "WHERE user_id = $1 AND expires_at > NOW()", "user-1")
+	})
+
+	t.Run("claiming a password reset token consumes it, sets the password and revokes sessions atomically", func(t *testing.T) {
+		database, d := openScriptedDB(t, scriptedRule{
+			match:   "UPDATE password_reset_tokens SET used = TRUE",
+			columns: []string{"user_id"},
+			rows:    [][]driver.Value{{"user-1"}},
+		})
+
+		userID, err := NewAuthTokenStore(database).ClaimPasswordResetToken(context.Background(), "token-hash", "new-password-hash")
+		if err != nil || userID != "user-1" {
+			t.Fatalf("ClaimPasswordResetToken() = (%q, %v), want user-1", userID, err)
+		}
+		var steps []string
+		for _, entry := range d.log {
+			switch {
+			case entry == "BEGIN" || entry == "COMMIT" || entry == "ROLLBACK":
+				steps = append(steps, entry)
+			case strings.HasPrefix(entry, "UPDATE password_reset_tokens"):
+				steps = append(steps, "consume token")
+			case strings.HasPrefix(entry, "UPDATE users SET password_hash"):
+				steps = append(steps, "set password")
+			case strings.HasPrefix(entry, "DELETE FROM refresh_tokens WHERE user_id"):
+				steps = append(steps, "revoke sessions")
+			}
+		}
+		want := "BEGIN,consume token,set password,revoke sessions,COMMIT"
+		if strings.Join(steps, ",") != want {
+			t.Fatalf("steps = %v, want %s", steps, want)
+		}
+	})
+
+	t.Run("an unknown reset token changes nothing and rolls back", func(t *testing.T) {
+		database, d := openScriptedDB(t, scriptedRule{match: "UPDATE password_reset_tokens SET used = TRUE", columns: []string{"user_id"}})
+
+		_, err := NewAuthTokenStore(database).ClaimPasswordResetToken(context.Background(), "bad", "hash")
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("ClaimPasswordResetToken() error = %v, want sql.ErrNoRows", err)
+		}
+		if got := d.log[len(d.log)-1]; got != "ROLLBACK" {
+			t.Fatalf("last step = %q, want ROLLBACK", got)
+		}
+	})
+}
+
+func TestSettingsStoreDelegatesToSettingsPersistence(t *testing.T) {
+	database, rec := openRecordingDB(t)
+	var store SettingsStore = NewSettingsStore(database)
+
+	if err := store.SetSetting("registrations_enabled", "true"); err != nil {
+		t.Fatalf("SetSetting() error: %v", err)
+	}
+	if len(rec.statements) != 1 || !strings.Contains(rec.statements[0].query, "INSERT INTO settings") || !strings.Contains(rec.statements[0].query, "ON CONFLICT (key) DO UPDATE") {
+		t.Fatalf("statements = %+v", rec.statements)
+	}
+	if got := rec.statements[0].args; len(got) != 2 || got[0] != driver.Value("registrations_enabled") || got[1] != driver.Value("true") {
+		t.Fatalf("args = %v, want key then value", got)
+	}
 }

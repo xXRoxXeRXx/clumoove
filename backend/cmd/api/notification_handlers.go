@@ -24,6 +24,7 @@ type notificationRequest struct {
 type notificationDependencies struct {
 	db            *sql.DB
 	users         db.UserStore
+	settings      db.SettingsStore
 	encryptionKey string
 	rateLimiter   rateLimiter
 	requestEnv
@@ -37,6 +38,9 @@ func newNotificationAPI(deps notificationDependencies) *notificationAPI {
 	deps.requestEnv = deps.requestEnv.withDefaults("notification")
 	if deps.users == nil {
 		deps.users = userStoreFor(deps.db)
+	}
+	if deps.settings == nil {
+		deps.settings = settingsStoreFor(deps.db)
 	}
 	return &notificationAPI{notificationDependencies: deps}
 }
@@ -55,6 +59,7 @@ func (s *APIServer) notifications() *notificationAPI {
 		requestEnv:    s.requestEnv(),
 		db:            s.db,
 		users:         userStoreFor(s.db),
+		settings:      settingsStoreFor(s.db),
 		encryptionKey: s.encryptionKey,
 		rateLimiter:   s.rateLimiter,
 	})
@@ -140,7 +145,7 @@ func (api *notificationAPI) handleGetSettings(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	emailAvailable, err := db.IsInstanceSMTPConfigured(api.db)
+	emailAvailable, err := api.settings.IsInstanceSMTPConfigured()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -186,7 +191,7 @@ func (api *notificationAPI) handleUpdateSettings(w http.ResponseWriter, r *http.
 		req.Config = map[string]any{}
 	}
 	if req.Type == "email" {
-		available, err := db.IsInstanceSMTPConfigured(api.db)
+		available, err := api.settings.IsInstanceSMTPConfigured()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return

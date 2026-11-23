@@ -30,7 +30,7 @@ func (api *accountAPI) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	regEnabled, err := db.GetSetting(api.db, "registrations_enabled")
+	regEnabled, err := api.settings.GetSetting("registrations_enabled")
 	if err != nil {
 		api.logf(r, "Register error: failed to check registrations_enabled: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -207,99 +207,35 @@ func (api *accountAPI) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oldTokenHash := hashToken(cookie.Value)
-	tx, err := api.db.BeginTx(r.Context(), nil)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	defer tx.Rollback()
-
-	// Consume the presented token before issuing a replacement. DELETE ...
-	// RETURNING locks the token row, so concurrent uses of the same token leave
-	// exactly one request able to continue.
-	var userID, userAgent string
-	if err := tx.QueryRowContext(r.Context(), `
-		DELETE FROM refresh_tokens
-		WHERE token_hash = $1 AND expires_at > NOW()
-		RETURNING user_id, user_agent
-	`, oldTokenHash).Scan(&userID, &userAgent); err != nil {
-		if err == sql.ErrNoRows {
-			auth.ClearRefreshTokenCookie(w)
-			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
-			return
-		}
-		api.logf(r, "Error consuming refresh token in tx: %v\n", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-
-	u, err := db.GetUserByIDTx(tx, userID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			auth.ClearRefreshTokenCookie(w)
-			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
-			return
-		}
-		api.logf(r, "Error loading refresh-token user: %v\n", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-
-	// Re-check the account state while holding a row lock. If suspension wins
-	// the race, its transaction removes all refresh tokens before this request
-	// can rotate one; if this request wins, suspension removes the new token.
-	var active bool
-	if err := tx.QueryRowContext(r.Context(), `SELECT active FROM users WHERE id = $1 FOR UPDATE`, u.ID).Scan(&active); err != nil {
-		if err == sql.ErrNoRows {
-			auth.ClearRefreshTokenCookie(w)
-			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
-			return
-		}
-		api.logf(r, "Error locking refresh-token user: %v\n", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if !active {
-		// Normally suspension has already deleted these rows. Removing them here
-		// also cleans up a residual token if an earlier operation was interrupted.
-		if _, err := tx.ExecContext(r.Context(), `DELETE FROM refresh_tokens WHERE user_id = $1`, u.ID); err != nil {
-			api.logf(r, "Error deleting suspended user's refresh tokens: %v\n", err)
-			auth.ClearRefreshTokenCookie(w)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
-		if err := tx.Commit(); err != nil {
-			api.logf(r, "Error committing suspended-user refresh-token cleanup: %v\n", err)
-			auth.ClearRefreshTokenCookie(w)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
-		auth.ClearRefreshTokenCookie(w)
-		writeError(w, http.StatusForbidden, ErrUserDisabled)
-		return
-	}
-
 	newRefreshToken, err := auth.GenerateRefreshToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	newExpiresAt := time.Now().Add(7 * 24 * time.Hour)
-	newHashedToken := hashToken(newRefreshToken)
 
-	insertQuery := `
-		INSERT INTO refresh_tokens (token_hash, user_id, user_agent, expires_at)
-		VALUES ($1, $2, $3, $4)
-	`
-	if _, err := tx.ExecContext(r.Context(), insertQuery, newHashedToken, u.ID, userAgent, newExpiresAt); err != nil {
-		api.logf(r, "Error storing new refresh token in tx: %v\n", err)
+	// The store consumes the presented token and stores its replacement in one
+	// transaction that re-checks the account state under a row lock, so
+	// concurrent use of the same token or a racing suspension cannot both win.
+	outcome, u, err := api.tokens.RotateRefreshToken(r.Context(), oldTokenHash, hashToken(newRefreshToken), newExpiresAt)
+	switch {
+	case outcome == db.RefreshUserDisabled:
+		// The presented token is dead whether or not the cleanup succeeded.
+		auth.ClearRefreshTokenCookie(w)
+		if err != nil {
+			api.logf(r, "Error cleaning up refresh tokens of a suspended user: %v\n", err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		writeError(w, http.StatusForbidden, ErrUserDisabled)
+		return
+	case err != nil:
+		api.logf(r, "Error rotating refresh token: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		api.logf(r, "Error committing token rotation transaction: %v\n", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
+	case outcome == db.RefreshTokenInvalid:
+		auth.ClearRefreshTokenCookie(w)
+		writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
 		return
 	}
 
@@ -323,7 +259,7 @@ func (api *accountAPI) handleLogout(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("refresh_token")
 	if err == nil {
 		tokenHash := hashToken(cookie.Value)
-		_ = db.DeleteRefreshToken(api.db, tokenHash)
+		_ = api.tokens.DeleteRefreshToken(tokenHash)
 	}
 
 	auth.ClearRefreshTokenCookie(w)
@@ -339,7 +275,7 @@ func (api *accountAPI) handleListSessions(w http.ResponseWriter, r *http.Request
 	if !authenticated {
 		return
 	}
-	sessions, err := db.ListRefreshSessions(r.Context(), api.db, userID)
+	sessions, err := api.tokens.ListRefreshSessions(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "handleListSessions: failed to list sessions for user %s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -362,7 +298,7 @@ func (api *accountAPI) handleDeleteSession(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, ErrSessionNotFound)
 		return
 	}
-	deleted, err := db.DeleteRefreshSessionForUser(r.Context(), api.db, sessionID, userID)
+	deleted, err := api.tokens.DeleteRefreshSessionForUser(r.Context(), sessionID, userID)
 	if err != nil {
 		api.logf(r, "handleDeleteSession: failed to revoke session for user %s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

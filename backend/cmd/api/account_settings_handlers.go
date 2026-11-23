@@ -120,7 +120,7 @@ func (api *accountAPI) handleChangePassword(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := db.DeleteAllRefreshTokensForUser(api.db, userID); err != nil {
+	if err := api.tokens.DeleteAllRefreshTokensForUser(userID); err != nil {
 		api.logf(r, "handleChangePassword: failed to revoke refresh tokens for user %s: %v\n", userID, err)
 	}
 

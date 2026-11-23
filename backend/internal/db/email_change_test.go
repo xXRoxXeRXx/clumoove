@@ -163,7 +163,7 @@ func TestClaimEmailChangeToken(t *testing.T) {
 		}
 		insertChangeToken(t, db, "tok-valid", uid, "new@example.com", time.Now().Add(4*time.Hour))
 
-		gotUID, gotEmail, err := ClaimEmailChangeToken(db, context.Background(), "tok-valid")
+		gotUID, gotEmail, err := claimEmailChangeToken(db, context.Background(), "tok-valid")
 		if err != nil {
 			t.Fatalf("expected success, got error: %v", err)
 		}
@@ -192,7 +192,7 @@ func TestClaimEmailChangeToken(t *testing.T) {
 		uid := createTestUser(t, db, "expired-user@example.com")
 		insertChangeToken(t, db, "tok-expired", uid, "fresh@example.com", time.Now().Add(-1*time.Hour))
 
-		_, _, err := ClaimEmailChangeToken(db, context.Background(), "tok-expired")
+		_, _, err := claimEmailChangeToken(db, context.Background(), "tok-expired")
 		if err != sql.ErrNoRows {
 			t.Fatalf("expected sql.ErrNoRows, got %v", err)
 		}
@@ -205,12 +205,12 @@ func TestClaimEmailChangeToken(t *testing.T) {
 		uid := createTestUser(t, db, "reuse-user@example.com")
 		insertChangeToken(t, db, "tok-reuse", uid, "reuse-new@example.com", time.Now().Add(4*time.Hour))
 
-		if _, _, err := ClaimEmailChangeToken(db, context.Background(), "tok-reuse"); err != nil {
+		if _, _, err := claimEmailChangeToken(db, context.Background(), "tok-reuse"); err != nil {
 			t.Fatalf("first claim failed: %v", err)
 		}
 
 		// Second attempt with the same (now used) token.
-		_, _, err := ClaimEmailChangeToken(db, context.Background(), "tok-reuse")
+		_, _, err := claimEmailChangeToken(db, context.Background(), "tok-reuse")
 		if err != sql.ErrNoRows {
 			t.Fatalf("expected sql.ErrNoRows on reuse, got %v", err)
 		}
@@ -225,7 +225,7 @@ func TestClaimEmailChangeToken(t *testing.T) {
 		createTestUser(t, db, "taken@example.com")
 		insertChangeToken(t, db, "tok-taken", owner, "taken@example.com", time.Now().Add(4*time.Hour))
 
-		_, _, err := ClaimEmailChangeToken(db, context.Background(), "tok-taken")
+		_, _, err := claimEmailChangeToken(db, context.Background(), "tok-taken")
 		if err == nil {
 			t.Fatal("expected ErrEmailTaken, got nil")
 		}
@@ -242,7 +242,7 @@ func TestClaimEmailChangeToken(t *testing.T) {
 	})
 
 	t.Run("unknown token returns ErrNoRows", func(t *testing.T) {
-		if _, _, err := ClaimEmailChangeToken(db, context.Background(), "tok-does-not-exist"); err != sql.ErrNoRows {
+		if _, _, err := claimEmailChangeToken(db, context.Background(), "tok-does-not-exist"); err != sql.ErrNoRows {
 			t.Fatalf("expected sql.ErrNoRows, got %v", err)
 		}
 	})
@@ -253,8 +253,8 @@ func TestCreateEmailChangeToken_ReplacesPriorOpenToken(t *testing.T) {
 
 	uid := createTestUser(t, db, "single@example.com")
 	insertChangeToken(t, db, "tok-first", uid, "a@example.com", time.Now().Add(4*time.Hour))
-	if err := CreateEmailChangeToken(db, "tok-second", uid, "b@example.com", time.Now().Add(4*time.Hour)); err != nil {
-		t.Fatalf("CreateEmailChangeToken: %v", err)
+	if err := createEmailChangeToken(db, "tok-second", uid, "b@example.com", time.Now().Add(4*time.Hour)); err != nil {
+		t.Fatalf("createEmailChangeToken: %v", err)
 	}
 
 	var firstUsed, secondExists bool

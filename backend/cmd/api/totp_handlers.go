@@ -405,7 +405,7 @@ func (api *accountAPI) issueTokens(w http.ResponseWriter, r *http.Request, u *db
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 	tokenHash := hashToken(refreshToken)
 
-	if err := db.StoreRefreshToken(r.Context(), api.db, tokenHash, u.ID, expiresAt, sessionUserAgent(r)); err != nil {
+	if err := api.tokens.StoreRefreshToken(r.Context(), tokenHash, u.ID, expiresAt, sessionUserAgent(r)); err != nil {
 		api.logf(r, "issueTokens: failed to store refresh token for user %s: %v\n", u.ID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return

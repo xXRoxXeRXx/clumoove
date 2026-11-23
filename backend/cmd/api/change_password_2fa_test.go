@@ -247,7 +247,7 @@ func TestSuspensionRevokesRefreshTokensAndBlocksRefresh(t *testing.T) {
 	s := &APIServer{db: database, jwtSecret: "test-jwt-secret-at-least-32-bytes-long!!"}
 	user := createChangePasswordTestUser(t, database, false)
 	refreshToken := "refresh-token-that-must-be-revoked"
-	if err := db.StoreRefreshToken(context.Background(), database, hashToken(refreshToken), user.ID, time.Now().Add(time.Hour), "test-agent"); err != nil {
+	if err := db.NewAuthTokenStore(database).StoreRefreshToken(context.Background(), hashToken(refreshToken), user.ID, time.Now().Add(time.Hour), "test-agent"); err != nil {
 		t.Fatalf("store refresh token: %v", err)
 	}
 
@@ -265,7 +265,7 @@ func TestSuspensionRevokesRefreshTokensAndBlocksRefresh(t *testing.T) {
 
 	// Simulate a stale token that was read before the suspension transaction
 	// committed. Refresh must still refuse it after checking users.active.
-	if err := db.StoreRefreshToken(context.Background(), database, hashToken(refreshToken), user.ID, time.Now().Add(time.Hour), "test-agent"); err != nil {
+	if err := db.NewAuthTokenStore(database).StoreRefreshToken(context.Background(), hashToken(refreshToken), user.ID, time.Now().Add(time.Hour), "test-agent"); err != nil {
 		t.Fatalf("store stale refresh token: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/refresh", nil)

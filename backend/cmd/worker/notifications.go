@@ -18,6 +18,7 @@ import (
 // or failed channel never blocks others.
 type notifier struct {
 	db               *sql.DB
+	tokens           db.AuthTokenStore
 	secretKey        string
 	send             func(ctx context.Context, channelType string, cfg notify.Config, payload json.RawMessage, recipientEmail, language string) error
 	getSMTPSettings  func() (*db.InstanceSMTPSettings, error)
@@ -25,12 +26,17 @@ type notifier struct {
 }
 
 func newNotifier(database *sql.DB, secretKey string) *notifier {
+	var tokens db.AuthTokenStore
+	if database != nil {
+		tokens = db.NewAuthTokenStore(database)
+	}
 	return &notifier{
 		db:        database,
+		tokens:    tokens,
 		secretKey: secretKey,
 		send:      notify.Send,
 		getSMTPSettings: func() (*db.InstanceSMTPSettings, error) {
-			return db.GetInstanceSMTPSettings(database)
+			return db.NewSettingsStore(database).GetInstanceSMTPSettings()
 		},
 		completeDelivery: func(id string, success bool, errCode string) error {
 			return db.CompleteNotificationDelivery(database, id, success, errCode)
@@ -50,10 +56,10 @@ func (n *notifier) Run(ctx context.Context) error {
 		case <-ticker.C:
 			n.sendPendingNotifications(ctx)
 		case <-cleanup.C:
-			if err := db.DeleteExpiredPasswordResetTokens(n.db); err != nil {
+			if err := n.tokens.DeleteExpiredPasswordResetTokens(); err != nil {
 				workerLogf("notifier", "[Notifier] reset cleanup failed: %v", err)
 			}
-			if err := db.DeleteExpiredEmailChangeTokens(n.db); err != nil {
+			if err := n.tokens.DeleteExpiredEmailChangeTokens(); err != nil {
 				workerLogf("notifier", "[Notifier] email-change cleanup failed: %v", err)
 			}
 		}

@@ -13,7 +13,7 @@ import (
 )
 
 func (api *adminAPI) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	val, err := db.GetSetting(api.db, "registrations_enabled")
+	val, err := api.settings.GetSetting("registrations_enabled")
 	if err != nil {
 		api.logf(r, "handleGetSettings: failed to fetch registrations_enabled: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -63,7 +63,7 @@ func (api *adminAPI) handleUpdateSetting(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := db.SetSetting(api.db, req.Key, req.Value); err != nil {
+	if err := api.settings.SetSetting(req.Key, req.Value); err != nil {
 		api.logf(r, "handleUpdateSetting: failed to set setting: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return

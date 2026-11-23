@@ -39,7 +39,7 @@ func databaseAuthStateLookup(database *sql.DB) AuthStateLookup {
 // suspended, and copies mutable authorization claims from the database.
 // Database state may further restrict authorization, but must never promote
 // a temporary token into an access token. The nil-state check is defense-in-depth:
-// db.GetUserAuthState reports a missing user as sql.ErrNoRows, while tests
+// UserStore.GetUserAuthState reports a missing user as sql.ErrNoRows, while tests
 // and alternative lookups may return nil.
 func RefreshClaimsFromAuthState(claims *Claims, state *db.UserAuthState) error {
 	if claims == nil || state == nil || !state.Active {

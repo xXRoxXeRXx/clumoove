@@ -14,6 +14,8 @@ import (
 type accountDependencies struct {
 	db                *sql.DB
 	users             db.UserStore
+	tokens            db.AuthTokenStore
+	settings          db.SettingsStore
 	encryptionKey     string
 	jwtSecret         string
 	rateLimiter       rateLimiter
@@ -31,10 +33,34 @@ func newAccountAPI(deps accountDependencies) *accountAPI {
 	if deps.users == nil {
 		deps.users = userStoreFor(deps.db)
 	}
+	if deps.tokens == nil {
+		deps.tokens = authTokenStoreFor(deps.db)
+	}
+	if deps.settings == nil {
+		deps.settings = settingsStoreFor(deps.db)
+	}
 	if deps.getRedirectURI == nil {
 		deps.getRedirectURI = defaultRedirectURI
 	}
 	return &accountAPI{accountDependencies: deps}
+}
+
+// authTokenStoreFor returns the PostgreSQL auth-token store, or nil when a module
+// is built without a database handle (route-only tests).
+func authTokenStoreFor(database *sql.DB) db.AuthTokenStore {
+	if database == nil {
+		return nil
+	}
+	return db.NewAuthTokenStore(database)
+}
+
+// settingsStoreFor returns the PostgreSQL settings store, or nil when a module is
+// built without a database handle (route-only tests).
+func settingsStoreFor(database *sql.DB) db.SettingsStore {
+	if database == nil {
+		return nil
+	}
+	return db.NewSettingsStore(database)
 }
 
 // userStoreFor returns the PostgreSQL user store, or nil when a module is built
@@ -51,6 +77,8 @@ func (s *APIServer) accounts() *accountAPI {
 		requestEnv:        s.requestEnv(),
 		db:                s.db,
 		users:             userStoreFor(s.db),
+		tokens:            authTokenStoreFor(s.db),
+		settings:          settingsStoreFor(s.db),
 		encryptionKey:     s.encryptionKey,
 		jwtSecret:         s.jwtSecret,
 		rateLimiter:       s.rateLimiter,

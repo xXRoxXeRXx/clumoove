@@ -22,7 +22,7 @@ import (
 // Password reset and email change both depend on outbound email, so their
 // availability endpoints share this handler.
 func (api *accountAPI) handleSMTPFeatureAvailable(w http.ResponseWriter, r *http.Request) {
-	available, err := db.IsInstanceSMTPConfigured(api.db)
+	available, err := api.settings.IsInstanceSMTPConfigured()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -31,7 +31,7 @@ func (api *accountAPI) handleSMTPFeatureAvailable(w http.ResponseWriter, r *http
 }
 
 func (api *accountAPI) instanceSMTPConfig() (email.SMTPConfig, error) {
-	settings, err := db.GetInstanceSMTPSettings(api.db)
+	settings, err := api.settings.GetInstanceSMTPSettings()
 	if err != nil {
 		return email.SMTPConfig{}, err
 	}
@@ -90,7 +90,7 @@ func (api *accountAPI) handleForgotPassword(w http.ResponseWriter, r *http.Reque
 	tokenHash := hashToken(rawToken)
 	expiresAt := time.Now().Add(4 * time.Hour)
 
-	if err := db.CreatePasswordResetToken(api.db, tokenHash, u.ID, expiresAt); err != nil {
+	if err := api.tokens.CreatePasswordResetToken(tokenHash, u.ID, expiresAt); err != nil {
 		api.logf(r, "handleForgotPassword: error storing token: %v\n", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
@@ -146,7 +146,7 @@ func (api *accountAPI) handleResetPassword(w http.ResponseWriter, r *http.Reques
 	}
 
 	tokenHash := hashToken(req.Token)
-	userID, err := db.ClaimPasswordResetToken(api.db, r.Context(), tokenHash, newHash)
+	userID, err := api.tokens.ClaimPasswordResetToken(r.Context(), tokenHash, newHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusBadRequest, ErrResetTokenInvalid)
@@ -229,7 +229,7 @@ func (api *accountAPI) handleChangeEmail(w http.ResponseWriter, r *http.Request)
 	tokenHash := hashToken(rawToken)
 	expiresAt := time.Now().Add(4 * time.Hour)
 
-	if err := db.CreateEmailChangeToken(api.db, tokenHash, userID, req.NewEmail, expiresAt); err != nil {
+	if err := api.tokens.CreateEmailChangeToken(tokenHash, userID, req.NewEmail, expiresAt); err != nil {
 		api.logf(r, "handleChangeEmail: error storing token: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -273,7 +273,7 @@ func (api *accountAPI) handleConfirmEmailChange(w http.ResponseWriter, r *http.R
 	}
 
 	tokenHash := hashToken(req.Token)
-	userID, newEmail, err := db.ClaimEmailChangeToken(api.db, r.Context(), tokenHash)
+	userID, newEmail, err := api.tokens.ClaimEmailChangeToken(r.Context(), tokenHash)
 	if err != nil {
 		if errorsIsEmailTaken(err) {
 			writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
@@ -288,7 +288,7 @@ func (api *accountAPI) handleConfirmEmailChange(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if err := db.DeleteAllRefreshTokensForUser(api.db, userID); err != nil {
+	if err := api.tokens.DeleteAllRefreshTokensForUser(userID); err != nil {
 		api.logf(r, "handleConfirmEmailChange: failed to revoke refresh tokens for user %s: %v\n", userID, err)
 	}
 
