@@ -161,7 +161,7 @@ File-scoped commands referenced in `AGENTS.md`:
   `mig.UserID` → `403` on mismatch.
 - Detail SSE `/migration/{id}/stream` is behind `AuthMiddleware` and verifies migration ownership from
   the JWT context; it never accepts a token in a query parameter.
-- Schedule endpoints use `db.VerifyScheduleOwnership` (EXISTS) and return `404` (not `403`) for
+- Schedule endpoints use `db.ScheduleStore.VerifyScheduleOwnershipContext` (EXISTS) and return `404` (not `403`) for
   non-owners.
 
 ### Indexing (BFS)

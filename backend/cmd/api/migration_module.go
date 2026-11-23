@@ -17,6 +17,7 @@ import (
 type migrationDependencies struct {
 	db                     *sql.DB
 	store                  db.MigrationStore
+	schedules              db.ScheduleStore
 	encryptionKey          string
 	backgroundCtx          context.Context
 	rateLimiter            rateLimiter
@@ -50,6 +51,9 @@ func newMigrationAPI(deps migrationDependencies) *migrationAPI {
 	if deps.store == nil {
 		deps.store = migrationStoreFor(deps.db)
 	}
+	if deps.schedules == nil {
+		deps.schedules = scheduleStoreFor(deps.db)
+	}
 	if deps.profiles == nil {
 		deps.profiles = newOwnedProfileAccess(deps.db, deps.encryptionKey, nil, nil, nil)
 	}
@@ -77,6 +81,7 @@ func (s *APIServer) migrations() *migrationAPI {
 		requestEnv:             s.requestEnv(),
 		db:                     s.db,
 		store:                  migrationStoreFor(s.db),
+		schedules:              scheduleStoreFor(s.db),
 		encryptionKey:          s.encryptionKey,
 		backgroundCtx:          s.backgroundCtx,
 		rateLimiter:            s.rateLimiter,

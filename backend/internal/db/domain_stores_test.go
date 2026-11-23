@@ -198,6 +198,7 @@ func TestDomainStoreConstructorsRejectNilDatabase(t *testing.T) {
 		"profile":   func() { NewProfileStore(nil) },
 		"migration": func() { NewMigrationStore(nil) },
 		"task":      func() { NewTaskStore(nil) },
+		"schedule":  func() { NewScheduleStore(nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			defer func() {
@@ -673,5 +674,54 @@ func TestSyncStoreAPICallsStayOwnerAndStateScoped(t *testing.T) {
 			t.Fatalf("UpdateSyncJobThreads() error: %v", err)
 		}
 		requireSingleStatement(t, rec, "SET threads = $1", int64(6), "sync-1")
+	})
+}
+
+func TestScheduleStoreKeepsItsGuards(t *testing.T) {
+	t.Run("ownership check binds the schedule and the owner", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		rec.queryColumns = []string{"exists"}
+		rec.queryRow = []driver.Value{true}
+		var store ScheduleStore = NewScheduleStore(database)
+
+		owned, err := store.VerifyScheduleOwnershipContext(context.Background(), "sched-1", "user-1")
+		if err != nil {
+			t.Fatalf("VerifyScheduleOwnershipContext() error: %v", err)
+		}
+		if !owned {
+			t.Error("VerifyScheduleOwnershipContext() = false, want true")
+		}
+		requireSingleStatement(t, rec, "FROM schedules WHERE id = $1 AND user_id = $2", "sched-1", "user-1")
+	})
+
+	t.Run("advancing next_run_at is a compare-and-swap on the value that was read", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		due := time.Date(2026, 1, 2, 3, 0, 0, 0, time.UTC)
+		next := due.Add(30 * time.Minute)
+
+		advanced, err := NewScheduleStore(database).UpdateNextRunAtIfUnchangedContext(context.Background(), "sched-1", due, next)
+		if err != nil {
+			t.Fatalf("UpdateNextRunAtIfUnchangedContext() error: %v", err)
+		}
+		if !advanced {
+			t.Error("UpdateNextRunAtIfUnchangedContext() = false, want true when a row matched")
+		}
+		requireSingleStatement(t, rec, "WHERE id = $2 AND next_run_at IS NOT DISTINCT FROM $3", next, "sched-1", due)
+	})
+
+	t.Run("deactivation is keyed by schedule id", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewScheduleStore(database).DeactivateScheduleContext(context.Background(), "sched-1"); err != nil {
+			t.Fatalf("DeactivateScheduleContext() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "SET is_active = FALSE", "sched-1")
+	})
+
+	t.Run("task schedules are deleted by task type and id", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewScheduleStore(database).DeleteSchedulesForTask("migration", "mig-1"); err != nil {
+			t.Fatalf("DeleteSchedulesForTask() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "DELETE FROM schedules WHERE task_type = $1 AND task_id = $2", "migration", "mig-1")
 	})
 }

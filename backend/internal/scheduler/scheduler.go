@@ -21,6 +21,7 @@ type Scheduler struct {
 	db         *sql.DB
 	backups    db.BackupStore
 	migrations db.MigrationStore
+	schedules  db.ScheduleStore
 	syncs      db.SyncStore
 	queue      *queue.Queue
 	indexer    *indexer.Indexer
@@ -50,6 +51,7 @@ func NewScheduler(database *sql.DB, q *queue.Queue, idx *indexer.Indexer) *Sched
 		db:         database,
 		backups:    db.NewBackupStore(database),
 		migrations: db.NewMigrationStore(database),
+		schedules:  db.NewScheduleStore(database),
 		syncs:      db.NewSyncStore(database),
 		queue:      q,
 		indexer:    idx,
@@ -79,7 +81,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 // processDueSchedules queries and processes all due schedules
 func (s *Scheduler) processDueSchedules(ctx context.Context) {
 	logger := schedulerLogger(ctx)
-	schedules, err := db.GetDueSchedulesContext(ctx, s.db)
+	schedules, err := s.schedules.GetDueSchedulesContext(ctx)
 	if err != nil {
 		logger.ErrorContext(ctx, "due_schedule_query_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		return
@@ -127,7 +129,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 			if schedule.CronExpression.Valid || schedule.TaskType == "sync" || schedule.TaskType == "backup" {
 				nextRun, err := s.nextRunForSchedule(ctx, schedule)
 				if err == nil {
-					advanced, err := db.UpdateNextRunAtIfUnchangedContext(ctx, s.db, schedule.ID, schedule.NextRunAt.Time, nextRun)
+					advanced, err := s.schedules.UpdateNextRunAtIfUnchangedContext(ctx, schedule.ID, schedule.NextRunAt.Time, nextRun)
 					if err != nil {
 						logger.ErrorContext(ctx, "schedule_next_run_update_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 					} else if !advanced {
@@ -136,7 +138,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 				} else {
 					logger.ErrorContext(ctx, "schedule_next_run_calculation_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 				}
-			} else if err := db.DeactivateScheduleContext(ctx, s.db, schedule.ID); err != nil {
+			} else if err := s.schedules.DeactivateScheduleContext(ctx, schedule.ID); err != nil {
 				logger.ErrorContext(ctx, "one_shot_overlap_deactivation_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			} else {
 				logger.InfoContext(ctx, "one_shot_overlap_deactivated")
@@ -159,7 +161,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 
 		// A missing target or a confirmed non-runnable state cannot recover by
 		// retrying the same schedule, so require explicit operator action.
-		if deactErr := db.DeactivateScheduleContext(ctx, s.db, schedule.ID); deactErr != nil {
+		if deactErr := s.schedules.DeactivateScheduleContext(ctx, schedule.ID); deactErr != nil {
 			logger.ErrorContext(ctx, "failed_schedule_deactivation_failed", observability.Error(deactErr), slog.String("error_kind", observability.ErrorKind(deactErr)))
 		} else {
 			logger.InfoContext(ctx, "failed_schedule_deactivated")
@@ -177,7 +179,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 			logger.ErrorContext(ctx, "schedule_next_run_calculation_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			return
 		}
-		advanced, err := db.UpdateNextRunAtIfUnchangedContext(ctx, s.db, schedule.ID, schedule.NextRunAt.Time, nextRun)
+		advanced, err := s.schedules.UpdateNextRunAtIfUnchangedContext(ctx, schedule.ID, schedule.NextRunAt.Time, nextRun)
 		if err != nil {
 			logger.ErrorContext(ctx, "schedule_next_run_update_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		} else if !advanced {
@@ -187,7 +189,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 		}
 	} else {
 		// One-shot: deactivate the schedule
-		err := db.DeactivateScheduleContext(ctx, s.db, schedule.ID)
+		err := s.schedules.DeactivateScheduleContext(ctx, schedule.ID)
 		if err != nil {
 			logger.ErrorContext(ctx, "one_shot_schedule_deactivation_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		} else {

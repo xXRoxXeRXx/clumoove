@@ -817,7 +817,7 @@ func verifySyncJobOwnershipContext(ctx context.Context, db *sql.DB, syncJobID, u
 
 // deleteSyncJobCascade deletes a sync job and all related tasks / state / schedules
 func deleteSyncJobCascade(db *sql.DB, syncJobID string) error {
-	_ = DeleteSchedulesForTask(db, "sync", syncJobID)
+	_ = deleteSchedulesForTask(db, "sync", syncJobID)
 	query := `DELETE FROM sync_jobs WHERE id = $1`
 	_, err := db.Exec(query, syncJobID)
 	return err

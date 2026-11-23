@@ -46,7 +46,7 @@ func TestUpdateNextRunAtIfUnchangedDoesNotOverwriteReschedule(t *testing.T) {
 		}
 
 		wantNextRun := time.Now().UTC().Add(time.Hour)
-		advanced, err := UpdateNextRunAtIfUnchangedContext(context.Background(), database, "unchanged-schedule", observedNextRun, wantNextRun)
+		advanced, err := updateNextRunAtIfUnchangedContext(context.Background(), database, "unchanged-schedule", observedNextRun, wantNextRun)
 		if err != nil {
 			t.Fatalf("conditionally advance unchanged schedule: %v", err)
 		}
@@ -74,10 +74,10 @@ func TestUpdateNextRunAtIfUnchangedDoesNotOverwriteReschedule(t *testing.T) {
 		}
 
 		rescheduledNextRun := time.Now().UTC().Add(5 * time.Minute)
-		if err := UpdateNextRunAtContext(context.Background(), database, "rescheduled-schedule", rescheduledNextRun); err != nil {
+		if err := updateNextRunAtContext(context.Background(), database, "rescheduled-schedule", rescheduledNextRun); err != nil {
 			t.Fatalf("reschedule: %v", err)
 		}
-		advanced, err := UpdateNextRunAtIfUnchangedContext(context.Background(), database, "rescheduled-schedule", observedNextRun, time.Now().UTC().Add(24*time.Hour))
+		advanced, err := updateNextRunAtIfUnchangedContext(context.Background(), database, "rescheduled-schedule", observedNextRun, time.Now().UTC().Add(24*time.Hour))
 		if err != nil {
 			t.Fatalf("conditionally advance stale schedule: %v", err)
 		}

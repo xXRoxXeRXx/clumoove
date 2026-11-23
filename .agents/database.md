@@ -9,7 +9,7 @@
 ## Domain Stores
 - Backup, restore, and sync orchestration persist through `db.BackupStore`, `db.RestoreStore`, and `db.SyncStore` (`NewBackupStore(sqlDB)` etc. in `backend/internal/db/*_store.go`). They delegate to the package-level functions; fencing, ownership, and claim-epoch predicates stay in those functions, never in the store wrappers.
 - Add a new orchestration persistence call to the store interface and its delegating method in the same change, so consumers can fake it.
-- Connection profiles, the migrations table, task rows and sync jobs are unexported: outside `internal/db` they are reached only through `db.ProfileStore`, `db.MigrationStore`, `db.TaskStore` and `db.SyncStore` (`NewProfileStore(sqlDB)` etc.). Callers must verify ownership (`VerifyProfileOwnership`, `GetOwnedMigrationContext`, `GetOwnedSyncJobContext`) before mutating by id; other store calls are keyed by id alone, and claim-fenced calls take the lease or generation the caller captured. Consumers keep a store field next to their `*sql.DB` and tests embed the interface in a fake. Migrate other tables the same way, one feature at a time (issue #83), and never call a migrated feature's queries from outside `db`.
+- Connection profiles, the migrations table, task rows, sync jobs and schedules are unexported: outside `internal/db` they are reached only through `db.ProfileStore`, `db.MigrationStore`, `db.TaskStore`, `db.SyncStore` and `db.ScheduleStore` (`NewProfileStore(sqlDB)` etc.). Callers must verify ownership (`VerifyProfileOwnership`, `GetOwnedMigrationContext`, `GetOwnedSyncJobContext`, `VerifyScheduleOwnershipContext`) before mutating by id; other store calls are keyed by id alone, and claim-fenced calls take the lease or generation the caller captured. Consumers keep a store field next to their `*sql.DB` and tests embed the interface in a fake. Migrate other tables the same way, one feature at a time (issue #83), and never call a migrated feature's queries from outside `db`.
 - `BackupRepositoryCredentials` is shared by the backup and restore stores.
 - Naming note: "repository" in the backup domain means the pack repository, so the persistence modules are called stores.
 
@@ -18,7 +18,7 @@
   - Migration endpoints (`GET /api/migration/{id}`, `DELETE /api/migration/{id}`, `GET /api/migration/{id}/report`, SSE stream) must retrieve the caller's ID via `auth.GetUserIDFromContext(r.Context())` and compare with `migration.UserID`. Return `403 Forbidden` on mismatch.
   - The User ID must always originate from validated JWT claims (`auth.ClaimsKey`).
 - **Schedule Anti-Enumeration**:
-  - Schedule endpoints (`GET /api/schedule/{id}`, `DELETE /api/schedule/{id}`) verify ownership with `db.VerifyScheduleOwnership` (which uses SQL `EXISTS`).
+  - Schedule endpoints (`GET /api/schedule/{id}`, `DELETE /api/schedule/{id}`) verify ownership with `db.ScheduleStore.VerifyScheduleOwnershipContext` (which uses SQL `EXISTS`).
   - If ownership fails or the row does not exist, return `404 Not Found` in both cases. Never return `403 Forbidden` for schedules, preventing cross-tenant existence enumeration.
 - **Profile References**: Persist `source_profile_id` and `target_profile_id` foreign keys with `ON DELETE SET NULL`.
 

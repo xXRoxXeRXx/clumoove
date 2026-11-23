@@ -1077,7 +1077,7 @@ func (api *migrationAPI) handleDeleteMigration(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := db.DeleteSchedulesForTask(api.db, "migration", id); err != nil {
+	if err := api.schedules.DeleteSchedulesForTask("migration", id); err != nil {
 		api.logf(r, "Warning: failed to delete schedules for migration %s: %v\n", id, err)
 	}
 

@@ -26,13 +26,6 @@ const createScheduleQuery = `
 		RETURNING id, created_at, updated_at
 	`
 
-func CreateSchedule(db *sql.DB, s *Schedule) (string, error) {
-	if err := insertSchedule(context.Background(), db, s); err != nil {
-		return "", err
-	}
-	return s.ID, nil
-}
-
 func insertSchedule(ctx context.Context, database queryExecerContext, s *Schedule) error {
 	return database.QueryRowContext(ctx,
 		createScheduleQuery,
@@ -40,12 +33,8 @@ func insertSchedule(ctx context.Context, database queryExecerContext, s *Schedul
 	).Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt)
 }
 
-func GetSchedule(db *sql.DB, id string) (*Schedule, error) {
-	return GetScheduleContext(context.Background(), db, id)
-}
-
-// GetScheduleContext retrieves a schedule while honoring caller cancellation.
-func GetScheduleContext(ctx context.Context, db *sql.DB, id string) (*Schedule, error) {
+// getScheduleContext retrieves a schedule while honoring caller cancellation.
+func getScheduleContext(ctx context.Context, db *sql.DB, id string) (*Schedule, error) {
 	query := `
 		SELECT id, user_id, task_type, task_id, cron_expression, run_at, next_run_at,
 		       is_active, created_at, updated_at
@@ -62,12 +51,8 @@ func GetScheduleContext(ctx context.Context, db *sql.DB, id string) (*Schedule, 
 	return &s, nil
 }
 
-func GetSchedulesForUser(db *sql.DB, userID string) ([]Schedule, error) {
-	return GetSchedulesForUserContext(context.Background(), db, userID)
-}
-
-// GetSchedulesForUserContext lists schedules while honoring caller cancellation.
-func GetSchedulesForUserContext(ctx context.Context, db *sql.DB, userID string) ([]Schedule, error) {
+// getSchedulesForUserContext lists schedules while honoring caller cancellation.
+func getSchedulesForUserContext(ctx context.Context, db *sql.DB, userID string) ([]Schedule, error) {
 	query := `
 		SELECT id, user_id, task_type, task_id, cron_expression, run_at, next_run_at,
 		       is_active, created_at, updated_at
@@ -99,13 +84,9 @@ func GetSchedulesForUserContext(ctx context.Context, db *sql.DB, userID string) 
 	return schedules, nil
 }
 
-func GetDueSchedules(db *sql.DB) ([]Schedule, error) {
-	return GetDueSchedulesContext(context.Background(), db)
-}
-
-// GetDueSchedulesContext lists active schedules that are ready to run while
+// getDueSchedulesContext lists active schedules that are ready to run while
 // honoring caller cancellation.
-func GetDueSchedulesContext(ctx context.Context, db *sql.DB) ([]Schedule, error) {
+func getDueSchedulesContext(ctx context.Context, db *sql.DB) ([]Schedule, error) {
 	query := `
 		SELECT id, user_id, task_type, task_id, cron_expression, run_at, next_run_at,
 		       is_active, created_at, updated_at
@@ -138,8 +119,8 @@ func GetDueSchedulesContext(ctx context.Context, db *sql.DB) ([]Schedule, error)
 	return schedules, nil
 }
 
-// UpdateNextRunAtContext updates a schedule while honoring caller cancellation.
-func UpdateNextRunAtContext(ctx context.Context, db *sql.DB, id string, nextRunAt time.Time) error {
+// updateNextRunAtContext updates a schedule while honoring caller cancellation.
+func updateNextRunAtContext(ctx context.Context, db *sql.DB, id string, nextRunAt time.Time) error {
 	query := `
 		UPDATE schedules
 		SET next_run_at = $1, updated_at = CURRENT_TIMESTAMP
@@ -149,10 +130,10 @@ func UpdateNextRunAtContext(ctx context.Context, db *sql.DB, id string, nextRunA
 	return err
 }
 
-// UpdateNextRunAtIfUnchangedContext advances a schedule only when its next run
+// updateNextRunAtIfUnchangedContext advances a schedule only when its next run
 // is still the value observed by the caller. This prevents a stale scheduler
 // read from overwriting a schedule explicitly rescheduled by a user.
-func UpdateNextRunAtIfUnchangedContext(ctx context.Context, db *sql.DB, id string, expectedNextRunAt, nextRunAt time.Time) (bool, error) {
+func updateNextRunAtIfUnchangedContext(ctx context.Context, db *sql.DB, id string, expectedNextRunAt, nextRunAt time.Time) (bool, error) {
 	result, err := db.ExecContext(ctx, `
 		UPDATE schedules
 		SET next_run_at = $1, updated_at = CURRENT_TIMESTAMP
@@ -168,12 +149,8 @@ func UpdateNextRunAtIfUnchangedContext(ctx context.Context, db *sql.DB, id strin
 	return rows > 0, nil
 }
 
-func DeactivateSchedule(db *sql.DB, id string) error {
-	return DeactivateScheduleContext(context.Background(), db, id)
-}
-
-// DeactivateScheduleContext deactivates a schedule while honoring caller cancellation.
-func DeactivateScheduleContext(ctx context.Context, db *sql.DB, id string) error {
+// deactivateScheduleContext deactivates a schedule while honoring caller cancellation.
+func deactivateScheduleContext(ctx context.Context, db *sql.DB, id string) error {
 	query := `
 		UPDATE schedules
 		SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
@@ -183,59 +160,22 @@ func DeactivateScheduleContext(ctx context.Context, db *sql.DB, id string) error
 	return err
 }
 
-// DeactivateSchedulesForTask prevents a paused job from being triggered by
-// the scheduler while preserving its schedule for a later resume.
-func DeactivateSchedulesForTask(db *sql.DB, taskType, taskID string) error {
-	_, err := db.Exec(`
-		UPDATE schedules
-		SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
-		WHERE task_type = $1 AND task_id = $2
-	`, taskType, taskID)
-	return err
-}
-
-// ReactivateSchedulesForTask enables a job's existing schedules and makes
-// them due at nextRunAt after a successful resume.
-func ReactivateSchedulesForTask(db *sql.DB, taskType, taskID string, nextRunAt time.Time) error {
-	_, err := db.Exec(`
-		UPDATE schedules
-		SET is_active = TRUE, next_run_at = $1, updated_at = CURRENT_TIMESTAMP
-		WHERE task_type = $2 AND task_id = $3
-	`, nextRunAt, taskType, taskID)
-	return err
-}
-
-func DeleteSchedule(db *sql.DB, id string) error {
+func deleteSchedule(db *sql.DB, id string) error {
 	query := `DELETE FROM schedules WHERE id = $1`
 	_, err := db.Exec(query, id)
 	return err
 }
 
-func DeleteSchedulesForTask(db *sql.DB, taskType string, taskID string) error {
+func deleteSchedulesForTask(db *sql.DB, taskType string, taskID string) error {
 	query := `DELETE FROM schedules WHERE task_type = $1 AND task_id = $2`
 	_, err := db.Exec(query, taskType, taskID)
 	return err
 }
 
-func VerifyScheduleOwnership(db *sql.DB, scheduleID, userID string) (bool, error) {
-	return VerifyScheduleOwnershipContext(context.Background(), db, scheduleID, userID)
-}
-
-// VerifyScheduleOwnershipContext verifies ownership while honoring caller cancellation.
-func VerifyScheduleOwnershipContext(ctx context.Context, db *sql.DB, scheduleID, userID string) (bool, error) {
+// verifyScheduleOwnershipContext verifies ownership while honoring caller cancellation.
+func verifyScheduleOwnershipContext(ctx context.Context, db *sql.DB, scheduleID, userID string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM schedules WHERE id = $1 AND user_id = $2)`
 	var exists bool
 	err := db.QueryRowContext(ctx, query, scheduleID, userID).Scan(&exists)
 	return exists, err
-}
-
-func UpdateSchedule(db *sql.DB, s *Schedule) error {
-	query := `
-		UPDATE schedules
-		SET cron_expression = $1, run_at = $2, next_run_at = $3, is_active = $4,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $5
-	`
-	_, err := db.Exec(query, s.CronExpression, s.RunAt, s.NextRunAt, s.IsActive, s.ID)
-	return err
 }
