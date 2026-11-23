@@ -31,7 +31,7 @@ type AuthStateLookup func(id string) (*db.UserAuthState, error)
 
 func databaseAuthStateLookup(database *sql.DB) AuthStateLookup {
 	return func(id string) (*db.UserAuthState, error) {
-		return db.GetUserAuthState(database, id)
+		return db.NewUserStore(database).GetUserAuthState(id)
 	}
 }
 

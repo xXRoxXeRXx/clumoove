@@ -69,7 +69,7 @@ func (api *accountAPI) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := db.GetUserByEmail(r.Context(), api.db, req.Email); err == nil {
+	if _, err := api.users.GetUserByEmail(r.Context(), req.Email); err == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
 	} else if err != sql.ErrNoRows {
@@ -78,7 +78,7 @@ func (api *accountAPI) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.CreateUser(api.db, req.Email, passHash, req.DisplayName, req.Language)
+	u, err := api.users.CreateUser(req.Email, passHash, req.DisplayName, req.Language)
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -119,7 +119,7 @@ func (api *accountAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByEmail(r.Context(), api.db, req.Email)
+	u, err := api.users.GetUserByEmail(r.Context(), req.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			_ = auth.CheckPasswordHash(req.Password, api.dummyPasswordHash)
@@ -145,7 +145,7 @@ func (api *accountAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if !passwordValid {
 		api.writeAudit(r, db.AuditLoginFailed, req.Email, u.ID, map[string]interface{}{"reason": "bad_password"})
-		locked, lerr := db.IncrementLoginFailed(api.db, u.ID, loginMaxAttempts, loginLockDuration)
+		locked, lerr := api.users.IncrementLoginFailed(u.ID, loginMaxAttempts, loginLockDuration)
 		if lerr != nil {
 			api.logf(r, "Login error: failed to record failed attempt for user %s: %v\n", u.ID, lerr)
 		}
@@ -159,7 +159,7 @@ func (api *accountAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.ResetLoginFailed(api.db, u.ID); err != nil {
+	if err := api.users.ResetLoginFailed(u.ID); err != nil {
 		api.logf(r, "Login error: failed to reset failed attempts for user %s: %v\n", u.ID, err)
 	}
 
@@ -395,7 +395,7 @@ func (api *accountAPI) handleMe(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
+	u, err := api.users.GetUserByIDContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "handleMe: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

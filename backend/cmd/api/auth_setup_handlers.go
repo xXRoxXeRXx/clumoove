@@ -23,7 +23,7 @@ func (api *accountAPI) handleGetSetupStatus(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	needsSetup, err := db.IsSetupRequired(api.db)
+	needsSetup, err := api.users.IsSetupRequired()
 	if err != nil {
 		api.logf(r, "handleGetSetupStatus: failed to check setup status: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -40,7 +40,7 @@ func (api *accountAPI) handleSetupAdmin(w http.ResponseWriter, r *http.Request) 
 
 	// Avoid expensive password hashing after bootstrap is permanently closed.
 	// CreateInitialAdmin repeats this check while holding its transaction lock.
-	needsSetup, err := db.IsSetupRequired(api.db)
+	needsSetup, err := api.users.IsSetupRequired()
 	if err != nil {
 		api.logf(r, "handleSetupAdmin: failed to check setup status: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -80,7 +80,7 @@ func (api *accountAPI) handleSetupAdmin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	u, err := db.CreateInitialAdmin(r.Context(), api.db, req.Email, passHash, req.DisplayName, req.Language)
+	u, err := api.users.CreateInitialAdmin(r.Context(), req.Email, passHash, req.DisplayName, req.Language)
 	if err != nil {
 		api.logf(r, "handleSetupAdmin: failed to create admin user: %v\n", err)
 		if errors.Is(err, db.ErrSetupAlreadyCompleted) {

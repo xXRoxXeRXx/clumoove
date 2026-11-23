@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"strconv"
 	"time"
@@ -50,7 +49,7 @@ func (api *accountAPI) handleTOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByIDContext(r.Context(), api.db, claims.UserID)
+	u, err := api.users.GetUserByIDContext(r.Context(), claims.UserID)
 	if err != nil {
 		api.logf(r, "handleTOTP: failed to load user %s: %v\n", claims.UserID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -100,7 +99,7 @@ func (api *accountAPI) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load the user to obtain the email for the otpauth account name.
-	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
+	u, err := api.users.GetUserByIDContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "handle2FASetup: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -129,7 +128,7 @@ func (api *accountAPI) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ok, err := db.SetUserTOTPSecretContext(r.Context(), api.db, userID, encrypted)
+	ok, err := api.users.SetUserTOTPSecretContext(r.Context(), userID, encrypted)
 	if err != nil {
 		api.logf(r, "handle2FASetup: failed to store secret for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -170,7 +169,7 @@ func (api *accountAPI) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
+	u, err := api.users.GetUserByIDContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "handle2FAEnable: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -204,14 +203,14 @@ func (api *accountAPI) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ok, err := db.EnableUserTOTPContext(r.Context(), api.db, userID, u.TotpSecretEnc, db.StringArray(hashes))
+	ok, err := api.users.EnableUserTOTPContext(r.Context(), userID, u.TotpSecretEnc, db.StringArray(hashes))
 	if err != nil {
 		api.logf(r, "handle2FAEnable: failed to enable 2FA for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if !ok {
-		latest, lerr := db.GetUserByIDContext(r.Context(), api.db, userID)
+		latest, lerr := api.users.GetUserByIDContext(r.Context(), userID)
 		if lerr != nil {
 			api.logf(r, "handle2FAEnable: failed to triage !ok for user %s: %v\n", userID, lerr)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -255,7 +254,7 @@ func (api *accountAPI) handle2FADisable(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
+	u, err := api.users.GetUserByIDContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "handle2FADisable: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -270,7 +269,7 @@ func (api *accountAPI) handle2FADisable(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := db.DisableUserTOTP(api.db, userID); err != nil {
+	if err := api.users.DisableUserTOTP(userID); err != nil {
 		api.logf(r, "handle2FADisable: failed to disable 2FA for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -288,7 +287,7 @@ func (api *accountAPI) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
+	u, err := api.users.GetUserByIDContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "handle2FAStatus: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -326,7 +325,7 @@ func (api *accountAPI) verifySecondFactor(w http.ResponseWriter, r *http.Request
 	valid := totp2fa.Validate(secret, code)
 	usedBackupCode := false
 	if !valid {
-		usedBackupCode, err = consumeTOTPBackupCode(r.Context(), api.db, u, code)
+		usedBackupCode, err = consumeTOTPBackupCode(r.Context(), api.users, u, code)
 		if err != nil {
 			api.logf(r, "%s: failed to consume backup code for user %s: %v\n", operation, u.ID, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -338,7 +337,7 @@ func (api *accountAPI) verifySecondFactor(w http.ResponseWriter, r *http.Request
 	}
 
 	if !valid {
-		locked, lerr := db.IncrementTOTPFailed(api.db, u.ID, totpMaxAttempts, totpLockDuration)
+		locked, lerr := api.users.IncrementTOTPFailed(u.ID, totpMaxAttempts, totpLockDuration)
 		if lerr != nil {
 			api.logf(r, "%s: failed to increment attempts for user %s: %v\n", operation, u.ID, lerr)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -356,7 +355,7 @@ func (api *accountAPI) verifySecondFactor(w http.ResponseWriter, r *http.Request
 	// Backup codes are single-use and consumed atomically; only a TOTP code
 	// clears the failed-attempt counter.
 	if !usedBackupCode {
-		if err := db.ResetTOTPFailed(api.db, u.ID); err != nil {
+		if err := api.users.ResetTOTPFailed(u.ID); err != nil {
 			api.logf(r, "%s: failed to reset attempts for user %s: %v\n", operation, u.ID, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return false
@@ -367,7 +366,7 @@ func (api *accountAPI) verifySecondFactor(w http.ResponseWriter, r *http.Request
 
 // consumeTOTPBackupCode verifies a backup code against the user's loaded hashes
 // and atomically removes its matching hash when it is still available.
-func consumeTOTPBackupCode(ctx context.Context, database *sql.DB, user *db.User, code string) (bool, error) {
+func consumeTOTPBackupCode(ctx context.Context, users db.UserStore, user *db.User, code string) (bool, error) {
 	if len(user.TotpBackupCodes) == 0 {
 		return false, nil
 	}
@@ -377,13 +376,13 @@ func consumeTOTPBackupCode(ctx context.Context, database *sql.DB, user *db.User,
 		return false, nil
 	}
 
-	return db.ConsumeTOTPBackupCode(ctx, database, user.ID, user.TotpBackupCodes[index])
+	return users.ConsumeTOTPBackupCode(ctx, user.ID, user.TotpBackupCodes[index])
 }
 
 // issueTokens mints a fresh access + refresh token pair for the given user,
 // mirroring the token issuance in handleLogin.
 func (api *accountAPI) issueTokens(w http.ResponseWriter, r *http.Request, u *db.User) {
-	if ts, err := db.UpdateLastLoginAt(api.db, u.ID); err != nil {
+	if ts, err := api.users.UpdateLastLoginAt(u.ID); err != nil {
 		api.logf(r, "issueTokens: failed to update last_login_at for user %s: %v\n", u.ID, err)
 	} else {
 		u.LastLoginAt = &ts

@@ -23,7 +23,7 @@ func (api *adminAPI) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		val = "false"
 	}
 
-	needsSetup, err := db.IsSetupRequired(api.db)
+	needsSetup, err := api.users.IsSetupRequired()
 	if err != nil {
 		api.logf(r, "handleGetSettings: failed to check setup status: %v\n", err)
 		needsSetup = false
@@ -122,7 +122,7 @@ func (api *adminAPI) handleAdminCreateUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if _, err := db.GetUserByEmail(r.Context(), api.db, req.Email); err == nil {
+	if _, err := api.users.GetUserByEmail(r.Context(), req.Email); err == nil {
 		writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
 		return
 	}
@@ -133,7 +133,7 @@ func (api *adminAPI) handleAdminCreateUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	u, err := db.CreateUserWithRole(api.db, req.Email, passHash, req.DisplayName, req.Role, false, "en")
+	u, err := api.users.CreateUserWithRole(req.Email, passHash, req.DisplayName, req.Role, false, "en")
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
@@ -169,7 +169,7 @@ func (api *adminAPI) handleAdminSuspendUser(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	syncJobIDs, err := db.SuspendUser(api.db, id)
+	syncJobIDs, err := api.users.SuspendUser(id)
 	if err != nil {
 		if errors.Is(err, db.ErrLastActiveAdmin) {
 			writeError(w, http.StatusConflict, ErrLastAdmin)
@@ -213,7 +213,7 @@ func (api *adminAPI) handleAdminReactivateUser(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := db.UpdateUserActive(api.db, id, true); err != nil {
+	if err := api.users.UpdateUserActive(id, true); err != nil {
 		api.logf(r, "Admin reactivate %s error: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -240,7 +240,7 @@ func (api *adminAPI) handleAdminDeleteUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := db.DeleteUser(api.db, id); err != nil {
+	if err := api.users.DeleteUser(id); err != nil {
 		if errors.Is(err, db.ErrLastActiveAdmin) {
 			writeError(w, http.StatusConflict, ErrLastAdmin)
 			return
@@ -280,7 +280,7 @@ func (api *adminAPI) handleAdminUpdateRole(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	target, err := db.GetUserByIDContext(r.Context(), api.db, id)
+	target, err := api.users.GetUserByIDContext(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrUserNotFound)
 		return
@@ -298,7 +298,7 @@ func (api *adminAPI) handleAdminUpdateRole(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	if err := db.UpdateUserRole(api.db, id, req.Role); err != nil {
+	if err := api.users.UpdateUserRole(id, req.Role); err != nil {
 		if errors.Is(err, db.ErrLastActiveAdmin) {
 			writeError(w, http.StatusConflict, ErrLastAdmin)
 			return
@@ -337,7 +337,7 @@ func (api *adminAPI) handleAdminListUsers(w http.ResponseWriter, r *http.Request
 	}
 	search := strings.TrimSpace(q.Get("q"))
 
-	users, total, err := db.ListUsersContext(r.Context(), api.db, db.UserListParams{
+	users, total, err := api.users.ListUsersContext(r.Context(), db.UserListParams{
 		Page:   page,
 		Limit:  limit,
 		Role:   role,
@@ -363,7 +363,7 @@ func (api *adminAPI) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := db.GetGlobalStats(api.db)
+	stats, err := api.users.GetGlobalStats()
 	if err != nil {
 		api.logf(r, "Admin stats: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

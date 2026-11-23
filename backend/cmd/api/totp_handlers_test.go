@@ -170,7 +170,7 @@ func TestHandle2FAEnable_RejectsWhenSecretSuperseded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encrypt secret A: %v", err)
 	}
-	if ok, err := db.SetUserTOTPSecret(database, user.ID, secretA); err != nil || !ok {
+	if ok, err := db.NewUserStore(database).SetUserTOTPSecretContext(context.Background(), user.ID, secretA); err != nil || !ok {
 		t.Fatalf("store secret A: ok=%v, err=%v", ok, err)
 	}
 
@@ -185,7 +185,7 @@ func TestHandle2FAEnable_RejectsWhenSecretSuperseded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encrypt secret B: %v", err)
 	}
-	if ok, err := db.SetUserTOTPSecret(database, user.ID, secretB); err != nil || !ok {
+	if ok, err := db.NewUserStore(database).SetUserTOTPSecretContext(context.Background(), user.ID, secretB); err != nil || !ok {
 		t.Fatalf("store secret B: ok=%v, err=%v", ok, err)
 	}
 
@@ -206,7 +206,7 @@ func TestHandle2FAEnable_RejectsWhenSecretSuperseded(t *testing.T) {
 		t.Fatal("expected enable to be rejected when secret was superseded")
 	}
 
-	updated, err := db.GetUserByID(database, user.ID)
+	updated, err := db.NewUserStore(database).GetUserByIDContext(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("get user: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestHandle2FA_ConcurrentSetupAndEnable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encrypt secret A: %v", err)
 	}
-	if ok, err := db.SetUserTOTPSecret(database, user.ID, secretA); err != nil || !ok {
+	if ok, err := db.NewUserStore(database).SetUserTOTPSecretContext(context.Background(), user.ID, secretA); err != nil || !ok {
 		t.Fatalf("store secret A: ok=%v, err=%v", ok, err)
 	}
 
@@ -272,7 +272,7 @@ func TestHandle2FA_ConcurrentSetupAndEnable(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	updated, err := db.GetUserByID(database, user.ID)
+	updated, err := db.NewUserStore(database).GetUserByIDContext(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("get user: %v", err)
 	}

@@ -70,7 +70,7 @@ func (api *accountAPI) handleForgotPassword(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	u, err := db.GetUserByEmail(r.Context(), api.db, req.Email)
+	u, err := api.users.GetUserByEmail(r.Context(), req.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -157,7 +157,7 @@ func (api *accountAPI) handleResetPassword(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := db.ResetLoginFailed(api.db, userID); err != nil {
+	if err := api.users.ResetLoginFailed(userID); err != nil {
 		api.logf(r, "handleResetPassword: failed to clear login lockout for user %s: %v\n", userID, err)
 	}
 
@@ -191,7 +191,7 @@ func (api *accountAPI) handleChangeEmail(w http.ResponseWriter, r *http.Request)
 	}
 	req.NewEmail = addr.Address
 
-	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
+	u, err := api.users.GetUserByIDContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "handleChangeEmail: error fetching user: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -203,7 +203,7 @@ func (api *accountAPI) handleChangeEmail(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	existing, err := db.GetUserByEmail(r.Context(), api.db, req.NewEmail)
+	existing, err := api.users.GetUserByEmail(r.Context(), req.NewEmail)
 	if err != nil && err != sql.ErrNoRows {
 		api.logf(r, "handleChangeEmail: error checking email: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -293,7 +293,7 @@ func (api *accountAPI) handleConfirmEmailChange(w http.ResponseWriter, r *http.R
 	}
 
 	if smtpCfg, smtpErr := api.instanceSMTPConfig(); smtpErr == nil {
-		u, lookupErr := db.GetUserByIDContext(r.Context(), api.db, userID)
+		u, lookupErr := api.users.GetUserByIDContext(r.Context(), userID)
 		language := "en"
 		if lookupErr == nil {
 			language = u.Language

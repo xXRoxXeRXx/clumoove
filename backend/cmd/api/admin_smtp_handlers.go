@@ -120,7 +120,7 @@ func (api *adminAPI) handleAdminTestSMTP(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrSmtpDecryptFailed})
 		return
 	}
-	user, err := db.GetUserByIDContext(r.Context(), api.db, actor)
+	user, err := api.users.GetUserByIDContext(r.Context(), actor)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrInternalError})
 		return

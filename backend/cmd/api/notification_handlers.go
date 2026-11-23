@@ -23,6 +23,7 @@ type notificationRequest struct {
 // the root server and are injected as narrow functions.
 type notificationDependencies struct {
 	db            *sql.DB
+	users         db.UserStore
 	encryptionKey string
 	rateLimiter   rateLimiter
 	requestEnv
@@ -34,6 +35,9 @@ type notificationAPI struct {
 
 func newNotificationAPI(deps notificationDependencies) *notificationAPI {
 	deps.requestEnv = deps.requestEnv.withDefaults("notification")
+	if deps.users == nil {
+		deps.users = userStoreFor(deps.db)
+	}
 	return &notificationAPI{notificationDependencies: deps}
 }
 
@@ -50,6 +54,7 @@ func (s *APIServer) notifications() *notificationAPI {
 	return newNotificationAPI(notificationDependencies{
 		requestEnv:    s.requestEnv(),
 		db:            s.db,
+		users:         userStoreFor(s.db),
 		encryptionKey: s.encryptionKey,
 		rateLimiter:   s.rateLimiter,
 	})
@@ -285,7 +290,7 @@ func (api *notificationAPI) handleTest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": notificationErrorCode(err)})
 		return
 	}
-	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
+	u, err := api.users.GetUserByIDContext(r.Context(), userID)
 	if err != nil || notify.Send(r.Context(), req.Type, notify.Config(req.Config), json.RawMessage(`{"kind":"test","name":"Clumoove","status":"TEST","total":0,"processed":0,"failed":0,"skipped":0}`), u.Email, u.Language) != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrNotificationTestFailed})
 		return

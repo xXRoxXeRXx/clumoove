@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"net/http"
+
+	"backend/internal/db"
 )
 
 // accountDependencies contains only the infrastructure required by the
@@ -11,6 +13,7 @@ import (
 // Cross-cutting request helpers are injected at module construction.
 type accountDependencies struct {
 	db                *sql.DB
+	users             db.UserStore
 	encryptionKey     string
 	jwtSecret         string
 	rateLimiter       rateLimiter
@@ -25,16 +28,29 @@ type accountAPI struct {
 
 func newAccountAPI(deps accountDependencies) *accountAPI {
 	deps.requestEnv = deps.requestEnv.withDefaults("account")
+	if deps.users == nil {
+		deps.users = userStoreFor(deps.db)
+	}
 	if deps.getRedirectURI == nil {
 		deps.getRedirectURI = defaultRedirectURI
 	}
 	return &accountAPI{accountDependencies: deps}
 }
 
+// userStoreFor returns the PostgreSQL user store, or nil when a module is built
+// without a database handle (route-only tests).
+func userStoreFor(database *sql.DB) db.UserStore {
+	if database == nil {
+		return nil
+	}
+	return db.NewUserStore(database)
+}
+
 func (s *APIServer) accounts() *accountAPI {
 	return newAccountAPI(accountDependencies{
 		requestEnv:        s.requestEnv(),
 		db:                s.db,
+		users:             userStoreFor(s.db),
 		encryptionKey:     s.encryptionKey,
 		jwtSecret:         s.jwtSecret,
 		rateLimiter:       s.rateLimiter,

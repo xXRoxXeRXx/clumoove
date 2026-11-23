@@ -68,7 +68,7 @@ type GlobalStats struct {
 	TasksByStatus      map[string]int `json:"tasks_by_status"`
 }
 
-func CreateUser(db *sql.DB, email, passwordHash, displayName, language string) (*User, error) {
+func createUser(db *sql.DB, email, passwordHash, displayName, language string) (*User, error) {
 	if language != "de" && language != "en" {
 		language = "en"
 	}
@@ -88,7 +88,7 @@ func CreateUser(db *sql.DB, email, passwordHash, displayName, language string) (
 	return &u, nil
 }
 
-func CreateUserWithRole(database *sql.DB, email, passwordHash, displayName, role string, mustChangePassword bool, language string) (*User, error) {
+func createUserWithRole(database *sql.DB, email, passwordHash, displayName, role string, mustChangePassword bool, language string) (*User, error) {
 	if !ValidRoles[role] {
 		role = "USER"
 	}
@@ -111,10 +111,10 @@ func CreateUserWithRole(database *sql.DB, email, passwordHash, displayName, role
 	return &u, nil
 }
 
-// CreateInitialAdmin atomically claims an empty installation for its first
+// createInitialAdmin atomically claims an empty installation for its first
 // administrator. The advisory lock also serializes the otherwise unlocked
 // empty-table case, where SELECT ... FOR UPDATE cannot protect a missing row.
-func CreateInitialAdmin(ctx context.Context, database *sql.DB, email, passwordHash, displayName, language string) (*User, error) {
+func createInitialAdmin(ctx context.Context, database *sql.DB, email, passwordHash, displayName, language string) (*User, error) {
 	if language != "de" && language != "en" {
 		language = "en"
 	}
@@ -156,7 +156,7 @@ func CreateInitialAdmin(ctx context.Context, database *sql.DB, email, passwordHa
 	return &u, nil
 }
 
-func GetUserByEmail(ctx context.Context, db *sql.DB, email string) (*User, error) {
+func getUserByEmail(ctx context.Context, db *sql.DB, email string) (*User, error) {
 	query := `
 		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,
@@ -185,12 +185,12 @@ func GetUserByEmail(ctx context.Context, db *sql.DB, email string) (*User, error
 	return &u, nil
 }
 
-func GetUserByID(db *sql.DB, id string) (*User, error) {
-	return GetUserByIDContext(context.Background(), db, id)
+func getUserByID(db *sql.DB, id string) (*User, error) {
+	return getUserByIDContext(context.Background(), db, id)
 }
 
-// GetUserByIDContext retrieves a user while honoring caller cancellation.
-func GetUserByIDContext(ctx context.Context, db *sql.DB, id string) (*User, error) {
+// getUserByIDContext retrieves a user while honoring caller cancellation.
+func getUserByIDContext(ctx context.Context, db *sql.DB, id string) (*User, error) {
 	query := `
 		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,
@@ -219,7 +219,7 @@ func GetUserByIDContext(ctx context.Context, db *sql.DB, id string) (*User, erro
 	return &u, nil
 }
 
-// GetUserByIDTx is the transaction-scoped counterpart of GetUserByID.
+// GetUserByIDTx is the transaction-scoped counterpart of getUserByID.
 func GetUserByIDTx(tx *sql.Tx, id string) (*User, error) {
 	query := `
 		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
@@ -249,8 +249,8 @@ func GetUserByIDTx(tx *sql.Tx, id string) (*User, error) {
 	return &u, nil
 }
 
-// GetUserAuthState fetches the current authorization state for an account.
-func GetUserAuthState(database *sql.DB, id string) (*UserAuthState, error) {
+// getUserAuthState fetches the current authorization state for an account.
+func getUserAuthState(database *sql.DB, id string) (*UserAuthState, error) {
 	var state UserAuthState
 	err := database.QueryRow(`
 		SELECT role, active, must_change_password
@@ -262,12 +262,12 @@ func GetUserAuthState(database *sql.DB, id string) (*UserAuthState, error) {
 	return &state, nil
 }
 
-func ListUsers(database *sql.DB, p UserListParams) ([]User, int, error) {
-	return ListUsersContext(context.Background(), database, p)
+func listUsers(database *sql.DB, p UserListParams) ([]User, int, error) {
+	return listUsersContext(context.Background(), database, p)
 }
 
-// ListUsersContext lists users while honoring caller cancellation.
-func ListUsersContext(ctx context.Context, database *sql.DB, p UserListParams) ([]User, int, error) {
+// listUsersContext lists users while honoring caller cancellation.
+func listUsersContext(ctx context.Context, database *sql.DB, p UserListParams) ([]User, int, error) {
 	where := "TRUE"
 	args := []interface{}{}
 	idx := 1
@@ -324,18 +324,18 @@ func ListUsersContext(ctx context.Context, database *sql.DB, p UserListParams) (
 	return users, total, nil
 }
 
-func UpdateLastLoginAt(database *sql.DB, id string) (time.Time, error) {
+func updateLastLoginAt(database *sql.DB, id string) (time.Time, error) {
 	var ts time.Time
 	err := database.QueryRow(`UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING last_login_at`, id).Scan(&ts)
 	return ts, err
 }
 
-func UpdateUserDisplayName(db *sql.DB, id, name string) error {
+func updateUserDisplayName(db *sql.DB, id, name string) error {
 	_, err := db.Exec(`UPDATE users SET display_name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, name, id)
 	return err
 }
 
-func UpdateUserLanguage(database *sql.DB, id, language string) error {
+func updateUserLanguage(database *sql.DB, id, language string) error {
 	if language != "de" && language != "en" {
 		return fmt.Errorf("unsupported language %q", language)
 	}
@@ -343,12 +343,12 @@ func UpdateUserLanguage(database *sql.DB, id, language string) error {
 	return err
 }
 
-func UpdateUserPassword(db *sql.DB, id, newHash string) error {
+func updateUserPassword(db *sql.DB, id, newHash string) error {
 	_, err := db.Exec(`UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, newHash, id)
 	return err
 }
 
-func UpdateUserRole(database *sql.DB, id, role string) error {
+func updateUserRole(database *sql.DB, id, role string) error {
 	if !ValidRoles[role] {
 		return fmt.Errorf("invalid role %q", role)
 	}
@@ -413,10 +413,10 @@ func ensureNotLastActiveAdmin(tx *sql.Tx, id string) error {
 	return nil
 }
 
-// SuspendUser deactivates an account and abandons every active sync pass. It
+// suspendUser deactivates an account and abandons every active sync pass. It
 // returns the affected jobs so the API can cancel their in-flight coordinators
 // and worker streams after this transaction commits.
-func SuspendUser(database *sql.DB, id string) ([]string, error) {
+func suspendUser(database *sql.DB, id string) ([]string, error) {
 	tx, err := beginActiveAdminMutation(database)
 	if err != nil {
 		return nil, err
@@ -559,10 +559,10 @@ func SuspendUser(database *sql.DB, id string) ([]string, error) {
 	return syncJobIDs, nil
 }
 
-// UpdateUserActive is the reactivation path (active=true). For suspension
-// (active=false), callers MUST use SuspendUser directly so they can publish
+// updateUserActive is the reactivation path (active=true). For suspension
+// (active=false), callers MUST use suspendUser directly so they can publish
 // cancellation events for in-flight sync coordinators and worker streams.
-func UpdateUserActive(database *sql.DB, id string, active bool) error {
+func updateUserActive(database *sql.DB, id string, active bool) error {
 	if !active {
 		return fmt.Errorf("use SuspendUser to deactivate an account")
 	}
@@ -574,7 +574,7 @@ func UpdateUserActive(database *sql.DB, id string, active bool) error {
 	return err
 }
 
-func DeleteUser(database *sql.DB, id string) error {
+func deleteUser(database *sql.DB, id string) error {
 	tx, err := beginActiveAdminMutation(database)
 	if err != nil {
 		return err
@@ -606,14 +606,14 @@ func DeleteUser(database *sql.DB, id string) error {
 	return tx.Commit()
 }
 
-func CountActiveAdmins(database *sql.DB) (int, error) {
+func countActiveAdmins(database *sql.DB) (int, error) {
 	var n int
 	err := database.QueryRow(`SELECT COUNT(*) FROM users WHERE role = 'ADMIN' AND active = TRUE`).Scan(&n)
 	return n, err
 }
 
-// IsSetupRequired checks if there are no users in the database, requiring initial admin setup.
-func IsSetupRequired(database *sql.DB) (bool, error) {
+// isSetupRequired checks if there are no users in the database, requiring initial admin setup.
+func isSetupRequired(database *sql.DB) (bool, error) {
 	var setupRequired bool
 	err := database.QueryRow(`SELECT NOT EXISTS (SELECT 1 FROM users)`).Scan(&setupRequired)
 	if err != nil {
@@ -622,7 +622,7 @@ func IsSetupRequired(database *sql.DB) (bool, error) {
 	return setupRequired, nil
 }
 
-func GetGlobalStats(database *sql.DB) (*GlobalStats, error) {
+func getGlobalStats(database *sql.DB) (*GlobalStats, error) {
 	stats := &GlobalStats{
 		MigrationsByStatus: map[string]int{},
 		SyncsByStatus:      map[string]int{},
@@ -667,11 +667,11 @@ func GetGlobalStats(database *sql.DB) (*GlobalStats, error) {
 	return stats, rows.Err()
 }
 
-func SetUserTOTPSecret(database *sql.DB, userID, encryptedSecret string) (bool, error) {
-	return SetUserTOTPSecretContext(context.Background(), database, userID, encryptedSecret)
+func setUserTOTPSecret(database *sql.DB, userID, encryptedSecret string) (bool, error) {
+	return setUserTOTPSecretContext(context.Background(), database, userID, encryptedSecret)
 }
 
-func SetUserTOTPSecretContext(ctx context.Context, database *sql.DB, userID, encryptedSecret string) (bool, error) {
+func setUserTOTPSecretContext(ctx context.Context, database *sql.DB, userID, encryptedSecret string) (bool, error) {
 	query := `
 		UPDATE users
 		SET totp_secret_enc = $1,
@@ -690,11 +690,11 @@ func SetUserTOTPSecretContext(ctx context.Context, database *sql.DB, userID, enc
 	return rows == 1, nil
 }
 
-func EnableUserTOTP(database *sql.DB, userID, expectedEncryptedSecret string, backupCodeHashes StringArray) (bool, error) {
-	return EnableUserTOTPContext(context.Background(), database, userID, expectedEncryptedSecret, backupCodeHashes)
+func enableUserTOTP(database *sql.DB, userID, expectedEncryptedSecret string, backupCodeHashes StringArray) (bool, error) {
+	return enableUserTOTPContext(context.Background(), database, userID, expectedEncryptedSecret, backupCodeHashes)
 }
 
-func EnableUserTOTPContext(ctx context.Context, database *sql.DB, userID, expectedEncryptedSecret string, backupCodeHashes StringArray) (bool, error) {
+func enableUserTOTPContext(ctx context.Context, database *sql.DB, userID, expectedEncryptedSecret string, backupCodeHashes StringArray) (bool, error) {
 	query := `
 		UPDATE users
 		SET totp_enabled = TRUE,
@@ -717,7 +717,7 @@ func EnableUserTOTPContext(ctx context.Context, database *sql.DB, userID, expect
 	return rows == 1, nil
 }
 
-func DisableUserTOTP(database *sql.DB, userID string) error {
+func disableUserTOTP(database *sql.DB, userID string) error {
 	query := `
 		UPDATE users
 		SET totp_enabled = FALSE,
@@ -732,12 +732,12 @@ func DisableUserTOTP(database *sql.DB, userID string) error {
 	return err
 }
 
-// ConsumeTOTPBackupCode removes a verified backup-code hash only if it is still
+// consumeTOTPBackupCode removes a verified backup-code hash only if it is still
 // present for an enabled user, and atomically clears the TOTP failure state.
 // PostgreSQL rechecks the predicate after waiting on a concurrent update, so a
 // recovery code can be consumed only once. Callers rely on a successful result
-// to skip ResetTOTPFailed.
-func ConsumeTOTPBackupCode(ctx context.Context, database *sql.DB, userID, codeHash string) (bool, error) {
+// to skip resetTOTPFailed.
+func consumeTOTPBackupCode(ctx context.Context, database *sql.DB, userID, codeHash string) (bool, error) {
 	// The JSONB - operator removes all exact duplicates. Bcrypt hashes are unique
 	// per generated backup code, so this consumes one code in practice.
 	query := `
@@ -761,7 +761,7 @@ func ConsumeTOTPBackupCode(ctx context.Context, database *sql.DB, userID, codeHa
 	return rows == 1, nil
 }
 
-func IncrementTOTPFailed(database *sql.DB, userID string, maxAttempts int, lockDuration time.Duration) (bool, error) {
+func incrementTOTPFailed(database *sql.DB, userID string, maxAttempts int, lockDuration time.Duration) (bool, error) {
 	lockUntil := time.Now().Add(lockDuration)
 	query := `
 		UPDATE users
@@ -784,7 +784,7 @@ func IncrementTOTPFailed(database *sql.DB, userID string, maxAttempts int, lockD
 	return locked, nil
 }
 
-func ResetTOTPFailed(database *sql.DB, userID string) error {
+func resetTOTPFailed(database *sql.DB, userID string) error {
 	query := `
 		UPDATE users
 		SET totp_failed_attempts = 0,
@@ -796,7 +796,7 @@ func ResetTOTPFailed(database *sql.DB, userID string) error {
 	return err
 }
 
-func IncrementLoginFailed(database *sql.DB, userID string, maxAttempts int, lockDuration time.Duration) (bool, error) {
+func incrementLoginFailed(database *sql.DB, userID string, maxAttempts int, lockDuration time.Duration) (bool, error) {
 	lockUntil := time.Now().Add(lockDuration)
 	query := `
 		UPDATE users
@@ -819,7 +819,7 @@ func IncrementLoginFailed(database *sql.DB, userID string, maxAttempts int, lock
 	return locked, nil
 }
 
-func ResetLoginFailed(database *sql.DB, userID string) error {
+func resetLoginFailed(database *sql.DB, userID string) error {
 	query := `
 		UPDATE users
 		SET login_failed_attempts = 0,
@@ -831,12 +831,12 @@ func ResetLoginFailed(database *sql.DB, userID string) error {
 	return err
 }
 
-func UpdateUserAvatar(db *sql.DB, id string, data []byte, mime string) error {
+func updateUserAvatar(db *sql.DB, id string, data []byte, mime string) error {
 	_, err := db.Exec(`UPDATE users SET avatar = $1, avatar_mime = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3`, data, mime, id)
 	return err
 }
 
-func DeleteUserAvatar(db *sql.DB, id string) error {
+func deleteUserAvatar(db *sql.DB, id string) error {
 	_, err := db.Exec(`UPDATE users SET avatar = NULL, avatar_mime = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, id)
 	return err
 }

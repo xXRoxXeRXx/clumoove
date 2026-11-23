@@ -31,7 +31,7 @@ func (api *accountAPI) handleUpdateLanguage(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, ErrSettingInvalid)
 		return
 	}
-	if err := db.UpdateUserLanguage(api.db, userID, language); err != nil {
+	if err := api.users.UpdateUserLanguage(userID, language); err != nil {
 		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
@@ -55,7 +55,7 @@ func (api *accountAPI) handleUpdateProfile(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := db.UpdateUserDisplayName(api.db, userID, req.DisplayName); err != nil {
+	if err := api.users.UpdateUserDisplayName(userID, req.DisplayName); err != nil {
 		api.logf(r, "handleUpdateProfile: failed to update display name: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -93,7 +93,7 @@ func (api *accountAPI) handleChangePassword(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	u, err := db.GetUserByIDContext(r.Context(), api.db, userID)
+	u, err := api.users.GetUserByIDContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "handleChangePassword: user not found: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -114,7 +114,7 @@ func (api *accountAPI) handleChangePassword(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if _, err := api.db.Exec(`UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, newHash, userID); err != nil {
+	if err := api.users.UpdateUserPassword(userID, newHash); err != nil {
 		api.logf(r, "handleChangePassword: update error: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -127,7 +127,7 @@ func (api *accountAPI) handleChangePassword(w http.ResponseWriter, r *http.Reque
 	api.writeAudit(r, db.AuditSettingUpdated, "password", userID, map[string]interface{}{"type": "password_change", "forced": mustChange})
 
 	if mustChange {
-		rotated, lerr := db.GetUserByIDContext(r.Context(), api.db, userID)
+		rotated, lerr := api.users.GetUserByIDContext(r.Context(), userID)
 		if lerr != nil {
 			api.logf(r, "handleChangePassword: failed to load user for token rotation: %v\n", lerr)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -217,7 +217,7 @@ func (api *accountAPI) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.UpdateUserAvatar(api.db, userID, data, mime); err != nil {
+	if err := api.users.UpdateUserAvatar(userID, data, mime); err != nil {
 		api.logf(r, "handleSetAvatar: failed to update avatar: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -235,7 +235,7 @@ func (api *accountAPI) handleDeleteAvatar(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := db.DeleteUserAvatar(api.db, userID); err != nil {
+	if err := api.users.DeleteUserAvatar(userID); err != nil {
 		api.logf(r, "handleDeleteAvatar: failed to delete avatar: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return

@@ -199,6 +199,7 @@ func TestDomainStoreConstructorsRejectNilDatabase(t *testing.T) {
 		"migration": func() { NewMigrationStore(nil) },
 		"task":      func() { NewTaskStore(nil) },
 		"schedule":  func() { NewScheduleStore(nil) },
+		"user":      func() { NewUserStore(nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			defer func() {
@@ -723,5 +724,68 @@ func TestScheduleStoreKeepsItsGuards(t *testing.T) {
 			t.Fatalf("DeleteSchedulesForTask() error: %v", err)
 		}
 		requireSingleStatement(t, rec, "DELETE FROM schedules WHERE task_type = $1 AND task_id = $2", "migration", "mig-1")
+	})
+}
+
+func TestUserStoreKeepsItsCredentialGuards(t *testing.T) {
+	t.Run("a failed login is counted and locks in one statement", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		rec.queryColumns = []string{"locked"}
+		rec.queryRow = []driver.Value{true}
+		var store UserStore = NewUserStore(database)
+
+		locked, err := store.IncrementLoginFailed("user-1", 5, 15*time.Minute)
+		if err != nil {
+			t.Fatalf("IncrementLoginFailed() error: %v", err)
+		}
+		if !locked {
+			t.Error("IncrementLoginFailed() = false, want the lock flag the statement returned")
+		}
+		if len(rec.statements) != 1 || !strings.Contains(rec.statements[0].query, "WHEN login_failed_attempts + 1 >= $2 THEN 0") {
+			t.Fatalf("statements = %+v", rec.statements)
+		}
+		if got := rec.statements[0].args; len(got) != 3 || got[0] != driver.Value("user-1") || got[1] != driver.Value(int64(5)) {
+			t.Fatalf("args = %v, want user, max attempts and a lock time", got)
+		}
+	})
+
+	t.Run("a successful login clears the counter and the lock", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewUserStore(database).ResetLoginFailed("user-1"); err != nil {
+			t.Fatalf("ResetLoginFailed() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "SET login_failed_attempts = 0,", "user-1")
+	})
+
+	t.Run("a TOTP secret can only be replaced before 2FA is enabled", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		stored, err := NewUserStore(database).SetUserTOTPSecretContext(context.Background(), "user-1", "enc-secret")
+		if err != nil {
+			t.Fatalf("SetUserTOTPSecretContext() error: %v", err)
+		}
+		if !stored {
+			t.Error("SetUserTOTPSecretContext() = false, want true when one row changed")
+		}
+		requireSingleStatement(t, rec, "AND totp_enabled = FALSE", "enc-secret", "user-1")
+	})
+
+	t.Run("a backup code is consumed only while it is still stored", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		consumed, err := NewUserStore(database).ConsumeTOTPBackupCode(context.Background(), "user-1", "hash-1")
+		if err != nil {
+			t.Fatalf("ConsumeTOTPBackupCode() error: %v", err)
+		}
+		if !consumed {
+			t.Error("ConsumeTOTPBackupCode() = false, want true when one row changed")
+		}
+		requireSingleStatement(t, rec, "AND totp_enabled = TRUE\n\t\t  AND totp_backup_codes ? $2", "user-1", "hash-1")
+	})
+
+	t.Run("changing a password also clears the forced-change flag", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewUserStore(database).UpdateUserPassword("user-1", "new-hash"); err != nil {
+			t.Fatalf("UpdateUserPassword() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "must_change_password = FALSE", "new-hash", "user-1")
 	})
 }

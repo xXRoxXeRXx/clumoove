@@ -17,12 +17,12 @@ type activeAdminMutation struct {
 }
 
 func suspendActiveAdmin(database *sql.DB, id string) error {
-	_, err := SuspendUser(database, id)
+	_, err := suspendUser(database, id)
 	return err
 }
 
 func demoteActiveAdmin(database *sql.DB, id string) error {
-	return UpdateUserRole(database, id, "USER")
+	return updateUserRole(database, id, "USER")
 }
 
 func TestCreateInitialAdmin_ConcurrentRequestsCreateOnlyOneAdmin(t *testing.T) {
@@ -36,7 +36,7 @@ func TestCreateInitialAdmin_ConcurrentRequestsCreateOnlyOneAdmin(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := CreateInitialAdmin(
+			_, err := createInitialAdmin(
 				context.Background(),
 				database,
 				fmt.Sprintf("admin-%d@example.test", i),
@@ -59,7 +59,7 @@ func TestCreateInitialAdmin_ConcurrentRequestsCreateOnlyOneAdmin(t *testing.T) {
 		case errors.Is(err, ErrSetupAlreadyCompleted):
 			rejected++
 		default:
-			t.Fatalf("CreateInitialAdmin returned unexpected error: %v", err)
+			t.Fatalf("createInitialAdmin returned unexpected error: %v", err)
 		}
 	}
 	if created != 1 || rejected != 1 {
@@ -78,62 +78,62 @@ func TestCreateInitialAdmin_ConcurrentRequestsCreateOnlyOneAdmin(t *testing.T) {
 func TestUpdateLastLoginAt_And_ListUsers(t *testing.T) {
 	database := setupTestDB(t)
 
-	u, err := CreateUser(database, "testlastlogin@example.com", "hash", "Test User", "de")
+	u, err := createUser(database, "testlastlogin@example.com", "hash", "Test User", "de")
 	if err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
+		t.Fatalf("createUser failed: %v", err)
 	}
 
 	// Initially LastLoginAt should be nil
-	fetched, err := GetUserByID(database, u.ID)
+	fetched, err := getUserByID(database, u.ID)
 	if err != nil {
-		t.Fatalf("GetUserByID failed: %v", err)
+		t.Fatalf("getUserByID failed: %v", err)
 	}
 	if fetched.LastLoginAt != nil {
 		t.Errorf("expected LastLoginAt to be nil initially, got %v", fetched.LastLoginAt)
 	}
 
 	// Update last login
-	ts, err := UpdateLastLoginAt(database, u.ID)
+	ts, err := updateLastLoginAt(database, u.ID)
 	if err != nil {
-		t.Fatalf("UpdateLastLoginAt failed: %v", err)
+		t.Fatalf("updateLastLoginAt failed: %v", err)
 	}
 	if ts.IsZero() {
-		t.Errorf("expected non-zero timestamp from UpdateLastLoginAt")
+		t.Errorf("expected non-zero timestamp from updateLastLoginAt")
 	}
 
 	// Stale / non-existent ID should return error (sql.ErrNoRows)
-	if _, err := UpdateLastLoginAt(database, "00000000-0000-0000-0000-000000000000"); err == nil {
-		t.Errorf("expected UpdateLastLoginAt with non-existent ID to return error, got nil")
+	if _, err := updateLastLoginAt(database, "00000000-0000-0000-0000-000000000000"); err == nil {
+		t.Errorf("expected updateLastLoginAt with non-existent ID to return error, got nil")
 	}
 
-	// Verify GetUserByID returns non-nil LastLoginAt
-	fetchedAfter, err := GetUserByID(database, u.ID)
+	// Verify getUserByID returns non-nil LastLoginAt
+	fetchedAfter, err := getUserByID(database, u.ID)
 	if err != nil {
-		t.Fatalf("GetUserByID after update failed: %v", err)
+		t.Fatalf("getUserByID after update failed: %v", err)
 	}
 	if fetchedAfter.LastLoginAt == nil {
-		t.Fatal("expected LastLoginAt to be non-nil after UpdateLastLoginAt")
+		t.Fatal("expected LastLoginAt to be non-nil after updateLastLoginAt")
 	}
 
-	// Verify GetUserByEmail returns non-nil LastLoginAt
-	byEmail, err := GetUserByEmail(context.Background(), database, u.Email)
+	// Verify getUserByEmail returns non-nil LastLoginAt
+	byEmail, err := getUserByEmail(context.Background(), database, u.Email)
 	if err != nil {
-		t.Fatalf("GetUserByEmail failed: %v", err)
+		t.Fatalf("getUserByEmail failed: %v", err)
 	}
 	if byEmail.LastLoginAt == nil {
-		t.Errorf("expected GetUserByEmail to return non-nil LastLoginAt")
+		t.Errorf("expected getUserByEmail to return non-nil LastLoginAt")
 	}
 
-	// Verify ListUsers includes LastLoginAt
-	users, _, err := ListUsers(database, UserListParams{Query: "testlastlogin@example.com", Page: 1, Limit: 10})
+	// Verify listUsers includes LastLoginAt
+	users, _, err := listUsers(database, UserListParams{Query: "testlastlogin@example.com", Page: 1, Limit: 10})
 	if err != nil {
-		t.Fatalf("ListUsers failed: %v", err)
+		t.Fatalf("listUsers failed: %v", err)
 	}
 	if len(users) != 1 {
-		t.Fatalf("ListUsers count = %d, want 1", len(users))
+		t.Fatalf("listUsers count = %d, want 1", len(users))
 	}
 	if users[0].LastLoginAt == nil {
-		t.Errorf("expected ListUsers item to have non-nil LastLoginAt")
+		t.Errorf("expected listUsers item to have non-nil LastLoginAt")
 	}
 }
 
@@ -145,7 +145,7 @@ func TestActiveAdminGovernanceMutationsAreConcurrentSafe(t *testing.T) {
 		},
 		{
 			name:  "delete",
-			apply: DeleteUser,
+			apply: deleteUser,
 		},
 		{
 			name:  "demote",
@@ -156,11 +156,11 @@ func TestActiveAdminGovernanceMutationsAreConcurrentSafe(t *testing.T) {
 	for _, mutation := range mutations {
 		t.Run(mutation.name, func(t *testing.T) {
 			database := setupTestDB(t)
-			adminA, err := CreateUserWithRole(database, "admin-a@example.test", "hash", "Admin A", "ADMIN", false, "en")
+			adminA, err := createUserWithRole(database, "admin-a@example.test", "hash", "Admin A", "ADMIN", false, "en")
 			if err != nil {
 				t.Fatalf("create admin A: %v", err)
 			}
-			adminB, err := CreateUserWithRole(database, "admin-b@example.test", "hash", "Admin B", "ADMIN", false, "en")
+			adminB, err := createUserWithRole(database, "admin-b@example.test", "hash", "Admin B", "ADMIN", false, "en")
 			if err != nil {
 				t.Fatalf("create admin B: %v", err)
 			}
@@ -194,7 +194,7 @@ func TestActiveAdminGovernanceMutationsAreConcurrentSafe(t *testing.T) {
 			if succeeded != 1 || rejected != 1 {
 				t.Fatalf("results = %d succeeded, %d rejected; want 1 each", succeeded, rejected)
 			}
-			count, err := CountActiveAdmins(database)
+			count, err := countActiveAdmins(database)
 			if err != nil {
 				t.Fatalf("count active admins: %v", err)
 			}
@@ -207,7 +207,7 @@ func TestActiveAdminGovernanceMutationsAreConcurrentSafe(t *testing.T) {
 
 func TestConsumeTOTPBackupCode_ConcurrentRequestsConsumeOnlyOnce(t *testing.T) {
 	database := setupTestDB(t)
-	user, err := CreateUser(database, "totp-recovery@example.test", "hash", "Recovery User", "en")
+	user, err := createUser(database, "totp-recovery@example.test", "hash", "Recovery User", "en")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestConsumeTOTPBackupCode_ConcurrentRequestsConsumeOnlyOnce(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			consumed, err := ConsumeTOTPBackupCode(context.Background(), database, user.ID, hash)
+			consumed, err := consumeTOTPBackupCode(context.Background(), database, user.ID, hash)
 			results <- consumeResult{consumed: consumed, err: err}
 		}()
 	}
@@ -261,7 +261,7 @@ func TestConsumeTOTPBackupCode_ConcurrentRequestsConsumeOnlyOnce(t *testing.T) {
 		t.Fatalf("backup-code consumption successes = %d, want 1", consumed)
 	}
 
-	updated, err := GetUserByID(database, user.ID)
+	updated, err := getUserByID(database, user.ID)
 	if err != nil {
 		t.Fatalf("load updated user: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestConsumeTOTPBackupCode_ConcurrentRequestsConsumeOnlyOnce(t *testing.T) {
 
 func TestSetUserTOTPSecret_RejectsWhenAlreadyEnabled(t *testing.T) {
 	database := setupTestDB(t)
-	user, err := CreateUser(database, "totp-setup-guard@example.test", "hash", "Guard User", "en")
+	user, err := createUser(database, "totp-setup-guard@example.test", "hash", "Guard User", "en")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestSetUserTOTPSecret_RejectsWhenAlreadyEnabled(t *testing.T) {
 	secretA := "encrypted-secret-A"
 	secretB := "encrypted-secret-B"
 
-	ok, err := SetUserTOTPSecret(database, user.ID, secretA)
+	ok, err := setUserTOTPSecret(database, user.ID, secretA)
 	if err != nil {
 		t.Fatalf("set initial secret: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestSetUserTOTPSecret_RejectsWhenAlreadyEnabled(t *testing.T) {
 		t.Fatal("expected set initial secret to succeed")
 	}
 
-	ok, err = EnableUserTOTP(database, user.ID, secretA, StringArray{"hash1"})
+	ok, err = enableUserTOTP(database, user.ID, secretA, StringArray{"hash1"})
 	if err != nil {
 		t.Fatalf("enable TOTP: %v", err)
 	}
@@ -300,15 +300,15 @@ func TestSetUserTOTPSecret_RejectsWhenAlreadyEnabled(t *testing.T) {
 	}
 
 	// Attempting to set a new secret while TOTP is already enabled must fail
-	ok, err = SetUserTOTPSecret(database, user.ID, secretB)
+	ok, err = setUserTOTPSecret(database, user.ID, secretB)
 	if err != nil {
 		t.Fatalf("set secret on enabled account: %v", err)
 	}
 	if ok {
-		t.Fatal("expected SetUserTOTPSecret to be rejected when TOTP is already enabled")
+		t.Fatal("expected setUserTOTPSecret to be rejected when TOTP is already enabled")
 	}
 
-	updated, err := GetUserByID(database, user.ID)
+	updated, err := getUserByID(database, user.ID)
 	if err != nil {
 		t.Fatalf("get user: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestSetUserTOTPSecret_RejectsWhenAlreadyEnabled(t *testing.T) {
 
 func TestEnableUserTOTP_RejectsMismatchedSecretOrAlreadyEnabled(t *testing.T) {
 	database := setupTestDB(t)
-	user, err := CreateUser(database, "totp-enable-guard@example.test", "hash", "Enable User", "en")
+	user, err := createUser(database, "totp-enable-guard@example.test", "hash", "Enable User", "en")
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -327,21 +327,21 @@ func TestEnableUserTOTP_RejectsMismatchedSecretOrAlreadyEnabled(t *testing.T) {
 	secretA := "encrypted-secret-A"
 	secretB := "encrypted-secret-B"
 
-	ok, err := SetUserTOTPSecret(database, user.ID, secretA)
+	ok, err := setUserTOTPSecret(database, user.ID, secretA)
 	if err != nil || !ok {
 		t.Fatalf("set initial secret: ok=%v, err=%v", ok, err)
 	}
 
 	// Attempt to enable with mismatched secret B
-	ok, err = EnableUserTOTP(database, user.ID, secretB, StringArray{"hash1"})
+	ok, err = enableUserTOTP(database, user.ID, secretB, StringArray{"hash1"})
 	if err != nil {
 		t.Fatalf("enable with mismatched secret: %v", err)
 	}
 	if ok {
-		t.Fatal("expected EnableUserTOTP to be rejected with mismatched secret")
+		t.Fatal("expected enableUserTOTP to be rejected with mismatched secret")
 	}
 
-	u, err := GetUserByID(database, user.ID)
+	u, err := getUserByID(database, user.ID)
 	if err != nil {
 		t.Fatalf("get user: %v", err)
 	}
@@ -350,12 +350,12 @@ func TestEnableUserTOTP_RejectsMismatchedSecretOrAlreadyEnabled(t *testing.T) {
 	}
 
 	// Enable with correct secret A
-	ok, err = EnableUserTOTP(database, user.ID, secretA, StringArray{"hash1"})
+	ok, err = enableUserTOTP(database, user.ID, secretA, StringArray{"hash1"})
 	if err != nil || !ok {
 		t.Fatalf("enable with valid secret: ok=%v, err=%v", ok, err)
 	}
 
-	u, err = GetUserByID(database, user.ID)
+	u, err = getUserByID(database, user.ID)
 	if err != nil {
 		t.Fatalf("get user: %v", err)
 	}
@@ -364,12 +364,12 @@ func TestEnableUserTOTP_RejectsMismatchedSecretOrAlreadyEnabled(t *testing.T) {
 	}
 
 	// Attempt to enable again when already enabled
-	ok, err = EnableUserTOTP(database, user.ID, secretA, StringArray{"hash2"})
+	ok, err = enableUserTOTP(database, user.ID, secretA, StringArray{"hash2"})
 	if err != nil {
 		t.Fatalf("enable when already enabled: %v", err)
 	}
 	if ok {
-		t.Fatal("expected EnableUserTOTP to be rejected when already enabled")
+		t.Fatal("expected enableUserTOTP to be rejected when already enabled")
 	}
 }
 

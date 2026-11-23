@@ -216,10 +216,10 @@ func TestHandle2FADisable_WithBackupCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate backup codes: %v", err)
 	}
-	if ok, err := db.SetUserTOTPSecret(database, user.ID, secret); err != nil || !ok {
+	if ok, err := db.NewUserStore(database).SetUserTOTPSecretContext(context.Background(), user.ID, secret); err != nil || !ok {
 		t.Fatalf("store TOTP secret: ok=%v err=%v", ok, err)
 	}
-	if ok, err := db.EnableUserTOTP(database, user.ID, secret, db.StringArray(hashes)); err != nil || !ok {
+	if ok, err := db.NewUserStore(database).EnableUserTOTPContext(context.Background(), user.ID, secret, db.StringArray(hashes)); err != nil || !ok {
 		t.Fatalf("enable TOTP: ok=%v err=%v", ok, err)
 	}
 
@@ -231,7 +231,7 @@ func TestHandle2FADisable_WithBackupCode(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	updated, err := db.GetUserByID(database, user.ID)
+	updated, err := db.NewUserStore(database).GetUserByIDContext(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("load updated user: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestSuspensionRevokesRefreshTokensAndBlocksRefresh(t *testing.T) {
 		t.Fatalf("store refresh token: %v", err)
 	}
 
-	if _, err := db.SuspendUser(database, user.ID); err != nil {
+	if _, err := db.NewUserStore(database).SuspendUser(user.ID); err != nil {
 		t.Fatalf("suspend user: %v", err)
 	}
 
