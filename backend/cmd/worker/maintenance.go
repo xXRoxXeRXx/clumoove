@@ -15,6 +15,7 @@ type workerMaintenance struct {
 	db                      *sql.DB
 	migrations              db.MigrationStore
 	syncs                   db.SyncStore
+	tasks                   db.TaskStore
 	notifications           db.NotificationStore
 	queue                   *queue.Queue
 	indexer                 *indexer.Indexer
@@ -30,15 +31,18 @@ type workerMaintenance struct {
 func newWorkerMaintenance(database *sql.DB, q *queue.Queue, idx *indexer.Indexer, workerID, secretKey string) *workerMaintenance {
 	var migrations db.MigrationStore
 	var syncs db.SyncStore
+	var tasks db.TaskStore
 	var notifications db.NotificationStore
 	if database != nil {
 		migrations = db.NewMigrationStore(database)
 		syncs = db.NewSyncStore(database)
+		tasks = db.NewTaskStore(database)
 		notifications = db.NewNotificationStore(database)
 	}
 	return &workerMaintenance{
 		migrations:    migrations,
 		syncs:         syncs,
+		tasks:         tasks,
 		notifications: notifications,
 		db:            database,
 		queue:         q,
@@ -152,29 +156,9 @@ func (m *workerMaintenance) runRetryScheduler(ctx context.Context) {
 }
 
 func (m *workerMaintenance) requeueFailedTasks(ctx context.Context) {
-	tx, err := m.db.BeginTx(ctx, nil)
+	requeued, err := m.tasks.RequeueDueFailedTasks(ctx, time.Now())
 	if err != nil {
-		workerLogf("maintenance", "[RetryScheduler] begin transaction: %v\n", err)
-		return
-	}
-	defer tx.Rollback()
-
-	now := time.Now()
-	var requeued int64
-	for _, updateQuery := range []string{
-		`UPDATE tasks AS t SET status = 'PENDING', next_retry_at = NULL, checksum_verified = FALSE FROM migrations m WHERE t.migration_id = m.id AND t.status = 'FAILED' AND t.next_retry_at <= $1 AND m.status IN ('RUNNING', 'INDEXING', 'VERIFYING')`,
-		`UPDATE tasks AS t SET status = 'PENDING', next_retry_at = NULL, checksum_verified = FALSE FROM sync_jobs sj WHERE t.sync_job_id = sj.id AND t.pass_generation = sj.run_generation AND t.status = 'FAILED' AND t.next_retry_at <= $1 AND sj.status IN ('RUNNING', 'INDEXING', 'VERIFYING')`,
-	} {
-		result, err := tx.ExecContext(ctx, updateQuery, now)
-		if err != nil {
-			workerLogf("maintenance", "[RetryScheduler] re-enqueue tasks: %v\n", err)
-			return
-		}
-		count, _ := result.RowsAffected()
-		requeued += count
-	}
-	if err := tx.Commit(); err != nil {
-		workerLogf("maintenance", "[RetryScheduler] commit re-enqueue: %v\n", err)
+		workerLogf("maintenance", "[RetryScheduler] re-enqueue tasks: %v\n", err)
 		return
 	}
 	if requeued > 0 {
@@ -209,28 +193,11 @@ func (m *workerMaintenance) repairMissingMigrationNotifications() {
 }
 
 func (m *workerMaintenance) reconcileActiveMigrations(ctx context.Context) {
-	rows, err := m.db.QueryContext(ctx, `
-		SELECT DISTINCT m.id
-		FROM migrations m
-		WHERE m.status = 'RUNNING'
-	`)
+	// A read failure still returns the ids read before it; reconciling them is
+	// idempotent, so the failure is logged and the sweep carries on.
+	ids, err := m.migrations.ListRunningMigrationIDs(ctx)
 	if err != nil {
 		workerLogf("maintenance", "[ProgressReconciler] DB query error: %v\n", err)
-		return
-	}
-	defer rows.Close()
-
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			continue
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		workerLogf("maintenance", "[ProgressReconciler] rows error: %v\n", err)
-		return
 	}
 
 	for _, id := range ids {
@@ -248,37 +215,14 @@ func (m *workerMaintenance) reconcileActiveMigrations(ctx context.Context) {
 }
 
 func (m *workerMaintenance) reconcileActiveSyncJobs(ctx context.Context) {
-	rows, err := m.db.QueryContext(ctx, `
-		SELECT DISTINCT sj.id, sj.run_generation
-		FROM sync_jobs sj
-		WHERE sj.status = 'RUNNING'
-	`)
+	passes, err := m.syncs.ListRunningSyncPasses(ctx)
 	if err != nil {
 		workerLogf("maintenance", "[ProgressReconciler] Sync DB query error: %v\n", err)
-		return
-	}
-	defer rows.Close()
-
-	type syncPass struct {
-		id         string
-		generation int
-	}
-	var passes []syncPass
-	for rows.Next() {
-		var pass syncPass
-		if err := rows.Scan(&pass.id, &pass.generation); err != nil {
-			continue
-		}
-		passes = append(passes, pass)
-	}
-	if err := rows.Err(); err != nil {
-		workerLogf("maintenance", "[ProgressReconciler] Sync rows error: %v\n", err)
-		return
 	}
 
 	for _, pass := range passes {
-		if err := m.syncs.ReconcileSyncJobProgress(pass.id, pass.generation); err != nil {
-			workerLogf("maintenance", "[ProgressReconciler] error reconciling sync job %s: %v\n", pass.id, err)
+		if err := m.syncs.ReconcileSyncJobProgress(pass.ID, pass.Generation); err != nil {
+			workerLogf("maintenance", "[ProgressReconciler] error reconciling sync job %s: %v\n", pass.ID, err)
 		}
 	}
 }
@@ -303,24 +247,9 @@ func (m *workerMaintenance) runOrphanedRunningTasksRecovery(ctx context.Context)
 }
 
 func (m *workerMaintenance) requeueOrphanedRunningTasks(ctx context.Context) {
-	query := `
-		UPDATE tasks t
-		SET status = 'PENDING', worker_hash = NULL, updated_at = NOW()
-		WHERE t.status = 'RUNNING'
-		  AND t.updated_at < NOW() - INTERVAL '10 minutes'
-		  AND (
-			EXISTS (SELECT 1 FROM migrations m WHERE m.id = t.migration_id AND m.status IN ('RUNNING', 'INDEXING'))
-			OR EXISTS (SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id AND sj.status IN ('RUNNING', 'INDEXING'))
-		  )
-	`
-	result, err := m.db.ExecContext(ctx, query)
+	count, err := m.tasks.RequeueOrphanedRunningTasks(ctx)
 	if err != nil {
 		workerLogf("maintenance", "[OrphanedTaskRecovery] DB update error: %v\n", err)
-		return
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		workerLogf("maintenance", "[OrphanedTaskRecovery] Cannot count reset tasks: %v\n", err)
 		return
 	}
 	if count > 0 {

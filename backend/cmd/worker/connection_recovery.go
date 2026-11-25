@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"backend/internal/crypto"
+	"backend/internal/db"
 	"backend/internal/oauth"
 	"backend/internal/storage"
 )
@@ -21,10 +22,10 @@ type recoveryState struct {
 	pausedUpdatedAt time.Time
 }
 
-type recoveryCandidate struct {
-	id, userID, sourceURL, sourceUsername, sourcePassword, targetURL, targetUsername, targetPassword, sourceProvider, targetProvider string
-	updatedAt                                                                                                                        time.Time
-}
+// recoveryCandidateLister pages paused entities for the connection probe; the
+// store methods ListPausedConnectionLossMigrations and
+// ListPausedConnectionLossSyncJobs fit it.
+type recoveryCandidateLister func(ctx context.Context, cursor string, limit int) ([]db.ConnectionRecoveryCandidate, error)
 
 func (m *workerMaintenance) awaitRecoveredIndexers(run func(ctx context.Context)) func(ctx context.Context) {
 	return func(ctx context.Context) {
@@ -115,22 +116,22 @@ func examineRecoveryCandidate(lastExamined *string, probes, budget int, id strin
 	return true
 }
 
-func (m *workerMaintenance) probeCandidateConnections(ctx context.Context, c recoveryCandidate) bool {
-	sPass, err := crypto.DecryptWithDomain(c.sourcePassword, m.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(c.sourceProvider)))
+func (m *workerMaintenance) probeCandidateConnections(ctx context.Context, c db.ConnectionRecoveryCandidate) bool {
+	sPass, err := crypto.DecryptWithDomain(c.SourcePassword, m.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(c.SourceProvider)))
 	if err != nil {
 		return false
 	}
-	tPass, err := crypto.DecryptWithDomain(c.targetPassword, m.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(c.targetProvider)))
+	tPass, err := crypto.DecryptWithDomain(c.TargetPassword, m.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(c.TargetProvider)))
 	if err != nil {
 		return false
 	}
 
-	userCtx := storage.WithLocalUserScope(ctx, c.userID)
-	sClient, err := storage.NewProvider(userCtx, c.sourceProvider, c.sourceURL, c.sourceUsername, sPass)
+	userCtx := storage.WithLocalUserScope(ctx, c.UserID)
+	sClient, err := storage.NewProvider(userCtx, c.SourceProvider, c.SourceURL, c.SourceUsername, sPass)
 	if err != nil {
 		return false
 	}
-	tClient, err := storage.NewProvider(userCtx, c.targetProvider, c.targetURL, c.targetUsername, tPass)
+	tClient, err := storage.NewProvider(userCtx, c.TargetProvider, c.TargetURL, c.TargetUsername, tPass)
 	if err != nil {
 		sClient.Close()
 		return false
@@ -146,29 +147,20 @@ func (m *workerMaintenance) probeCandidateConnections(ctx context.Context, c rec
 }
 
 func (m *workerMaintenance) recoverPausedMigrations(ctx context.Context) {
-	query := `
-		SELECT id, COALESCE(user_id, ''), source_url, source_username, source_password_encrypted,
-		       target_url, target_username, target_password_encrypted,
-		       source_provider, target_provider, updated_at
-		FROM migrations
-		WHERE status = 'PAUSED_CONNECTION_LOSS'
-		ORDER BY (id::text <= $1), id
-		LIMIT $2
-	`
-	m.recoverPausedEntities(ctx, false, query, maxMigrationRecoveryProbesPerTick, func(candidate recoveryCandidate) bool {
-		workerLogf("maintenance", "[RecoveryScheduler] Connection restored for migration %s! Resuming...\n", candidate.id)
-		recovered, needsDiscovery, recoverErr := m.migrations.RecoverConnectionLostMigration(candidate.id)
+	m.recoverPausedEntities(ctx, false, m.migrations.ListPausedConnectionLossMigrations, maxMigrationRecoveryProbesPerTick, func(candidate db.ConnectionRecoveryCandidate) bool {
+		workerLogf("maintenance", "[RecoveryScheduler] Connection restored for migration %s! Resuming...\n", candidate.ID)
+		recovered, needsDiscovery, recoverErr := m.migrations.RecoverConnectionLostMigration(candidate.ID)
 		if recoverErr != nil {
-			workerLogf("maintenance", "[RecoveryScheduler] Error resuming migration %s: %v\n", candidate.id, recoverErr)
+			workerLogf("maintenance", "[RecoveryScheduler] Error resuming migration %s: %v\n", candidate.ID, recoverErr)
 			return false
 		}
 		if !recovered {
-			workerLogf("maintenance", "[RecoveryScheduler] Did not resume migration %s because its status changed", candidate.id)
+			workerLogf("maintenance", "[RecoveryScheduler] Did not resume migration %s because its status changed", candidate.ID)
 			return false
 		}
 		if needsDiscovery && m.indexer != nil {
 			m.recoveredIndexers.Add(1)
-			id := candidate.id
+			id := candidate.ID
 			go func() {
 				defer m.recoveredIndexers.Done()
 				m.indexer.Start(ctx, id)
@@ -179,23 +171,14 @@ func (m *workerMaintenance) recoverPausedMigrations(ctx context.Context) {
 }
 
 func (m *workerMaintenance) recoverPausedSyncJobs(ctx context.Context) {
-	query := `
-		SELECT id, user_id, source_url, source_username, source_password_encrypted,
-		       target_url, target_username, target_password_encrypted,
-		       source_provider, target_provider, updated_at
-		FROM sync_jobs
-		WHERE status = 'PAUSED_CONNECTION_LOSS'
-		ORDER BY (id::text <= $1), id
-		LIMIT $2
-	`
-	m.recoverPausedEntities(ctx, true, query, maxSyncRecoveryProbesPerTick, func(candidate recoveryCandidate) bool {
-		recovered, recoverErr := m.syncs.RecoverConnectionLostSyncJob(ctx, candidate.id)
+	m.recoverPausedEntities(ctx, true, m.syncs.ListPausedConnectionLossSyncJobs, maxSyncRecoveryProbesPerTick, func(candidate db.ConnectionRecoveryCandidate) bool {
+		recovered, recoverErr := m.syncs.RecoverConnectionLostSyncJob(ctx, candidate.ID)
 		if recoverErr != nil {
-			workerLogf("maintenance", "[RecoveryScheduler] Error recovering sync job %s: %v\n", candidate.id, recoverErr)
+			workerLogf("maintenance", "[RecoveryScheduler] Error recovering sync job %s: %v\n", candidate.ID, recoverErr)
 			return false
 		}
 		if recovered {
-			workerLogf("maintenance", "[RecoveryScheduler] Connection restored for sync job %s; scheduled API retry\n", candidate.id)
+			workerLogf("maintenance", "[RecoveryScheduler] Connection restored for sync job %s; scheduled API retry\n", candidate.ID)
 		}
 		return true
 	})
@@ -204,30 +187,33 @@ func (m *workerMaintenance) recoverPausedSyncJobs(ctx context.Context) {
 func (m *workerMaintenance) recoverPausedEntities(
 	ctx context.Context,
 	syncJob bool,
-	query string,
+	list recoveryCandidateLister,
 	maxProbes int,
-	recoverFn func(candidate recoveryCandidate) bool,
+	recoverFn func(candidate db.ConnectionRecoveryCandidate) bool,
 ) {
-	candidates, err := m.queryRecoveryCandidates(ctx, query, m.recoveryCursor(syncJob))
+	candidates, err := list(ctx, m.recoveryCursor(syncJob), recoveryScanWindow)
 	if err != nil {
-		return
+		// The store returns the candidates it could read, so one unreadable row
+		// no longer hides the rest. A prefix of the ordered page is a valid page
+		// to examine, and examining past the bad row moves the cursor beyond it.
+		workerLogf("maintenance", "[RecoveryScheduler] listing paused entities: %v\n", err)
 	}
 
 	probes := 0
 	lastExamined := ""
 	for _, candidate := range candidates {
-		if !examineRecoveryCandidate(&lastExamined, probes, maxProbes, candidate.id) {
+		if !examineRecoveryCandidate(&lastExamined, probes, maxProbes, candidate.ID) {
 			break
 		}
-		key := recoveryAttemptKey(syncJob, candidate.id)
-		ra := m.effectiveRecoveryState(key, candidate.updatedAt)
+		key := recoveryAttemptKey(syncJob, candidate.ID)
+		ra := m.effectiveRecoveryState(key, candidate.UpdatedAt)
 		if !shouldProbeRecovery(ra, time.Now()) {
 			continue
 		}
 		probes++
 
 		if !m.probeCandidateConnections(ctx, candidate) {
-			m.recordRecoveryFailure(syncJob, candidate.id, ra.attempts, candidate.updatedAt)
+			m.recordRecoveryFailure(syncJob, candidate.ID, ra.attempts, candidate.UpdatedAt)
 			continue
 		}
 
@@ -238,31 +224,4 @@ func (m *workerMaintenance) recoverPausedEntities(
 	if lastExamined != "" {
 		m.setRecoveryCursor(syncJob, lastExamined)
 	}
-}
-
-func (m *workerMaintenance) queryRecoveryCandidates(ctx context.Context, query, cursor string) ([]recoveryCandidate, error) {
-	rows, err := m.db.QueryContext(ctx, query, cursor, recoveryScanWindow)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var candidates []recoveryCandidate
-	for rows.Next() {
-		var candidate recoveryCandidate
-		if err := rows.Scan(
-			&candidate.id, &candidate.userID,
-			&candidate.sourceURL, &candidate.sourceUsername, &candidate.sourcePassword,
-			&candidate.targetURL, &candidate.targetUsername, &candidate.targetPassword,
-			&candidate.sourceProvider, &candidate.targetProvider, &candidate.updatedAt,
-		); err != nil {
-			continue
-		}
-		candidates = append(candidates, candidate)
-	}
-	if err := rows.Err(); err != nil {
-		workerLogf("maintenance", "[RecoveryScheduler] rows error: %v\n", err)
-		return nil, err
-	}
-	return candidates, nil
 }

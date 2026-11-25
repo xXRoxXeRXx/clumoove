@@ -113,6 +113,15 @@ type MigrationStore interface {
 	ReconcileMigrationProgress(id string) error
 	ReconcileMigrationProgressWhileVerifying(id string, generation int) (bool, error)
 
+	// Worker scans. The ID listings feed the progress reconciler (RUNNING) and
+	// the checksum verifier (VERIFYING); on a read failure they return the ids
+	// read so far with the error. ListPausedConnectionLossMigrations returns at
+	// most limit migrations ordered after cursor, wrapping around, for the
+	// connection-recovery probe.
+	ListRunningMigrationIDs(ctx context.Context) ([]string, error)
+	ListVerifyingMigrationIDs(ctx context.Context) ([]string, error)
+	ListPausedConnectionLossMigrations(ctx context.Context, cursor string, limit int) ([]ConnectionRecoveryCandidate, error)
+
 	// Task outcome: one atomic write of the task row and the migration counters.
 	UpdateMigrationTaskAndProgress(ctx context.Context, t *Task, filesDelta int, bytesDelta int64, skippedDelta, failedDelta int, liveBytesDelta int64) error
 	FailMigrationForAuthentication(ctx context.Context, t *Task, errMsg string) (bool, error)
@@ -329,6 +338,18 @@ func (s postgresMigrationStore) ResetLiveBytes(ctx context.Context, id string) e
 
 func (s postgresMigrationStore) ReconcileMigrationProgress(id string) error {
 	return reconcileMigrationProgressUnfenced(s.db, id)
+}
+
+func (s postgresMigrationStore) ListRunningMigrationIDs(ctx context.Context) ([]string, error) {
+	return listRunningMigrationIDs(ctx, s.db)
+}
+
+func (s postgresMigrationStore) ListVerifyingMigrationIDs(ctx context.Context) ([]string, error) {
+	return listVerifyingMigrationIDs(ctx, s.db)
+}
+
+func (s postgresMigrationStore) ListPausedConnectionLossMigrations(ctx context.Context, cursor string, limit int) ([]ConnectionRecoveryCandidate, error) {
+	return listPausedConnectionLossMigrations(ctx, s.db, cursor, limit)
 }
 
 func (s postgresMigrationStore) ReconcileMigrationProgressWhileVerifying(id string, generation int) (bool, error) {

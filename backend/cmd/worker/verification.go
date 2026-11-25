@@ -199,23 +199,11 @@ func (v *checksumVerifier) schedule(ctx context.Context, entityType, entityID st
 }
 
 func (v *checksumVerifier) processVerifyingMigrations(ctx context.Context) {
-	query := `SELECT id FROM migrations WHERE status = 'VERIFYING'`
-	rows, err := v.db.QueryContext(ctx, query)
+	// A failed read still returns the ids read before it; scheduling them is
+	// safe because the per-entity guard and the claim fence the pass itself.
+	migIDs, err := v.migrations.ListVerifyingMigrationIDs(ctx)
 	if err != nil {
-		return
-	}
-	defer rows.Close()
-
-	var migIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err == nil {
-			migIDs = append(migIDs, id)
-		}
-	}
-	if err := rows.Err(); err != nil {
 		workerLogf("verifier", "[VERIFIER] Listing verifying migrations: %v", err)
-		return
 	}
 
 	for _, migID := range migIDs {
@@ -226,23 +214,9 @@ func (v *checksumVerifier) processVerifyingMigrations(ctx context.Context) {
 }
 
 func (v *checksumVerifier) processVerifyingSyncJobs(ctx context.Context) {
-	query := `SELECT id FROM sync_jobs WHERE status = 'VERIFYING'`
-	rows, err := v.db.QueryContext(ctx, query)
+	syncIDs, err := v.syncs.ListVerifyingSyncJobIDs(ctx)
 	if err != nil {
-		return
-	}
-	defer rows.Close()
-
-	var syncIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err == nil {
-			syncIDs = append(syncIDs, id)
-		}
-	}
-	if err := rows.Err(); err != nil {
 		workerLogf("verifier", "[VERIFIER] Listing verifying sync jobs: %v", err)
-		return
 	}
 
 	for _, syncID := range syncIDs {

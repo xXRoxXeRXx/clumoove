@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"time"
 )
 
 // TaskStore is the persistence seam for rows of the tasks table as the
@@ -40,6 +41,23 @@ type TaskStore interface {
 	MarkSyncTaskChecksumMismatchWhileVerifying(ctx context.Context, task *Task, runGeneration, verificationGeneration int) (bool, error)
 
 	GetSyncErrorsContext(ctx context.Context, syncJobID string, limit, offset int) ([]ErrorListItem, int, error)
+
+	// Worker maintenance sweeps over both flavours of task. Each reports how
+	// many tasks went back to PENDING so the caller can wake idle workers.
+	// RequeueDueFailedTasks re-enqueues FAILED tasks whose retry time (against
+	// now) has passed, for active migrations and the current pass of active sync
+	// jobs, in one transaction. RequeueOrphanedRunningTasks resets RUNNING tasks
+	// untouched for ten minutes whose parent is still active.
+	RequeueDueFailedTasks(ctx context.Context, now time.Time) (int64, error)
+	RequeueOrphanedRunningTasks(ctx context.Context) (int64, error)
+}
+
+func (s postgresTaskStore) RequeueDueFailedTasks(ctx context.Context, now time.Time) (int64, error) {
+	return requeueDueFailedTasks(ctx, s.db, now)
+}
+
+func (s postgresTaskStore) RequeueOrphanedRunningTasks(ctx context.Context) (int64, error) {
+	return requeueOrphanedRunningTasks(ctx, s.db)
 }
 
 type postgresTaskStore struct{ db *sql.DB }

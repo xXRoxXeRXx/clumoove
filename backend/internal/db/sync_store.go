@@ -42,6 +42,14 @@ type SyncStore interface {
 	UpdateSyncJobStatusForGeneration(id string, generation int, status string, errMsg *string) error
 	RecoverConnectionLostSyncJob(ctx context.Context, id string) (bool, error)
 	ReconcileSyncJobProgress(syncJobID string, generation int) error
+
+	// Worker scans, with the same partial-result contract as the migration
+	// listings: ListRunningSyncPasses feeds the progress reconciler,
+	// ListVerifyingSyncJobIDs the checksum verifier, and
+	// ListPausedConnectionLossSyncJobs the connection-recovery probe.
+	ListRunningSyncPasses(ctx context.Context) ([]SyncPassRef, error)
+	ListVerifyingSyncJobIDs(ctx context.Context) ([]string, error)
+	ListPausedConnectionLossSyncJobs(ctx context.Context, cursor string, limit int) ([]ConnectionRecoveryCandidate, error)
 	AddSyncJobLiveBytesForGeneration(ctx context.Context, id string, generation int, bytesDelta int64) error
 	IncrementSyncJobProgressForGeneration(ctx context.Context, id string, generation, filesDelta, changedDelta, deletedDelta, failedDelta int, bytesDelta int64) error
 
@@ -172,6 +180,18 @@ func (s postgresSyncStore) UpdateSyncJobStatusForGeneration(id string, generatio
 
 func (s postgresSyncStore) RecoverConnectionLostSyncJob(ctx context.Context, id string) (bool, error) {
 	return recoverConnectionLostSyncJob(s.db, ctx, id)
+}
+
+func (s postgresSyncStore) ListRunningSyncPasses(ctx context.Context) ([]SyncPassRef, error) {
+	return listRunningSyncPasses(ctx, s.db)
+}
+
+func (s postgresSyncStore) ListVerifyingSyncJobIDs(ctx context.Context) ([]string, error) {
+	return listVerifyingSyncJobIDs(ctx, s.db)
+}
+
+func (s postgresSyncStore) ListPausedConnectionLossSyncJobs(ctx context.Context, cursor string, limit int) ([]ConnectionRecoveryCandidate, error) {
+	return listPausedConnectionLossSyncJobs(ctx, s.db, cursor, limit)
 }
 
 func (s postgresSyncStore) ReconcileSyncJobProgress(syncJobID string, generation int) error {
