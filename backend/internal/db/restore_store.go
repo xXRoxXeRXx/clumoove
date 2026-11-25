@@ -45,6 +45,8 @@ type RestoreStore interface {
 	GetRestoreRunTargetConnectionContext(ctx context.Context, runID string) (*RestoreRunTargetConnection, error)
 	GetRestoreRunCredentialSnapshotContext(ctx context.Context, runID string) (accessEncrypted string, refreshEncrypted sql.NullString, expiresAt sql.NullTime, err error)
 	RestoreRunTokenSink(runID string) OAuthTokenSink
+	// GetExpiringOAuthRestoreRuns lists active runs whose OAuth access token expires within 15 minutes, for the proactive rotation daemon.
+	GetExpiringOAuthRestoreRuns() ([]ExpiringOAuthRestoreRun, error)
 	UpdateRestoreRunMegaSessionContext(ctx context.Context, runID, sessionIDEncrypted, masterKeyEncrypted string) error
 }
 
@@ -63,119 +65,119 @@ func NewRestoreStore(database *sql.DB) RestoreStore {
 }
 
 func (s postgresRestoreStore) ClaimNextQueuedRestoreRunForWorkerContext(ctx context.Context, workerID string) (*RestoreJob, *RestoreRun, error) {
-	return ClaimNextQueuedRestoreRunForWorkerContext(ctx, s.db, workerID)
+	return claimNextQueuedRestoreRunForWorkerContext(ctx, s.db, workerID)
 }
 
 func (s postgresRestoreStore) PlanRestoreRunContext(ctx context.Context, job *RestoreJob, run *RestoreRun) (bool, error) {
-	return PlanRestoreRunContext(ctx, s.db, job, run)
+	return planRestoreRunContext(ctx, s.db, job, run)
 }
 
 func (s postgresRestoreStore) FailRestoreRunPlanningContext(ctx context.Context, jobID, runID string, generation int, errorCode string) (bool, error) {
-	return FailRestoreRunPlanningContext(ctx, s.db, jobID, runID, generation, errorCode)
+	return failRestoreRunPlanningContext(ctx, s.db, jobID, runID, generation, errorCode)
 }
 
 func (s postgresRestoreStore) RecoverStaleRestorePlanningContext(ctx context.Context) error {
-	return RecoverStaleRestorePlanningContext(ctx, s.db)
+	return recoverStaleRestorePlanningContext(ctx, s.db)
 }
 
 func (s postgresRestoreStore) ClaimNextRestorePreviewForWorkerContext(ctx context.Context, workerID string) (*RestorePreview, error) {
-	return ClaimNextRestorePreviewForWorkerContext(ctx, s.db, workerID)
+	return claimNextRestorePreviewForWorkerContext(ctx, s.db, workerID)
 }
 
 func (s postgresRestoreStore) RenewRestorePreviewLeaseContext(ctx context.Context, previewID string, generation int, workerID string) (bool, error) {
-	return RenewRestorePreviewLeaseContext(ctx, s.db, previewID, generation, workerID)
+	return renewRestorePreviewLeaseContext(ctx, s.db, previewID, generation, workerID)
 }
 
 func (s postgresRestoreStore) CompleteRestorePreviewWithStatsFencedContext(ctx context.Context, previewID string, generation int, workerID string, stats RestorePreviewStats) (bool, error) {
-	return CompleteRestorePreviewWithStatsFencedContext(ctx, s.db, previewID, generation, workerID, stats)
+	return completeRestorePreviewWithStatsFencedContext(ctx, s.db, previewID, generation, workerID, stats)
 }
 
 func (s postgresRestoreStore) FailRestorePreviewFencedContext(ctx context.Context, previewID string, generation int, workerID, errorCode string) error {
-	return FailRestorePreviewFencedContext(ctx, s.db, previewID, generation, workerID, errorCode)
+	return failRestorePreviewFencedContext(ctx, s.db, previewID, generation, workerID, errorCode)
 }
 
 func (s postgresRestoreStore) ExpireRestorePreviewsContext(ctx context.Context) error {
-	return ExpireRestorePreviewsContext(ctx, s.db)
+	return expireRestorePreviewsContext(ctx, s.db)
 }
 
 func (s postgresRestoreStore) ListRestorePreviewItemsContext(ctx context.Context, preview *RestorePreview) ([]RestorePreviewItem, error) {
-	return ListRestorePreviewItemsContext(ctx, s.db, preview)
+	return listRestorePreviewItemsContext(ctx, s.db, preview)
 }
 
 func (s postgresRestoreStore) FinalizeCompletedRestoreRunsContext(ctx context.Context) (int, error) {
-	return FinalizeCompletedRestoreRunsContext(ctx, s.db)
+	return finalizeCompletedRestoreRunsContext(ctx, s.db)
 }
 
 func (s postgresRestoreStore) FinalizeCancellingRestoreRunsContext(ctx context.Context) (int, error) {
-	return FinalizeCancellingRestoreRunsContext(ctx, s.db)
+	return finalizeCancellingRestoreRunsContext(ctx, s.db)
 }
 
 func (s postgresRestoreStore) ClaimNextRestoreItemForWorkerContext(ctx context.Context, workerID string) (*RestoreItem, error) {
-	return ClaimNextRestoreItemForWorkerContext(ctx, s.db, workerID)
+	return claimNextRestoreItemForWorkerContext(ctx, s.db, workerID)
 }
 
 func (s postgresRestoreStore) HeartbeatRestoreItemContext(ctx context.Context, lease Lease, runID, workerID string) error {
-	return HeartbeatRestoreItemContext(ctx, s.db, lease, runID, workerID)
+	return heartbeatRestoreItemContext(ctx, s.db, lease, runID, workerID)
 }
 
 func (s postgresRestoreStore) RecoverStaleRestoreItemsContext(ctx context.Context) (int64, error) {
-	return RecoverStaleRestoreItemsContext(ctx, s.db)
+	return recoverStaleRestoreItemsContext(ctx, s.db)
 }
 
 func (s postgresRestoreStore) SkipBlockedRestoreItemsContext(ctx context.Context) (int64, error) {
-	return SkipBlockedRestoreItemsContext(ctx, s.db)
+	return skipBlockedRestoreItemsContext(ctx, s.db)
 }
 
 func (s postgresRestoreStore) ListRestoreItemBlocksContext(ctx context.Context, itemID, runID string) ([]RestoreItemBlock, error) {
-	return ListRestoreItemBlocksContext(ctx, s.db, itemID, runID)
+	return listRestoreItemBlocksContext(ctx, s.db, itemID, runID)
 }
 
 func (s postgresRestoreStore) SetRestoreItemTargetPathContext(ctx context.Context, lease Lease, runID, targetPath string) error {
-	return SetRestoreItemTargetPathContext(ctx, s.db, lease, runID, targetPath)
+	return setRestoreItemTargetPathContext(ctx, s.db, lease, runID, targetPath)
 }
 
 func (s postgresRestoreStore) SetRestoreDirectoryTargetPathContext(ctx context.Context, lease Lease, runID, snapshotPath, targetPath string) error {
-	return SetRestoreDirectoryTargetPathContext(ctx, s.db, lease, runID, snapshotPath, targetPath)
+	return setRestoreDirectoryTargetPathContext(ctx, s.db, lease, runID, snapshotPath, targetPath)
 }
 
 func (s postgresRestoreStore) ReserveRestoreTargetPathContext(ctx context.Context, runID, itemID, targetPath string) (bool, error) {
-	return ReserveRestoreTargetPathContext(ctx, s.db, runID, itemID, targetPath)
+	return reserveRestoreTargetPathContext(ctx, s.db, runID, itemID, targetPath)
 }
 
 func (s postgresRestoreStore) MoveRestoreTargetReservationContext(ctx context.Context, runID, itemID, targetPath string) (bool, error) {
-	return MoveRestoreTargetReservationContext(ctx, s.db, runID, itemID, targetPath)
+	return moveRestoreTargetReservationContext(ctx, s.db, runID, itemID, targetPath)
 }
 
 func (s postgresRestoreStore) CompleteRestoreItemContext(ctx context.Context, lease Lease, runID string, sizeBytes int64, verificationKind string) (bool, error) {
-	return CompleteRestoreItemContext(ctx, s.db, lease, runID, sizeBytes, verificationKind)
+	return completeRestoreItemContext(ctx, s.db, lease, runID, sizeBytes, verificationKind)
 }
 
 func (s postgresRestoreStore) CompleteRestoreDirectoryContext(ctx context.Context, lease Lease, runID string) error {
-	return CompleteRestoreDirectoryContext(ctx, s.db, lease, runID)
+	return completeRestoreDirectoryContext(ctx, s.db, lease, runID)
 }
 
 func (s postgresRestoreStore) WarnRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) error {
-	return WarnRestoreItemContext(ctx, s.db, lease, runID, errorCode)
+	return warnRestoreItemContext(ctx, s.db, lease, runID, errorCode)
 }
 
 func (s postgresRestoreStore) RetryRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) (bool, error) {
-	return RetryRestoreItemContext(ctx, s.db, lease, runID, errorCode)
+	return retryRestoreItemContext(ctx, s.db, lease, runID, errorCode)
 }
 
 func (s postgresRestoreStore) FailRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) error {
-	return FailRestoreItemContext(ctx, s.db, lease, runID, errorCode)
+	return failRestoreItemContext(ctx, s.db, lease, runID, errorCode)
 }
 
 func (s postgresRestoreStore) SkipRestoreItemContext(ctx context.Context, lease Lease, runID, errorCode string) error {
-	return SkipRestoreItemContext(ctx, s.db, lease, runID, errorCode)
+	return skipRestoreItemContext(ctx, s.db, lease, runID, errorCode)
 }
 
 func (s postgresRestoreStore) GetRestoreRunTargetConnectionContext(ctx context.Context, runID string) (*RestoreRunTargetConnection, error) {
-	return GetRestoreRunTargetConnectionContext(ctx, s.db, runID)
+	return getRestoreRunTargetConnectionContext(ctx, s.db, runID)
 }
 
 func (s postgresRestoreStore) GetRestoreRunCredentialSnapshotContext(ctx context.Context, runID string) (accessEncrypted string, refreshEncrypted sql.NullString, expiresAt sql.NullTime, err error) {
-	return GetRestoreRunCredentialSnapshotContext(ctx, s.db, runID)
+	return getRestoreRunCredentialSnapshotContext(ctx, s.db, runID)
 }
 
 func (s postgresRestoreStore) RestoreRunTokenSink(runID string) OAuthTokenSink {
@@ -183,5 +185,9 @@ func (s postgresRestoreStore) RestoreRunTokenSink(runID string) OAuthTokenSink {
 }
 
 func (s postgresRestoreStore) UpdateRestoreRunMegaSessionContext(ctx context.Context, runID, sessionIDEncrypted, masterKeyEncrypted string) error {
-	return UpdateRestoreRunMegaSessionContext(ctx, s.db, runID, sessionIDEncrypted, masterKeyEncrypted)
+	return updateRestoreRunMegaSessionContext(ctx, s.db, runID, sessionIDEncrypted, masterKeyEncrypted)
+}
+
+func (s postgresRestoreStore) GetExpiringOAuthRestoreRuns() ([]ExpiringOAuthRestoreRun, error) {
+	return getExpiringOAuthRestoreRuns(s.db)
 }

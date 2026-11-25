@@ -223,7 +223,7 @@ type RestorePreviewItem struct {
 	Metadata     json.RawMessage
 }
 
-func ListRestorePreviewItemsContext(ctx context.Context, database *sql.DB, preview *RestorePreview) ([]RestorePreviewItem, error) {
+func listRestorePreviewItemsContext(ctx context.Context, database *sql.DB, preview *RestorePreview) ([]RestorePreviewItem, error) {
 	if preview == nil {
 		return nil, errors.New("restore preview is required")
 	}
@@ -252,7 +252,7 @@ func ListRestorePreviewItemsContext(ctx context.Context, database *sql.DB, previ
 	return items, rows.Err()
 }
 
-func ClaimNextRestoreItemForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*RestoreItem, error) {
+func claimNextRestoreItemForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*RestoreItem, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin restore item claim: %w", err)
@@ -295,7 +295,7 @@ func ClaimNextRestoreItemForWorkerContext(ctx context.Context, database *sql.DB,
 	return item, nil
 }
 
-func ListRestoreItemBlocksContext(ctx context.Context, database *sql.DB, itemID, runID string) ([]RestoreItemBlock, error) {
+func listRestoreItemBlocksContext(ctx context.Context, database *sql.DB, itemID, runID string) ([]RestoreItemBlock, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT ordinal, pack_remote_path, pack_sha256, pack_size_bytes, payload_offset, payload_length, block_sha256, plaintext_size
 		FROM restore_item_blocks b JOIN restore_items i ON i.id = b.restore_item_id
@@ -315,7 +315,7 @@ func ListRestoreItemBlocksContext(ctx context.Context, database *sql.DB, itemID,
 	return blocks, rows.Err()
 }
 
-func CompleteRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID string, sizeBytes int64, verificationKind string) (bool, error) {
+func completeRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID string, sizeBytes int64, verificationKind string) (bool, error) {
 	if err := lease.validate(); err != nil {
 		return false, err
 	}
@@ -338,7 +338,7 @@ func CompleteRestoreItemContext(ctx context.Context, database *sql.DB, lease Lea
 	return true, tx.Commit()
 }
 
-func CompleteRestoreDirectoryContext(ctx context.Context, database *sql.DB, lease Lease, runID string) error {
+func completeRestoreDirectoryContext(ctx context.Context, database *sql.DB, lease Lease, runID string) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -352,7 +352,7 @@ func CompleteRestoreDirectoryContext(ctx context.Context, database *sql.DB, leas
 	return nil
 }
 
-func WarnRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) error {
+func warnRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -360,7 +360,7 @@ func WarnRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, 
 	return err
 }
 
-func FailRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) error {
+func failRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -368,10 +368,10 @@ func FailRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, 
 	return err
 }
 
-// RetryRestoreItemContext applies the restore retry contract atomically. The
+// retryRestoreItemContext applies the restore retry contract atomically. The
 // stored attempt number is incremented for every failed claim. The first three
 // failures are rescheduled after 10s, 30s, and 90s; the fourth is terminal.
-func RetryRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) (bool, error) {
+func retryRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) (bool, error) {
 	if err := lease.validate(); err != nil {
 		return false, err
 	}
@@ -392,7 +392,7 @@ func RetryRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease,
 	return true, nil
 }
 
-func SkipRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) error {
+func skipRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, errorCode string) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -400,7 +400,7 @@ func SkipRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, 
 	return err
 }
 
-func SetRestoreItemTargetPathContext(ctx context.Context, database *sql.DB, lease Lease, runID, targetPath string) error {
+func setRestoreItemTargetPathContext(ctx context.Context, database *sql.DB, lease Lease, runID, targetPath string) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -408,11 +408,11 @@ func SetRestoreItemTargetPathContext(ctx context.Context, database *sql.DB, leas
 	return err
 }
 
-// ReserveRestoreTargetPathContext is a durable in-run reservation. Paths are
+// reserveRestoreTargetPathContext is a durable in-run reservation. Paths are
 // canonicalized conservatively to lower case, which prevents two concurrent
 // workers from selecting aliases on case-insensitive targets. A retry by the
 // same item reuses its reservation.
-func ReserveRestoreTargetPathContext(ctx context.Context, database *sql.DB, runID, itemID, targetPath string) (bool, error) {
+func reserveRestoreTargetPathContext(ctx context.Context, database *sql.DB, runID, itemID, targetPath string) (bool, error) {
 	canonical := strings.ToLower(strings.TrimPrefix(path.Clean(targetPath), "/"))
 	if canonical == "." || canonical == "" {
 		canonical = "/"
@@ -433,7 +433,7 @@ func ReserveRestoreTargetPathContext(ctx context.Context, database *sql.DB, runI
 	return reservedID == itemID, nil
 }
 
-func MoveRestoreTargetReservationContext(ctx context.Context, database *sql.DB, runID, itemID, targetPath string) (bool, error) {
+func moveRestoreTargetReservationContext(ctx context.Context, database *sql.DB, runID, itemID, targetPath string) (bool, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -457,10 +457,10 @@ func MoveRestoreTargetReservationContext(ctx context.Context, database *sql.DB, 
 	return true, tx.Commit()
 }
 
-// SetRestoreDirectoryTargetPathContext persists a directory rename and rewrites
+// setRestoreDirectoryTargetPathContext persists a directory rename and rewrites
 // every selected descendant in the same transaction. This makes retry target
 // paths stable even after a coordinator crash.
-func SetRestoreDirectoryTargetPathContext(ctx context.Context, database *sql.DB, lease Lease, runID, snapshotPath, targetPath string) error {
+func setRestoreDirectoryTargetPathContext(ctx context.Context, database *sql.DB, lease Lease, runID, snapshotPath, targetPath string) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -483,9 +483,9 @@ func SetRestoreDirectoryTargetPathContext(ctx context.Context, database *sql.DB,
 	return tx.Commit()
 }
 
-// SkipBlockedRestoreItemsContext propagates a skipped or failed directory to
+// skipBlockedRestoreItemsContext propagates a skipped or failed directory to
 // its descendants so a terminal run cannot be held open by unreachable files.
-func SkipBlockedRestoreItemsContext(ctx context.Context, database *sql.DB) (int64, error) {
+func skipBlockedRestoreItemsContext(ctx context.Context, database *sql.DB) (int64, error) {
 	result, err := database.ExecContext(ctx, `
 		UPDATE restore_items child SET status = 'SKIPPED', error_code = 'RESTORE_PARENT_UNAVAILABLE'
 		WHERE child.status = 'PENDING' AND EXISTS (
@@ -500,7 +500,7 @@ func SkipBlockedRestoreItemsContext(ctx context.Context, database *sql.DB) (int6
 	return result.RowsAffected()
 }
 
-func HeartbeatRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, workerID string) error {
+func heartbeatRestoreItemContext(ctx context.Context, database *sql.DB, lease Lease, runID, workerID string) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -508,7 +508,7 @@ func HeartbeatRestoreItemContext(ctx context.Context, database *sql.DB, lease Le
 	return err
 }
 
-func GetRestoreRunCredentialSnapshotContext(ctx context.Context, database *sql.DB, runID string) (accessEncrypted string, refreshEncrypted sql.NullString, expiresAt sql.NullTime, err error) {
+func getRestoreRunCredentialSnapshotContext(ctx context.Context, database *sql.DB, runID string) (accessEncrypted string, refreshEncrypted sql.NullString, expiresAt sql.NullTime, err error) {
 	err = database.QueryRowContext(ctx, `SELECT target_password_encrypted, target_refresh_token_encrypted, target_token_expires_at FROM restore_runs WHERE id = $1`, runID).Scan(&accessEncrypted, &refreshEncrypted, &expiresAt)
 	return
 }
@@ -530,9 +530,9 @@ type RestoreRunTargetConnection struct {
 	TargetMegaMasterKeyEncrypted sql.NullString
 }
 
-// GetRestoreRunTargetConnectionContext loads the target connection of one run.
+// getRestoreRunTargetConnectionContext loads the target connection of one run.
 // A missing run returns sql.ErrNoRows.
-func GetRestoreRunTargetConnectionContext(ctx context.Context, database *sql.DB, runID string) (*RestoreRunTargetConnection, error) {
+func getRestoreRunTargetConnectionContext(ctx context.Context, database *sql.DB, runID string) (*RestoreRunTargetConnection, error) {
 	c := &RestoreRunTargetConnection{}
 	err := database.QueryRowContext(ctx, `
 		SELECT j.backup_job_id, j.target_provider, j.target_url, j.target_username, j.conflict_strategy,
@@ -547,10 +547,10 @@ func GetRestoreRunTargetConnectionContext(ctx context.Context, database *sql.DB,
 	return c, nil
 }
 
-// UpdateRestoreRunMegaSessionContext stores a newly issued MEGA session only
+// updateRestoreRunMegaSessionContext stores a newly issued MEGA session only
 // while the same run remains active. It deliberately never writes sessions to
 // the durable restore job, because a later retry must be previewed again.
-func UpdateRestoreRunMegaSessionContext(ctx context.Context, database *sql.DB, runID, sessionIDEncrypted, masterKeyEncrypted string) error {
+func updateRestoreRunMegaSessionContext(ctx context.Context, database *sql.DB, runID, sessionIDEncrypted, masterKeyEncrypted string) error {
 	_, err := database.ExecContext(ctx, `
 		UPDATE restore_runs SET target_mega_session_id_encrypted = $2, target_mega_master_key_encrypted = $3
 		WHERE id = $1 AND status IN ('QUEUED','PLANNING','RUNNING','VERIFYING','CANCELLING')`, runID, nullableStringValue(sessionIDEncrypted), nullableStringValue(masterKeyEncrypted))
@@ -564,10 +564,10 @@ func nullableStringValue(value string) any {
 	return value
 }
 
-// RecoverStaleRestoreItemsContext only reclaims claims whose worker heartbeat
+// recoverStaleRestoreItemsContext only reclaims claims whose worker heartbeat
 // has been absent for ten minutes. CANCELLING runs drain to CANCELLED instead
 // of re-queuing target mutations after a worker crash.
-func RecoverStaleRestoreItemsContext(ctx context.Context, database *sql.DB) (int64, error) {
+func recoverStaleRestoreItemsContext(ctx context.Context, database *sql.DB) (int64, error) {
 	result, err := database.ExecContext(ctx, `
 		UPDATE restore_items i
 		SET status = CASE WHEN r.status = 'CANCELLING' THEN 'CANCELLED' ELSE 'PENDING' END,
@@ -586,10 +586,10 @@ func RecoverStaleRestoreItemsContext(ctx context.Context, database *sql.DB) (int
 	return result.RowsAffected()
 }
 
-// FinalizeCompletedRestoreRunsContext closes drained runs and releases their
+// finalizeCompletedRestoreRunsContext closes drained runs and releases their
 // pins in the same transaction. A failed/skipped item yields PARTIAL if any
 // file succeeded, otherwise FAILED; no target object is rolled back.
-func FinalizeCompletedRestoreRunsContext(ctx context.Context, database *sql.DB) (int, error) {
+func finalizeCompletedRestoreRunsContext(ctx context.Context, database *sql.DB) (int, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -653,9 +653,9 @@ func FinalizeCompletedRestoreRunsContext(ctx context.Context, database *sql.DB) 
 	return len(summaries), nil
 }
 
-// FinalizeCancellingRestoreRunsContext releases pins only after the final live
+// finalizeCancellingRestoreRunsContext releases pins only after the final live
 // item drains. Pending work was marked CANCELLED by the cancellation request.
-func FinalizeCancellingRestoreRunsContext(ctx context.Context, database *sql.DB) (int, error) {
+func finalizeCancellingRestoreRunsContext(ctx context.Context, database *sql.DB) (int, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -698,7 +698,7 @@ func FinalizeCancellingRestoreRunsContext(ctx context.Context, database *sql.DB)
 	return len(ids), nil
 }
 
-func ListRestoreRunsForOwnerContext(ctx context.Context, database *sql.DB, userID string) ([]RestoreRun, error) {
+func listRestoreRunsForOwnerContext(ctx context.Context, database *sql.DB, userID string) ([]RestoreRun, error) {
 	rows, err := database.QueryContext(ctx, `SELECT r.id, r.restore_job_id, r.generation, r.status, r.total_files, r.total_bytes, r.processed_files, r.processed_bytes, r.failed_files, r.error_code, r.started_at, r.finished_at, r.created_at, r.updated_at FROM restore_runs r JOIN restore_jobs j ON j.id = r.restore_job_id WHERE j.user_id = $1 ORDER BY r.created_at DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -715,7 +715,7 @@ func ListRestoreRunsForOwnerContext(ctx context.Context, database *sql.DB, userI
 	return runs, rows.Err()
 }
 
-func GetRestoreRunForOwnerContext(ctx context.Context, database *sql.DB, runID, userID string) (*RestoreRun, error) {
+func getRestoreRunForOwnerContext(ctx context.Context, database *sql.DB, runID, userID string) (*RestoreRun, error) {
 	run := &RestoreRun{}
 	err := database.QueryRowContext(ctx, `SELECT r.id, r.restore_job_id, r.generation, r.status, r.total_files, r.total_bytes, r.processed_files, r.processed_bytes, r.failed_files, r.error_code, r.started_at, r.finished_at, r.created_at, r.updated_at FROM restore_runs r JOIN restore_jobs j ON j.id = r.restore_job_id WHERE r.id = $1 AND j.user_id = $2`, runID, userID).Scan(restoreRunDestinations(run)...)
 	if err != nil {
@@ -724,7 +724,7 @@ func GetRestoreRunForOwnerContext(ctx context.Context, database *sql.DB, runID, 
 	return run, nil
 }
 
-func ListRestoreItemsForRunOwnerContext(ctx context.Context, database *sql.DB, runID, userID string) ([]RestoreItem, error) {
+func listRestoreItemsForRunOwnerContext(ctx context.Context, database *sql.DB, runID, userID string) ([]RestoreItem, error) {
 	rows, err := database.QueryContext(ctx, `SELECT i.id, i.restore_run_id, i.parent_item_id, i.snapshot_relative_path, i.is_dir, i.size_bytes, i.file_sha256, i.source_mtime, i.source_metadata, i.target_path, i.resolved_target_path, i.status, i.verification_kind, i.outcome_code, i.attempts, i.next_retry_at, i.error_code FROM restore_items i JOIN restore_runs r ON r.id = i.restore_run_id JOIN restore_jobs j ON j.id = r.restore_job_id WHERE i.restore_run_id = $1 AND j.user_id = $2 ORDER BY i.snapshot_relative_path`, runID, userID)
 	if err != nil {
 		return nil, err
@@ -741,11 +741,11 @@ func ListRestoreItemsForRunOwnerContext(ctx context.Context, database *sql.DB, r
 	return items, rows.Err()
 }
 
-func ListRestoreItemsForOwnerContext(ctx context.Context, database *sql.DB, runID, userID string) ([]RestoreItem, error) {
-	return ListRestoreItemsForRunOwnerContext(ctx, database, runID, userID)
+func listRestoreItemsForOwnerContext(ctx context.Context, database *sql.DB, runID, userID string) ([]RestoreItem, error) {
+	return listRestoreItemsForRunOwnerContext(ctx, database, runID, userID)
 }
 
-func CancelRestoreRunForOwnerContext(ctx context.Context, database *sql.DB, runID, userID string) (bool, error) {
+func cancelRestoreRunForOwnerContext(ctx context.Context, database *sql.DB, runID, userID string) (bool, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -774,10 +774,10 @@ func CancelRestoreRunForOwnerContext(ctx context.Context, database *sql.DB, runI
 	return true, nil
 }
 
-// DeleteRestoreJobForOwnerContext retains active evidence until a run has
+// deleteRestoreJobForOwnerContext retains active evidence until a run has
 // drained. Cascading deletion then removes run items, frozen recipes and any
 // already-terminal pin rows together.
-func DeleteRestoreJobForOwnerContext(ctx context.Context, database *sql.DB, jobID, userID string) (bool, error) {
+func deleteRestoreJobForOwnerContext(ctx context.Context, database *sql.DB, jobID, userID string) (bool, error) {
 	result, err := database.ExecContext(ctx, `
 		DELETE FROM restore_jobs j
 		WHERE j.id = $1 AND j.user_id = $2
@@ -799,7 +799,7 @@ func restoreRunDestinations(run *RestoreRun) []any {
 	return []any{&run.ID, &run.RestoreJobID, &run.Generation, &run.Status, &run.TotalFiles, &run.TotalBytes, &run.ProcessedFiles, &run.ProcessedBytes, &run.FailedFiles, &run.ErrorCode, &run.StartedAt, &run.FinishedAt, &run.CreatedAt, &run.UpdatedAt}
 }
 
-func ClaimNextQueuedRestoreRunForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*RestoreJob, *RestoreRun, error) {
+func claimNextQueuedRestoreRunForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*RestoreJob, *RestoreRun, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("begin restore run claim: %w", err)
@@ -837,10 +837,10 @@ func ClaimNextQueuedRestoreRunForWorkerContext(ctx context.Context, database *sq
 	return job, run, nil
 }
 
-// PlanRestoreRunContext freezes all source block locators while the source
+// planRestoreRunContext freezes all source block locators while the source
 // catalog is locked. Retention and compaction may run after this commit, but
 // cannot remove any pinned pack until the restore run terminalizes.
-func PlanRestoreRunContext(ctx context.Context, database *sql.DB, job *RestoreJob, run *RestoreRun) (bool, error) {
+func planRestoreRunContext(ctx context.Context, database *sql.DB, job *RestoreJob, run *RestoreRun) (bool, error) {
 	if job == nil || run == nil || job.ID == "" || run.ID == "" || !job.BackupJobID.Valid || !job.BackupSnapshotID.Valid {
 		return false, errors.New("restore job/run is incomplete")
 	}
@@ -953,9 +953,9 @@ func PlanRestoreRunContext(ctx context.Context, database *sql.DB, job *RestoreJo
 	return true, nil
 }
 
-// FailRestoreRunPlanningContext terminalizes a run that could not freeze a
+// failRestoreRunPlanningContext terminalizes a run that could not freeze a
 // restorable source catalog. No pack pins exist until planning commits.
-func FailRestoreRunPlanningContext(ctx context.Context, database *sql.DB, jobID, runID string, generation int, errorCode string) (bool, error) {
+func failRestoreRunPlanningContext(ctx context.Context, database *sql.DB, jobID, runID string, generation int, errorCode string) (bool, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -988,10 +988,10 @@ func FailRestoreRunPlanningContext(ctx context.Context, database *sql.DB, jobID,
 	return true, nil
 }
 
-// CreateRestorePreviewContext records a pending preview only after the API has
+// createRestorePreviewContext records a pending preview only after the API has
 // verified ownership and provider capabilities. The worker owns all target-tree
 // enumeration and marks it READY later.
-func CreateRestorePreviewContext(ctx context.Context, database *sql.DB, preview *RestorePreview) (string, error) {
+func createRestorePreviewContext(ctx context.Context, database *sql.DB, preview *RestorePreview) (string, error) {
 	if preview == nil || preview.UserID == "" || preview.BackupJobID == "" || preview.BackupSnapshotID == "" || preview.TargetProvider == "" || preview.TargetRoot == "" {
 		return "", errors.New("restore preview is incomplete")
 	}
@@ -1018,7 +1018,7 @@ func CreateRestorePreviewContext(ctx context.Context, database *sql.DB, preview 
 	return id, err
 }
 
-func ClaimNextRestorePreviewForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*RestorePreview, error) {
+func claimNextRestorePreviewForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*RestorePreview, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin restore preview claim: %w", err)
@@ -1051,7 +1051,7 @@ func ClaimNextRestorePreviewForWorkerContext(ctx context.Context, database *sql.
 	return preview, nil
 }
 
-func CompleteRestorePreviewWithStatsFencedContext(ctx context.Context, database *sql.DB, previewID string, generation int, workerID string, stats RestorePreviewStats) (bool, error) {
+func completeRestorePreviewWithStatsFencedContext(ctx context.Context, database *sql.DB, previewID string, generation int, workerID string, stats RestorePreviewStats) (bool, error) {
 	if len(stats.ConflictExamples) == 0 {
 		stats.ConflictExamples = json.RawMessage("[]")
 	}
@@ -1072,12 +1072,12 @@ func CompleteRestorePreviewWithStatsFencedContext(ctx context.Context, database 
 	return n == 1, err
 }
 
-func FailRestorePreviewFencedContext(ctx context.Context, database *sql.DB, previewID string, generation int, workerID, errorCode string) error {
+func failRestorePreviewFencedContext(ctx context.Context, database *sql.DB, previewID string, generation int, workerID, errorCode string) error {
 	_, err := database.ExecContext(ctx, `UPDATE restore_previews SET status = 'FAILED', error_code = $2, target_password_encrypted = NULL, target_refresh_token_encrypted = NULL, target_mega_session_id_encrypted = NULL, target_mega_master_key_encrypted = NULL, coordinator_lease_until = NULL, worker_hash = NULL WHERE id = $1 AND status = 'RUNNING' AND ($3 = 0 OR (coordinator_generation = $3 AND worker_hash IS NOT DISTINCT FROM $4))`, previewID, errorCode, generation, nullableStringValue(workerID))
 	return err
 }
 
-func RenewRestorePreviewLeaseContext(ctx context.Context, database *sql.DB, previewID string, generation int, workerID string) (bool, error) {
+func renewRestorePreviewLeaseContext(ctx context.Context, database *sql.DB, previewID string, generation int, workerID string) (bool, error) {
 	result, err := database.ExecContext(ctx, `UPDATE restore_previews SET coordinator_lease_until = CURRENT_TIMESTAMP + INTERVAL '2 minutes' WHERE id = $1 AND status = 'RUNNING' AND coordinator_generation = $2 AND worker_hash IS NOT DISTINCT FROM $3`, previewID, generation, nullableStringValue(workerID))
 	if err != nil {
 		return false, err
@@ -1086,7 +1086,7 @@ func RenewRestorePreviewLeaseContext(ctx context.Context, database *sql.DB, prev
 	return count == 1, err
 }
 
-func CancelRestorePreviewForOwnerContext(ctx context.Context, database *sql.DB, previewID, userID string) (bool, error) {
+func cancelRestorePreviewForOwnerContext(ctx context.Context, database *sql.DB, previewID, userID string) (bool, error) {
 	result, err := database.ExecContext(ctx, `UPDATE restore_previews SET status = 'CANCELLED', error_code = 'RESTORE_PREVIEW_CANCELLED', target_password_encrypted = NULL, target_refresh_token_encrypted = NULL, target_mega_session_id_encrypted = NULL, target_mega_master_key_encrypted = NULL, coordinator_lease_until = NULL, worker_hash = NULL WHERE id = $1 AND user_id = $2 AND status IN ('QUEUED', 'RUNNING', 'READY')`, previewID, userID)
 	if err != nil {
 		return false, err
@@ -1095,17 +1095,17 @@ func CancelRestorePreviewForOwnerContext(ctx context.Context, database *sql.DB, 
 	return count == 1, err
 }
 
-// ExpireRestorePreviewsContext clears previews which can no longer be
+// expireRestorePreviewsContext clears previews which can no longer be
 // consumed. It is safe to run periodically from every worker.
-func ExpireRestorePreviewsContext(ctx context.Context, database *sql.DB) error {
+func expireRestorePreviewsContext(ctx context.Context, database *sql.DB) error {
 	_, err := database.ExecContext(ctx, `UPDATE restore_previews SET status = 'EXPIRED', target_password_encrypted = NULL, target_refresh_token_encrypted = NULL, target_mega_session_id_encrypted = NULL, target_mega_master_key_encrypted = NULL, coordinator_lease_until = NULL, worker_hash = NULL WHERE status = 'READY' AND expires_at <= CURRENT_TIMESTAMP`)
 	return err
 }
 
-// RecoverStaleRestorePlanningContext only recovers phases that perform no
+// recoverStaleRestorePlanningContext only recovers phases that perform no
 // target mutation. Transfer items remain owned until explicit cancellation or
 // future lease fencing is available, avoiding duplicate remote writes.
-func RecoverStaleRestorePlanningContext(ctx context.Context, database *sql.DB) error {
+func recoverStaleRestorePlanningContext(ctx context.Context, database *sql.DB) error {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1120,7 +1120,7 @@ func RecoverStaleRestorePlanningContext(ctx context.Context, database *sql.DB) e
 	return tx.Commit()
 }
 
-func GetRestorePreviewForOwnerContext(ctx context.Context, database *sql.DB, previewID, userID string) (*RestorePreview, error) {
+func getRestorePreviewForOwnerContext(ctx context.Context, database *sql.DB, previewID, userID string) (*RestorePreview, error) {
 	preview := &RestorePreview{}
 	err := database.QueryRowContext(ctx, `SELECT id, user_id, backup_job_id, backup_snapshot_id, retry_restore_job_id, target_profile_id, selected_paths, target_provider, target_root, conflict_strategy, threads, bandwidth_mbps, config_fingerprint, status, total_files, total_directories, total_bytes, existing_file_conflicts, mergeable_directories, type_conflicts, unavailable_items, expected_skips, expected_renames, metadata_warnings, conflict_examples, error_code, ready_at, expires_at, created_at, updated_at FROM restore_previews WHERE id = $1 AND user_id = $2`, previewID, userID).Scan(
 		&preview.ID, &preview.UserID, &preview.BackupJobID, &preview.BackupSnapshotID, &preview.RetryRestoreJobID, &preview.TargetProfileID, &preview.SelectedPaths, &preview.TargetProvider, &preview.TargetRoot, &preview.ConflictStrategy, &preview.Threads, &preview.BandwidthMbps, &preview.ConfigFingerprint, &preview.Status, &preview.TotalFiles, &preview.TotalDirectories, &preview.TotalBytes, &preview.ExistingFileConflicts, &preview.MergeableDirectories, &preview.TypeConflicts, &preview.UnavailableItems, &preview.ExpectedSkips, &preview.ExpectedRenames, &preview.MetadataWarnings, &preview.ConflictExamples, &preview.ErrorCode, &preview.ReadyAt, &preview.ExpiresAt, &preview.CreatedAt, &preview.UpdatedAt)
@@ -1130,11 +1130,11 @@ func GetRestorePreviewForOwnerContext(ctx context.Context, database *sql.DB, pre
 	return preview, nil
 }
 
-// ConsumeRestorePreviewContext turns an unexpired READY preview into the first
+// consumeRestorePreviewContext turns an unexpired READY preview into the first
 // queued run in one transaction. The live snapshot check intentionally happens
 // here as well as during preview generation because retention or damage can
 // change the repository between the two operations.
-func ConsumeRestorePreviewContext(ctx context.Context, database *sql.DB, previewID, userID string) (*RestoreJob, *RestoreRun, error) {
+func consumeRestorePreviewContext(ctx context.Context, database *sql.DB, previewID, userID string) (*RestoreJob, *RestoreRun, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("begin restore preview consume: %w", err)
@@ -1234,8 +1234,8 @@ type ExpiringOAuthRestoreRun struct {
 	RefreshTokenEncrypted string
 }
 
-// GetExpiringOAuthRestoreRuns returns active restore runs whose OAuth access tokens expire within 15 minutes.
-func GetExpiringOAuthRestoreRuns(database *sql.DB) ([]ExpiringOAuthRestoreRun, error) {
+// getExpiringOAuthRestoreRuns returns active restore runs whose OAuth access tokens expire within 15 minutes.
+func getExpiringOAuthRestoreRuns(database *sql.DB) ([]ExpiringOAuthRestoreRun, error) {
 	rows, err := database.Query(`
 		SELECT r.id, j.user_id, j.target_provider, r.target_refresh_token_encrypted
 		FROM restore_runs r

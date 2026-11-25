@@ -288,6 +288,7 @@ func (server *APIServer) backgroundDaemons() []backgroundDaemon {
 			db:            server.db,
 			migrations:    migrationStoreFor(server.db),
 			syncs:         syncStoreFor(server.db),
+			restores:      restoreStoreFor(server.db),
 			queue:         server.queue,
 			encryptionKey: server.encryptionKey,
 			cache:         server.oauthRotations.get(),

@@ -28,6 +28,7 @@ type oauthRotationDaemon struct {
 	db            *sql.DB
 	migrations    db.MigrationStore
 	syncs         db.SyncStore
+	restores      db.RestoreStore
 	queue         *queue.Queue
 	encryptionKey string
 	cache         *oauth.RotationCache
@@ -105,7 +106,7 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthTokens(ctx context.Context) {
 		logger.ErrorContext(ctx, "oauth_rotation_scan_failed", slog.String("job_type", "sync"), observability.Error(errSync), slog.String("error_kind", observability.ErrorKind(errSync)))
 	}
 
-	expiringRestore, errRestore := db.GetExpiringOAuthRestoreRuns(d.db)
+	expiringRestore, errRestore := d.restores.GetExpiringOAuthRestoreRuns()
 	if errRestore != nil {
 		logger.ErrorContext(ctx, "oauth_rotation_scan_failed", slog.String("job_type", "restore"), observability.Error(errRestore), slog.String("error_kind", observability.ErrorKind(errRestore)))
 	}
@@ -193,7 +194,7 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthTokens(ctx context.Context) {
 				role:     "target",
 				provider: entry.Provider,
 				loadSnapshot: func(loadCtx context.Context) (string, string, time.Time, bool, string, error) {
-					_, refreshEnc, expiresAt, loadErr := db.GetRestoreRunCredentialSnapshotContext(loadCtx, d.db, entry.RestoreRunID)
+					_, refreshEnc, expiresAt, loadErr := d.restores.GetRestoreRunCredentialSnapshotContext(loadCtx, entry.RestoreRunID)
 					if loadErr != nil {
 						return entry.UserID, "", time.Time{}, false, "", loadErr
 					}
@@ -203,7 +204,7 @@ func (d *oauthRotationDaemon) rotateExpiringOAuthTokens(ctx context.Context) {
 					}
 					return entry.UserID, refreshEnc.String, exp, true, "", nil
 				},
-				sink: db.NewRestoreRunTokenSink(d.db, entry.RestoreRunID),
+				sink: d.restores.RestoreRunTokenSink(entry.RestoreRunID),
 			})
 		}
 	}

@@ -278,25 +278,19 @@ func (api *backupAPI) handleCreateRestorePreview(w http.ResponseWriter, r *http.
 	}
 	retryJobID := sql.NullString{}
 	if req.RetryRestoreJobID != "" {
-		var existingFingerprint []byte
-		var retryBackupID, retrySnapshotID string
-		var active bool
-		err = api.db.QueryRowContext(r.Context(), `
-			SELECT j.config_fingerprint, j.source_backup_ref, j.source_snapshot_ref,
-				EXISTS (SELECT 1 FROM restore_runs r WHERE r.restore_job_id = j.id AND r.status IN ('QUEUED','PLANNING','RUNNING','VERIFYING','CANCELLING'))
-			FROM restore_jobs j WHERE j.id = $1 AND j.user_id = $2`, req.RetryRestoreJobID, userID).Scan(&existingFingerprint, &retryBackupID, &retrySnapshotID, &active)
-		if err != nil || active || retryBackupID != backupID || retrySnapshotID != snapshotID {
+		retrySource, retryErr := api.restores.GetRestoreRetrySourceContext(r.Context(), req.RetryRestoreJobID, userID)
+		if retryErr != nil || retrySource.Active || retrySource.SourceBackupRef != backupID || retrySource.SourceSnapshotRef != snapshotID {
 			writeConflictError(w, ErrRestorePreviewInvalidState)
 			return
 		}
 		fingerprint, fingerprintErr := db.RestoreConfigFingerprintWithIdentity(snapshotID, db.StringArray(paths), targetSnap.Provider, targetRoot, identity, req.ConflictStrategy)
-		if fingerprintErr != nil || !bytes.Equal(fingerprint[:], existingFingerprint) {
+		if fingerprintErr != nil || !bytes.Equal(fingerprint[:], retrySource.ConfigFingerprint) {
 			writeConflictError(w, ErrRestorePreviewInvalidState)
 			return
 		}
 		retryJobID = sql.NullString{String: req.RetryRestoreJobID, Valid: true}
 	}
-	previewID, err := db.CreateRestorePreviewContext(r.Context(), api.db, &db.RestorePreview{UserID: userID, BackupJobID: backupID, BackupSnapshotID: snapshotID, RetryRestoreJobID: retryJobID, TargetProfileID: targetProfileID, SelectedPaths: db.StringArray(paths), TargetProvider: targetSnap.Provider, TargetURL: targetSnap.URL, TargetUsername: targetSnap.Username, TargetPasswordEncrypted: sql.NullString{String: passwordEncrypted, Valid: passwordEncrypted != ""}, TargetRefreshTokenEncrypted: refreshEncrypted, TargetTokenExpiresAt: expiresAt, TargetMegaSessionIDEncrypted: sql.NullString{String: megaSessionID, Valid: megaSessionID != ""}, TargetMegaMasterKeyEncrypted: sql.NullString{String: megaMasterKey, Valid: megaMasterKey != ""}, TargetConnectionIdentity: identity, TargetRoot: targetRoot, ConflictStrategy: req.ConflictStrategy, Threads: req.Threads, BandwidthMbps: req.BandwidthMbps})
+	previewID, err := api.restores.CreateRestorePreviewContext(r.Context(), &db.RestorePreview{UserID: userID, BackupJobID: backupID, BackupSnapshotID: snapshotID, RetryRestoreJobID: retryJobID, TargetProfileID: targetProfileID, SelectedPaths: db.StringArray(paths), TargetProvider: targetSnap.Provider, TargetURL: targetSnap.URL, TargetUsername: targetSnap.Username, TargetPasswordEncrypted: sql.NullString{String: passwordEncrypted, Valid: passwordEncrypted != ""}, TargetRefreshTokenEncrypted: refreshEncrypted, TargetTokenExpiresAt: expiresAt, TargetMegaSessionIDEncrypted: sql.NullString{String: megaSessionID, Valid: megaSessionID != ""}, TargetMegaMasterKeyEncrypted: sql.NullString{String: megaMasterKey, Valid: megaMasterKey != ""}, TargetConnectionIdentity: identity, TargetRoot: targetRoot, ConflictStrategy: req.ConflictStrategy, Threads: req.Threads, BandwidthMbps: req.BandwidthMbps})
 	if err != nil {
 		api.logf(r, "create restore preview failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -311,7 +305,7 @@ func (api *backupAPI) handleGetRestorePreview(w http.ResponseWriter, r *http.Req
 	if !authenticated {
 		return
 	}
-	preview, err := db.GetRestorePreviewForOwnerContext(r.Context(), api.db, r.PathValue("previewID"), userID)
+	preview, err := api.restores.GetRestorePreviewForOwnerContext(r.Context(), r.PathValue("previewID"), userID)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
 		return
@@ -333,7 +327,7 @@ func (api *backupAPI) handleCancelRestorePreview(w http.ResponseWriter, r *http.
 	if !authenticated {
 		return
 	}
-	cancelled, err := db.CancelRestorePreviewForOwnerContext(r.Context(), api.db, r.PathValue("previewID"), userID)
+	cancelled, err := api.restores.CancelRestorePreviewForOwnerContext(r.Context(), r.PathValue("previewID"), userID)
 	if err != nil {
 		api.logf(r, "cancel restore preview failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -356,7 +350,7 @@ func (api *backupAPI) handleConsumeRestorePreview(w http.ResponseWriter, r *http
 	if !authenticated {
 		return
 	}
-	job, run, err := db.ConsumeRestorePreviewContext(r.Context(), api.db, r.PathValue("previewID"), userID)
+	job, run, err := api.restores.ConsumeRestorePreviewContext(r.Context(), r.PathValue("previewID"), userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, db.ErrRestorePreviewNotFound) {
 			writeError(w, http.StatusNotFound, ErrRestoreNotFound)
@@ -379,7 +373,7 @@ func (api *backupAPI) handleListRestoreRuns(w http.ResponseWriter, r *http.Reque
 	if !authenticated {
 		return
 	}
-	runs, err := db.ListRestoreRunsForOwnerContext(r.Context(), api.db, userID)
+	runs, err := api.restores.ListRestoreRunsForOwnerContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "list restore runs failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -393,7 +387,7 @@ func (api *backupAPI) handleGetRestoreRun(w http.ResponseWriter, r *http.Request
 	if !authenticated {
 		return
 	}
-	run, err := db.GetRestoreRunForOwnerContext(r.Context(), api.db, r.PathValue("runID"), userID)
+	run, err := api.restores.GetRestoreRunForOwnerContext(r.Context(), r.PathValue("runID"), userID)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
 		return
@@ -415,7 +409,7 @@ func (api *backupAPI) handleRestoreRunStream(w http.ResponseWriter, r *http.Requ
 	}
 	defer api.releaseBackupStream(userID)
 	runID := r.PathValue("runID")
-	run, err := db.GetRestoreRunForOwnerContext(r.Context(), api.db, runID, userID)
+	run, err := api.restores.GetRestoreRunForOwnerContext(r.Context(), runID, userID)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
 		return
@@ -426,7 +420,7 @@ func (api *backupAPI) handleRestoreRunStream(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	api.serveBackupDetailSSE(w, r, "restore", run, func(ctx context.Context) (any, error) {
-		return db.GetRestoreRunForOwnerContext(ctx, api.db, runID, userID)
+		return api.restores.GetRestoreRunForOwnerContext(ctx, runID, userID)
 	})
 }
 
@@ -436,7 +430,7 @@ func (api *backupAPI) handleListRestoreRunItems(w http.ResponseWriter, r *http.R
 		return
 	}
 	runID := r.PathValue("runID")
-	if _, err := db.GetRestoreRunForOwnerContext(r.Context(), api.db, runID, userID); err != nil {
+	if _, err := api.restores.GetRestoreRunForOwnerContext(r.Context(), runID, userID); err != nil {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, ErrRestoreNotFound)
 			return
@@ -445,7 +439,7 @@ func (api *backupAPI) handleListRestoreRunItems(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	items, err := db.ListRestoreItemsForOwnerContext(r.Context(), api.db, runID, userID)
+	items, err := api.restores.ListRestoreItemsForOwnerContext(r.Context(), runID, userID)
 	if err != nil {
 		api.logf(r, "list restore items failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -463,7 +457,7 @@ func (api *backupAPI) handleCancelRestoreRun(w http.ResponseWriter, r *http.Requ
 	if !authenticated {
 		return
 	}
-	cancelled, err := db.CancelRestoreRunForOwnerContext(r.Context(), api.db, r.PathValue("runID"), userID)
+	cancelled, err := api.restores.CancelRestoreRunForOwnerContext(r.Context(), r.PathValue("runID"), userID)
 	if err != nil {
 		api.logf(r, "cancel restore run failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -486,7 +480,7 @@ func (api *backupAPI) handleDeleteRestoreJob(w http.ResponseWriter, r *http.Requ
 	if !authenticated {
 		return
 	}
-	deleted, err := db.DeleteRestoreJobForOwnerContext(r.Context(), api.db, r.PathValue("jobID"), userID)
+	deleted, err := api.restores.DeleteRestoreJobForOwnerContext(r.Context(), r.PathValue("jobID"), userID)
 	if err != nil {
 		api.logf(r, "delete restore job failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -506,7 +500,7 @@ func (api *backupAPI) handleDownloadRestoreReport(w http.ResponseWriter, r *http
 		return
 	}
 	runID := r.PathValue("runID")
-	run, err := db.GetRestoreRunForOwnerContext(r.Context(), api.db, runID, userID)
+	run, err := api.restores.GetRestoreRunForOwnerContext(r.Context(), runID, userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, ErrRestoreNotFound)
@@ -520,7 +514,7 @@ func (api *backupAPI) handleDownloadRestoreReport(w http.ResponseWriter, r *http
 		writeConflictError(w, ErrRestorePreviewInvalidState)
 		return
 	}
-	items, err := db.ListRestoreItemsForRunOwnerContext(r.Context(), api.db, runID, userID)
+	items, err := api.restores.ListRestoreItemsForRunOwnerContext(r.Context(), runID, userID)
 	if err != nil {
 		api.logf(r, "create restore report failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

@@ -14,6 +14,7 @@ import (
 type backupDependencies struct {
 	db                 *sql.DB
 	backups            db.BackupAPIStore
+	restores           db.RestoreAPIStore
 	encryptionKey      string
 	rateLimiter        rateLimiter
 	profiles           *ownedProfileAccess
@@ -37,6 +38,9 @@ func newBackupAPI(deps backupDependencies) *backupAPI {
 	if deps.backups == nil {
 		deps.backups = backupAPIStoreFor(deps.db)
 	}
+	if deps.restores == nil {
+		deps.restores = restoreAPIStoreFor(deps.db)
+	}
 	return &backupAPI{backupDependencies: deps}
 }
 
@@ -45,6 +49,7 @@ func (s *APIServer) backups() *backupAPI {
 		requestEnv:    s.requestEnv(),
 		db:            s.db,
 		backups:       backupAPIStoreFor(s.db),
+		restores:      restoreAPIStoreFor(s.db),
 		encryptionKey: s.encryptionKey,
 		rateLimiter:   s.rateLimiter,
 		profiles:      s.profiles(),

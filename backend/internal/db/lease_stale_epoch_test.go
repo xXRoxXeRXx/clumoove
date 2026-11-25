@@ -116,7 +116,7 @@ func TestRestoreItemRejectsWritesFromAStaleLeaseAfterReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := ClaimNextRestoreItemForWorkerContext(ctx, database, "worker-1")
+	first, err := claimNextRestoreItemForWorkerContext(ctx, database, "worker-1")
 	if err != nil || first == nil {
 		t.Fatalf("first claim = (%v, %v)", first, err)
 	}
@@ -124,7 +124,7 @@ func TestRestoreItemRejectsWritesFromAStaleLeaseAfterReclaim(t *testing.T) {
 	if _, err := database.Exec(`UPDATE restore_items SET status = 'PENDING', worker_hash = NULL, claim_deadline = NULL WHERE id = $1`, itemID); err != nil {
 		t.Fatal(err)
 	}
-	second, err := ClaimNextRestoreItemForWorkerContext(ctx, database, "worker-2")
+	second, err := claimNextRestoreItemForWorkerContext(ctx, database, "worker-2")
 	if err != nil || second == nil {
 		t.Fatalf("second claim = (%v, %v)", second, err)
 	}
@@ -133,16 +133,16 @@ func TestRestoreItemRejectsWritesFromAStaleLeaseAfterReclaim(t *testing.T) {
 	}
 
 	stale := first.Lease()
-	if err := SetRestoreItemTargetPathContext(ctx, database, stale, runID, "/stale"); err != nil {
+	if err := setRestoreItemTargetPathContext(ctx, database, stale, runID, "/stale"); err != nil {
 		t.Fatalf("stale set target path: %v", err)
 	}
-	if err := HeartbeatRestoreItemContext(ctx, database, stale, runID, "worker-1"); err != nil {
+	if err := heartbeatRestoreItemContext(ctx, database, stale, runID, "worker-1"); err != nil {
 		t.Fatalf("stale heartbeat: %v", err)
 	}
-	if err := FailRestoreItemContext(ctx, database, stale, runID, "RESTORE_TRANSFER_FAILED"); err != nil {
+	if err := failRestoreItemContext(ctx, database, stale, runID, "RESTORE_TRANSFER_FAILED"); err != nil {
 		t.Fatalf("stale fail: %v", err)
 	}
-	if completed, err := CompleteRestoreItemContext(ctx, database, stale, runID, 10, "HASH_VERIFIED"); err != nil || completed {
+	if completed, err := completeRestoreItemContext(ctx, database, stale, runID, 10, "HASH_VERIFIED"); err != nil || completed {
 		t.Fatalf("stale complete = (%v, %v), want (false, nil)", completed, err)
 	}
 
@@ -159,7 +159,7 @@ func TestRestoreItemRejectsWritesFromAStaleLeaseAfterReclaim(t *testing.T) {
 		t.Fatalf("run counters moved for a stale lease: processed_files=%d, %v", processed, err)
 	}
 
-	if completed, err := CompleteRestoreItemContext(ctx, database, second.Lease(), runID, 10, "HASH_VERIFIED"); err != nil || !completed {
+	if completed, err := completeRestoreItemContext(ctx, database, second.Lease(), runID, 10, "HASH_VERIFIED"); err != nil || !completed {
 		t.Fatalf("current lease complete = (%v, %v), want (true, nil)", completed, err)
 	}
 }

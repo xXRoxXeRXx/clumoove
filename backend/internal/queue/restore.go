@@ -2,14 +2,12 @@ package queue
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/lib/pq"
 
-	"backend/internal/db"
 	"backend/internal/observability"
 )
 
@@ -21,22 +19,6 @@ type RestoreItemPayload struct {
 	TargetPath           string `json:"target_path"`
 	IsDir                bool   `json:"is_dir"`
 	ClaimEpoch           int64  `json:"claim_epoch"`
-}
-
-// DequeueRestoreItem claims the next runnable item for a restore run while
-// respecting the per-job thread cap and enforcing parent-first directory ordering.
-func DequeueRestoreItem(ctx context.Context, database *sql.DB, workerID string) (*db.RestoreItem, error) {
-	return db.ClaimNextRestoreItemForWorkerContext(ctx, database, workerID)
-}
-
-// HeartbeatRestoreItem extends the claim deadline for an active restore item.
-func HeartbeatRestoreItem(ctx context.Context, database *sql.DB, lease db.Lease, runID, workerID string) error {
-	return db.HeartbeatRestoreItemContext(ctx, database, lease, runID, workerID)
-}
-
-// RecoverStaleRestoreItems resets expired running restore items back to PENDING.
-func RecoverStaleRestoreItems(ctx context.Context, database *sql.DB) (int64, error) {
-	return db.RecoverStaleRestoreItemsContext(ctx, database)
 }
 
 // ListenRestoreEvents connects a PostgreSQL listener to restore notification channels.
