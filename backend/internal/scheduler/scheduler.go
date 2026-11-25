@@ -18,7 +18,6 @@ import (
 
 // Scheduler is the core daemon that manages scheduled tasks
 type Scheduler struct {
-	db         *sql.DB
 	backups    db.BackupStore
 	migrations db.MigrationStore
 	schedules  db.ScheduleStore
@@ -49,7 +48,6 @@ func schedulerLogger(ctx context.Context) *slog.Logger {
 // NewScheduler creates a new Scheduler instance
 func NewScheduler(database *sql.DB, q *queue.Queue, idx *indexer.Indexer) *Scheduler {
 	return &Scheduler{
-		db:         database,
 		backups:    db.NewBackupStore(database),
 		migrations: db.NewMigrationStore(database),
 		schedules:  db.NewScheduleStore(database),
@@ -487,84 +485,40 @@ func (s *Scheduler) recoverOrphanedMigrationIndexing(ctx context.Context) {
 // migration is transitioned first; its linked schedules are then reactivated
 // before the next scheduler tick can claim them.
 func (s *Scheduler) recoverScheduledMigrations(ctx context.Context, logger *slog.Logger, recoveryMsg string) {
-	rows, err := s.db.QueryContext(ctx, `
-		UPDATE migrations m
-		SET status = 'SCHEDULED', indexing_lease_until = NULL, error_message = $1, updated_at = CURRENT_TIMESTAMP
-		WHERE m.status = 'INDEXING'
-		  AND (m.indexing_lease_until IS NULL OR m.indexing_lease_until <= NOW())
-		  AND EXISTS (
-			SELECT 1 FROM schedules s
-			WHERE s.task_type = 'migration' AND s.task_id = m.id
-		)
-		RETURNING m.id, m.user_id
-	`, recoveryMsg)
+	// The store returns the migrations it already moved even when reading the
+	// rest failed, so they are reactivated before moving on.
+	scheduled, err := s.migrations.RecoverStaleScheduledIndexingMigrations(ctx, recoveryMsg)
 	if err != nil {
 		logger.ErrorContext(ctx, "orphaned_migration_query_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-		return
-	}
-	defer rows.Close()
-
-	type recoveredMigration struct{ id, userID string }
-	var scheduled []recoveredMigration
-	for rows.Next() {
-		var migrationID string
-		var userID sql.NullString
-		if err := rows.Scan(&migrationID, &userID); err != nil {
-			logger.ErrorContext(ctx, "orphaned_migration_scan_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-			continue
-		}
-		scheduled = append(scheduled, recoveredMigration{id: migrationID, userID: userID.String})
-	}
-	if err := rows.Err(); err != nil {
-		logger.ErrorContext(ctx, "orphaned_migration_rows_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-		return
 	}
 
 	for _, migration := range scheduled {
-		if _, err := s.db.ExecContext(ctx, `
-			UPDATE schedules SET is_active = TRUE, next_run_at = NOW(), updated_at = CURRENT_TIMESTAMP
-			WHERE task_type = 'migration' AND task_id = $1
-		`, migration.id); err != nil {
-			logger.ErrorContext(ctx, "orphaned_migration_schedule_reactivation_failed", slog.String("migration_id", migration.id), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		if err := s.migrations.ReactivateMigrationSchedules(ctx, migration.ID); err != nil {
+			logger.ErrorContext(ctx, "orphaned_migration_schedule_reactivation_failed", slog.String("migration_id", migration.ID), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			continue
 		}
-		s.audit(ctx, db.AuditEntry{UserID: sql.NullString{String: migration.userID, Valid: migration.userID != ""}, Action: db.AuditMigrationRecovered, Target: migration.id})
-		logger.InfoContext(ctx, "orphaned_migration_rescheduled", slog.String("migration_id", migration.id))
+		s.audit(ctx, db.AuditEntry{UserID: migration.UserID, Action: db.AuditMigrationRecovered, Target: migration.ID})
+		logger.InfoContext(ctx, "orphaned_migration_rescheduled", slog.String("migration_id", migration.ID))
 	}
 }
 
 // failOrphanedImmediateMigrations makes stale immediate migrations visible to
 // their owner. Without a schedule there is no safe automatic restart path.
 func (s *Scheduler) failOrphanedImmediateMigrations(ctx context.Context, logger *slog.Logger, recoveryMsg string) {
-	unscheduledRows, err := s.db.QueryContext(ctx, `
-		SELECT m.id, m.user_id FROM migrations m
-		WHERE m.status = 'INDEXING' AND (m.indexing_lease_until IS NULL OR m.indexing_lease_until <= NOW())
-		  AND NOT EXISTS (SELECT 1 FROM schedules s WHERE s.task_type = 'migration' AND s.task_id = m.id)
-	`)
+	stale, err := s.migrations.ListStaleUnscheduledIndexingMigrations(ctx)
 	if err != nil {
 		logger.ErrorContext(ctx, "orphaned_unscheduled_migration_query_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-		return
 	}
-	defer unscheduledRows.Close()
-	for unscheduledRows.Next() {
-		var migrationID string
-		var userID sql.NullString
-		if err := unscheduledRows.Scan(&migrationID, &userID); err != nil {
-			logger.ErrorContext(ctx, "orphaned_unscheduled_migration_scan_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-			continue
-		}
-		failed, err := s.migrations.FailStaleIndexingMigration(ctx, migrationID, stringPtr(recoveryMsg))
+	for _, migration := range stale {
+		failed, err := s.migrations.FailStaleIndexingMigration(ctx, migration.ID, stringPtr(recoveryMsg))
 		if err != nil {
-			logger.ErrorContext(ctx, "orphaned_unscheduled_migration_failure_persist_failed", slog.String("migration_id", migrationID), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			logger.ErrorContext(ctx, "orphaned_unscheduled_migration_failure_persist_failed", slog.String("migration_id", migration.ID), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			continue
 		}
 		if failed {
-			s.audit(ctx, db.AuditEntry{UserID: userID, Action: db.AuditMigrationRecovered, Target: migrationID})
-			logger.InfoContext(ctx, "orphaned_unscheduled_migration_failed", slog.String("migration_id", migrationID))
+			s.audit(ctx, db.AuditEntry{UserID: migration.UserID, Action: db.AuditMigrationRecovered, Target: migration.ID})
+			logger.InfoContext(ctx, "orphaned_unscheduled_migration_failed", slog.String("migration_id", migration.ID))
 		}
-	}
-	if err := unscheduledRows.Err(); err != nil {
-		logger.ErrorContext(ctx, "orphaned_unscheduled_migration_rows_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 	}
 }
 

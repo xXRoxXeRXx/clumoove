@@ -488,6 +488,78 @@ func failStaleIndexingMigration(ctx context.Context, database *sql.DB, id string
 	return true, tx.Commit()
 }
 
+// StaleIndexingMigration identifies a migration whose indexer lease expired,
+// with its owner for the audit entry (NULL for migrations without one).
+type StaleIndexingMigration struct {
+	ID     string
+	UserID sql.NullString
+}
+
+// recoverStaleScheduledIndexingMigrations returns expired INDEXING migrations
+// that have a schedule to SCHEDULED in one statement and reports which ones it
+// moved. The caller then reactivates their schedules. On a read failure it
+// returns the rows read so far together with the error, because those
+// migrations have already left INDEXING.
+func recoverStaleScheduledIndexingMigrations(ctx context.Context, database *sql.DB, errMsg string) ([]StaleIndexingMigration, error) {
+	rows, err := database.QueryContext(ctx, `
+		UPDATE migrations m
+		SET status = 'SCHEDULED', indexing_lease_until = NULL, error_message = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE m.status = 'INDEXING'
+		  AND (m.indexing_lease_until IS NULL OR m.indexing_lease_until <= NOW())
+		  AND EXISTS (
+			SELECT 1 FROM schedules s
+			WHERE s.task_type = 'migration' AND s.task_id = m.id
+		)
+		RETURNING m.id, m.user_id
+	`, errMsg)
+	if err != nil {
+		return nil, err
+	}
+	return scanStaleIndexingMigrations(rows)
+}
+
+// reactivateMigrationSchedules makes every schedule of a migration due now.
+func reactivateMigrationSchedules(ctx context.Context, database *sql.DB, migrationID string) error {
+	_, err := database.ExecContext(ctx, `
+		UPDATE schedules SET is_active = TRUE, next_run_at = NOW(), updated_at = CURRENT_TIMESTAMP
+		WHERE task_type = 'migration' AND task_id = $1
+	`, migrationID)
+	return err
+}
+
+// listStaleUnscheduledIndexingMigrations lists INDEXING migrations with an
+// expired lease and no schedule. It only selects; failStaleIndexingMigration
+// re-checks the lease when it fails each one.
+func listStaleUnscheduledIndexingMigrations(ctx context.Context, database *sql.DB) ([]StaleIndexingMigration, error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT m.id, m.user_id FROM migrations m
+		WHERE m.status = 'INDEXING' AND (m.indexing_lease_until IS NULL OR m.indexing_lease_until <= NOW())
+		  AND NOT EXISTS (SELECT 1 FROM schedules s WHERE s.task_type = 'migration' AND s.task_id = m.id)
+	`)
+	if err != nil {
+		return nil, err
+	}
+	return scanStaleIndexingMigrations(rows)
+}
+
+// scanStaleIndexingMigrations reads every row it can. A row that fails to scan
+// is skipped and reported through the returned error, so one bad row does not
+// hide the migrations after it.
+func scanStaleIndexingMigrations(rows *sql.Rows) ([]StaleIndexingMigration, error) {
+	defer rows.Close()
+	var out []StaleIndexingMigration
+	var scanErr error
+	for rows.Next() {
+		var m StaleIndexingMigration
+		if err := rows.Scan(&m.ID, &m.UserID); err != nil {
+			scanErr = errors.Join(scanErr, err)
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, errors.Join(scanErr, rows.Err())
+}
+
 // claimScheduledMigrationForIndexing atomically claims a scheduled migration for
 // indexing. A false result means the row either does not exist or is no longer
 // in SCHEDULED state; both cases are intentionally treated as an invalid claim.

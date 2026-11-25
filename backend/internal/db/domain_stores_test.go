@@ -875,3 +875,69 @@ func TestSettingsStoreDelegatesToSettingsPersistence(t *testing.T) {
 		t.Fatalf("args = %v, want key then value", got)
 	}
 }
+
+func TestMigrationStoreStaleIndexingRecoveryKeepsItsGuards(t *testing.T) {
+	t.Run("scheduled recovery only touches expired INDEXING migrations that have a schedule", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		rec.queryColumns = []string{"id", "user_id"}
+		rec.queryRow = []driver.Value{"mig-1", "user-1"}
+
+		recovered, err := NewMigrationStore(database).RecoverStaleScheduledIndexingMigrations(context.Background(), "lost")
+		if err != nil {
+			t.Fatalf("RecoverStaleScheduledIndexingMigrations() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "m.status = 'INDEXING'", "lost")
+		for _, fragment := range []string{"indexing_lease_until <= NOW()", "EXISTS", "s.task_type = 'migration'", "RETURNING m.id, m.user_id"} {
+			if !strings.Contains(rec.statements[0].query, fragment) {
+				t.Errorf("query is missing guard %q: %s", fragment, rec.statements[0].query)
+			}
+		}
+		want := []StaleIndexingMigration{{ID: "mig-1", UserID: sql.NullString{String: "user-1", Valid: true}}}
+		if len(recovered) != 1 || recovered[0] != want[0] {
+			t.Fatalf("recovered = %+v, want %+v", recovered, want)
+		}
+	})
+
+	t.Run("schedule reactivation is keyed by the migration's task id", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		if err := NewMigrationStore(database).ReactivateMigrationSchedules(context.Background(), "mig-1"); err != nil {
+			t.Fatalf("ReactivateMigrationSchedules() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "task_type = 'migration' AND task_id = $1", "mig-1")
+		if !strings.Contains(rec.statements[0].query, "is_active = TRUE") {
+			t.Errorf("query must reactivate the schedule: %s", rec.statements[0].query)
+		}
+	})
+
+	t.Run("the unscheduled scan excludes migrations with a schedule and live leases", func(t *testing.T) {
+		database, rec := openRecordingDB(t)
+		rec.queryColumns = []string{"id", "user_id"}
+		rec.queryRow = []driver.Value{"mig-2", nil}
+
+		stale, err := NewMigrationStore(database).ListStaleUnscheduledIndexingMigrations(context.Background())
+		if err != nil {
+			t.Fatalf("ListStaleUnscheduledIndexingMigrations() error: %v", err)
+		}
+		requireSingleStatement(t, rec, "NOT EXISTS (SELECT 1 FROM schedules s")
+		if !strings.Contains(rec.statements[0].query, "indexing_lease_until <= NOW()") {
+			t.Errorf("query must skip live leases: %s", rec.statements[0].query)
+		}
+		if len(stale) != 1 || stale[0].ID != "mig-2" || stale[0].UserID.Valid {
+			t.Fatalf("stale = %+v, want one row with a NULL owner", stale)
+		}
+	})
+}
+
+func TestStaleIndexingScanReportsAnUnreadableRowButKeepsTheRest(t *testing.T) {
+	database, rec := openRecordingDB(t)
+	rec.queryColumns = []string{"id", "user_id"}
+	rec.queryRow = []driver.Value{nil, "user-1"} // a NULL id cannot scan into a string
+
+	got, err := NewMigrationStore(database).RecoverStaleScheduledIndexingMigrations(context.Background(), "lost")
+	if err == nil {
+		t.Fatal("expected the scan failure to be reported")
+	}
+	if len(got) != 0 {
+		t.Fatalf("got = %+v, want the unreadable row skipped", got)
+	}
+}

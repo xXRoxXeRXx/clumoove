@@ -82,6 +82,15 @@ type MigrationStore interface {
 	// Scheduler claim and stale-indexing recovery.
 	ClaimScheduledMigrationForIndexingContext(ctx context.Context, id string) (bool, error)
 	FailStaleIndexingMigration(ctx context.Context, id string, errMsg *string) (bool, error)
+	// RecoverStaleScheduledIndexingMigrations moves expired INDEXING migrations
+	// that have a schedule back to SCHEDULED and returns them (on a read
+	// failure, those read so far plus the error). The caller then calls
+	// ReactivateMigrationSchedules for each. ListStaleUnscheduledIndexingMigrations
+	// lists the expired ones without a schedule, to be failed one by one with
+	// FailStaleIndexingMigration, which re-checks the lease.
+	RecoverStaleScheduledIndexingMigrations(ctx context.Context, errMsg string) ([]StaleIndexingMigration, error)
+	ReactivateMigrationSchedules(ctx context.Context, migrationID string) error
+	ListStaleUnscheduledIndexingMigrations(ctx context.Context) ([]StaleIndexingMigration, error)
 
 	// Indexing pass.
 	RenewMigrationIndexingLease(ctx context.Context, id string, generation int64, duration time.Duration) (bool, error)
@@ -244,6 +253,18 @@ func (s postgresMigrationStore) ClaimScheduledMigrationForIndexingContext(ctx co
 
 func (s postgresMigrationStore) FailStaleIndexingMigration(ctx context.Context, id string, errMsg *string) (bool, error) {
 	return failStaleIndexingMigration(ctx, s.db, id, errMsg)
+}
+
+func (s postgresMigrationStore) RecoverStaleScheduledIndexingMigrations(ctx context.Context, errMsg string) ([]StaleIndexingMigration, error) {
+	return recoverStaleScheduledIndexingMigrations(ctx, s.db, errMsg)
+}
+
+func (s postgresMigrationStore) ReactivateMigrationSchedules(ctx context.Context, migrationID string) error {
+	return reactivateMigrationSchedules(ctx, s.db, migrationID)
+}
+
+func (s postgresMigrationStore) ListStaleUnscheduledIndexingMigrations(ctx context.Context) ([]StaleIndexingMigration, error) {
+	return listStaleUnscheduledIndexingMigrations(ctx, s.db)
 }
 
 func (s postgresMigrationStore) RenewMigrationIndexingLease(ctx context.Context, id string, generation int64, duration time.Duration) (bool, error) {
