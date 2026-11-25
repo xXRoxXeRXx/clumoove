@@ -648,7 +648,7 @@ func FinalizeCompletedRestoreRunsContext(ctx context.Context, database *sql.DB) 
 		action := AuditRestoreCompleted
 		if value.status == "PARTIAL" { action = AuditRestorePartial }
 		if value.status == "FAILED" { action = AuditRestoreFailed }
-		WriteAuditLog(database, AuditEntry{UserID: sql.NullString{String: value.userID, Valid: true}, Action: action, Target: value.id})
+		writeAuditLog(database, AuditEntry{UserID: sql.NullString{String: value.userID, Valid: true}, Action: action, Target: value.id})
 	}
 	return len(summaries), nil
 }
@@ -693,7 +693,7 @@ func FinalizeCancellingRestoreRunsContext(ctx context.Context, database *sql.DB)
 		return 0, err
 	}
 	for _, value := range ids {
-		WriteAuditLog(database, AuditEntry{UserID: sql.NullString{String: value.userID, Valid: true}, Action: AuditRestoreCancelled, Target: value.id})
+		writeAuditLog(database, AuditEntry{UserID: sql.NullString{String: value.userID, Valid: true}, Action: AuditRestoreCancelled, Target: value.id})
 	}
 	return len(ids), nil
 }
@@ -984,7 +984,7 @@ func FailRestoreRunPlanningContext(ctx context.Context, database *sql.DB, jobID,
 	if err = tx.Commit(); err != nil {
 		return false, err
 	}
-	WriteAuditLog(database, AuditEntry{UserID: sql.NullString{String: userID, Valid: true}, Action: AuditRestoreFailed, Target: runID})
+	writeAuditLog(database, AuditEntry{UserID: sql.NullString{String: userID, Valid: true}, Action: AuditRestoreFailed, Target: runID})
 	return true, nil
 }
 

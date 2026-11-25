@@ -86,6 +86,7 @@ func newAPIGateway(cfg gatewayConfig) (*APIServer, error) {
 
 	return &APIServer{
 		db:                cfg.DB,
+		audit:             auditStoreFor(cfg.DB),
 		queue:             cfg.Queue,
 		indexer:           idx,
 		syncPass:          cfg.SyncPass,

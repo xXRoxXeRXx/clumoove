@@ -447,7 +447,7 @@ func (api *adminAPI) handleAdminAuditLog(w http.ResponseWriter, r *http.Request)
 		limit = 20
 	}
 
-	entries, total, err := db.ListAuditLog(api.db, db.AuditLogParams{
+	entries, total, err := api.audit.ListAuditLog(db.AuditLogParams{
 		Page:   page,
 		Limit:  limit,
 		Action: q.Get("action"),

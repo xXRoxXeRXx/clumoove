@@ -36,6 +36,7 @@ type ProviderFactoryFunc func(ctx context.Context, job *db.SyncJob) (PassClient,
 type Engine struct {
 	db              *sql.DB
 	syncs           db.SyncStore
+	auditLog        db.AuditStore
 	queue           *queue.Queue
 	encryptionKey   string
 	passStore       passStore
@@ -65,8 +66,9 @@ func NewEngine(database *sql.DB, q *queue.Queue, encryptionKey string) *Engine {
 	// Tests build engines without a database; NewSyncStore rejects a nil handle.
 	if database != nil {
 		engine.syncs = db.NewSyncStore(database)
+		engine.auditLog = db.NewAuditStore(database)
 	}
-	engine.passStore = postgresPassStore{db: database, syncs: engine.syncs}
+	engine.passStore = postgresPassStore{db: database, syncs: engine.syncs, audit: engine.auditLog}
 	engine.passRunner = engine
 	engine.passSignals = enginePassSignals{engine: engine, queue: q}
 	return engine
@@ -782,7 +784,7 @@ SyncTaskPoll:
 	if finalRunStatus == "FAILED" {
 		auditAction = db.AuditSyncFailed
 	}
-	db.WriteAuditLog(e.db, db.AuditEntry{
+	e.audit(db.AuditEntry{
 		UserID: sql.NullString{String: job.UserID, Valid: job.UserID != ""},
 		Action: auditAction,
 		Target: job.ID,
@@ -875,7 +877,7 @@ func (e *Engine) failSync(id string, generation int, errMsg string) {
 		return
 	}
 	if ownerID, err := e.syncs.GetSyncJobOwnerID(id); err == nil {
-		db.WriteAuditLog(e.db, db.AuditEntry{
+		e.audit(db.AuditEntry{
 			UserID: sql.NullString{String: ownerID, Valid: ownerID != ""},
 			Action: db.AuditSyncFailed,
 			Target: id,
@@ -885,3 +887,12 @@ func (e *Engine) failSync(id string, generation int, errMsg string) {
 
 // Delta calculation, state update, and listing helpers (updateSyncStates, listFiles,
 // isFileModified, isFileMatchingTarget, ensureFreshToken) are located in delta.go.
+
+// audit records an audit entry; it is a no-op for an engine built without a
+// database (tests).
+func (e *Engine) audit(entry db.AuditEntry) {
+	if e.auditLog == nil {
+		return
+	}
+	e.auditLog.WriteAuditLog(entry)
+}

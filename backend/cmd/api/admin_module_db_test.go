@@ -426,10 +426,11 @@ func TestGatewayAdministrationPersistsAuditEntries(t *testing.T) {
 
 	// WriteAuditLog persists asynchronously, so wait for the row to appear.
 	var entries []db.AuditLogRow
+	auditStore := db.NewAuditStore(database)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var err error
-		entries, _, err = db.ListAuditLog(database, db.AuditLogParams{Page: 1, Limit: 10, UserID: actor})
+		entries, _, err = auditStore.ListAuditLog(db.AuditLogParams{Page: 1, Limit: 10, UserID: actor})
 		if err != nil {
 			t.Fatalf("ListAuditLog: %v", err)
 		}

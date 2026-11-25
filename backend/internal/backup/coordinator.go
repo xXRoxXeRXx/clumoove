@@ -92,6 +92,7 @@ type ProviderFactoryFunc func(ctx context.Context, job *db.BackupJob) (SourcePro
 type Coordinator struct {
 	db                *sql.DB
 	store             db.BackupStore
+	auditLog          db.AuditStore
 	encryptionKey     string
 	packWriterSlots   chan struct{}
 	packReaderSlots   *restore.PackReaderLimiter
@@ -153,7 +154,7 @@ func NewCoordinator(database *sql.DB, cfg Config) (*Coordinator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("backup coordinator: %w", err)
 	}
-	return &Coordinator{db: database, store: db.NewBackupStore(database), encryptionKey: cfg.EncryptionKey, packWriterSlots: make(chan struct{}, cfg.MaxPackWriters), packReaderSlots: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
+	return &Coordinator{db: database, store: db.NewBackupStore(database), auditLog: db.NewAuditStore(database), encryptionKey: cfg.EncryptionKey, packWriterSlots: make(chan struct{}, cfg.MaxPackWriters), packReaderSlots: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
 }
 
 func (c *Coordinator) SetProviderFactory(factory ProviderFactoryFunc) {
@@ -1601,7 +1602,10 @@ func (c *Coordinator) markPackDamaged(job *db.BackupJob, packID string) {
 }
 
 func (c *Coordinator) audit(job *db.BackupJob, action db.AuditAction) {
-	db.WriteAuditLog(c.db, db.AuditEntry{
+	if c.auditLog == nil {
+		return
+	}
+	c.auditLog.WriteAuditLog(db.AuditEntry{
 		UserID: sql.NullString{String: job.UserID, Valid: job.UserID != ""},
 		Action: action,
 		Target: job.ID,

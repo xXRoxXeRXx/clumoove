@@ -219,11 +219,12 @@ func IsActivePassStatus(status string) bool {
 	return status == "RUNNING" || status == "INDEXING" || status == "VERIFYING" || status == "PAUSED_CONNECTION_LOSS"
 }
 
-// postgresPassStore keeps its *sql.DB only for the recovery queries and audit
-// log, which are not part of db.SyncStore yet.
+// postgresPassStore keeps its *sql.DB only for the recovery queries, which are
+// not part of db.SyncStore yet.
 type postgresPassStore struct {
 	db    *sql.DB
 	syncs db.SyncStore
+	audit db.AuditStore
 }
 
 func (s postgresPassStore) Status(ctx context.Context, id string) (string, error) {
@@ -301,7 +302,10 @@ func (s postgresPassStore) AdvanceRecovered(ctx context.Context, id string) erro
 }
 
 func (s postgresPassStore) AuditRecovered(ctx context.Context, pass RecoveredPass) error {
-	db.WriteAuditLogContext(ctx, s.db, db.AuditEntry{
+	if s.audit == nil {
+		return nil
+	}
+	s.audit.WriteAuditLogContext(ctx, db.AuditEntry{
 		UserID: sql.NullString{String: pass.UserID, Valid: pass.UserID != ""},
 		Action: db.AuditSyncRecovered,
 		Target: pass.ID,

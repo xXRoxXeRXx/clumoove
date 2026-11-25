@@ -348,7 +348,14 @@ func (s *APIServer) writeAudit(r *http.Request, action db.AuditAction, target st
 			d = b
 		}
 	}
-	db.WriteAuditLog(s.db, db.AuditEntry{
+	store := s.audit
+	if store == nil {
+		store = auditStoreFor(s.db)
+	}
+	if store == nil {
+		return
+	}
+	store.WriteAuditLog(db.AuditEntry{
 		UserID:  uid,
 		Action:  action,
 		Target:  target,

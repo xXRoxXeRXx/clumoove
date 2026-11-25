@@ -23,6 +23,7 @@ type Scheduler struct {
 	migrations db.MigrationStore
 	schedules  db.ScheduleStore
 	syncs      db.SyncStore
+	auditLog   db.AuditStore
 	queue      *queue.Queue
 	indexer    *indexer.Indexer
 	syncPass   atomic.Pointer[syncPassSlot]
@@ -53,6 +54,7 @@ func NewScheduler(database *sql.DB, q *queue.Queue, idx *indexer.Indexer) *Sched
 		migrations: db.NewMigrationStore(database),
 		schedules:  db.NewScheduleStore(database),
 		syncs:      db.NewSyncStore(database),
+		auditLog:   db.NewAuditStore(database),
 		queue:      q,
 		indexer:    idx,
 	}
@@ -526,7 +528,7 @@ func (s *Scheduler) recoverScheduledMigrations(ctx context.Context, logger *slog
 			logger.ErrorContext(ctx, "orphaned_migration_schedule_reactivation_failed", slog.String("migration_id", migration.id), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			continue
 		}
-		db.WriteAuditLogContext(ctx, s.db, db.AuditEntry{UserID: sql.NullString{String: migration.userID, Valid: migration.userID != ""}, Action: db.AuditMigrationRecovered, Target: migration.id})
+		s.audit(ctx, db.AuditEntry{UserID: sql.NullString{String: migration.userID, Valid: migration.userID != ""}, Action: db.AuditMigrationRecovered, Target: migration.id})
 		logger.InfoContext(ctx, "orphaned_migration_rescheduled", slog.String("migration_id", migration.id))
 	}
 }
@@ -557,7 +559,7 @@ func (s *Scheduler) failOrphanedImmediateMigrations(ctx context.Context, logger 
 			continue
 		}
 		if failed {
-			db.WriteAuditLogContext(ctx, s.db, db.AuditEntry{UserID: userID, Action: db.AuditMigrationRecovered, Target: migrationID})
+			s.audit(ctx, db.AuditEntry{UserID: userID, Action: db.AuditMigrationRecovered, Target: migrationID})
 			logger.InfoContext(ctx, "orphaned_unscheduled_migration_failed", slog.String("migration_id", migrationID))
 		}
 	}
@@ -567,3 +569,12 @@ func (s *Scheduler) failOrphanedImmediateMigrations(ctx context.Context, logger 
 }
 
 func stringPtr(value string) *string { return &value }
+
+// audit records an audit entry tied to ctx; it is a no-op for a scheduler built
+// without an audit store (tests).
+func (s *Scheduler) audit(ctx context.Context, e db.AuditEntry) {
+	if s.auditLog == nil {
+		return
+	}
+	s.auditLog.WriteAuditLogContext(ctx, e)
+}

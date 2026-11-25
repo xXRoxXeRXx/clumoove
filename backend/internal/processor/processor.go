@@ -44,6 +44,7 @@ type Processor struct {
 	migrations         db.MigrationStore
 	tasks              db.TaskStore
 	syncs              db.SyncStore
+	auditLog           db.AuditStore
 	queue              *queue.Queue
 	oauthRefresher     *oauth.JobTokenRefresher
 	oauthRefresherOnce sync.Once
@@ -364,16 +365,19 @@ func NewProcessor(database *sql.DB, q *queue.Queue, cfg Config) (*Processor, err
 	var migrations db.MigrationStore
 	var tasks db.TaskStore
 	var syncs db.SyncStore
+	var auditLog db.AuditStore
 	if database != nil {
 		migrations = db.NewMigrationStore(database)
 		tasks = db.NewTaskStore(database)
 		syncs = db.NewSyncStore(database)
+		auditLog = db.NewAuditStore(database)
 	}
 	return &Processor{
 		db:              database,
 		migrations:      migrations,
 		tasks:           tasks,
 		syncs:           syncs,
+		auditLog:        auditLog,
 		queue:           q,
 		oauthRefresher:  refresher,
 		workerID:        cfg.WorkerID,

@@ -87,6 +87,7 @@ type RestoreTargetFactoryFunc func(ctx context.Context, provider, endpoint, user
 type Coordinator struct {
 	db                      *sql.DB
 	store                   db.RestoreStore
+	auditLog                db.AuditStore
 	encryptionKey           string
 	packReaders             *PackReaderLimiter
 	workerID                string
@@ -130,7 +131,16 @@ func NewCoordinator(database *sql.DB, cfg Config) (*Coordinator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("restore coordinator: %w", err)
 	}
-	return &Coordinator{db: database, store: db.NewRestoreStore(database), encryptionKey: cfg.EncryptionKey, packReaders: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
+	return &Coordinator{db: database, store: db.NewRestoreStore(database), auditLog: db.NewAuditStore(database), encryptionKey: cfg.EncryptionKey, packReaders: cfg.PackReaders, workerID: workerID, oauthLocker: cfg.OAuthLocker}, nil
+}
+
+// audit records a preview lifecycle event; it is a no-op for a coordinator
+// built without an audit store.
+func (c *Coordinator) audit(preview *db.RestorePreview, action db.AuditAction) {
+	if c.auditLog == nil {
+		return
+	}
+	c.auditLog.WriteAuditLog(db.AuditEntry{UserID: sql.NullString{String: preview.UserID, Valid: true}, Action: action, Target: preview.ID})
 }
 
 // PollOnce claims a single preview. The durable status transition is the
@@ -162,13 +172,13 @@ func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
 			if failErr := c.store.FailRestorePreviewFencedContext(context.Background(), preview.ID, preview.CoordinatorGeneration, c.workerID, "RESTORE_PREVIEW_FAILED"); failErr != nil {
 				return true, fmt.Errorf("count restore preview: %w; persist failure: %v", err, failErr)
 			}
-			db.WriteAuditLog(c.db, db.AuditEntry{UserID: sql.NullString{String: preview.UserID, Valid: true}, Action: db.AuditRestorePreviewFailed, Target: preview.ID})
+			c.audit(preview, db.AuditRestorePreviewFailed)
 			return true, nil
 		}
 		if _, err := c.store.CompleteRestorePreviewWithStatsFencedContext(ctx, preview.ID, preview.CoordinatorGeneration, c.workerID, stats); err != nil {
 			return true, fmt.Errorf("complete restore preview: %w", err)
 		}
-		db.WriteAuditLog(c.db, db.AuditEntry{UserID: sql.NullString{String: preview.UserID, Valid: true}, Action: db.AuditRestorePreviewReady, Target: preview.ID})
+		c.audit(preview, db.AuditRestorePreviewReady)
 		return true, nil
 	}
 

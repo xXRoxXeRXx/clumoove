@@ -43,6 +43,7 @@ type SourceFactoryFunc func(ctx context.Context, providerType, urlStr, username,
 type Indexer struct {
 	db            *sql.DB
 	migrations    db.MigrationStore
+	auditLog      db.AuditStore
 	encryptionKey string
 	queue         *queue.Queue
 	sourceFactory SourceFactoryFunc
@@ -63,12 +64,15 @@ func NewIndexer(database *sql.DB, encryptionKey string, q *queue.Queue, timeout 
 		return nil, errors.New("indexer timeout must be positive")
 	}
 	var migrations db.MigrationStore
+	var auditLog db.AuditStore
 	if database != nil {
 		migrations = db.NewMigrationStore(database)
+		auditLog = db.NewAuditStore(database)
 	}
 	return &Indexer{
 		db:            database,
 		migrations:    migrations,
+		auditLog:      auditLog,
 		encryptionKey: encryptionKey,
 		queue:         q,
 		timeout:       timeout,
@@ -429,7 +433,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			return
 		}
 		if owner, oerr := idx.migrations.GetMigrationOwnerID(migID); oerr == nil {
-			db.WriteAuditLog(idx.db, db.AuditEntry{
+			idx.audit(db.AuditEntry{
 				UserID:  sql.NullString{String: owner, Valid: true},
 				Action:  db.AuditMigrationCompleted,
 				Target:  migID,
@@ -939,7 +943,7 @@ func (idx *Indexer) failMigration(ctx context.Context, migID string, generation 
 		return
 	}
 	if owner, oerr := idx.migrations.GetMigrationOwnerID(migID); oerr == nil {
-		db.WriteAuditLog(idx.db, db.AuditEntry{
+		idx.audit(db.AuditEntry{
 			UserID:  sql.NullString{String: owner, Valid: true},
 			Action:  db.AuditMigrationFailed,
 			Target:  migID,
@@ -962,4 +966,13 @@ func indexingAuditDetails(errMsg string) json.RawMessage {
 		return json.RawMessage(`{"phase":"indexing"}`)
 	}
 	return details
+}
+
+// audit records an audit entry; it is a no-op for an indexer built without a
+// database (tests).
+func (idx *Indexer) audit(e db.AuditEntry) {
+	if idx.auditLog == nil {
+		return
+	}
+	idx.auditLog.WriteAuditLog(e)
 }

@@ -147,7 +147,7 @@ func (p *Processor) handleMigrationAuthenticationFailure(ctx context.Context, pa
 		return
 	}
 	if owner, oerr := p.migrations.GetMigrationOwnerID(payload.MigrationID); oerr == nil {
-		db.WriteAuditLog(p.db, db.AuditEntry{UserID: sql.NullString{String: owner, Valid: true}, Action: db.AuditMigrationFailed, Target: payload.MigrationID, Details: json.RawMessage(`{"phase":"transfer","reason":"auth_error"}`)})
+		p.audit(db.AuditEntry{UserID: sql.NullString{String: owner, Valid: true}, Action: db.AuditMigrationFailed, Target: payload.MigrationID, Details: json.RawMessage(`{"phase":"transfer","reason":"auth_error"}`)})
 	}
 }
 
@@ -199,4 +199,13 @@ func (p *Processor) skipMigrationTaskWithBytes(ctx context.Context, task *db.Tas
 	task.Status = "SKIPPED"
 	task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(reason), Valid: true}
 	return p.migrations.UpdateMigrationTaskAndProgress(ctx, task, 1, bytes, skipped, 0, skippedBytes)
+}
+
+// audit records an audit entry; it is a no-op for a processor built without a
+// database (tests).
+func (p *Processor) audit(e db.AuditEntry) {
+	if p.auditLog == nil {
+		return
+	}
+	p.auditLog.WriteAuditLog(e)
 }

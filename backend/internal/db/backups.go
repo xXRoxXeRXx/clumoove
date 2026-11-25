@@ -1085,7 +1085,7 @@ func MarkBackupPackDamagedContext(ctx context.Context, database *sql.DB, jobID, 
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	WriteAuditLog(database, AuditEntry{UserID: sql.NullString{String: userID, Valid: true}, Action: AuditRepositoryDamageDetected, Target: packID})
+	writeAuditLog(database, AuditEntry{UserID: sql.NullString{String: userID, Valid: true}, Action: AuditRepositoryDamageDetected, Target: packID})
 	return nil
 }
 
@@ -1191,7 +1191,7 @@ func CompleteBackupMaintenanceContext(ctx context.Context, database *sql.DB, mai
 		if previousState == "CANCELLING" {
 			action = AuditRepositoryCheckCancelled
 		}
-		WriteAuditLog(database, AuditEntry{UserID: sql.NullString{String: userID, Valid: true}, Action: action, Target: maintenanceID})
+		writeAuditLog(database, AuditEntry{UserID: sql.NullString{String: userID, Valid: true}, Action: action, Target: maintenanceID})
 	}
 	return nil
 }

@@ -112,15 +112,15 @@ type AuditLogParams struct {
 	To     string
 }
 
-// WriteAuditLog queues a bounded best-effort insert so audit persistence never
+// writeAuditLog queues a bounded best-effort insert so audit persistence never
 // delays the request or background operation that produced the event.
-func WriteAuditLog(database *sql.DB, e AuditEntry) {
-	WriteAuditLogContext(context.Background(), database, e)
+func writeAuditLog(database *sql.DB, e AuditEntry) {
+	writeAuditLogContext(context.Background(), database, e)
 }
 
-// WriteAuditLogContext queues a bounded best-effort audit insert that is
+// writeAuditLogContext queues a bounded best-effort audit insert that is
 // cancelled when the caller's operation has ended.
-func WriteAuditLogContext(ctx context.Context, database *sql.DB, e AuditEntry) {
+func writeAuditLogContext(ctx context.Context, database *sql.DB, e AuditEntry) {
 	if database == nil {
 		return
 	}
@@ -141,7 +141,7 @@ func WriteAuditLogContext(ctx context.Context, database *sql.DB, e AuditEntry) {
 	}()
 }
 
-func ListAuditLog(database *sql.DB, p AuditLogParams) ([]AuditLogRow, int, error) {
+func listAuditLog(database *sql.DB, p AuditLogParams) ([]AuditLogRow, int, error) {
 	where := "TRUE"
 	args := []interface{}{}
 	idx := 1

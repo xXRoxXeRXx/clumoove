@@ -29,7 +29,11 @@ type rateLimiter interface {
 }
 
 type APIServer struct {
-	db            *sql.DB
+	db *sql.DB
+	// audit is built once from db by newAPIGateway. Tests that construct an
+	// APIServer directly leave it nil (writeAudit then falls back to a store
+	// built from db) or inject a fake to observe audit entries.
+	audit         db.AuditStore
 	queue         *queue.Queue
 	indexer       *indexer.Indexer
 	syncPass      appSync.Pass
