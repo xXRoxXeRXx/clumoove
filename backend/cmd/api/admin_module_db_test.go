@@ -371,7 +371,7 @@ func TestAdminMutationsWriteExpectedAuditEntries(t *testing.T) {
 			t.Fatalf("put status = %d, body=%s", rec.Code, rec.Body.String())
 		}
 
-		stored, err := db.GetInstanceOAuthProvider(h.database, "box")
+		stored, err := db.NewOAuthProviderStore(h.database).GetInstanceOAuthProvider("box")
 		if err != nil {
 			t.Fatalf("GetInstanceOAuthProvider(box): %v", err)
 		}

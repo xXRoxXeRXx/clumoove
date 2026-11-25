@@ -72,6 +72,15 @@ func auditStoreFor(database *sql.DB) db.AuditStore {
 	return db.NewAuditStore(database)
 }
 
+// oauthProviderStoreFor returns the PostgreSQL OAuth provider store, or nil when
+// a module is built without a database handle (route-only tests).
+func oauthProviderStoreFor(database *sql.DB) db.OAuthProviderStore {
+	if database == nil {
+		return nil
+	}
+	return db.NewOAuthProviderStore(database)
+}
+
 // notificationStoreFor returns the PostgreSQL notification store, or nil when a
 // module is built without a database handle (route-only tests).
 func notificationStoreFor(database *sql.DB) db.NotificationStore {

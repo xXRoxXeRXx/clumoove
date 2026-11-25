@@ -20,6 +20,7 @@ type adminDependencies struct {
 	users          db.UserStore
 	settings       db.SettingsStore
 	audit          db.AuditStore
+	oauthProviders db.OAuthProviderStore
 	encryptionKey  string
 	cancelSyncJob  func(context.Context, string) error
 	getRedirectURI func(*http.Request) string
@@ -52,6 +53,9 @@ func newAdminAPI(deps adminDependencies) *adminAPI {
 	if deps.audit == nil {
 		deps.audit = auditStoreFor(deps.db)
 	}
+	if deps.oauthProviders == nil {
+		deps.oauthProviders = oauthProviderStoreFor(deps.db)
+	}
 	if deps.getRedirectURI == nil {
 		deps.getRedirectURI = defaultRedirectURI
 	}
@@ -60,14 +64,15 @@ func newAdminAPI(deps adminDependencies) *adminAPI {
 
 func (s *APIServer) administration() *adminAPI {
 	return newAdminAPI(adminDependencies{
-		requestEnv:    s.requestEnv(),
-		db:            s.db,
-		migrations:    migrationStoreFor(s.db),
-		syncs:         syncStoreFor(s.db),
-		users:         userStoreFor(s.db),
-		settings:      settingsStoreFor(s.db),
-		audit:         s.audit,
-		encryptionKey: s.encryptionKey,
+		requestEnv:     s.requestEnv(),
+		db:             s.db,
+		migrations:     migrationStoreFor(s.db),
+		syncs:          syncStoreFor(s.db),
+		users:          userStoreFor(s.db),
+		settings:       settingsStoreFor(s.db),
+		audit:          s.audit,
+		oauthProviders: oauthProviderStoreFor(s.db),
+		encryptionKey:  s.encryptionKey,
 		cancelSyncJob: func(ctx context.Context, syncJobID string) error {
 			return s.syncPass.Cancel(ctx, syncJobID)
 		},

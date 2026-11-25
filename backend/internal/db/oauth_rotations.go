@@ -17,8 +17,8 @@ func OAuthTokenRotationHash(userID, provider, refreshToken string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// RecordOAuthTokenRotation upserts an encrypted OAuth refresh token rotation mapping.
-func RecordOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, provider, previousTokenHash, rotatedTokenHash, rotatedRefreshTokenEncrypted string) error {
+// recordOAuthTokenRotation upserts an encrypted OAuth refresh token rotation mapping.
+func recordOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, provider, previousTokenHash, rotatedTokenHash, rotatedRefreshTokenEncrypted string) error {
 	if database == nil || userID == "" || provider == "" || previousTokenHash == "" || rotatedTokenHash == "" || previousTokenHash == rotatedTokenHash || rotatedRefreshTokenEncrypted == "" {
 		return nil
 	}
@@ -34,10 +34,10 @@ func RecordOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, pro
 	return err
 }
 
-// RepairOAuthTokenRotation inserts a backup rotation mapping only if PostgreSQL
+// repairOAuthTokenRotation inserts a backup rotation mapping only if PostgreSQL
 // does not already have a mapping for previousTokenHash, preventing a delayed
 // repair from overwriting a newer rotation. Returns true when inserted.
-func RepairOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, provider, previousTokenHash, rotatedTokenHash, rotatedRefreshTokenEncrypted string) (bool, error) {
+func repairOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, provider, previousTokenHash, rotatedTokenHash, rotatedRefreshTokenEncrypted string) (bool, error) {
 	if database == nil || userID == "" || provider == "" || previousTokenHash == "" || rotatedTokenHash == "" || previousTokenHash == rotatedTokenHash || rotatedRefreshTokenEncrypted == "" {
 		return false, nil
 	}
@@ -57,16 +57,16 @@ func RepairOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, pro
 	return affected > 0, nil
 }
 
-// LookupOAuthTokenRotation transitively resolves a possibly pre-rotation
+// lookupOAuthTokenRotation transitively resolves a possibly pre-rotation
 // token hash along any recorded rotation chain (A -> B -> C) with cycle protection.
-func LookupOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, provider, tokenHash string) (string, string, bool, error) {
-	latestHash, latestEncrypted, _, found, err := LookupOAuthTokenRotationChain(ctx, database, userID, provider, tokenHash)
+func lookupOAuthTokenRotation(ctx context.Context, database *sql.DB, userID, provider, tokenHash string) (string, string, bool, error) {
+	latestHash, latestEncrypted, _, found, err := lookupOAuthTokenRotationChain(ctx, database, userID, provider, tokenHash)
 	return latestHash, latestEncrypted, found, err
 }
 
-// LookupOAuthTokenRotationChain resolves a rotation chain like
-// LookupOAuthTokenRotation and also returns every token hash visited along it.
-func LookupOAuthTokenRotationChain(ctx context.Context, database *sql.DB, userID, provider, tokenHash string) (string, string, map[string]struct{}, bool, error) {
+// lookupOAuthTokenRotationChain resolves a rotation chain like
+// lookupOAuthTokenRotation and also returns every token hash visited along it.
+func lookupOAuthTokenRotationChain(ctx context.Context, database *sql.DB, userID, provider, tokenHash string) (string, string, map[string]struct{}, bool, error) {
 	if database == nil || userID == "" || provider == "" || tokenHash == "" {
 		return "", "", nil, false, nil
 	}

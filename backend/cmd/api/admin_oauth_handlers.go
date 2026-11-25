@@ -31,7 +31,7 @@ func (api *adminAPI) handleAdminGetOAuth(w http.ResponseWriter, r *http.Request)
 	if _, ok := api.adminActorID(w, r); !ok {
 		return
 	}
-	rows, err := db.ListInstanceOAuthProviders(api.db)
+	rows, err := api.oauthProviders.ListInstanceOAuthProviders()
 	if err != nil {
 		api.logf(r, "instance OAuth settings lookup failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -86,7 +86,7 @@ func (api *adminAPI) handleAdminPutOAuth(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	existing, err := db.GetInstanceOAuthProvider(api.db, provider)
+	existing, err := api.oauthProviders.GetInstanceOAuthProvider(provider)
 	if err != nil && err != sql.ErrNoRows {
 		api.logf(r, "instance OAuth lookup failed for %s: %v", provider, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -110,7 +110,7 @@ func (api *adminAPI) handleAdminPutOAuth(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if err := db.UpsertInstanceOAuthProvider(api.db, &db.InstanceOAuthProvider{
+	if err := api.oauthProviders.UpsertInstanceOAuthProvider(&db.InstanceOAuthProvider{
 		Provider:        provider,
 		ClientID:        req.ClientID,
 		ClientSecretEnc: encrypted,
@@ -136,7 +136,7 @@ func (api *adminAPI) handleAdminDeleteOAuth(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := db.DeleteInstanceOAuthProvider(api.db, provider); err != nil {
+	if err := api.oauthProviders.DeleteInstanceOAuthProvider(provider); err != nil {
 		api.logf(r, "instance OAuth delete failed for %s: %v", provider, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return

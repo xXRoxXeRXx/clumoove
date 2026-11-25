@@ -94,28 +94,28 @@ func TestOAuthTokenRotationTransitiveAndCycleSafe(t *testing.T) {
 	hB := OAuthTokenRotationHash("u1", "google", "tok-B")
 	hC := OAuthTokenRotationHash("u1", "google", "tok-C")
 
-	if err := RecordOAuthTokenRotation(ctx, database, "u1", "google", hA, hB, "enc-B"); err != nil {
+	if err := recordOAuthTokenRotation(ctx, database, "u1", "google", hA, hB, "enc-B"); err != nil {
 		t.Fatalf("record A->B: %v", err)
 	}
-	if err := RecordOAuthTokenRotation(ctx, database, "u1", "google", hB, hC, "enc-C"); err != nil {
+	if err := recordOAuthTokenRotation(ctx, database, "u1", "google", hB, hC, "enc-C"); err != nil {
 		t.Fatalf("record B->C: %v", err)
 	}
 
-	gotHash, gotEnc, found, err := LookupOAuthTokenRotation(ctx, database, "u1", "google", hA)
+	gotHash, gotEnc, found, err := lookupOAuthTokenRotation(ctx, database, "u1", "google", hA)
 	if err != nil || !found || gotHash != hC || gotEnc != "enc-C" {
 		t.Fatalf("Lookup(A) = (%q, %q, %v, %v), want (%q, enc-C, true, nil)", gotHash, gotEnc, found, err, hC)
 	}
 
 	// Isolation: different user or provider must not see u1/google rotation.
-	if _, _, found, err := LookupOAuthTokenRotation(ctx, database, "u2", "google", hA); err != nil || found {
+	if _, _, found, err := lookupOAuthTokenRotation(ctx, database, "u2", "google", hA); err != nil || found {
 		t.Fatalf("Lookup(u2) = (found=%v, err=%v), want (false, nil)", found, err)
 	}
 
 	// Cycle protection: A->B->C->A must terminate cleanly without hanging.
-	if err := RecordOAuthTokenRotation(ctx, database, "u1", "google", hC, hA, "enc-A"); err != nil {
+	if err := recordOAuthTokenRotation(ctx, database, "u1", "google", hC, hA, "enc-A"); err != nil {
 		t.Fatalf("record C->A: %v", err)
 	}
-	_, _, found, err = LookupOAuthTokenRotation(ctx, database, "u1", "google", hA)
+	_, _, found, err = lookupOAuthTokenRotation(ctx, database, "u1", "google", hA)
 	if err != nil || !found {
 		t.Fatalf("Lookup(cycle) = (found=%v, err=%v), want (true, nil)", found, err)
 	}

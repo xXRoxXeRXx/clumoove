@@ -16,7 +16,7 @@ type InstanceOAuthProvider struct {
 	UpdatedAt       time.Time
 }
 
-func ListInstanceOAuthProviders(db *sql.DB) ([]InstanceOAuthProvider, error) {
+func listInstanceOAuthProviders(db *sql.DB) ([]InstanceOAuthProvider, error) {
 	query := `
 		SELECT provider, client_id, client_secret_encrypted, created_at, updated_at
 		FROM instance_oauth_providers
@@ -42,9 +42,9 @@ func ListInstanceOAuthProviders(db *sql.DB) ([]InstanceOAuthProvider, error) {
 	return out, nil
 }
 
-// GetInstanceOAuthProvider returns the configured credentials for a single
+// getInstanceOAuthProvider returns the configured credentials for a single
 // provider. It returns sql.ErrNoRows when the provider is not configured.
-func GetInstanceOAuthProvider(db *sql.DB, provider string) (*InstanceOAuthProvider, error) {
+func getInstanceOAuthProvider(db *sql.DB, provider string) (*InstanceOAuthProvider, error) {
 	query := `
 		SELECT provider, client_id, client_secret_encrypted, created_at, updated_at
 		FROM instance_oauth_providers WHERE provider = $1
@@ -57,7 +57,7 @@ func GetInstanceOAuthProvider(db *sql.DB, provider string) (*InstanceOAuthProvid
 	return &p, nil
 }
 
-func UpsertInstanceOAuthProvider(db *sql.DB, p *InstanceOAuthProvider) error {
+func upsertInstanceOAuthProvider(db *sql.DB, p *InstanceOAuthProvider) error {
 	query := `
 		INSERT INTO instance_oauth_providers (provider, client_id, client_secret_encrypted)
 		VALUES ($1, $2, $3)
@@ -70,7 +70,7 @@ func UpsertInstanceOAuthProvider(db *sql.DB, p *InstanceOAuthProvider) error {
 	return err
 }
 
-func DeleteInstanceOAuthProvider(db *sql.DB, provider string) error {
+func deleteInstanceOAuthProvider(db *sql.DB, provider string) error {
 	_, err := db.Exec(`DELETE FROM instance_oauth_providers WHERE provider = $1`, provider)
 	return err
 }
