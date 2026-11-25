@@ -161,7 +161,7 @@ func setupNotificationsTestDB(t *testing.T) *sql.DB {
 		)`,
 		// Partial unique indexes cannot be declared inline on TEMP TABLEs;
 		// create them separately. This mirrors the production constraint that
-		// CreateMigrationNotificationEvent relies on for ON CONFLICT idempotency.
+		// createMigrationNotificationEvent relies on for ON CONFLICT idempotency.
 		`CREATE UNIQUE INDEX notification_events_migration_gen
 			ON notification_events (migration_id, run_generation)
 			WHERE migration_id IS NOT NULL`,
@@ -214,8 +214,8 @@ func TestCreateSyncNotificationEvent_SuccessfulRun(t *testing.T) {
 	}
 
 	// Enable Gotify channel for user
-	if err := UpsertNotificationChannel(db, testUserUUID, "gotify", true, "enc_config"); err != nil {
-		t.Fatalf("UpsertNotificationChannel failed: %v", err)
+	if err := upsertNotificationChannel(db, testUserUUID, "gotify", true, "enc_config"); err != nil {
+		t.Fatalf("upsertNotificationChannel failed: %v", err)
 	}
 
 	// Create a completed sync job pass
@@ -226,9 +226,9 @@ func TestCreateSyncNotificationEvent_SuccessfulRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Invoke CreateSyncNotificationEvent
-	if err := CreateSyncNotificationEvent(db, syncJobID); err != nil {
-		t.Fatalf("CreateSyncNotificationEvent failed for successful run: %v", err)
+	// Invoke createSyncNotificationEvent
+	if err := createSyncNotificationEvent(db, syncJobID); err != nil {
+		t.Fatalf("createSyncNotificationEvent failed for successful run: %v", err)
 	}
 
 	// Verify notification event created
@@ -266,8 +266,8 @@ func TestCreateSyncNotificationEvent_FailedRun(t *testing.T) {
 	}
 
 	// Enable Telegram channel for user
-	if err := UpsertNotificationChannel(db, testUserUUID, "telegram", true, "enc_telegram_config"); err != nil {
-		t.Fatalf("UpsertNotificationChannel failed: %v", err)
+	if err := upsertNotificationChannel(db, testUserUUID, "telegram", true, "enc_telegram_config"); err != nil {
+		t.Fatalf("upsertNotificationChannel failed: %v", err)
 	}
 
 	// Create a failed sync job pass
@@ -278,9 +278,9 @@ func TestCreateSyncNotificationEvent_FailedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Invoke CreateSyncNotificationEvent
-	if err := CreateSyncNotificationEvent(db, syncJobID); err != nil {
-		t.Fatalf("CreateSyncNotificationEvent failed for failed run: %v", err)
+	// Invoke createSyncNotificationEvent
+	if err := createSyncNotificationEvent(db, syncJobID); err != nil {
+		t.Fatalf("createSyncNotificationEvent failed for failed run: %v", err)
 	}
 
 	// Verify notification event created with correct payload fields
@@ -322,7 +322,7 @@ func TestCreateSyncNotificationEvent_Idempotency(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpsertNotificationChannel(db, testUserUUID, "discord", true, "enc_discord_config"); err != nil {
+	if err := upsertNotificationChannel(db, testUserUUID, "discord", true, "enc_discord_config"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -334,13 +334,13 @@ func TestCreateSyncNotificationEvent_Idempotency(t *testing.T) {
 	}
 
 	// First call
-	if err := CreateSyncNotificationEvent(db, syncJobID); err != nil {
-		t.Fatalf("first CreateSyncNotificationEvent call failed: %v", err)
+	if err := createSyncNotificationEvent(db, syncJobID); err != nil {
+		t.Fatalf("first createSyncNotificationEvent call failed: %v", err)
 	}
 
 	// Second call (same run_at) — must be idempotent
-	if err := CreateSyncNotificationEvent(db, syncJobID); err != nil {
-		t.Fatalf("second CreateSyncNotificationEvent call failed: %v", err)
+	if err := createSyncNotificationEvent(db, syncJobID); err != nil {
+		t.Fatalf("second createSyncNotificationEvent call failed: %v", err)
 	}
 
 	// Verify only 1 event and 1 delivery exist
@@ -362,7 +362,7 @@ func TestCreateSyncNotificationEvent_Idempotency(t *testing.T) {
 }
 
 // TestCreateMigrationNotificationEvent_Idempotency verifies that calling
-// CreateMigrationNotificationEvent twice for the same terminal state (same
+// createMigrationNotificationEvent twice for the same terminal state (same
 // notification_generation) produces exactly one event and one delivery row,
 // exercising the partial unique index on (migration_id, run_generation).
 func TestCreateMigrationNotificationEvent_Idempotency(t *testing.T) {
@@ -371,7 +371,7 @@ func TestCreateMigrationNotificationEvent_Idempotency(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpsertNotificationChannel(db, testUserUUID, "gotify", true, "enc_config"); err != nil {
+	if err := upsertNotificationChannel(db, testUserUUID, "gotify", true, "enc_config"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO migrations (id, user_id, status, notification_generation) VALUES ($1, $2, 'COMPLETED', 1)`, testMigrationID, testUserUUID); err != nil {
@@ -379,13 +379,13 @@ func TestCreateMigrationNotificationEvent_Idempotency(t *testing.T) {
 	}
 
 	// First call
-	if err := CreateMigrationNotificationEvent(db, testMigrationID); err != nil {
-		t.Fatalf("first CreateMigrationNotificationEvent call failed: %v", err)
+	if err := createMigrationNotificationEvent(db, testMigrationID); err != nil {
+		t.Fatalf("first createMigrationNotificationEvent call failed: %v", err)
 	}
 
 	// Second call — must not insert a duplicate event (same run_generation)
-	if err := CreateMigrationNotificationEvent(db, testMigrationID); err != nil {
-		t.Fatalf("second CreateMigrationNotificationEvent call failed: %v", err)
+	if err := createMigrationNotificationEvent(db, testMigrationID); err != nil {
+		t.Fatalf("second createMigrationNotificationEvent call failed: %v", err)
 	}
 
 	var eventCount int
@@ -410,7 +410,7 @@ func TestFailMigrationForAuthentication_FinalizesCountersBeforeOutbox(t *testing
 	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpsertNotificationChannel(db, testUserUUID, "gotify", true, "enc"); err != nil {
+	if err := upsertNotificationChannel(db, testUserUUID, "gotify", true, "enc"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO migrations (id,user_id,status,total_files) VALUES ($1,$2,'RUNNING',3)`, testMigrationID, testUserUUID); err != nil {
@@ -496,9 +496,9 @@ func TestRepairMissingMigrationNotificationEvents(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO migrations (id,user_id,status,notification_generation) VALUES ($1,$2,'COMPLETED',4)`, testMigrationID, testUserUUID); err != nil {
 		t.Fatal(err)
 	}
-	count, err := RepairMissingMigrationNotificationEvents(db, 10)
+	count, err := repairMissingMigrationNotificationEvents(db, 10)
 	if err != nil || count != 1 {
-		t.Fatalf("RepairMissingMigrationNotificationEvents() = (%d, %v)", count, err)
+		t.Fatalf("repairMissingMigrationNotificationEvents() = (%d, %v)", count, err)
 	}
 	var events int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_events WHERE migration_id=$1 AND run_generation=4`, testMigrationID).Scan(&events); err != nil {
@@ -518,7 +518,7 @@ func TestFinalizeAndFailSyncJobPass_NotificationEvents(t *testing.T) {
 		if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
 			t.Fatal(err)
 		}
-		if err := UpsertNotificationChannel(db, testUserUUID, "ntfy", true, "enc_ntfy_config"); err != nil {
+		if err := upsertNotificationChannel(db, testUserUUID, "ntfy", true, "enc_ntfy_config"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -555,7 +555,7 @@ func TestFinalizeAndFailSyncJobPass_NotificationEvents(t *testing.T) {
 		if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
 			t.Fatal(err)
 		}
-		if err := UpsertNotificationChannel(db, testUserUUID, "ntfy", true, "enc_ntfy_config"); err != nil {
+		if err := upsertNotificationChannel(db, testUserUUID, "ntfy", true, "enc_ntfy_config"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -593,8 +593,8 @@ func TestCreateBackupNotificationEvent_SuccessfulRun(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'backup-user@example.com')`, testUserUUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpsertNotificationChannel(db, testUserUUID, "gotify", true, "enc_gotify"); err != nil {
-		t.Fatalf("UpsertNotificationChannel failed: %v", err)
+	if err := upsertNotificationChannel(db, testUserUUID, "gotify", true, "enc_gotify"); err != nil {
+		t.Fatalf("upsertNotificationChannel failed: %v", err)
 	}
 
 	backupJobID := "00000000-0000-0000-0000-000000000030"
@@ -607,8 +607,8 @@ func TestCreateBackupNotificationEvent_SuccessfulRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := CreateBackupNotificationEvent(db, backupRunID); err != nil {
-		t.Fatalf("CreateBackupNotificationEvent failed: %v", err)
+	if err := createBackupNotificationEvent(db, backupRunID); err != nil {
+		t.Fatalf("createBackupNotificationEvent failed: %v", err)
 	}
 
 	var eventID string
@@ -651,8 +651,8 @@ func TestCreateBackupNotificationEvent_FailedRun(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'backup-user@example.com')`, testUserUUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpsertNotificationChannel(db, testUserUUID, "discord", true, "enc_discord"); err != nil {
-		t.Fatalf("UpsertNotificationChannel failed: %v", err)
+	if err := upsertNotificationChannel(db, testUserUUID, "discord", true, "enc_discord"); err != nil {
+		t.Fatalf("upsertNotificationChannel failed: %v", err)
 	}
 
 	backupJobID := "00000000-0000-0000-0000-000000000032"
@@ -665,8 +665,8 @@ func TestCreateBackupNotificationEvent_FailedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := CreateBackupNotificationEvent(db, backupRunID); err != nil {
-		t.Fatalf("CreateBackupNotificationEvent failed: %v", err)
+	if err := createBackupNotificationEvent(db, backupRunID); err != nil {
+		t.Fatalf("createBackupNotificationEvent failed: %v", err)
 	}
 
 	var payloadStr string
@@ -692,7 +692,7 @@ func TestCreateBackupNotificationEvent_Idempotency(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'backup-user@example.com')`, testUserUUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpsertNotificationChannel(db, testUserUUID, "telegram", true, "enc_tg"); err != nil {
+	if err := upsertNotificationChannel(db, testUserUUID, "telegram", true, "enc_tg"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -705,10 +705,10 @@ func TestCreateBackupNotificationEvent_Idempotency(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := CreateBackupNotificationEvent(db, backupRunID); err != nil {
+	if err := createBackupNotificationEvent(db, backupRunID); err != nil {
 		t.Fatalf("first call failed: %v", err)
 	}
-	if err := CreateBackupNotificationEvent(db, backupRunID); err != nil {
+	if err := createBackupNotificationEvent(db, backupRunID); err != nil {
 		t.Fatalf("second call failed: %v", err)
 	}
 
@@ -727,7 +727,7 @@ func TestPublishBackupSnapshotAndFinalizeContext_CreatesNotification(t *testing.
 	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'backup-user@example.com')`, testUserUUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpsertNotificationChannel(db, testUserUUID, "gotify", true, "enc_gotify"); err != nil {
+	if err := upsertNotificationChannel(db, testUserUUID, "gotify", true, "enc_gotify"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -765,7 +765,7 @@ func TestFailBackupRunContext_CreatesNotification(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'backup-user@example.com')`, testUserUUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpsertNotificationChannel(db, testUserUUID, "ntfy", true, "enc_ntfy"); err != nil {
+	if err := upsertNotificationChannel(db, testUserUUID, "ntfy", true, "enc_ntfy"); err != nil {
 		t.Fatal(err)
 	}
 

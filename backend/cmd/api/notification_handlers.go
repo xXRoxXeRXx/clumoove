@@ -25,6 +25,7 @@ type notificationDependencies struct {
 	db            *sql.DB
 	users         db.UserStore
 	settings      db.SettingsStore
+	notifications db.NotificationStore
 	encryptionKey string
 	rateLimiter   rateLimiter
 	requestEnv
@@ -41,6 +42,9 @@ func newNotificationAPI(deps notificationDependencies) *notificationAPI {
 	}
 	if deps.settings == nil {
 		deps.settings = settingsStoreFor(deps.db)
+	}
+	if deps.notifications == nil {
+		deps.notifications = notificationStoreFor(deps.db)
 	}
 	return &notificationAPI{notificationDependencies: deps}
 }
@@ -60,6 +64,7 @@ func (s *APIServer) notifications() *notificationAPI {
 		db:            s.db,
 		users:         userStoreFor(s.db),
 		settings:      settingsStoreFor(s.db),
+		notifications: notificationStoreFor(s.db),
 		encryptionKey: s.encryptionKey,
 		rateLimiter:   s.rateLimiter,
 	})
@@ -140,7 +145,7 @@ func (api *notificationAPI) handleGetSettings(w http.ResponseWriter, r *http.Req
 	if !authenticated {
 		return
 	}
-	channels, err := db.GetNotificationChannels(api.db, userID)
+	channels, err := api.notifications.GetNotificationChannels(userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -205,7 +210,7 @@ func (api *notificationAPI) handleUpdateSettings(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
-		if err := db.UpsertNotificationChannel(api.db, userID, "email", req.Enabled, enc); err != nil {
+		if err := api.notifications.UpsertNotificationChannel(userID, "email", req.Enabled, enc); err != nil {
 			api.logf(r, "handleUpdateSettings: upsert email channel failed: %v", err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
@@ -215,7 +220,7 @@ func (api *notificationAPI) handleUpdateSettings(w http.ResponseWriter, r *http.
 		return
 	}
 	req.Config = allowedNotificationConfig(req.Type, req.Config)
-	old, err := db.GetNotificationChannel(api.db, userID, req.Type)
+	old, err := api.notifications.GetNotificationChannel(userID, req.Type)
 	if err != nil && err != sql.ErrNoRows {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -247,7 +252,7 @@ func (api *notificationAPI) handleUpdateSettings(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if err = db.UpsertNotificationChannel(api.db, userID, req.Type, req.Enabled, enc); err != nil {
+	if err = api.notifications.UpsertNotificationChannel(userID, req.Type, req.Enabled, enc); err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -279,7 +284,7 @@ func (api *notificationAPI) handleTest(w http.ResponseWriter, r *http.Request) {
 	req.Config = allowedNotificationConfig(req.Type, req.Config)
 	// A blank secret means “keep the saved secret”, matching PUT semantics;
 	// plaintext is still supplied only to the sender and never returned.
-	if existing, err := db.GetNotificationChannel(api.db, userID, req.Type); err == nil {
+	if existing, err := api.notifications.GetNotificationChannel(userID, req.Type); err == nil {
 		if plain, derr := crypto.DecryptWithDomain(existing.ConfigEncrypted, api.encryptionKey, crypto.DomainNotificationConfig); derr == nil {
 			var prior map[string]any
 			if json.Unmarshal([]byte(plain), &prior) == nil {

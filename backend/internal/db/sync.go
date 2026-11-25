@@ -735,7 +735,7 @@ func finalizeSyncJobPassWithStates(database *sql.DB, id string, generation int, 
 	// transaction. The durable lifecycle and delta baseline are atomic; as with
 	// prior finalization, a process crash before this best-effort handoff can
 	// omit the completion notification.
-	if err := CreateSyncNotificationEvent(database, id); err != nil {
+	if err := createSyncNotificationEvent(database, id); err != nil {
 		log.Printf("notification event creation for sync %s failed: %v", id, err)
 	}
 	return true, nil
@@ -798,7 +798,7 @@ func failSyncJobPass(db *sql.DB, id string, generation int, errMsg string) (bool
 	if err != nil {
 		return false, err
 	}
-	if err := CreateSyncNotificationEvent(db, id); err != nil {
+	if err := createSyncNotificationEvent(db, id); err != nil {
 		log.Printf("notification event creation for sync %s failed: %v", id, err)
 	}
 	return true, nil

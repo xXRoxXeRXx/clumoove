@@ -101,10 +101,10 @@ func TestNotifierDeliversAndClassifiesChannelOutcomes(t *testing.T) {
 			SMTPEncryption:  "starttls",
 		}, nil
 	}
-	n.completeDelivery = func(id string, success bool, errCode string) error {
+	n.notifications = &fakeNotificationStore{complete: func(id string, success bool, errCode string) error {
 		completions = append(completions, completion{id: id, success: success, errCode: errCode})
 		return nil
-	}
+	}}
 
 	var sentChannels []string
 	n.send = func(_ context.Context, channelType string, cfg notify.Config, payload json.RawMessage, recipientEmail, language string) error {

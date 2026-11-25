@@ -15,6 +15,7 @@ type workerMaintenance struct {
 	db                      *sql.DB
 	migrations              db.MigrationStore
 	syncs                   db.SyncStore
+	notifications           db.NotificationStore
 	queue                   *queue.Queue
 	indexer                 *indexer.Indexer
 	workerID                string
@@ -29,18 +30,21 @@ type workerMaintenance struct {
 func newWorkerMaintenance(database *sql.DB, q *queue.Queue, idx *indexer.Indexer, workerID, secretKey string) *workerMaintenance {
 	var migrations db.MigrationStore
 	var syncs db.SyncStore
+	var notifications db.NotificationStore
 	if database != nil {
 		migrations = db.NewMigrationStore(database)
 		syncs = db.NewSyncStore(database)
+		notifications = db.NewNotificationStore(database)
 	}
 	return &workerMaintenance{
-		migrations: migrations,
-		syncs:      syncs,
-		db:         database,
-		queue:      q,
-		indexer:    idx,
-		workerID:   workerID,
-		secretKey:  secretKey,
+		migrations:    migrations,
+		syncs:         syncs,
+		notifications: notifications,
+		db:            database,
+		queue:         q,
+		indexer:       idx,
+		workerID:      workerID,
+		secretKey:     secretKey,
 	}
 }
 
@@ -199,7 +203,7 @@ func (m *workerMaintenance) runProgressReconciler(ctx context.Context) {
 }
 
 func (m *workerMaintenance) repairMissingMigrationNotifications() {
-	if _, err := db.RepairMissingMigrationNotificationEvents(m.db, 100); err != nil {
+	if _, err := m.notifications.RepairMissingMigrationNotificationEvents(100); err != nil {
 		workerLogf("maintenance", "[NotificationRepair] migration outbox repair: %v\n", err)
 	}
 }

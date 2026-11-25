@@ -20,7 +20,7 @@ type NotificationDelivery struct {
 	Attempts                                                   int
 }
 
-func GetNotificationChannels(database *sql.DB, userID string) ([]NotificationChannel, error) {
+func getNotificationChannels(database *sql.DB, userID string) ([]NotificationChannel, error) {
 	rows, err := database.Query(`SELECT type, enabled, config_encrypted FROM notification_channels WHERE user_id = $1 ORDER BY type`, userID)
 	if err != nil {
 		return nil, err
@@ -37,7 +37,7 @@ func GetNotificationChannels(database *sql.DB, userID string) ([]NotificationCha
 	return out, rows.Err()
 }
 
-func GetNotificationChannel(database *sql.DB, userID, typ string) (*NotificationChannel, error) {
+func getNotificationChannel(database *sql.DB, userID, typ string) (*NotificationChannel, error) {
 	var c NotificationChannel
 	err := database.QueryRow(`SELECT type, enabled, config_encrypted FROM notification_channels WHERE user_id=$1 AND type=$2`, userID, typ).Scan(&c.Type, &c.Enabled, &c.ConfigEncrypted)
 	if err != nil {
@@ -46,7 +46,7 @@ func GetNotificationChannel(database *sql.DB, userID, typ string) (*Notification
 	return &c, nil
 }
 
-func UpsertNotificationChannel(database *sql.DB, userID, typ string, enabled bool, encrypted string) error {
+func upsertNotificationChannel(database *sql.DB, userID, typ string, enabled bool, encrypted string) error {
 	_, err := database.Exec(`INSERT INTO notification_channels (user_id,type,enabled,config_encrypted) VALUES ($1,$2,$3,$4)
 		ON CONFLICT (user_id,type) DO UPDATE SET enabled=EXCLUDED.enabled, config_encrypted=EXCLUDED.config_encrypted, updated_at=CURRENT_TIMESTAMP`, userID, typ, enabled, encrypted)
 	return err
@@ -68,9 +68,9 @@ func createNotificationDeliveries(tx *sql.Tx, eventID, userID string) error {
 	return err
 }
 
-// CreateMigrationNotificationEvent snapshots active channel configuration.
+// createMigrationNotificationEvent snapshots active channel configuration.
 // The unique migration constraint makes terminal state updates idempotent.
-func CreateMigrationNotificationEvent(database *sql.DB, migrationID string) error {
+func createMigrationNotificationEvent(database *sql.DB, migrationID string) error {
 	tx, err := database.Begin()
 	if err != nil {
 		return err
@@ -194,8 +194,8 @@ func createBackupNotificationEventTx(tx *sql.Tx, backupRunID string) error {
 	return createNotificationDeliveries(tx, eventID, userID)
 }
 
-// CreateBackupNotificationEvent creates one immutable event per completed or failed backup run.
-func CreateBackupNotificationEvent(database *sql.DB, backupRunID string) error {
+// createBackupNotificationEvent creates one immutable event per completed or failed backup run.
+func createBackupNotificationEvent(database *sql.DB, backupRunID string) error {
 	tx, err := database.Begin()
 	if err != nil {
 		return err
@@ -207,9 +207,9 @@ func CreateBackupNotificationEvent(database *sql.DB, backupRunID string) error {
 	return tx.Commit()
 }
 
-// RepairMissingMigrationNotificationEvents repairs legacy or interrupted
+// repairMissingMigrationNotificationEvents repairs legacy or interrupted
 // terminal transitions. Normal paths write state and the event together.
-func RepairMissingMigrationNotificationEvents(database *sql.DB, limit int) (int, error) {
+func repairMissingMigrationNotificationEvents(database *sql.DB, limit int) (int, error) {
 	rows, err := database.Query(`SELECT m.id FROM migrations m
 		WHERE m.status IN ('COMPLETED','COMPLETED_WITH_ERRORS','FAILED')
 		  AND NOT EXISTS (SELECT 1 FROM notification_events e WHERE e.migration_id=m.id AND e.run_generation=m.notification_generation)
@@ -230,15 +230,15 @@ func RepairMissingMigrationNotificationEvents(database *sql.DB, limit int) (int,
 		return 0, err
 	}
 	for _, id := range ids {
-		if err := CreateMigrationNotificationEvent(database, id); err != nil {
+		if err := createMigrationNotificationEvent(database, id); err != nil {
 			return 0, err
 		}
 	}
 	return len(ids), nil
 }
 
-// CreateSyncNotificationEvent creates one immutable event per completed pass.
-func CreateSyncNotificationEvent(database *sql.DB, syncJobID string) error {
+// createSyncNotificationEvent creates one immutable event per completed pass.
+func createSyncNotificationEvent(database *sql.DB, syncJobID string) error {
 	tx, err := database.Begin()
 	if err != nil {
 		return err
@@ -278,7 +278,7 @@ func nullString(v sql.NullString) any {
 	return nil
 }
 
-func ClaimNotificationDeliveries(database *sql.DB, limit int) ([]NotificationDelivery, error) {
+func claimNotificationDeliveries(database *sql.DB, limit int) ([]NotificationDelivery, error) {
 	_, _ = database.Exec(`UPDATE notification_deliveries
 		SET attempts = attempts + 1,
 		    state = CASE WHEN attempts + 1 >= 3 THEN 'FAILED' ELSE 'PENDING' END,
@@ -304,7 +304,7 @@ func ClaimNotificationDeliveries(database *sql.DB, limit int) ([]NotificationDel
 	return out, rows.Err()
 }
 
-func CompleteNotificationDelivery(database *sql.DB, id string, sent bool, code string) error {
+func completeNotificationDelivery(database *sql.DB, id string, sent bool, code string) error {
 	if sent {
 		_, err := database.Exec(`UPDATE notification_deliveries SET state='SENT',sent_at=CURRENT_TIMESTAMP,last_error_code=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=$1 AND state='RUNNING'`, id)
 		return err

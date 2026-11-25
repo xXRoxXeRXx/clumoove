@@ -72,6 +72,15 @@ func auditStoreFor(database *sql.DB) db.AuditStore {
 	return db.NewAuditStore(database)
 }
 
+// notificationStoreFor returns the PostgreSQL notification store, or nil when a
+// module is built without a database handle (route-only tests).
+func notificationStoreFor(database *sql.DB) db.NotificationStore {
+	if database == nil {
+		return nil
+	}
+	return db.NewNotificationStore(database)
+}
+
 // userStoreFor returns the PostgreSQL user store, or nil when a module is built
 // without a database handle (route-only tests).
 func userStoreFor(database *sql.DB) db.UserStore {

@@ -17,29 +17,27 @@ import (
 // verification tokens. Network work runs after the database claim, so a slow
 // or failed channel never blocks others.
 type notifier struct {
-	db               *sql.DB
-	tokens           db.AuthTokenStore
-	secretKey        string
-	send             func(ctx context.Context, channelType string, cfg notify.Config, payload json.RawMessage, recipientEmail, language string) error
-	getSMTPSettings  func() (*db.InstanceSMTPSettings, error)
-	completeDelivery func(id string, success bool, errCode string) error
+	notifications   db.NotificationStore
+	tokens          db.AuthTokenStore
+	secretKey       string
+	send            func(ctx context.Context, channelType string, cfg notify.Config, payload json.RawMessage, recipientEmail, language string) error
+	getSMTPSettings func() (*db.InstanceSMTPSettings, error)
 }
 
 func newNotifier(database *sql.DB, secretKey string) *notifier {
+	var notifications db.NotificationStore
 	var tokens db.AuthTokenStore
 	if database != nil {
+		notifications = db.NewNotificationStore(database)
 		tokens = db.NewAuthTokenStore(database)
 	}
 	return &notifier{
-		db:        database,
-		tokens:    tokens,
-		secretKey: secretKey,
-		send:      notify.Send,
+		notifications: notifications,
+		tokens:        tokens,
+		secretKey:     secretKey,
+		send:          notify.Send,
 		getSMTPSettings: func() (*db.InstanceSMTPSettings, error) {
 			return db.NewSettingsStore(database).GetInstanceSMTPSettings()
-		},
-		completeDelivery: func(id string, success bool, errCode string) error {
-			return db.CompleteNotificationDelivery(database, id, success, errCode)
 		},
 	}
 }
@@ -67,7 +65,7 @@ func (n *notifier) Run(ctx context.Context) error {
 }
 
 func (n *notifier) sendPendingNotifications(ctx context.Context) {
-	deliveries, err := db.ClaimNotificationDeliveries(n.db, 10)
+	deliveries, err := n.notifications.ClaimNotificationDeliveries(10)
 	if err != nil {
 		workerLogf("notifier", "[Notifier] claim failed: %v", err)
 		return
@@ -97,7 +95,7 @@ func (n *notifier) sendNotificationDelivery(ctx context.Context, d db.Notificati
 	if d.ChannelType == "email" {
 		settings, err := n.getSMTPSettings()
 		if err != nil {
-			_ = n.completeDelivery(d.ID, false, "SMTP_NOT_CONFIGURED")
+			_ = n.notifications.CompleteNotificationDelivery(d.ID, false, "SMTP_NOT_CONFIGURED")
 			return
 		}
 		if err := withDecryptedNotificationSecret(settings.SMTPPasswordEnc, n.secretKey, crypto.DomainSMTPPassword, func(password string) error {
@@ -113,13 +111,13 @@ func (n *notifier) sendNotificationDelivery(ctx context.Context, d db.Notificati
 			return n.send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail, d.Language)
 		}); err != nil {
 			if errors.Is(err, errNotificationDecryptFailed) {
-				_ = n.completeDelivery(d.ID, false, "SMTP_DECRYPT_FAILED")
+				_ = n.notifications.CompleteNotificationDelivery(d.ID, false, "SMTP_DECRYPT_FAILED")
 			} else {
-				_ = n.completeDelivery(d.ID, false, "NOTIFICATION_SEND_FAILED")
+				_ = n.notifications.CompleteNotificationDelivery(d.ID, false, "NOTIFICATION_SEND_FAILED")
 			}
 			return
 		}
-		_ = n.completeDelivery(d.ID, true, "")
+		_ = n.notifications.CompleteNotificationDelivery(d.ID, true, "")
 		return
 	}
 	if err := withDecryptedNotificationSecret(d.ConfigEncrypted, n.secretKey, crypto.DomainNotificationConfig, func(plain string) error {
@@ -130,17 +128,17 @@ func (n *notifier) sendNotificationDelivery(ctx context.Context, d db.Notificati
 		return n.send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail, d.Language)
 	}); err != nil {
 		if errors.Is(err, errNotificationDecryptFailed) {
-			_ = n.completeDelivery(d.ID, false, "NOTIFICATION_DECRYPT_FAILED")
+			_ = n.notifications.CompleteNotificationDelivery(d.ID, false, "NOTIFICATION_DECRYPT_FAILED")
 			// A decryptable but malformed configuration is security-relevant: it
 			// cannot be delivered and may indicate corrupted persisted state.
 			workerLogf("notifier", "[Notifier] channel=%s delivery=%s failed", d.ChannelType, d.ID)
 			return
 		}
-		_ = n.completeDelivery(d.ID, false, "NOTIFICATION_SEND_FAILED")
+		_ = n.notifications.CompleteNotificationDelivery(d.ID, false, "NOTIFICATION_SEND_FAILED")
 		workerLogf("notifier", "[Notifier] channel=%s delivery=%s send failed", d.ChannelType, d.ID)
 		return
 	}
-	_ = n.completeDelivery(d.ID, true, "")
+	_ = n.notifications.CompleteNotificationDelivery(d.ID, true, "")
 }
 
 var errNotificationDecryptFailed = errors.New("notification secret decryption failed")
