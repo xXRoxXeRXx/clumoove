@@ -18,7 +18,7 @@ type BackupRepositoryCredentials interface {
 type backupRepositoryCredentials struct{ db *sql.DB }
 
 func (s backupRepositoryCredentials) GetBackupRepositoryConnectionContext(ctx context.Context, jobID string) (*BackupRepositoryConnection, error) {
-	return GetBackupRepositoryConnectionContext(ctx, s.db, jobID)
+	return getBackupRepositoryConnectionContext(ctx, s.db, jobID)
 }
 
 func (s backupRepositoryCredentials) BackupRepositoryTokenSink(backupJobID string) OAuthTokenSink {
@@ -26,5 +26,5 @@ func (s backupRepositoryCredentials) BackupRepositoryTokenSink(backupJobID strin
 }
 
 func (s backupRepositoryCredentials) UpdateBackupRepositoryMegaSessionContext(ctx context.Context, backupJobID, sessionIDEncrypted, masterKeyEncrypted string) error {
-	return UpdateBackupRepositoryMegaSessionContext(ctx, s.db, backupJobID, sessionIDEncrypted, masterKeyEncrypted)
+	return updateBackupRepositoryMegaSessionContext(ctx, s.db, backupJobID, sessionIDEncrypted, masterKeyEncrypted)
 }

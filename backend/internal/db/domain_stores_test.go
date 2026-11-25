@@ -129,7 +129,7 @@ func TestBackupStoreDelegatesToBackupPersistence(t *testing.T) {
 	var store BackupStore = NewBackupStore(database)
 
 	if err := store.TouchBackupRunContext(context.Background(), "job-1", 7, "run-1"); err != nil {
-		t.Fatalf("TouchBackupRunContext() error: %v", err)
+		t.Fatalf("touchBackupRunContext() error: %v", err)
 	}
 
 	requireSingleStatement(t, rec, "UPDATE backup_runs", "run-1", "job-1", int64(7))

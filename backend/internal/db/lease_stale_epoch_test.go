@@ -54,7 +54,7 @@ func TestBackupVerifyTargetRejectsWritesFromAStaleLeaseAfterReclaim(t *testing.T
 		t.Fatal(err)
 	}
 
-	first, err := ClaimNextBackupVerifyTargetContext(ctx, database, leaseTestMaintenanceID, "worker-1")
+	first, err := claimNextBackupVerifyTargetContext(ctx, database, leaseTestMaintenanceID, "worker-1")
 	if err != nil || first == nil {
 		t.Fatalf("first claim = (%v, %v)", first, err)
 	}
@@ -63,7 +63,7 @@ func TestBackupVerifyTargetRejectsWritesFromAStaleLeaseAfterReclaim(t *testing.T
 	if _, err := database.Exec(`UPDATE backup_verify_targets SET claim_deadline = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE id = $1`, targetID); err != nil {
 		t.Fatal(err)
 	}
-	second, err := ClaimNextBackupVerifyTargetContext(ctx, database, leaseTestMaintenanceID, "worker-2")
+	second, err := claimNextBackupVerifyTargetContext(ctx, database, leaseTestMaintenanceID, "worker-2")
 	if err != nil || second == nil {
 		t.Fatalf("second claim = (%v, %v)", second, err)
 	}
@@ -72,16 +72,16 @@ func TestBackupVerifyTargetRejectsWritesFromAStaleLeaseAfterReclaim(t *testing.T
 	}
 
 	stale := first.Lease()
-	if _, err := CompleteBackupVerifyTargetContext(ctx, database, stale, true, 1, 1); err != nil {
+	if _, err := completeBackupVerifyTargetContext(ctx, database, stale, true, 1, 1); err != nil {
 		t.Fatalf("stale complete: %v", err)
 	}
-	if err := MarkBackupVerifyTargetDamagedContext(ctx, database, stale); err != nil {
+	if err := markBackupVerifyTargetDamagedContext(ctx, database, stale); err != nil {
 		t.Fatalf("stale mark damaged: %v", err)
 	}
-	if err := MarkBackupVerifyTargetReadContext(ctx, database, stale, 99); err != nil {
+	if err := markBackupVerifyTargetReadContext(ctx, database, stale, 99); err != nil {
 		t.Fatalf("stale mark read: %v", err)
 	}
-	if err := ReleaseBackupVerifyTargetClaimContext(ctx, database, stale); err != nil {
+	if err := releaseBackupVerifyTargetClaimContext(ctx, database, stale); err != nil {
 		t.Fatalf("stale release: %v", err)
 	}
 
@@ -94,7 +94,7 @@ func TestBackupVerifyTargetRejectsWritesFromAStaleLeaseAfterReclaim(t *testing.T
 		t.Fatalf("stale lease changed the re-claimed target: state=%s worker=%s bytes_read=%d", state, worker, bytesRead)
 	}
 
-	if got, err := CompleteBackupVerifyTargetContext(ctx, database, second.Lease(), true, 1, 1); err != nil || got != "COMPLETED" {
+	if got, err := completeBackupVerifyTargetContext(ctx, database, second.Lease(), true, 1, 1); err != nil || got != "COMPLETED" {
 		t.Fatalf("current lease complete = (%q, %v), want COMPLETED", got, err)
 	}
 	if err := database.QueryRow(`SELECT state FROM backup_verify_targets WHERE id = $1`, targetID).Scan(&state); err != nil || state != "COMPLETED" {

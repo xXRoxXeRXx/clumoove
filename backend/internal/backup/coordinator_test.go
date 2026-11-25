@@ -801,7 +801,7 @@ func TestCatalogIncompleteBlockChainRejection(t *testing.T) {
 	}
 
 	dbConn, _ := newMockCatalogTestDB(t, rows)
-	catalog, err := db.GetBackupSnapshotFileCatalogContext(context.Background(), dbConn, "snapshot-1")
+	catalog, err := db.NewBackupStore(dbConn).GetBackupSnapshotFileCatalogContext(context.Background(), "snapshot-1")
 	if err != nil {
 		t.Fatalf("GetBackupSnapshotFileCatalogContext() error = %v", err)
 	}
@@ -835,7 +835,7 @@ func TestBatchCreateBackupSnapshotItemsAndBlocksContextSingleTransaction(t *test
 	}
 
 	dbConn, state := newMockCatalogTestDB(t, nil)
-	err := db.BatchCreateBackupSnapshotItemsAndBlocksContext(context.Background(), dbConn, "snapshot-1", items)
+	err := db.NewBackupStore(dbConn).BatchCreateBackupSnapshotItemsAndBlocksContext(context.Background(), "snapshot-1", items)
 	if err != nil {
 		t.Fatalf("BatchCreateBackupSnapshotItemsAndBlocksContext() error = %v", err)
 	}

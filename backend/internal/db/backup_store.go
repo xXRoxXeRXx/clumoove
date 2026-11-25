@@ -82,43 +82,43 @@ func NewBackupStore(database *sql.DB) BackupStore {
 }
 
 func (s postgresBackupStore) ClaimBackupJobPassContext(ctx context.Context, jobID, trigger string, scheduledLocalKey *string) (BackupPassClaim, error) {
-	return ClaimBackupJobPassContext(ctx, s.db, jobID, trigger, scheduledLocalKey)
+	return claimBackupJobPassContext(ctx, s.db, jobID, trigger, scheduledLocalKey)
 }
 
 func (s postgresBackupStore) ClaimNextQueuedBackupRunContext(ctx context.Context) (*BackupJob, *BackupRun, error) {
-	return ClaimNextQueuedBackupRunContext(ctx, s.db)
+	return claimNextQueuedBackupRunContext(ctx, s.db)
 }
 
 func (s postgresBackupStore) RecoverStaleBackupRunsContext(ctx context.Context) (int, error) {
-	return RecoverStaleBackupRunsContext(ctx, s.db)
+	return recoverStaleBackupRunsContext(ctx, s.db)
 }
 
 func (s postgresBackupStore) TouchBackupRunContext(ctx context.Context, jobID string, generation int, runID string) error {
-	return TouchBackupRunContext(ctx, s.db, jobID, generation, runID)
+	return touchBackupRunContext(ctx, s.db, jobID, generation, runID)
 }
 
 func (s postgresBackupStore) BackupRunActiveContext(ctx context.Context, jobID string, generation int, runID string) (bool, error) {
-	return BackupRunActiveContext(ctx, s.db, jobID, generation, runID)
+	return backupRunActiveContext(ctx, s.db, jobID, generation, runID)
 }
 
 func (s postgresBackupStore) TransitionBackupRunContext(ctx context.Context, jobID string, generation int, runID, expectedState, nextState string) (bool, error) {
-	return TransitionBackupRunContext(ctx, s.db, jobID, generation, runID, expectedState, nextState)
+	return transitionBackupRunContext(ctx, s.db, jobID, generation, runID, expectedState, nextState)
 }
 
 func (s postgresBackupStore) FinalizeBackupRunContext(ctx context.Context, jobID string, generation int, runID, expectedState, terminalState string, totalFiles int, totalBytes int64, processedFiles int, processedBytes, deduplicatedBytes int64, failedFiles int, errorCode *string) (bool, error) {
-	return FinalizeBackupRunContext(ctx, s.db, jobID, generation, runID, expectedState, terminalState, totalFiles, totalBytes, processedFiles, processedBytes, deduplicatedBytes, failedFiles, errorCode)
+	return finalizeBackupRunContext(ctx, s.db, jobID, generation, runID, expectedState, terminalState, totalFiles, totalBytes, processedFiles, processedBytes, deduplicatedBytes, failedFiles, errorCode)
 }
 
 func (s postgresBackupStore) FailBackupRunContext(ctx context.Context, jobID string, generation int, runID, expectedState, errorCode string) (bool, error) {
-	return FailBackupRunContext(ctx, s.db, jobID, generation, runID, expectedState, errorCode)
+	return failBackupRunContext(ctx, s.db, jobID, generation, runID, expectedState, errorCode)
 }
 
 func (s postgresBackupStore) GetBackupScheduleInfoContext(ctx context.Context, jobID string) (BackupScheduleInfo, error) {
-	return GetBackupScheduleInfoContext(ctx, s.db, jobID)
+	return getBackupScheduleInfoContext(ctx, s.db, jobID)
 }
 
 func (s postgresBackupStore) GetBackupJobForOwnerContext(ctx context.Context, jobID, userID string) (*BackupJob, error) {
-	return GetBackupJobForOwnerContext(ctx, s.db, jobID, userID)
+	return getBackupJobForOwnerContext(ctx, s.db, jobID, userID)
 }
 
 func (s postgresBackupStore) BackupJobTokenSink(backupJobID, role string) OAuthTokenSink {
@@ -126,137 +126,137 @@ func (s postgresBackupStore) BackupJobTokenSink(backupJobID, role string) OAuthT
 }
 
 func (s postgresBackupStore) BackupProfilesSameOAuthAccountContext(ctx context.Context, sourceProfileID, targetProfileID sql.NullString) (bool, error) {
-	return BackupProfilesSameOAuthAccountContext(ctx, s.db, sourceProfileID, targetProfileID)
+	return backupProfilesSameOAuthAccountContext(ctx, s.db, sourceProfileID, targetProfileID)
 }
 
 func (s postgresBackupStore) DeleteBackupJobAfterRepositoryCleanupContext(ctx context.Context, jobID string) (bool, error) {
-	return DeleteBackupJobAfterRepositoryCleanupContext(ctx, s.db, jobID)
+	return deleteBackupJobAfterRepositoryCleanupContext(ctx, s.db, jobID)
 }
 
 func (s postgresBackupStore) CreateBackupSnapshotDraftContext(ctx context.Context, jobID, runID string, selectedRoots StringArray) (string, error) {
-	return CreateBackupSnapshotDraftContext(ctx, s.db, jobID, runID, selectedRoots)
+	return createBackupSnapshotDraftContext(ctx, s.db, jobID, runID, selectedRoots)
 }
 
 func (s postgresBackupStore) DiscardBackupSnapshotDraftContext(ctx context.Context, snapshotID, jobID, runID string) error {
-	return DiscardBackupSnapshotDraftContext(ctx, s.db, snapshotID, jobID, runID)
+	return discardBackupSnapshotDraftContext(ctx, s.db, snapshotID, jobID, runID)
 }
 
 func (s postgresBackupStore) GetLatestValidBackupSnapshotIDContext(ctx context.Context, jobID string) (string, error) {
-	return GetLatestValidBackupSnapshotIDContext(ctx, s.db, jobID)
+	return getLatestValidBackupSnapshotIDContext(ctx, s.db, jobID)
 }
 
 func (s postgresBackupStore) GetBackupSnapshotFileCatalogContext(ctx context.Context, snapshotID string) (map[string]BackupSnapshotCatalogItem, error) {
-	return GetBackupSnapshotFileCatalogContext(ctx, s.db, snapshotID)
+	return getBackupSnapshotFileCatalogContext(ctx, s.db, snapshotID)
 }
 
 func (s postgresBackupStore) FindBackupBlockContext(ctx context.Context, jobID string, hash []byte) (string, bool, error) {
-	return FindBackupBlockContext(ctx, s.db, jobID, hash)
+	return findBackupBlockContext(ctx, s.db, jobID, hash)
 }
 
 func (s postgresBackupStore) RecordBackupPackAndBlocksContext(ctx context.Context, jobID, remotePath string, packHash []byte, packSize int64, blocks []BackupPackBlock) (map[string]string, error) {
-	return RecordBackupPackAndBlocksContext(ctx, s.db, jobID, remotePath, packHash, packSize, blocks)
+	return recordBackupPackAndBlocksContext(ctx, s.db, jobID, remotePath, packHash, packSize, blocks)
 }
 
 func (s postgresBackupStore) BatchCreateBackupSnapshotItemsAndBlocksContext(ctx context.Context, snapshotID string, items []BatchSnapshotItem) error {
-	return BatchCreateBackupSnapshotItemsAndBlocksContext(ctx, s.db, snapshotID, items)
+	return batchCreateBackupSnapshotItemsAndBlocksContext(ctx, s.db, snapshotID, items)
 }
 
 func (s postgresBackupStore) PublishBackupSnapshotAndFinalizeContext(ctx context.Context, jobID string, generation int, runID, snapshotID, snapshotState, runState string, totalFiles, totalDirs int, totalBytes int64, processedFiles int, processedBytes, deduplicatedBytes int64, unstableFiles, failedFiles int) (bool, error) {
-	return PublishBackupSnapshotAndFinalizeContext(ctx, s.db, jobID, generation, runID, snapshotID, snapshotState, runState, totalFiles, totalDirs, totalBytes, processedFiles, processedBytes, deduplicatedBytes, unstableFiles, failedFiles)
+	return publishBackupSnapshotAndFinalizeContext(ctx, s.db, jobID, generation, runID, snapshotID, snapshotState, runState, totalFiles, totalDirs, totalBytes, processedFiles, processedBytes, deduplicatedBytes, unstableFiles, failedFiles)
 }
 
 func (s postgresBackupStore) ExpireBackupSnapshotsContext(ctx context.Context, jobID string, keep int) error {
-	return ExpireBackupSnapshotsContext(ctx, s.db, jobID, keep)
+	return expireBackupSnapshotsContext(ctx, s.db, jobID, keep)
 }
 
 func (s postgresBackupStore) EnqueueBackupMaintenanceContext(ctx context.Context, jobID, kind string) error {
-	return EnqueueBackupMaintenanceContext(ctx, s.db, jobID, kind)
+	return enqueueBackupMaintenanceContext(ctx, s.db, jobID, kind)
 }
 
 func (s postgresBackupStore) ClaimNextBackupMaintenanceForWorkerContext(ctx context.Context, workerID string) (*BackupMaintenance, error) {
-	return ClaimNextBackupMaintenanceForWorkerContext(ctx, s.db, workerID)
+	return claimNextBackupMaintenanceForWorkerContext(ctx, s.db, workerID)
 }
 
 func (s postgresBackupStore) IsBackupMaintenanceCancellingContext(ctx context.Context, maintenanceID string) (bool, error) {
-	return IsBackupMaintenanceCancellingContext(ctx, s.db, maintenanceID)
+	return isBackupMaintenanceCancellingContext(ctx, s.db, maintenanceID)
 }
 
 func (s postgresBackupStore) CompleteBackupMaintenanceContext(ctx context.Context, maintenanceID string) error {
-	return CompleteBackupMaintenanceContext(ctx, s.db, maintenanceID)
+	return completeBackupMaintenanceContext(ctx, s.db, maintenanceID)
 }
 
 func (s postgresBackupStore) RetryBackupMaintenanceContext(ctx context.Context, maintenanceID, errorCode string) error {
-	return RetryBackupMaintenanceContext(ctx, s.db, maintenanceID, errorCode)
+	return retryBackupMaintenanceContext(ctx, s.db, maintenanceID, errorCode)
 }
 
 func (s postgresBackupStore) ListBackupSnapshotPacksContext(ctx context.Context, jobID, snapshotID string) ([]BackupPack, error) {
-	return ListBackupSnapshotPacksContext(ctx, s.db, jobID, snapshotID)
+	return listBackupSnapshotPacksContext(ctx, s.db, jobID, snapshotID)
 }
 
 func (s postgresBackupStore) ListBackupPacksForDeletionContext(ctx context.Context, jobID string, limit int) ([]BackupPack, error) {
-	return ListBackupPacksForDeletionContext(ctx, s.db, jobID, limit)
+	return listBackupPacksForDeletionContext(ctx, s.db, jobID, limit)
 }
 
 func (s postgresBackupStore) ListBackupReclaimablePacksContext(ctx context.Context, jobID string, limit int) ([]BackupPack, error) {
-	return ListBackupReclaimablePacksContext(ctx, s.db, jobID, limit)
+	return listBackupReclaimablePacksContext(ctx, s.db, jobID, limit)
 }
 
 func (s postgresBackupStore) ListBackupLiveBlocksContext(ctx context.Context, jobID, packID string) ([]BackupLiveBlock, error) {
-	return ListBackupLiveBlocksContext(ctx, s.db, jobID, packID)
+	return listBackupLiveBlocksContext(ctx, s.db, jobID, packID)
 }
 
 func (s postgresBackupStore) FindBackupCompactionCandidateContext(ctx context.Context, jobID string) (*BackupPack, error) {
-	return FindBackupCompactionCandidateContext(ctx, s.db, jobID)
+	return findBackupCompactionCandidateContext(ctx, s.db, jobID)
 }
 
 func (s postgresBackupStore) ReplaceBackupPackLocatorsContext(ctx context.Context, jobID, oldPackID, remotePath string, packHash []byte, packSize int64, blocks []BackupPackBlock, blockIDs []string) (string, error) {
-	return ReplaceBackupPackLocatorsContext(ctx, s.db, jobID, oldPackID, remotePath, packHash, packSize, blocks, blockIDs)
+	return replaceBackupPackLocatorsContext(ctx, s.db, jobID, oldPackID, remotePath, packHash, packSize, blocks, blockIDs)
 }
 
 func (s postgresBackupStore) MarkBackupPackDeletedContext(ctx context.Context, jobID, packID string) error {
-	return MarkBackupPackDeletedContext(ctx, s.db, jobID, packID)
+	return markBackupPackDeletedContext(ctx, s.db, jobID, packID)
 }
 
 func (s postgresBackupStore) MarkBackupPacksCheckedContext(ctx context.Context, jobID string, packIDs []string) error {
-	return MarkBackupPacksCheckedContext(ctx, s.db, jobID, packIDs)
+	return markBackupPacksCheckedContext(ctx, s.db, jobID, packIDs)
 }
 
 func (s postgresBackupStore) MarkBackupPackDamagedContext(ctx context.Context, jobID, packID string) error {
-	return MarkBackupPackDamagedContext(ctx, s.db, jobID, packID)
+	return markBackupPackDamagedContext(ctx, s.db, jobID, packID)
 }
 
 func (s postgresBackupStore) SnapshotBackupVerifyTargetsContext(ctx context.Context, maintenanceID, backupJobID string) error {
-	return SnapshotBackupVerifyTargetsContext(ctx, s.db, maintenanceID, backupJobID)
+	return snapshotBackupVerifyTargetsContext(ctx, s.db, maintenanceID, backupJobID)
 }
 
 func (s postgresBackupStore) ClaimNextBackupVerifyTargetContext(ctx context.Context, maintenanceID, workerID string) (*BackupVerifyTarget, error) {
-	return ClaimNextBackupVerifyTargetContext(ctx, s.db, maintenanceID, workerID)
+	return claimNextBackupVerifyTargetContext(ctx, s.db, maintenanceID, workerID)
 }
 
 func (s postgresBackupStore) ReleaseBackupVerifyTargetClaimContext(ctx context.Context, lease Lease) error {
-	return ReleaseBackupVerifyTargetClaimContext(ctx, s.db, lease)
+	return releaseBackupVerifyTargetClaimContext(ctx, s.db, lease)
 }
 
 func (s postgresBackupStore) CompleteBackupVerifyTargetContext(ctx context.Context, lease Lease, exists bool, expectedSize, actualSize int64) (string, error) {
-	return CompleteBackupVerifyTargetContext(ctx, s.db, lease, exists, expectedSize, actualSize)
+	return completeBackupVerifyTargetContext(ctx, s.db, lease, exists, expectedSize, actualSize)
 }
 
 func (s postgresBackupStore) MarkBackupVerifyTargetReadContext(ctx context.Context, lease Lease, bytes int64) error {
-	return MarkBackupVerifyTargetReadContext(ctx, s.db, lease, bytes)
+	return markBackupVerifyTargetReadContext(ctx, s.db, lease, bytes)
 }
 
 func (s postgresBackupStore) MarkBackupVerifyTargetDamagedContext(ctx context.Context, lease Lease) error {
-	return MarkBackupVerifyTargetDamagedContext(ctx, s.db, lease)
+	return markBackupVerifyTargetDamagedContext(ctx, s.db, lease)
 }
 
 func (s postgresBackupStore) AdvanceBackupVerifyCursorContext(ctx context.Context, maintenanceID, targetID string) error {
-	return AdvanceBackupVerifyCursorContext(ctx, s.db, maintenanceID, targetID)
+	return advanceBackupVerifyCursorContext(ctx, s.db, maintenanceID, targetID)
 }
 
 func (s postgresBackupStore) AddBackupVerifyProcessedBytesContext(ctx context.Context, maintenanceID string, bytes int64) error {
-	return AddBackupVerifyProcessedBytesContext(ctx, s.db, maintenanceID, bytes)
+	return addBackupVerifyProcessedBytesContext(ctx, s.db, maintenanceID, bytes)
 }
 
 func (s postgresBackupStore) CompleteBackupVerifyContext(ctx context.Context, maintenanceID string) error {
-	return CompleteBackupVerifyContext(ctx, s.db, maintenanceID)
+	return completeBackupVerifyContext(ctx, s.db, maintenanceID)
 }

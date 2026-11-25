@@ -745,7 +745,7 @@ func TestPublishBackupSnapshotAndFinalizeContext_CreatesNotification(t *testing.
 		t.Fatal(err)
 	}
 
-	ok, err := PublishBackupSnapshotAndFinalizeContext(context.Background(), db, jobID, 1, runID, snapID, "READY", "COMPLETED", 10, 2, 1024, 10, 1024, 0, 0, 0)
+	ok, err := publishBackupSnapshotAndFinalizeContext(context.Background(), db, jobID, 1, runID, snapID, "READY", "COMPLETED", 10, 2, 1024, 10, 1024, 0, 0, 0)
 	if err != nil || !ok {
 		t.Fatalf("PublishBackupSnapshotAndFinalizeContext = (%v, %v), want (true, nil)", ok, err)
 	}
@@ -779,7 +779,7 @@ func TestFailBackupRunContext_CreatesNotification(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err := FailBackupRunContext(context.Background(), db, jobID, 1, runID, "RUNNING", "BACKUP_SCAN_FAILED")
+	ok, err := failBackupRunContext(context.Background(), db, jobID, 1, runID, "RUNNING", "BACKUP_SCAN_FAILED")
 	if err != nil || !ok {
 		t.Fatalf("FailBackupRunContext = (%v, %v), want (true, nil)", ok, err)
 	}

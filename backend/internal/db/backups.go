@@ -185,7 +185,7 @@ type BackupRepositoryConnection struct {
 	MegaMasterKeyEncrypted sql.NullString
 }
 
-func GetBackupRepositoryConnectionContext(ctx context.Context, database *sql.DB, jobID string) (*BackupRepositoryConnection, error) {
+func getBackupRepositoryConnectionContext(ctx context.Context, database *sql.DB, jobID string) (*BackupRepositoryConnection, error) {
 	connection := &BackupRepositoryConnection{}
 	err := database.QueryRowContext(ctx, `SELECT id, user_id, target_provider, target_url, target_username, target_password_encrypted, target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted, target_mega_master_key_encrypted FROM backup_jobs WHERE id = $1 AND deletion_state = 'ACTIVE'`, jobID).Scan(&connection.BackupJobID, &connection.UserID, &connection.Provider, &connection.URL, &connection.Username, &connection.PasswordEncrypted, &connection.RefreshTokenEncrypted, &connection.TokenExpiresAt, &connection.MegaSessionIDEncrypted, &connection.MegaMasterKeyEncrypted)
 	if err != nil {
@@ -194,7 +194,7 @@ func GetBackupRepositoryConnectionContext(ctx context.Context, database *sql.DB,
 	return connection, nil
 }
 
-func UpdateBackupRepositoryMegaSessionContext(ctx context.Context, database *sql.DB, backupJobID, sessionIDEncrypted, masterKeyEncrypted string) error {
+func updateBackupRepositoryMegaSessionContext(ctx context.Context, database *sql.DB, backupJobID, sessionIDEncrypted, masterKeyEncrypted string) error {
 	_, err := database.ExecContext(ctx, `UPDATE backup_jobs SET target_mega_session_id_encrypted = $2, target_mega_master_key_encrypted = $3 WHERE id = $1 AND deletion_state = 'ACTIVE'`, backupJobID, nullableBackupString(sessionIDEncrypted), nullableBackupString(masterKeyEncrypted))
 	return err
 }
@@ -254,7 +254,7 @@ const (
 	BackupVerifyFull     = "FULL"
 )
 
-func CreateBackupVerifyContext(ctx context.Context, database *sql.DB, backupJobID, userID, mode string, byteBudget *int64) (string, error) {
+func createBackupVerifyContext(ctx context.Context, database *sql.DB, backupJobID, userID, mode string, byteBudget *int64) (string, error) {
 	if mode != BackupVerifyMetadata && mode != BackupVerifyBudgeted && mode != BackupVerifyFull {
 		return "", errors.New("invalid backup verify mode")
 	}
@@ -270,7 +270,7 @@ func CreateBackupVerifyContext(ctx context.Context, database *sql.DB, backupJobI
 	return id, err
 }
 
-func ListBackupVerifiesForOwnerContext(ctx context.Context, database *sql.DB, backupJobID, userID string) ([]BackupMaintenance, error) {
+func listBackupVerifiesForOwnerContext(ctx context.Context, database *sql.DB, backupJobID, userID string) ([]BackupMaintenance, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT m.id, m.backup_job_id, m.kind, m.state, m.byte_budget, m.verify_mode, m.processed_bytes,
 			m.total_packs, m.checked_packs, m.missing_packs, m.damaged_packs, m.error_code,
@@ -293,7 +293,7 @@ func ListBackupVerifiesForOwnerContext(ctx context.Context, database *sql.DB, ba
 	return checks, rows.Err()
 }
 
-func GetBackupVerifyForOwnerContext(ctx context.Context, database *sql.DB, maintenanceID, userID string) (*BackupMaintenance, error) {
+func getBackupVerifyForOwnerContext(ctx context.Context, database *sql.DB, maintenanceID, userID string) (*BackupMaintenance, error) {
 	check := &BackupMaintenance{}
 	err := database.QueryRowContext(ctx, `
 		SELECT m.id, m.backup_job_id, m.kind, m.state, m.byte_budget, m.verify_mode, m.processed_bytes,
@@ -335,7 +335,7 @@ func nullableBackupString(value string) any {
 	return value
 }
 
-func SnapshotBackupVerifyTargetsContext(ctx context.Context, database *sql.DB, maintenanceID, backupJobID string) error {
+func snapshotBackupVerifyTargetsContext(ctx context.Context, database *sql.DB, maintenanceID, backupJobID string) error {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -359,10 +359,10 @@ func SnapshotBackupVerifyTargetsContext(ctx context.Context, database *sql.DB, m
 	return tx.Commit()
 }
 
-// ClaimNextBackupVerifyTargetContext grants one bounded pack check. The
+// claimNextBackupVerifyTargetContext grants one bounded pack check. The
 // persisted target state, epoch, and deadline allow another worker to resume
 // after a crash without losing the live-pack pin or replaying a finished pack.
-func ClaimNextBackupVerifyTargetContext(ctx context.Context, database *sql.DB, maintenanceID, workerID string) (*BackupVerifyTarget, error) {
+func claimNextBackupVerifyTargetContext(ctx context.Context, database *sql.DB, maintenanceID, workerID string) (*BackupVerifyTarget, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -393,7 +393,7 @@ func ClaimNextBackupVerifyTargetContext(ctx context.Context, database *sql.DB, m
 	return target, nil
 }
 
-func ReleaseBackupVerifyTargetClaimContext(ctx context.Context, database *sql.DB, lease Lease) error {
+func releaseBackupVerifyTargetClaimContext(ctx context.Context, database *sql.DB, lease Lease) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -401,7 +401,7 @@ func ReleaseBackupVerifyTargetClaimContext(ctx context.Context, database *sql.DB
 	return err
 }
 
-func CompleteBackupVerifyTargetContext(ctx context.Context, database *sql.DB, lease Lease, exists bool, expectedSize, actualSize int64) (string, error) {
+func completeBackupVerifyTargetContext(ctx context.Context, database *sql.DB, lease Lease, exists bool, expectedSize, actualSize int64) (string, error) {
 	if err := lease.validate(); err != nil {
 		return "", err
 	}
@@ -415,7 +415,7 @@ func CompleteBackupVerifyTargetContext(ctx context.Context, database *sql.DB, le
 	return state, err
 }
 
-func CompleteBackupVerifyContext(ctx context.Context, database *sql.DB, maintenanceID string) error {
+func completeBackupVerifyContext(ctx context.Context, database *sql.DB, maintenanceID string) error {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -434,7 +434,7 @@ func CompleteBackupVerifyContext(ctx context.Context, database *sql.DB, maintena
 	return tx.Commit()
 }
 
-func MarkBackupVerifyTargetDamagedContext(ctx context.Context, database *sql.DB, lease Lease) error {
+func markBackupVerifyTargetDamagedContext(ctx context.Context, database *sql.DB, lease Lease) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -442,12 +442,12 @@ func MarkBackupVerifyTargetDamagedContext(ctx context.Context, database *sql.DB,
 	return err
 }
 
-func AddBackupVerifyProcessedBytesContext(ctx context.Context, database *sql.DB, maintenanceID string, bytes int64) error {
+func addBackupVerifyProcessedBytesContext(ctx context.Context, database *sql.DB, maintenanceID string, bytes int64) error {
 	_, err := database.ExecContext(ctx, `UPDATE backup_maintenance SET processed_bytes = processed_bytes + $2 WHERE id = $1 AND state = 'RUNNING'`, maintenanceID, bytes)
 	return err
 }
 
-func MarkBackupVerifyTargetReadContext(ctx context.Context, database *sql.DB, lease Lease, bytes int64) error {
+func markBackupVerifyTargetReadContext(ctx context.Context, database *sql.DB, lease Lease, bytes int64) error {
 	if err := lease.validate(); err != nil {
 		return err
 	}
@@ -455,7 +455,7 @@ func MarkBackupVerifyTargetReadContext(ctx context.Context, database *sql.DB, le
 	return err
 }
 
-func AdvanceBackupVerifyCursorContext(ctx context.Context, database *sql.DB, maintenanceID, targetID string) error {
+func advanceBackupVerifyCursorContext(ctx context.Context, database *sql.DB, maintenanceID, targetID string) error {
 	_, err := database.ExecContext(ctx, `UPDATE backup_maintenance SET cursor = jsonb_build_object('last_completed_target_id', $2), claim_deadline = CURRENT_TIMESTAMP + INTERVAL '10 minutes', coordinator_lease_until = CURRENT_TIMESTAMP + INTERVAL '2 minutes' WHERE id = $1 AND state = 'RUNNING'`, maintenanceID, targetID)
 	return err
 }
@@ -474,11 +474,11 @@ type BackupPassClaim struct {
 	Run     *BackupRun
 }
 
-// RecoverStaleBackupRunsContext fails abandoned active passes so a crashed
+// recoverStaleBackupRunsContext fails abandoned active passes so a crashed
 // worker cannot permanently block later manual or scheduled runs. Active
 // workers renew their heartbeat while executing; recovery only affects a pass
 // that has been silent for ten minutes and still owns the job generation.
-func RecoverStaleBackupRunsContext(ctx context.Context, database *sql.DB) (int, error) {
+func recoverStaleBackupRunsContext(ctx context.Context, database *sql.DB) (int, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin stale backup recovery: %w", err)
@@ -521,18 +521,18 @@ func RecoverStaleBackupRunsContext(ctx context.Context, database *sql.DB) (int, 
 	return len(recovered), nil
 }
 
-// TouchBackupRunContext renews an active run's liveness heartbeat. The job and
+// touchBackupRunContext renews an active run's liveness heartbeat. The job and
 // generation predicates prevent an obsolete worker from masking a newer pass.
-func TouchBackupRunContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID string) error {
+func touchBackupRunContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID string) error {
 	_, err := database.ExecContext(ctx, `UPDATE backup_runs r SET updated_at = CURRENT_TIMESTAMP WHERE r.id = $1 AND r.backup_job_id = $2 AND r.generation = $3 AND r.state IN ('SCANNING', 'RUNNING', 'VERIFYING') AND EXISTS (SELECT 1 FROM backup_jobs j WHERE j.id = r.backup_job_id AND j.run_generation = r.generation AND j.status IN ('SCANNING', 'RUNNING', 'VERIFYING'))`, runID, jobID, generation)
 	return err
 }
 
-// BackupProfilesSameOAuthAccountContext uses the provider-recorded account ID
+// backupProfilesSameOAuthAccountContext uses the provider-recorded account ID
 // rather than empty OAuth usernames when deciding whether a source is also the
 // repository account. Deleted profiles deliberately return false; persisted
 // URL/username fallback remains available to callers for legacy jobs.
-func BackupProfilesSameOAuthAccountContext(ctx context.Context, database *sql.DB, sourceProfileID, targetProfileID sql.NullString) (bool, error) {
+func backupProfilesSameOAuthAccountContext(ctx context.Context, database *sql.DB, sourceProfileID, targetProfileID sql.NullString) (bool, error) {
 	if !sourceProfileID.Valid || !targetProfileID.Valid {
 		return false, nil
 	}
@@ -553,17 +553,17 @@ type BackupScheduleInfo struct {
 	Timezone       string
 }
 
-// GetBackupScheduleInfoContext loads only scheduling state for a backup job.
-func GetBackupScheduleInfoContext(ctx context.Context, database *sql.DB, jobID string) (BackupScheduleInfo, error) {
+// getBackupScheduleInfoContext loads only scheduling state for a backup job.
+func getBackupScheduleInfoContext(ctx context.Context, database *sql.DB, jobID string) (BackupScheduleInfo, error) {
 	var info BackupScheduleInfo
 	err := database.QueryRowContext(ctx, `SELECT status, cron_expression, timezone FROM backup_jobs WHERE id = $1`, jobID).Scan(&info.Status, &info.CronExpression, &info.Timezone)
 	return info, err
 }
 
-// ClaimNextQueuedBackupRunContext claims one queued run without waiting for
+// claimNextQueuedBackupRunContext claims one queued run without waiting for
 // another worker. Claiming also advances the run to SCANNING, so a released row
 // lock cannot be picked up by a second worker.
-func ClaimNextQueuedBackupRunContext(ctx context.Context, database *sql.DB) (*BackupJob, *BackupRun, error) {
+func claimNextQueuedBackupRunContext(ctx context.Context, database *sql.DB) (*BackupJob, *BackupRun, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("begin queued backup claim: %w", err)
@@ -625,15 +625,15 @@ func ClaimNextQueuedBackupRunContext(ctx context.Context, database *sql.DB) (*Ba
 	return job, run, nil
 }
 
-func CreateBackupSnapshotDraftContext(ctx context.Context, database *sql.DB, jobID, runID string, selectedRoots StringArray) (string, error) {
+func createBackupSnapshotDraftContext(ctx context.Context, database *sql.DB, jobID, runID string, selectedRoots StringArray) (string, error) {
 	var id string
 	err := database.QueryRowContext(ctx, `INSERT INTO backup_snapshots (backup_job_id, backup_run_id, selected_roots) VALUES ($1, $2, $3) RETURNING id`, jobID, runID, selectedRoots).Scan(&id)
 	return id, err
 }
 
-// BackupRunActiveContext is a durable cancellation fence: pausing a job changes
+// backupRunActiveContext is a durable cancellation fence: pausing a job changes
 // either state, so a worker must not publish or write further catalog entries.
-func BackupRunActiveContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID string) (bool, error) {
+func backupRunActiveContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID string) (bool, error) {
 	var active bool
 	err := database.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM backup_runs r JOIN backup_jobs j ON j.id = r.backup_job_id
@@ -644,12 +644,12 @@ func BackupRunActiveContext(ctx context.Context, database *sql.DB, jobID string,
 	return active, err
 }
 
-func DiscardBackupSnapshotDraftContext(ctx context.Context, database *sql.DB, snapshotID, jobID, runID string) error {
+func discardBackupSnapshotDraftContext(ctx context.Context, database *sql.DB, snapshotID, jobID, runID string) error {
 	_, err := database.ExecContext(ctx, `DELETE FROM backup_snapshots WHERE id = $1 AND backup_job_id = $2 AND backup_run_id = $3 AND state = 'PUBLISHING'`, snapshotID, jobID, runID)
 	return err
 }
 
-func FindBackupBlockContext(ctx context.Context, database *sql.DB, jobID string, hash []byte) (string, bool, error) {
+func findBackupBlockContext(ctx context.Context, database *sql.DB, jobID string, hash []byte) (string, bool, error) {
 	var id string
 	err := database.QueryRowContext(ctx, `
 		SELECT b.id FROM backup_blocks b
@@ -670,10 +670,10 @@ type BackupPackBlock struct {
 	PayloadLength int
 }
 
-// RecordBackupPackAndBlocksContext records a fully validated immutable pack and
+// recordBackupPackAndBlocksContext records a fully validated immutable pack and
 // every block it contains. Payload offsets are offsets in the remote pack, not
 // assumptions about a one-entry pack.
-func RecordBackupPackAndBlocksContext(ctx context.Context, database *sql.DB, jobID, remotePath string, packHash []byte, packSize int64, blocks []BackupPackBlock) (map[string]string, error) {
+func recordBackupPackAndBlocksContext(ctx context.Context, database *sql.DB, jobID, remotePath string, packHash []byte, packSize int64, blocks []BackupPackBlock) (map[string]string, error) {
 	if len(blocks) == 0 {
 		return nil, errors.New("backup pack must contain blocks")
 	}
@@ -713,7 +713,7 @@ type BatchSnapshotItem struct {
 	BlockIDs     []string
 }
 
-func BatchCreateBackupSnapshotItemsAndBlocksContext(ctx context.Context, database *sql.DB, snapshotID string, items []BatchSnapshotItem) error {
+func batchCreateBackupSnapshotItemsAndBlocksContext(ctx context.Context, database *sql.DB, snapshotID string, items []BatchSnapshotItem) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -775,7 +775,7 @@ func BatchCreateBackupSnapshotItemsAndBlocksContext(ctx context.Context, databas
 	return tx.Commit()
 }
 
-func GetLatestValidBackupSnapshotIDContext(ctx context.Context, database *sql.DB, jobID string) (string, error) {
+func getLatestValidBackupSnapshotIDContext(ctx context.Context, database *sql.DB, jobID string) (string, error) {
 	var id string
 	err := database.QueryRowContext(ctx, `
 		SELECT id
@@ -801,14 +801,14 @@ type BackupSnapshotCatalogItem struct {
 	BlockIDs     []string
 }
 
-// GetBackupSnapshotFileCatalogContext loads the full catalog of reusable file items and block
+// getBackupSnapshotFileCatalogContext loads the full catalog of reusable file items and block
 // references for a given snapshot into memory in a single query.
 //
 // Performance note: For personal and SMB workloads (thousands to hundreds of thousands of files),
 // this full in-memory map enables fast O(1) deduplication checks during incremental backup passes.
 // For extremely large snapshots with millions of files, this constitutes a significant memory
 // allocation and could be adapted in the future to stream/chunk rows or utilize DB-side set joins.
-func GetBackupSnapshotFileCatalogContext(ctx context.Context, database *sql.DB, snapshotID string) (map[string]BackupSnapshotCatalogItem, error) {
+func getBackupSnapshotFileCatalogContext(ctx context.Context, database *sql.DB, snapshotID string) (map[string]BackupSnapshotCatalogItem, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT i.relative_path, i.size_bytes, i.mtime, i.file_sha256,
 			COALESCE(ib.ordinal, -1), COALESCE(ib.backup_block_id::text, ''), COALESCE(p.state, '')
@@ -901,9 +901,9 @@ func GetBackupSnapshotFileCatalogContext(ctx context.Context, database *sql.DB, 
 	return result, nil
 }
 
-// PublishBackupSnapshotAndFinalizeContext makes the visible snapshot and run
+// publishBackupSnapshotAndFinalizeContext makes the visible snapshot and run
 // completion one transaction; a failed or cancelled run never exposes READY.
-func PublishBackupSnapshotAndFinalizeContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID, snapshotID, snapshotState, runState string, totalFiles, totalDirs int, totalBytes int64, processedFiles int, processedBytes, deduplicatedBytes int64, unstableFiles, failedFiles int) (bool, error) {
+func publishBackupSnapshotAndFinalizeContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID, snapshotID, snapshotState, runState string, totalFiles, totalDirs int, totalBytes int64, processedFiles int, processedBytes, deduplicatedBytes int64, unstableFiles, failedFiles int) (bool, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -945,9 +945,9 @@ func PublishBackupSnapshotAndFinalizeContext(ctx context.Context, database *sql.
 	return true, nil
 }
 
-// ListVisibleBackupSnapshotsContext returns only publish-complete snapshots.
+// listVisibleBackupSnapshotsContext returns only publish-complete snapshots.
 // Draft and retention states are not observable through the user catalog.
-func ListVisibleBackupSnapshotsContext(ctx context.Context, database *sql.DB, jobID string) ([]BackupSnapshot, error) {
+func listVisibleBackupSnapshotsContext(ctx context.Context, database *sql.DB, jobID string) ([]BackupSnapshot, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT id, state, created_at, total_files, total_dirs, total_bytes,
 			omitted_unstable_count, omitted_error_count, integrity_state
@@ -971,9 +971,9 @@ func ListVisibleBackupSnapshotsContext(ctx context.Context, database *sql.DB, jo
 	return snapshots, rows.Err()
 }
 
-// ListBackupSnapshotChildrenContext lists exactly one tree level. The snapshot
+// listBackupSnapshotChildrenContext lists exactly one tree level. The snapshot
 // is bound to its job so a valid snapshot UUID cannot cross an ownership fence.
-func ListBackupSnapshotChildrenContext(ctx context.Context, database *sql.DB, jobID, snapshotID, directory string) ([]BackupSnapshotItem, error) {
+func listBackupSnapshotChildrenContext(ctx context.Context, database *sql.DB, jobID, snapshotID, directory string) ([]BackupSnapshotItem, error) {
 	if directory != "" {
 		if _, err := NormalizeBackupSnapshotPath(directory); err != nil {
 			return nil, err
@@ -1012,9 +1012,9 @@ func ListBackupSnapshotChildrenContext(ctx context.Context, database *sql.DB, jo
 	return children, rows.Err()
 }
 
-// ListBackupSnapshotPacksContext returns every immutable object referenced by a
+// listBackupSnapshotPacksContext returns every immutable object referenced by a
 // draft snapshot. It is used only by the worker verification fence.
-func ListBackupSnapshotPacksContext(ctx context.Context, database *sql.DB, jobID, snapshotID string) ([]BackupPack, error) {
+func listBackupSnapshotPacksContext(ctx context.Context, database *sql.DB, jobID, snapshotID string) ([]BackupPack, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT DISTINCT p.id, p.remote_rel_path, p.sha256, p.size_bytes, p.state, p.last_checked_at
 		FROM backup_packs p
@@ -1039,7 +1039,7 @@ func ListBackupSnapshotPacksContext(ctx context.Context, database *sql.DB, jobID
 	return packs, rows.Err()
 }
 
-func MarkBackupPacksCheckedContext(ctx context.Context, database *sql.DB, jobID string, packIDs []string) error {
+func markBackupPacksCheckedContext(ctx context.Context, database *sql.DB, jobID string, packIDs []string) error {
 	if len(packIDs) == 0 {
 		return nil
 	}
@@ -1056,9 +1056,9 @@ func MarkBackupPacksCheckedContext(ctx context.Context, database *sql.DB, jobID 
 	return err
 }
 
-// MarkBackupPackDamagedContext propagates a verified missing or corrupt pack to
+// markBackupPackDamagedContext propagates a verified missing or corrupt pack to
 // only the snapshots that reference it. A draft is kept as diagnosis evidence.
-func MarkBackupPackDamagedContext(ctx context.Context, database *sql.DB, jobID, packID string) error {
+func markBackupPackDamagedContext(ctx context.Context, database *sql.DB, jobID, packID string) error {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1089,9 +1089,9 @@ func MarkBackupPackDamagedContext(ctx context.Context, database *sql.DB, jobID, 
 	return nil
 }
 
-// RequestBackupRepositoryDeletionContext blocks all future runs, disables the
+// requestBackupRepositoryDeletionContext blocks all future runs, disables the
 // schedule and makes remote cleanup durable before any catalog row is removed.
-func RequestBackupRepositoryDeletionContext(ctx context.Context, database *sql.DB, jobID, userID string) (bool, error) {
+func requestBackupRepositoryDeletionContext(ctx context.Context, database *sql.DB, jobID, userID string) (bool, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -1123,7 +1123,7 @@ func RequestBackupRepositoryDeletionContext(ctx context.Context, database *sql.D
 	return true, nil
 }
 
-func ClaimNextBackupMaintenanceForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*BackupMaintenance, error) {
+func claimNextBackupMaintenanceForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*BackupMaintenance, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -1159,7 +1159,7 @@ func ClaimNextBackupMaintenanceForWorkerContext(ctx context.Context, database *s
 	return maintenance, nil
 }
 
-func CompleteBackupMaintenanceContext(ctx context.Context, database *sql.DB, maintenanceID string) error {
+func completeBackupMaintenanceContext(ctx context.Context, database *sql.DB, maintenanceID string) error {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1196,10 +1196,10 @@ func CompleteBackupMaintenanceContext(ctx context.Context, database *sql.DB, mai
 	return nil
 }
 
-// CancelBackupVerifyForOwnerContext is owner-scoped and idempotently requests
+// cancelBackupVerifyForOwnerContext is owner-scoped and idempotently requests
 // cancellation. Work not yet claimed becomes terminal immediately; active work
 // sees CANCELLING at its next durable progress boundary.
-func CancelBackupVerifyForOwnerContext(ctx context.Context, database *sql.DB, maintenanceID, userID string) (bool, error) {
+func cancelBackupVerifyForOwnerContext(ctx context.Context, database *sql.DB, maintenanceID, userID string) (bool, error) {
 	result, err := database.ExecContext(ctx, `
 		UPDATE backup_maintenance m
 		SET state = CASE WHEN state IN ('PENDING', 'RETRY_WAIT') THEN 'CANCELLED' ELSE 'CANCELLING' END,
@@ -1216,7 +1216,7 @@ func CancelBackupVerifyForOwnerContext(ctx context.Context, database *sql.DB, ma
 	return count == 1, err
 }
 
-func IsBackupMaintenanceCancellingContext(ctx context.Context, database *sql.DB, maintenanceID string) (bool, error) {
+func isBackupMaintenanceCancellingContext(ctx context.Context, database *sql.DB, maintenanceID string) (bool, error) {
 	var cancelling bool
 	err := database.QueryRowContext(ctx, `SELECT state = 'CANCELLING' FROM backup_maintenance WHERE id = $1`, maintenanceID).Scan(&cancelling)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1225,12 +1225,12 @@ func IsBackupMaintenanceCancellingContext(ctx context.Context, database *sql.DB,
 	return cancelling, err
 }
 
-func RetryBackupMaintenanceContext(ctx context.Context, database *sql.DB, maintenanceID, errorCode string) error {
+func retryBackupMaintenanceContext(ctx context.Context, database *sql.DB, maintenanceID, errorCode string) error {
 	_, err := database.ExecContext(ctx, `UPDATE backup_maintenance SET state = 'RETRY_WAIT', claim_deadline = NULL, next_retry_at = CURRENT_TIMESTAMP + INTERVAL '30 seconds', error_code = $2 WHERE id = $1 AND state = 'RUNNING'`, maintenanceID, errorCode)
 	return err
 }
 
-func ListBackupPacksForDeletionContext(ctx context.Context, database *sql.DB, jobID string, limit int) ([]BackupPack, error) {
+func listBackupPacksForDeletionContext(ctx context.Context, database *sql.DB, jobID string, limit int) ([]BackupPack, error) {
 	rows, err := database.QueryContext(ctx, `SELECT id, remote_rel_path, sha256, size_bytes, state, last_checked_at FROM backup_packs p WHERE backup_job_id = $1 AND state <> 'DELETED' AND NOT EXISTS (SELECT 1 FROM restore_pack_pins pin WHERE pin.backup_pack_id = p.id) AND NOT EXISTS (SELECT 1 FROM backup_verify_targets t JOIN backup_maintenance m ON m.id = t.backup_maintenance_id WHERE t.backup_pack_id = p.id AND m.kind = 'VERIFY' AND m.state IN ('PENDING','RUNNING','RETRY_WAIT','CANCELLING')) ORDER BY created_at LIMIT $2`, jobID, limit)
 	if err != nil {
 		return nil, err
@@ -1247,7 +1247,7 @@ func ListBackupPacksForDeletionContext(ctx context.Context, database *sql.DB, jo
 	return packs, rows.Err()
 }
 
-func MarkBackupPackDeletedContext(ctx context.Context, database *sql.DB, jobID, packID string) error {
+func markBackupPackDeletedContext(ctx context.Context, database *sql.DB, jobID, packID string) error {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1274,15 +1274,15 @@ func MarkBackupPackDeletedContext(ctx context.Context, database *sql.DB, jobID, 
 	return tx.Commit()
 }
 
-func EnqueueBackupMaintenanceContext(ctx context.Context, database *sql.DB, jobID, kind string) error {
+func enqueueBackupMaintenanceContext(ctx context.Context, database *sql.DB, jobID, kind string) error {
 	_, err := database.ExecContext(ctx, `INSERT INTO backup_maintenance (backup_job_id, kind, byte_budget) VALUES ($1, $2, CASE WHEN $2 = 'COMPACTION' THEN 536870912 ELSE NULL END)`, jobID, kind)
 	return err
 }
 
-// ExpireBackupSnapshotsContext retains the newest N visible snapshots. It does
+// expireBackupSnapshotsContext retains the newest N visible snapshots. It does
 // not delete data itself; old objects remain readable to the compactor until
 // their last live reference has been determined transactionally.
-func ExpireBackupSnapshotsContext(ctx context.Context, database *sql.DB, jobID string, keep int) error {
+func expireBackupSnapshotsContext(ctx context.Context, database *sql.DB, jobID string, keep int) error {
 	_, err := database.ExecContext(ctx, `
 		UPDATE backup_snapshots SET state = 'EXPIRED', expires_at = CURRENT_TIMESTAMP
 		WHERE id IN (
@@ -1294,7 +1294,7 @@ func ExpireBackupSnapshotsContext(ctx context.Context, database *sql.DB, jobID s
 	return err
 }
 
-func ListBackupReclaimablePacksContext(ctx context.Context, database *sql.DB, jobID string, limit int) ([]BackupPack, error) {
+func listBackupReclaimablePacksContext(ctx context.Context, database *sql.DB, jobID string, limit int) ([]BackupPack, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT p.id, p.remote_rel_path, p.sha256, p.size_bytes, p.state, p.last_checked_at
 		FROM backup_packs p
@@ -1329,7 +1329,7 @@ func ListBackupReclaimablePacksContext(ctx context.Context, database *sql.DB, jo
 	return packs, rows.Err()
 }
 
-func ListBackupLiveBlocksContext(ctx context.Context, database *sql.DB, jobID, packID string) ([]BackupLiveBlock, error) {
+func listBackupLiveBlocksContext(ctx context.Context, database *sql.DB, jobID, packID string) ([]BackupLiveBlock, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT b.id, b.sha256, b.plaintext_size FROM backup_blocks b
 		WHERE b.backup_job_id = $1 AND b.backup_pack_id = $2 AND EXISTS (
@@ -1354,7 +1354,7 @@ func ListBackupLiveBlocksContext(ctx context.Context, database *sql.DB, jobID, p
 	return blocks, rows.Err()
 }
 
-func FindBackupCompactionCandidateContext(ctx context.Context, database *sql.DB, jobID string) (*BackupPack, error) {
+func findBackupCompactionCandidateContext(ctx context.Context, database *sql.DB, jobID string) (*BackupPack, error) {
 	pack := &BackupPack{}
 	err := database.QueryRowContext(ctx, `
 		SELECT p.id, p.remote_rel_path, p.sha256, p.size_bytes, p.state, p.last_checked_at
@@ -1371,9 +1371,9 @@ func FindBackupCompactionCandidateContext(ctx context.Context, database *sql.DB,
 	return pack, nil
 }
 
-// ReplaceBackupPackLocatorsContext switches every live locator before the old
+// replaceBackupPackLocatorsContext switches every live locator before the old
 // pack may be deleted. The old object is deliberately left DELETE_PENDING.
-func ReplaceBackupPackLocatorsContext(ctx context.Context, database *sql.DB, jobID, oldPackID, remotePath string, packHash []byte, packSize int64, blocks []BackupPackBlock, blockIDs []string) (string, error) {
+func replaceBackupPackLocatorsContext(ctx context.Context, database *sql.DB, jobID, oldPackID, remotePath string, packHash []byte, packSize int64, blocks []BackupPackBlock, blockIDs []string) (string, error) {
 	if len(blocks) == 0 || len(blocks) != len(blockIDs) {
 		return "", errors.New("replacement backup pack blocks are invalid")
 	}
@@ -1423,7 +1423,7 @@ func ReplaceBackupPackLocatorsContext(ctx context.Context, database *sql.DB, job
 	return replacementID, nil
 }
 
-func DeleteBackupJobAfterRepositoryCleanupContext(ctx context.Context, database *sql.DB, jobID string) (bool, error) {
+func deleteBackupJobAfterRepositoryCleanupContext(ctx context.Context, database *sql.DB, jobID string) (bool, error) {
 	result, err := database.ExecContext(ctx, `DELETE FROM backup_jobs WHERE id = $1 AND status = 'DELETING' AND NOT EXISTS (SELECT 1 FROM backup_packs WHERE backup_job_id = $1 AND state <> 'DELETED')`, jobID)
 	if err != nil {
 		return false, err
@@ -1458,7 +1458,7 @@ const insertBackupJobQuery = `
 	RETURNING id, lock_id, repository_id, created_at, updated_at
 `
 
-func GetBackupJobForOwnerContext(ctx context.Context, database *sql.DB, jobID, userID string) (*BackupJob, error) {
+func getBackupJobForOwnerContext(ctx context.Context, database *sql.DB, jobID, userID string) (*BackupJob, error) {
 	job := &BackupJob{}
 	err := database.QueryRowContext(ctx, `
 		SELECT id, user_id, lock_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,
@@ -1484,7 +1484,7 @@ func GetBackupJobForOwnerContext(ctx context.Context, database *sql.DB, jobID, u
 	return job, nil
 }
 
-func ListBackupRunsForOwnerContext(ctx context.Context, database *sql.DB, backupJobID, userID string) ([]BackupRun, error) {
+func listBackupRunsForOwnerContext(ctx context.Context, database *sql.DB, backupJobID, userID string) ([]BackupRun, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT r.id, r.backup_job_id, r.generation, r.trigger, r.scheduled_local_key, r.state,
 			r.total_files, r.total_bytes, r.processed_files, r.processed_bytes, r.deduplicated_bytes, r.failed_files,
@@ -1517,7 +1517,7 @@ func ListBackupRunsForOwnerContext(ctx context.Context, database *sql.DB, backup
 	return runs, nil
 }
 
-func UpdateBackupJobContext(ctx context.Context, database *sql.DB, backupJobID, userID, cronExpression, timezone string, retentionCount, threads int, nextRun *time.Time) error {
+func updateBackupJobContext(ctx context.Context, database *sql.DB, backupJobID, userID, cronExpression, timezone string, retentionCount, threads int, nextRun *time.Time) error {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1554,7 +1554,7 @@ func UpdateBackupJobContext(ctx context.Context, database *sql.DB, backupJobID, 
 	return tx.Commit()
 }
 
-func ListBackupJobsForOwnerContext(ctx context.Context, database *sql.DB, userID string) ([]BackupJob, error) {
+func listBackupJobsForOwnerContext(ctx context.Context, database *sql.DB, userID string) ([]BackupJob, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT id, user_id, lock_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,
 			source_refresh_token_encrypted, source_token_expires_at, source_mega_session_id_encrypted, source_mega_master_key_encrypted,
@@ -1600,13 +1600,13 @@ func scanBackupJob(row backupJobScanner, job *BackupJob) error {
 	)
 }
 
-func VerifyBackupJobOwnershipContext(ctx context.Context, database *sql.DB, jobID, userID string) (bool, error) {
+func verifyBackupJobOwnershipContext(ctx context.Context, database *sql.DB, jobID, userID string) (bool, error) {
 	var owned bool
 	err := database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM backup_jobs WHERE id = $1 AND user_id = $2)`, jobID, userID).Scan(&owned)
 	return owned, err
 }
 
-func ClaimBackupJobPassContext(ctx context.Context, database *sql.DB, jobID, trigger string, scheduledLocalKey *string) (BackupPassClaim, error) {
+func claimBackupJobPassContext(ctx context.Context, database *sql.DB, jobID, trigger string, scheduledLocalKey *string) (BackupPassClaim, error) {
 	if trigger != "manual" && trigger != "schedule" && trigger != "catch_up" {
 		return BackupPassClaim{}, fmt.Errorf("invalid backup trigger %q", trigger)
 	}
@@ -1669,7 +1669,7 @@ func ClaimBackupJobPassContext(ctx context.Context, database *sql.DB, jobID, tri
 	return BackupPassClaim{Outcome: BackupClaimed, Run: run}, nil
 }
 
-func TransitionBackupRunContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID, expectedState, nextState string) (bool, error) {
+func transitionBackupRunContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID, expectedState, nextState string) (bool, error) {
 	if !validBackupTransition(expectedState, nextState) {
 		return false, fmt.Errorf("invalid backup run transition %s to %s", expectedState, nextState)
 	}
@@ -1719,14 +1719,14 @@ func validBackupTransition(expectedState, nextState string) bool {
 		(expectedState == "RUNNING" && nextState == "VERIFYING")
 }
 
-func FinalizeBackupRunContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID, expectedState, terminalState string, totalFiles int, totalBytes int64, processedFiles int, processedBytes, deduplicatedBytes int64, failedFiles int, errorCode *string) (bool, error) {
+func finalizeBackupRunContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID, expectedState, terminalState string, totalFiles int, totalBytes int64, processedFiles int, processedBytes, deduplicatedBytes int64, failedFiles int, errorCode *string) (bool, error) {
 	if (expectedState != "SCANNING" && expectedState != "RUNNING" && expectedState != "VERIFYING") || (terminalState != "COMPLETED" && terminalState != "PARTIAL" && terminalState != "CANCELLED") {
 		return false, fmt.Errorf("invalid backup run finalization")
 	}
 	return completeBackupRunContext(ctx, database, jobID, generation, runID, expectedState, terminalState, "IDLE", totalFiles, totalBytes, processedFiles, processedBytes, deduplicatedBytes, failedFiles, errorCode)
 }
 
-func FailBackupRunContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID, expectedState string, errorCode string) (bool, error) {
+func failBackupRunContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID, expectedState string, errorCode string) (bool, error) {
 	if expectedState != "QUEUED" && expectedState != "SCANNING" && expectedState != "RUNNING" && expectedState != "VERIFYING" {
 		return false, fmt.Errorf("invalid backup run failure state %q", expectedState)
 	}

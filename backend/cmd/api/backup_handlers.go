@@ -18,8 +18,6 @@ import (
 	"backend/internal/oauth"
 	"backend/internal/scheduler"
 	"backend/internal/storage"
-
-	"github.com/lib/pq"
 )
 
 type backupScheduleAndTuning struct {
@@ -64,7 +62,7 @@ func (api *backupAPI) handleListBackups(w http.ResponseWriter, r *http.Request) 
 	if !authenticated {
 		return
 	}
-	jobs, err := db.ListBackupJobsForOwnerContext(r.Context(), api.db, userID)
+	jobs, err := api.backups.ListBackupJobsForOwnerContext(r.Context(), userID)
 	if err != nil {
 		api.logf(r, "list backup jobs failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -86,7 +84,7 @@ func (api *backupAPI) handleGetBackup(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrBackupIDMissing)
 		return
 	}
-	job, err := db.GetBackupJobForOwnerContext(r.Context(), api.db, id, userID)
+	job, err := api.backups.GetBackupJobForOwnerContext(r.Context(), id, userID)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
@@ -108,7 +106,7 @@ func (api *backupAPI) handleListBackupSnapshots(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	snapshots, err := db.ListVisibleBackupSnapshotsContext(r.Context(), api.db, id)
+	snapshots, err := api.backups.ListVisibleBackupSnapshotsContext(r.Context(), id)
 	if err != nil {
 		api.logf(r, "list backup snapshots failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -134,7 +132,7 @@ func (api *backupAPI) handleListBackupSnapshotItems(w http.ResponseWriter, r *ht
 		return
 	}
 	directory := strings.TrimPrefix(r.URL.Query().Get("path"), "/")
-	items, err := db.ListBackupSnapshotChildrenContext(r.Context(), api.db, id, snapshotID, directory)
+	items, err := api.backups.ListBackupSnapshotChildrenContext(r.Context(), id, snapshotID, directory)
 	if err != nil {
 		// Invalid paths and a snapshot outside this backup are deliberately not
 		// distinguishable from an absent catalog item.
@@ -223,7 +221,7 @@ func (api *backupAPI) handleCreateRestorePreview(w http.ResponseWriter, r *http.
 		writeValidationError(w, ErrRestoreRepositoryOverlap)
 		return
 	}
-	backupJob, err := db.GetBackupJobForOwnerContext(r.Context(), api.db, backupID, userID)
+	backupJob, err := api.backups.GetBackupJobForOwnerContext(r.Context(), backupID, userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
@@ -259,8 +257,7 @@ func (api *backupAPI) handleCreateRestorePreview(w http.ResponseWriter, r *http.
 		writeValidationError(w, ErrBandwidthOutOfRange)
 		return
 	}
-	var exists bool
-	err = api.db.QueryRowContext(r.Context(), `SELECT EXISTS (SELECT 1 FROM backup_snapshots WHERE id = $1 AND backup_job_id = $2 AND state IN ('READY','PARTIAL') AND integrity_state <> 'DAMAGED')`, snapshotID, backupID).Scan(&exists)
+	exists, err := api.backups.BackupSnapshotRestorableContext(r.Context(), backupID, snapshotID)
 	if err != nil {
 		api.logf(r, "check restore snapshot failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -720,29 +717,38 @@ func (api *backupAPI) handleCreateBackup(w http.ResponseWriter, r *http.Request)
 	}
 	// The repository UUID is generated once by PostgreSQL and used in the same
 	// statement to make the immutable root unguessable and collision-free.
-	var id string
-	tx, err := api.db.BeginTx(r.Context(), nil)
-	if err == nil {
-		err = tx.QueryRowContext(r.Context(), `WITH repository AS (SELECT gen_random_uuid() AS id)
-			INSERT INTO backup_jobs (user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,
-				source_refresh_token_encrypted, source_token_expires_at, source_mega_session_id_encrypted, source_mega_master_key_encrypted,
-				target_url, target_username, target_password_encrypted, target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted,
-				target_mega_master_key_encrypted, source_provider, target_provider, selected_paths, target_dir, repository_id, repository_root,
-				cron_expression, timezone, retention_count, threads)
-			SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, repository.id,
-				$21 || '/.clumoove-backup/' || repository.id::text, $22, $23, $24, $25 FROM repository RETURNING id`,
-			userID, req.SourceProfileID, req.TargetProfileID, source.URL, source.Username, sourcePersisted.PasswordEncrypted, sourcePersisted.RefreshTokenEncrypted, source.TokenExpiresAt, nullableEncrypted(sourcePersisted.MegaSessionIDEncrypted), nullableEncrypted(sourcePersisted.MegaMasterKeyEncrypted),
-			target.URL, target.Username, targetPersisted.PasswordEncrypted, targetPersisted.RefreshTokenEncrypted, target.TokenExpiresAt, nullableEncrypted(targetPersisted.MegaSessionIDEncrypted), nullableEncrypted(targetPersisted.MegaMasterKeyEncrypted), source.Provider, target.Provider, db.StringArray(paths), targetDir,
-			req.CronExpression, req.Timezone, req.RetentionCount, req.Threads).Scan(&id)
-	}
-	if err == nil {
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO schedules (user_id, task_type, task_id, cron_expression, next_run_at, is_active) VALUES ($1, 'backup', $2, $3, $4, TRUE)`, userID, id, req.CronExpression, nextRun)
-	}
-	if err == nil {
-		err = tx.Commit()
-	} else if tx != nil {
-		_ = tx.Rollback()
-	}
+	id, err := api.backups.CreateBackupJobContext(r.Context(), db.CreateBackupJobParams{
+		UserID: userID,
+		Source: db.BackupConnectionSnapshot{
+			ProfileID:              req.SourceProfileID,
+			Provider:               source.Provider,
+			URL:                    source.URL,
+			Username:               source.Username,
+			PasswordEncrypted:      sourcePersisted.PasswordEncrypted,
+			RefreshTokenEncrypted:  sourcePersisted.RefreshTokenEncrypted,
+			TokenExpiresAt:         source.TokenExpiresAt,
+			MegaSessionIDEncrypted: nullableEncrypted(sourcePersisted.MegaSessionIDEncrypted),
+			MegaMasterKeyEncrypted: nullableEncrypted(sourcePersisted.MegaMasterKeyEncrypted),
+		},
+		Target: db.BackupConnectionSnapshot{
+			ProfileID:              req.TargetProfileID,
+			Provider:               target.Provider,
+			URL:                    target.URL,
+			Username:               target.Username,
+			PasswordEncrypted:      targetPersisted.PasswordEncrypted,
+			RefreshTokenEncrypted:  targetPersisted.RefreshTokenEncrypted,
+			TokenExpiresAt:         target.TokenExpiresAt,
+			MegaSessionIDEncrypted: nullableEncrypted(targetPersisted.MegaSessionIDEncrypted),
+			MegaMasterKeyEncrypted: nullableEncrypted(targetPersisted.MegaMasterKeyEncrypted),
+		},
+		SelectedPaths:  db.StringArray(paths),
+		TargetDir:      targetDir,
+		CronExpression: req.CronExpression,
+		Timezone:       req.Timezone,
+		RetentionCount: req.RetentionCount,
+		Threads:        req.Threads,
+		NextRun:        nextRun,
+	})
 	if err != nil {
 		api.logf(r, "create backup job failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -825,7 +831,7 @@ func (api *backupAPI) handleCreateBackupVerify(w http.ResponseWriter, r *http.Re
 		writeValidationError(w, ErrBackupVerifyInvalid)
 		return
 	}
-	id, err := db.CreateBackupVerifyContext(r.Context(), api.db, backupID, userID, req.Mode, req.ByteBudget)
+	id, err := api.backups.CreateBackupVerifyContext(r.Context(), backupID, userID, req.Mode, req.ByteBudget)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
@@ -856,7 +862,7 @@ func (api *backupAPI) handleCancelBackupVerify(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
-	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), api.db, verifyID, userID)
+	check, err := api.backups.GetBackupVerifyForOwnerContext(r.Context(), verifyID, userID)
 	if err == sql.ErrNoRows || (check != nil && check.BackupJobID != backupID) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
@@ -866,7 +872,7 @@ func (api *backupAPI) handleCancelBackupVerify(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	cancelled, err := db.CancelBackupVerifyForOwnerContext(r.Context(), api.db, verifyID, userID)
+	cancelled, err := api.backups.CancelBackupVerifyForOwnerContext(r.Context(), verifyID, userID)
 	if err != nil {
 		api.logf(r, "cancel repository check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -889,7 +895,7 @@ func (api *backupAPI) handleListBackupVerifies(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	checks, err := db.ListBackupVerifiesForOwnerContext(r.Context(), api.db, backupID, userID)
+	checks, err := api.backups.ListBackupVerifiesForOwnerContext(r.Context(), backupID, userID)
 	if err != nil {
 		api.logf(r, "list repository checks failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -912,7 +918,7 @@ func (api *backupAPI) handleGetBackupVerify(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
-	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), api.db, verifyID, userID)
+	check, err := api.backups.GetBackupVerifyForOwnerContext(r.Context(), verifyID, userID)
 	if err == sql.ErrNoRows || (check != nil && check.BackupJobID != backupID) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
@@ -943,7 +949,7 @@ func (api *backupAPI) handleBackupVerifyStream(w http.ResponseWriter, r *http.Re
 		return
 	}
 	defer api.releaseBackupStream(userID)
-	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), api.db, verifyID, userID)
+	check, err := api.backups.GetBackupVerifyForOwnerContext(r.Context(), verifyID, userID)
 	if err == sql.ErrNoRows || (check != nil && check.BackupJobID != backupID) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
@@ -954,7 +960,7 @@ func (api *backupAPI) handleBackupVerifyStream(w http.ResponseWriter, r *http.Re
 		return
 	}
 	api.serveBackupDetailSSE(w, r, "repository-check", check, func(ctx context.Context) (any, error) {
-		return db.GetBackupVerifyForOwnerContext(ctx, api.db, verifyID, userID)
+		return api.backups.GetBackupVerifyForOwnerContext(ctx, verifyID, userID)
 	})
 }
 
@@ -971,7 +977,7 @@ func (api *backupAPI) handleRunBackup(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	claim, err := db.ClaimBackupJobPassContext(r.Context(), api.db, id, "manual", nil)
+	claim, err := api.backups.ClaimBackupJobPassContext(r.Context(), id, "manual", nil)
 	if err != nil {
 		api.logf(r, "claim backup run failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -1001,7 +1007,7 @@ func (api *backupAPI) handleDeleteBackup(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	started, err := db.RequestBackupRepositoryDeletionContext(r.Context(), api.db, id, userID)
+	started, err := api.backups.RequestBackupRepositoryDeletionContext(r.Context(), id, userID)
 	if err != nil {
 		api.logf(r, "request backup repository deletion failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -1036,64 +1042,22 @@ func (api *backupAPI) handleBackupStateChange(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	tx, err := api.db.BeginTx(r.Context(), nil)
-	if err != nil {
-		api.logf(r, "begin backup state change failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	defer tx.Rollback()
-
-	var result sql.Result
+	var changed bool
+	var err error
 	if pause {
-		result, err = tx.ExecContext(r.Context(), `UPDATE backup_jobs SET status = 'PAUSED' WHERE id = $1 AND user_id = $2 AND status = ANY($3::text[])`, id, userID, pq.Array(db.BackupActionSources(db.JobActionPause)))
-		if err == nil {
-			updated, rowsErr := result.RowsAffected()
-			if rowsErr != nil {
-				err = rowsErr
-			} else if updated != 1 {
-				writeConflictError(w, ErrBackupInvalidState)
-				return
-			}
-		}
-		if err == nil {
-			_, err = tx.ExecContext(r.Context(), `UPDATE backup_runs SET state = 'CANCELLED', finished_at = CURRENT_TIMESTAMP WHERE backup_job_id = $1 AND state IN ('QUEUED','SCANNING','RUNNING','VERIFYING')`, id)
-		}
-		if err == nil {
-			_, err = tx.ExecContext(r.Context(), `UPDATE schedules SET is_active = FALSE WHERE task_type = 'backup' AND task_id = $1`, id)
-		}
+		changed, err = api.backups.PauseBackupJobContext(r.Context(), id, userID)
 	} else {
-		var cronExpression, timezone string
-		err = tx.QueryRowContext(r.Context(), `SELECT cron_expression, timezone FROM backup_jobs WHERE id = $1 AND user_id = $2 AND status = ANY($3::text[]) FOR UPDATE`, id, userID, pq.Array(db.BackupActionSources(db.JobActionResume))).Scan(&cronExpression, &timezone)
-		if err == sql.ErrNoRows {
-			writeConflictError(w, ErrBackupInvalidState)
-			return
-		}
-		if err == nil {
-			result, err = tx.ExecContext(r.Context(), `UPDATE backup_jobs SET status = 'IDLE' WHERE id = $1 AND user_id = $2 AND status = ANY($3::text[])`, id, userID, pq.Array(db.BackupActionSources(db.JobActionResume)))
-		}
-		if err == nil {
-			nextRun, nextErr := scheduler.NextRunInLocation(cronExpression, timezone, time.Now())
-			if nextErr != nil {
-				err = nextErr
-			} else {
-				_, err = tx.ExecContext(r.Context(), `UPDATE schedules SET is_active = TRUE, next_run_at = $1 WHERE task_type = 'backup' AND task_id = $2`, nextRun, id)
-			}
-		}
+		changed, err = api.backups.ResumeBackupJobContext(r.Context(), id, userID, func(cronExpression, timezone string) (time.Time, error) {
+			return scheduler.NextRunInLocation(cronExpression, timezone, time.Now())
+		})
 	}
 	if err != nil {
 		api.logf(r, "change backup state failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	updated, err := result.RowsAffected()
-	if err != nil || updated != 1 {
+	if !changed {
 		writeConflictError(w, ErrBackupInvalidState)
-		return
-	}
-	if err := tx.Commit(); err != nil {
-		api.logf(r, "commit backup state change failed: %v", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if pause {
@@ -1188,7 +1152,7 @@ func (api *backupAPI) handleListBackupRuns(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	runs, err := db.ListBackupRunsForOwnerContext(r.Context(), api.db, id, userID)
+	runs, err := api.backups.ListBackupRunsForOwnerContext(r.Context(), id, userID)
 	if err != nil {
 		api.logf(r, "list backup runs failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -1226,7 +1190,7 @@ func (api *backupAPI) handleUpdateBackup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	err := db.UpdateBackupJobContext(r.Context(), api.db, id, userID, req.CronExpression, req.Timezone, req.RetentionCount, req.Threads, &nextRun)
+	err := api.backups.UpdateBackupJobContext(r.Context(), id, userID, req.CronExpression, req.Timezone, req.RetentionCount, req.Threads, &nextRun)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
@@ -1237,7 +1201,7 @@ func (api *backupAPI) handleUpdateBackup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	job, err := db.GetBackupJobForOwnerContext(r.Context(), api.db, id, userID)
+	job, err := api.backups.GetBackupJobForOwnerContext(r.Context(), id, userID)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 		return
@@ -1279,7 +1243,7 @@ func (api *backupAPI) handleBackupStream(w http.ResponseWriter, r *http.Request)
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			jobs, err := db.ListBackupJobsForOwnerContext(r.Context(), api.db, userID)
+			jobs, err := api.backups.ListBackupJobsForOwnerContext(r.Context(), userID)
 			if err != nil {
 				continue
 			}

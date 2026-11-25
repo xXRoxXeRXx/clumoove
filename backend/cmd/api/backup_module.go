@@ -13,6 +13,7 @@ import (
 // profile-access, and stream-pool concerns are injected at module construction.
 type backupDependencies struct {
 	db                 *sql.DB
+	backups            db.BackupAPIStore
 	encryptionKey      string
 	rateLimiter        rateLimiter
 	profiles           *ownedProfileAccess
@@ -33,6 +34,9 @@ func newBackupAPI(deps backupDependencies) *backupAPI {
 	if deps.streamPool == nil {
 		deps.streamPool = newDefaultUserStreamPool()
 	}
+	if deps.backups == nil {
+		deps.backups = backupAPIStoreFor(deps.db)
+	}
 	return &backupAPI{backupDependencies: deps}
 }
 
@@ -40,6 +44,7 @@ func (s *APIServer) backups() *backupAPI {
 	return newBackupAPI(backupDependencies{
 		requestEnv:    s.requestEnv(),
 		db:            s.db,
+		backups:       backupAPIStoreFor(s.db),
 		encryptionKey: s.encryptionKey,
 		rateLimiter:   s.rateLimiter,
 		profiles:      s.profiles(),
@@ -128,7 +133,7 @@ func (api *backupAPI) detailStreamPollInterval() time.Duration {
 // another account to the same response. This prevents backup IDs being used for
 // account enumeration while keeping database failures distinguishable.
 func (api *backupAPI) requireBackupOwnership(w http.ResponseWriter, r *http.Request, id, userID string) bool {
-	owned, err := db.VerifyBackupJobOwnershipContext(r.Context(), api.db, id, userID)
+	owned, err := api.backups.VerifyBackupJobOwnershipContext(r.Context(), id, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return false
