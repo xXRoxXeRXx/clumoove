@@ -21,6 +21,7 @@ type fakeSyncStore struct {
 	threads map[string]int
 	listErr error
 	updates []string
+	scopeErr error
 }
 
 func newFakeSyncStore() *fakeSyncStore {
@@ -168,5 +169,37 @@ func TestSyncHandlersUseTheSyncStore(t *testing.T) {
 		if tasks.asked != "" {
 			t.Errorf("task store was queried for a foreign job: %q", tasks.asked)
 		}
+	})
+}
+
+func (f *fakeSyncStore) UpdateSyncJobScope(syncJobID string, _ []string, _ string, _ string, _ string, _ *bool) error {
+	f.updates = append(f.updates, "scope:"+syncJobID)
+	return f.scopeErr
+}
+
+func TestSyncUpdateScopeUsesSyncStore(t *testing.T) {
+	t.Run("owner can update scope", func(t *testing.T) {
+		store := newFakeSyncStore()
+		store.add("mine", "user-1")
+		api := newFakeStoreSyncAPI(store, nil)
+		rec := serveSyncStoreAPI(api, http.MethodPut, "/api/sync/mine/scope", "user-1", `{"selected_paths":["/docs"]}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if len(store.updates) != 1 || store.updates[0] != "scope:mine" {
+			t.Fatalf("updates = %v, want [scope:mine]", store.updates)
+		}
+	})
+
+	t.Run("foreign job returns 404 and invalid state returns 409", func(t *testing.T) {
+		store := newFakeSyncStore()
+		store.add("mine", "user-1")
+		api := newFakeStoreSyncAPI(store, nil)
+		rec := serveSyncStoreAPI(api, http.MethodPut, "/api/sync/mine/scope", "user-2", `{"selected_paths":["/docs"]}`)
+		assertAPIError(t, rec, http.StatusNotFound, ErrSyncNotFound)
+
+		store.scopeErr = db.ErrSyncInvalidState
+		rec = serveSyncStoreAPI(api, http.MethodPut, "/api/sync/mine/scope", "user-1", `{"selected_paths":["/docs"]}`)
+		assertAPIError(t, rec, http.StatusConflict, ErrSyncInvalidState)
 	})
 }

@@ -26,6 +26,7 @@ var (
 // once per component, so call sites describe only what differs per owner.
 type RefresherConfig struct {
 	DB          *sql.DB
+	Rotations   db.OAuthRotationStore
 	BackupStore RotationBackupStore
 	Cache       *RotationCache
 	LocalLocks  *KeyLockSet
@@ -49,6 +50,9 @@ type Refresher struct {
 func NewRefresher(cfg RefresherConfig) *Refresher {
 	if v := reflect.ValueOf(cfg.Locker); v.Kind() == reflect.Pointer && v.IsNil() {
 		cfg.Locker = nil
+	}
+	if cfg.Rotations == nil && cfg.DB != nil {
+		cfg.Rotations = db.NewOAuthRotationStore(cfg.DB)
 	}
 	return &Refresher{cfg: cfg}
 }
@@ -93,6 +97,7 @@ type OwnerRefresh struct {
 func (r *Refresher) Refresh(ctx context.Context, req OwnerRefresh) (RotationRefreshResult, error) {
 	rotation := RotationRefreshRequest{
 		DB:            r.cfg.DB,
+		Rotations:     r.cfg.Rotations,
 		BackupStore:   r.cfg.BackupStore,
 		Cache:         r.cfg.Cache,
 		LocalLocks:    r.cfg.LocalLocks,

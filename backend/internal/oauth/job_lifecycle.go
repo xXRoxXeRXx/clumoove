@@ -34,6 +34,7 @@ type JobTokenRefresher struct {
 	db         *sql.DB
 	migrations db.MigrationStore
 	syncs      db.SyncStore
+	rotations  db.OAuthRotationStore
 	secretKey  string
 	locker     TokenLocker
 	refresh    func(context.Context, string, string) (*TokenResponse, error)
@@ -51,12 +52,13 @@ func NewJobTokenRefresher(database *sql.DB, secretKey string, locker TokenLocker
 	if database != nil {
 		r.migrations = db.NewMigrationStore(database)
 		r.syncs = db.NewSyncStore(database)
+		r.rotations = db.NewOAuthRotationStore(database)
 	}
 	return r
 }
 
 func (r *JobTokenRefresher) refresher() *Refresher {
-	return NewRefresher(RefresherConfig{DB: r.db, Locker: r.locker, EncryptionKey: r.secretKey})
+	return NewRefresher(RefresherConfig{DB: r.db, Rotations: r.rotations, Locker: r.locker, EncryptionKey: r.secretKey})
 }
 
 func (r *JobTokenRefresher) refreshToken(ctx context.Context, provider, refresh string) (*TokenResponse, error) {

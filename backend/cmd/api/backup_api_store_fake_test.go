@@ -47,6 +47,8 @@ type fakeBackupAPIStore struct {
 	cancelled    bool
 	cancelErr    error
 
+	updateErr error
+
 	calls []string
 }
 
@@ -389,4 +391,28 @@ func TestBackupRunAndSnapshotReadsUseTheBackupAPIStore(t *testing.T) {
 		assertAPIError(t, serveBackup(t, api, http.MethodGet, "/api/backup/b1/snapshots/s1/items?path=a/../../b", ""), http.StatusBadRequest, ErrFolderPathInvalid)
 		assertAPIError(t, serveBackup(t, api, http.MethodGet, "/api/backup/b1/snapshots/s1/items?path=docs", ""), http.StatusInternalServerError, ErrInternalError)
 	})
+}
+
+func (f *fakeBackupAPIStore) UpdateBackupJobContext(_ context.Context, jobID, userID, _, _ string, _, _ int, _ *time.Time) error {
+	f.calls = append(f.calls, "update:"+jobID+":"+userID)
+	return f.updateErr
+}
+
+func TestBackupUpdateUsesBackupAPIStore(t *testing.T) {
+	store := &fakeBackupAPIStore{
+		owned: true,
+		job:   &db.BackupJob{ID: "b1", UserID: "user-1"},
+	}
+	api, _ := newFakeBackupAPI(store)
+
+	rec := serveBackup(t, api, http.MethodPut, "/api/backup/b1", `{"cron_expression":"0 * * * *","timezone":"UTC","retention_count":5,"threads":2}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(store.calls) < 2 || store.calls[1] != "update:b1:user-1" {
+		t.Fatalf("calls = %v, want update:b1:user-1", store.calls)
+	}
+
+	store.owned = false
+	assertAPIError(t, serveBackup(t, api, http.MethodPut, "/api/backup/b1", `{"cron_expression":"0 * * * *","timezone":"UTC","retention_count":5,"threads":2}`), http.StatusNotFound, ErrBackupNotFound)
 }

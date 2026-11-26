@@ -918,6 +918,7 @@ func (s *RotationRepairState) repairOnePendingBackup(ctx context.Context, rotati
 // RotationRefreshRequest configures a token-locked, chain-aware OAuth refresh.
 type RotationRefreshRequest struct {
 	DB            *sql.DB
+	Rotations     db.OAuthRotationStore
 	BackupStore   RotationBackupStore
 	Cache         *RotationCache
 	LocalLocks    *KeyLockSet
@@ -979,9 +980,14 @@ func RefreshWithRotationLock(ctx context.Context, req RotationRefreshRequest) (R
 		}
 	}
 
+	rotations := req.Rotations
+	if rotations == nil {
+		rotations = rotationStoreFor(req.DB)
+	}
+
 	currentToken := req.RefreshToken
 	for hop := 0; hop < maxRotationHops; hop++ {
-		rotated, ok, lookupErr := LookupRotatedRefreshTokenWithStore(ctx, req.DB, backupStore, req.Cache, req.EncryptionKey, req.UserID, req.Provider, currentToken, nowFn())
+		rotated, ok, lookupErr := lookupRotatedRefreshToken(ctx, rotations, backupStore, req.Cache, req.EncryptionKey, req.UserID, req.Provider, currentToken, nowFn())
 		if lookupErr != nil {
 			return RotationRefreshResult{}, lookupErr
 		}
@@ -1021,7 +1027,7 @@ func RefreshWithRotationLock(ctx context.Context, req RotationRefreshRequest) (R
 		}
 		preRefreshCtx, cancelPreRefresh := context.WithTimeout(ctx, preRefreshBudget)
 
-		rotated, ok, lookupErr = LookupRotatedRefreshTokenWithStore(preRefreshCtx, req.DB, backupStore, req.Cache, req.EncryptionKey, req.UserID, req.Provider, target, nowFn())
+		rotated, ok, lookupErr = lookupRotatedRefreshToken(preRefreshCtx, rotations, backupStore, req.Cache, req.EncryptionKey, req.UserID, req.Provider, target, nowFn())
 		if lookupErr != nil {
 			cancelPreRefresh()
 			releaseLocks()
@@ -1110,7 +1116,7 @@ func RefreshWithRotationLock(ctx context.Context, req RotationRefreshRequest) (R
 			if req.ExtraAliases != nil {
 				aliases = append(aliases, req.ExtraAliases()...)
 			}
-			recErr = RecordRotatedRefreshTokenWithStore(persistCtx, req.DB, backupStore, req.Cache, req.EncryptionKey, req.UserID, req.Provider, tokenResp.RefreshToken, now, aliases...)
+			recErr = recordRotatedRefreshToken(persistCtx, rotations, backupStore, req.Cache, req.EncryptionKey, req.UserID, req.Provider, tokenResp.RefreshToken, now, aliases...)
 		}
 
 		if req.Persist != nil {

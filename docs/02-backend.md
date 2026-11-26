@@ -112,16 +112,7 @@ migrations** so the schema self-heals on first boot:
   `postgres:postgres@`, startup fails (local/private hosts are exempted).
 
 Key persistence operations (several are now reached only through the feature stores described below) include `CreateMigration`, `GetMigration`, `TransitionMigration` (guarded pause/cancel/fail transitions),
-`UpdateMigrationStatusIfIndexing`, `IncrementMigrationProgress` (transitions to `COMPLETED`/`FAILED`),
-`CreateSyncJobAndSchedule`, `GetSyncJob`, `ListSyncJobs`,
-`CreateBackupJob`, `GetBackupJob`, `ListBackupJobs`, `CreateBackupRun`, `GetBackupRun`, `ListBackupSnapshots`,
-`CreateRestorePreview`, `GetRestorePreview`, `CreateRestoreRun`, `GetRestoreRun`,
-`CreateTask`, `GetTask`, `UpdateTaskStatus`, `ResetMigrationForReindex` (TOCTOU-safe),
-`RecordIndexingErrors`, `WriteAuditLog`, `GetDueSchedules`, `UpdateNextRunAt`, `DeactivateSchedule`,
-`VerifyMigrationOwnership`, `VerifySyncOwnership`, `VerifyBackupOwnership`, `IsSetupRequired`, `ListUsers`, `GetGlobalStats`,
-`ListAllMigrations`, `ListAllSyncs`, `ListAuditLog`, and paginated admin views.
-
-Persistence is moving behind feature stores one feature at a time (issue #83). Connection profiles, the migrations table, task rows, sync jobs, schedules, users, instance settings and the auth tokens (refresh tokens, password-reset and email-change tokens) are done: outside `internal/db` they are reached only through `db.ProfileStore`, `db.MigrationStore`, `db.TaskStore`, `db.SyncStore`, `db.ScheduleStore`, `db.UserStore`, `db.SettingsStore` and `db.AuthTokenStore` (`NewProfileStore`, `NewMigrationStore`, `NewTaskStore`, `NewSyncStore`, `NewScheduleStore`, `NewUserStore`, `NewSettingsStore`, `NewAuthTokenStore`), so API handlers take a store through their dependencies and in-package tests of the scheduler, indexer, processor and worker can swap in a fake. The refresh-token rotation (consume, lock the account, re-check it is active, store the replacement) is one `AuthTokenStore.RotateRefreshToken` transaction. Still outside the stores: inline SQL on `sync_jobs`, `migrations`, `tasks`, `schedules` and `users` in the scheduler recovery, worker maintenance and verification, the queue dequeue, the sync engine and the backup handlers, the other tables (audit, notifications, OAuth providers, backup and restore API reads), and the migration notification outbox.
+All feature persistence outside `internal/db` goes through feature stores (`NewProfileStore`, `NewMigrationStore`, `NewTaskStore`, `NewSyncStore`, `NewScheduleStore`, `NewUserStore`, `NewSettingsStore`, `NewAuthTokenStore`, `NewAuditStore`, `NewNotificationStore`, `NewOAuthProviderStore`, `NewOAuthRotationStore`, `NewBackupStore`/`NewBackupAPIStore`, `NewRestoreStore`/`NewRestoreAPIStore` — issue #83). Package-level functions in `internal/db` remain unexported implementation details; multi-statement API operations (such as `AuthTokenStore.RotateRefreshToken`, backup create/pause/resume, and restore preview consumption) run as single store methods with their transactions inside `internal/db`. API handlers receive stores through their module dependencies, and scheduler, indexer, processor, queue, sync, and worker tests can swap in fake stores.
 
 ### `StringArray` & JSONB
 

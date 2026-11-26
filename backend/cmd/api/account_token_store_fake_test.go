@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -32,6 +33,12 @@ type fakeTokenStore struct {
 	revoked      [][2]string // session id, user id
 	deleted      []string    // token hashes removed by logout
 	deleteTokErr error
+
+	claimedEmailUser string
+	claimedEmail     string
+	claimEmailErr    error
+	claimedEmailHash string
+	deletedAllUser   string
 }
 
 func (f *fakeTokenStore) RotateRefreshToken(_ context.Context, oldHash, newHash string, _ time.Time) (db.RefreshRotationOutcome, *db.User, error) {
@@ -53,6 +60,16 @@ func (f *fakeTokenStore) DeleteRefreshSessionForUser(_ context.Context, sessionI
 func (f *fakeTokenStore) DeleteRefreshToken(tokenHash string) error {
 	f.deleted = append(f.deleted, tokenHash)
 	return f.deleteTokErr
+}
+
+func (f *fakeTokenStore) ClaimEmailChangeToken(_ context.Context, tokenHash string) (string, string, error) {
+	f.claimedEmailHash = tokenHash
+	return f.claimedEmailUser, f.claimedEmail, f.claimEmailErr
+}
+
+func (f *fakeTokenStore) DeleteAllRefreshTokensForUser(userID string) error {
+	f.deletedAllUser = userID
+	return nil
 }
 
 func newFakeTokenStoreAccountAPI(tokens db.AuthTokenStore) *accountAPI {
@@ -223,5 +240,43 @@ func TestSessionsAndLogoutUseTheTokenStore(t *testing.T) {
 		if !clearsRefreshCookie(rec) {
 			t.Error("the refresh cookie was not cleared")
 		}
+	})
+}
+
+func TestConfirmEmailChangeUsesTokenStore(t *testing.T) {
+	serve := func(store *fakeTokenStore, body string) *httptest.ResponseRecorder {
+		api := newAccountAPI(accountDependencies{
+			tokens:      store,
+			settings:    &fakeSettingsStore{},
+			rateLimiter: allowAllFileRateLimiter{},
+			requestEnv: requestEnv{
+				logf:     func(*http.Request, string, ...any) {},
+				clientIP: func(*http.Request) string { return "203.0.113.1" },
+			},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/confirm-email-change", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		api.handleConfirmEmailChange(rec, req)
+		return rec
+	}
+
+	t.Run("valid token claims email change by hash and revokes refresh tokens", func(t *testing.T) {
+		store := &fakeTokenStore{claimedEmailUser: "user-1", claimedEmail: "new@example.test"}
+		rec := serve(store, `{"token":"raw-email-token"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if store.claimedEmailHash != hashToken("raw-email-token") {
+			t.Fatalf("claimed hash = %q, want hash of raw-email-token", store.claimedEmailHash)
+		}
+		if store.deletedAllUser != "user-1" {
+			t.Fatalf("deletedAllUser = %q, want user-1", store.deletedAllUser)
+		}
+	})
+
+	t.Run("missing or expired token returns 400", func(t *testing.T) {
+		store := &fakeTokenStore{claimEmailErr: sql.ErrNoRows}
+		rec := serve(store, `{"token":"expired"}`)
+		assertAPIError(t, rec, http.StatusBadRequest, ErrEmailChangeTokenInvalid)
 	})
 }

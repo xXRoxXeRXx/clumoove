@@ -30,8 +30,14 @@ func writeUnauthorized(w http.ResponseWriter) {
 type AuthStateLookup func(id string) (*db.UserAuthState, error)
 
 func databaseAuthStateLookup(database *sql.DB) AuthStateLookup {
+	if database == nil {
+		return func(string) (*db.UserAuthState, error) {
+			return nil, errors.New("database is nil")
+		}
+	}
+	users := db.NewUserStore(database)
 	return func(id string) (*db.UserAuthState, error) {
-		return db.NewUserStore(database).GetUserAuthState(id)
+		return users.GetUserAuthState(id)
 	}
 }
 

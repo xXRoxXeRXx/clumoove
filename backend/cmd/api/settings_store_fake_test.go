@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,9 @@ type fakeSettingsStore struct {
 	getErr error
 	setErr error
 	set    [][2]string
+	smtp   *db.InstanceSMTPSettings
+	smtpErr error
+	deletedSMTP int
 }
 
 func (f *fakeSettingsStore) GetSetting(key string) (string, error) {
@@ -31,6 +35,22 @@ func (f *fakeSettingsStore) GetSetting(key string) (string, error) {
 
 func (f *fakeSettingsStore) SetSetting(key, value string) error {
 	f.set = append(f.set, [2]string{key, value})
+	return f.setErr
+}
+
+func (f *fakeSettingsStore) GetInstanceSMTPSettings() (*db.InstanceSMTPSettings, error) {
+	if f.smtpErr != nil {
+		return nil, f.smtpErr
+	}
+	if f.smtp == nil {
+		return nil, sql.ErrNoRows
+	}
+	return f.smtp, nil
+}
+
+func (f *fakeSettingsStore) DeleteInstanceSMTPSettings() error {
+	f.deletedSMTP++
+	f.smtp = nil
 	return f.setErr
 }
 
@@ -146,5 +166,48 @@ func adminHeaderAuthMiddleware(next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), auth.ClaimsKey, &auth.Claims{UserID: userID, Role: "ADMIN"})
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func TestAdminSMTPHandlersUseSettingsStore(t *testing.T) {
+	serve := func(store *fakeSettingsStore, method string) *httptest.ResponseRecorder {
+		api := newSettingsAdminAPI(store, &fakeSetupUsers{})
+		mux := http.NewServeMux()
+		mux.Handle("GET /api/admin/smtp", adminHeaderAuthMiddleware(http.HandlerFunc(api.handleAdminGetSMTP)))
+		mux.Handle("DELETE /api/admin/smtp", adminHeaderAuthMiddleware(http.HandlerFunc(api.handleAdminDeleteSMTP)))
+		req := httptest.NewRequest(method, "/api/admin/smtp", nil)
+		req.Header.Set("X-Test-User", "admin-1")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("unconfigured SMTP returns configured false", func(t *testing.T) {
+		rec := serve(&fakeSettingsStore{}, http.MethodGet)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"configured":false`) {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("configured SMTP returns settings and delete clears them", func(t *testing.T) {
+		store := &fakeSettingsStore{
+			smtp: &db.InstanceSMTPSettings{
+				SMTPHost:        "smtp.example.test",
+				SMTPPort:        587,
+				SMTPUsername:    "mailer",
+				SMTPPasswordEnc: "enc",
+				SMTPFromEmail:   "noreply@example.test",
+				SMTPEncryption:  "starttls",
+			},
+		}
+		rec := serve(store, http.MethodGet)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "smtp.example.test") {
+			t.Fatalf("GET status = %d body = %s", rec.Code, rec.Body.String())
+		}
+
+		delRec := serve(store, http.MethodDelete)
+		if delRec.Code != http.StatusOK || store.deletedSMTP != 1 {
+			t.Fatalf("DELETE status = %d deletedSMTP = %d", delRec.Code, store.deletedSMTP)
+		}
 	})
 }
