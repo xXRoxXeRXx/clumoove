@@ -182,7 +182,8 @@ func TestOneDriveProviderSharesShortcutResolutionAcrossInstances(t *testing.T) {
 	errs := make(chan error, transfers)
 	for i := 0; i < transfers; i++ {
 		go func(i int) {
-			p := newOneDriveProvider("shared-token", server.URL+"/v1.0/me/drive", server.Client())
+			client := &http.Client{Transport: newRetryTransport(server.Client().Transport, retryOptions{})}
+			p := newOneDriveProvider("shared-token", server.URL+"/v1.0/me/drive", client)
 			stream, err := p.StreamDownload(context.Background(), "files", "/Shared folder/file-"+string(rune('a'+i))+".txt")
 			if err == nil {
 				_, err = io.ReadAll(stream)

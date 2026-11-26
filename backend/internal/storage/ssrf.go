@@ -113,6 +113,9 @@ type providerHTTPOptions struct {
 	// RejectRedirects sets CheckRedirect to rejectEgressRedirect on
 	// newFixedEndpointClient. newEgressClient always rejects redirects.
 	RejectRedirects bool
+	// Retry wraps the base transport with retryTransport for transient 429/503
+	// responses on requests with replayable bodies.
+	Retry bool
 }
 
 func defaultProviderTransport() *http.Transport {
@@ -166,8 +169,11 @@ func buildProviderHTTPClient(opts providerHTTPOptions, dialer func(context.Conte
 	}
 
 	var rt http.RoundTripper = tr
+	if opts.Retry {
+		rt = newRetryTransport(rt, retryOptions{})
+	}
 	if opts.WrapTransport != nil {
-		rt = opts.WrapTransport(tr)
+		rt = opts.WrapTransport(rt)
 	}
 
 	var checkRedirect func(*http.Request, []*http.Request) error

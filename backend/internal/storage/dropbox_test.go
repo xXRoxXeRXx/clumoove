@@ -150,7 +150,7 @@ func TestDropboxDirectoryCacheDoesNotRetainAccessToken(t *testing.T) {
 
 func TestDropboxListingRetriesRateLimitsAndHonorsCancellation(t *testing.T) {
 	calls := 0
-	p := &DropboxProvider{HTTPClient: &http.Client{Transport: mockRoundTripper{fn: func(*http.Request) (*http.Response, error) {
+	rt := newRetryTransport(mockRoundTripper{fn: func(*http.Request) (*http.Response, error) {
 		calls++
 		if calls == 1 {
 			header := make(http.Header)
@@ -158,7 +158,8 @@ func TestDropboxListingRetriesRateLimitsAndHonorsCancellation(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusTooManyRequests, Body: io.NopCloser(strings.NewReader(`{}`)), Header: header}, nil
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"entries":[]}`)), Header: make(http.Header)}, nil
-	}}}}
+	}}, retryOptions{})
+	p := &DropboxProvider{HTTPClient: &http.Client{Transport: rt}}
 	if _, err := p.GetDirectoryListing(context.Background(), "files", "/"); err != nil {
 		t.Fatal(err)
 	}
@@ -167,8 +168,8 @@ func TestDropboxListingRetriesRateLimitsAndHonorsCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := dropboxWait(ctx, "", 0); !errors.Is(err, context.Canceled) {
-		t.Fatalf("dropboxWait cancellation error = %v", err)
+	if err := sleepWithContext(ctx, time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("sleepWithContext cancellation error = %v", err)
 	}
 }
 

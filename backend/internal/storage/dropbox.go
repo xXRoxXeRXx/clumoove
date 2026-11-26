@@ -95,7 +95,10 @@ var _ StorageProvider = (*DropboxProvider)(nil)
 func NewDropboxProvider(token string) (*DropboxProvider, error) {
 	return &DropboxProvider{
 		AccessToken: token,
-		HTTPClient:  newFixedEndpointClient(providerHTTPOptions{WrapTransport: newUserAgentTransport}),
+		HTTPClient: newFixedEndpointClient(providerHTTPOptions{
+			WrapTransport: newUserAgentTransport,
+			Retry:         true,
+		}),
 	}, nil
 }
 
@@ -136,72 +139,10 @@ func escapeAPIArg(arg interface{}) (string, error) {
 	return buf.String(), nil
 }
 
-func dropboxRetryDelay(retryAfter string, attempt int) time.Duration {
-	if seconds, err := time.ParseDuration(retryAfter + "s"); err == nil && retryAfter != "" {
-		return seconds
-	}
-	if retryAt, err := http.ParseTime(retryAfter); err == nil {
-		if delay := time.Until(retryAt); delay > 0 {
-			return delay
-		}
-	}
-	delay := 10 * time.Second
-	for i := 0; i < attempt; i++ {
-		delay *= 3
-	}
-	return delay
-}
-
-func dropboxWait(ctx context.Context, retryAfter string, attempt int) error {
-	timer := time.NewTimer(dropboxRetryDelay(retryAfter, attempt))
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
-// do retries requests whose body can safely be replayed. Dropbox rate limits
-// and transient server failures are common on large transfers; honoring
-// Retry-After prevents a worker from immediately consuming the next quota.
+// do executes a Dropbox request with ctx. Transient 429/503 retries for
+// replayable bodies are handled by the shared retryTransport on HTTPClient.
 func (p *DropboxProvider) do(ctx context.Context, req *http.Request) (*http.Response, error) {
-	replayable := req.Body == nil || req.GetBody != nil
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			if req.GetBody != nil {
-				body, err := req.GetBody()
-				if err != nil {
-					return nil, err
-				}
-				req.Body = body
-			}
-		}
-		resp, err := p.HTTPClient.Do(req)
-		if err == nil && (resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500) {
-			return resp, nil
-		}
-		if !replayable || attempt == 2 {
-			if err != nil {
-				return nil, err
-			}
-			return resp, nil
-		}
-		retryAfter := ""
-		if err != nil {
-			lastErr = err
-		} else {
-			retryAfter = resp.Header.Get("Retry-After")
-			lastErr = fmt.Errorf("dropbox request failed with status: %d", resp.StatusCode)
-			resp.Body.Close()
-		}
-		if err := dropboxWait(ctx, retryAfter, attempt); err != nil {
-			return nil, err
-		}
-	}
-	return nil, lastErr
+	return p.HTTPClient.Do(req.WithContext(ctx))
 }
 
 func (p *DropboxProvider) newRequest(method, urlStr string, body io.Reader) (*http.Request, error) {

@@ -125,6 +125,7 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 			tr.ResponseHeaderTimeout = 0
 		},
 		WrapTransport: newUserAgentTransport,
+		Retry:         true,
 	})
 	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, baseClient)
 

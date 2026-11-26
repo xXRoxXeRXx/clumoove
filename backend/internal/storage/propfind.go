@@ -16,16 +16,7 @@ import (
 // retries cannot run forever.
 const maxListAttempts = 3
 
-var propfindRetryWait = func(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
+var propfindRetryWait = sleepWithContext
 
 // listingTimeout returns the per-request timeout for a single WebDAV/Nextcloud
 // PROPFIND directory listing. Configurable via WEBDAV_LISTING_TIMEOUT_SECONDS

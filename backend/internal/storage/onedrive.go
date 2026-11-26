@@ -66,6 +66,7 @@ func NewOneDriveProvider(token string) (*OneDriveProvider, error) {
 	client := newFixedEndpointClient(providerHTTPOptions{
 		BaseTransport: compactProviderTransport(),
 		WrapTransport: newUserAgentTransport,
+		Retry:         true,
 	})
 	return newOneDriveProvider(token, defaultOneDriveAPIBase, client), nil
 }
@@ -229,42 +230,27 @@ func (p *OneDriveProvider) inspectSharedShortcut(ctx context.Context, rootFolder
 	if err != nil {
 		return "", err
 	}
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		req, err := p.request(ctx, http.MethodGet, rootURL+"?$select=id,remoteItem", nil, true)
-		if err != nil {
-			return "", err
-		}
-		resp, err := p.httpClient.Do(req)
-		if err != nil {
-			return "", err
-		}
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			var root oneDriveItem
-			decodeErr := json.NewDecoder(resp.Body).Decode(&root)
-			resp.Body.Close()
-			if decodeErr != nil {
-				return "", fmt.Errorf("decode onedrive shared root: %w", decodeErr)
-			}
-			if root.RemoteItem == nil || root.RemoteItem.ID == "" || root.RemoteItem.ParentReference.DriveID == "" {
-				return "", nil
-			}
-			graphBase := strings.TrimSuffix(p.apiBase, "/me/drive")
-			return graphBase + "/drives/" + url.PathEscape(root.RemoteItem.ParentReference.DriveID) + "/items/" + url.PathEscape(root.RemoteItem.ID), nil
-		}
-		lastErr = oneDriveError("inspect shared root", resp.StatusCode)
-		retryAfter := resp.Header.Get("Retry-After")
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
-			return "", lastErr
-		}
-		if attempt < 2 {
-			if err := oneDriveWait(ctx, retryAfter, attempt); err != nil {
-				return "", err
-			}
-		}
+	req, err := p.request(ctx, http.MethodGet, rootURL+"?$select=id,remoteItem", nil, true)
+	if err != nil {
+		return "", err
 	}
-	return "", lastErr
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var root oneDriveItem
+		if decodeErr := json.NewDecoder(resp.Body).Decode(&root); decodeErr != nil {
+			return "", fmt.Errorf("decode onedrive shared root: %w", decodeErr)
+		}
+		if root.RemoteItem == nil || root.RemoteItem.ID == "" || root.RemoteItem.ParentReference.DriveID == "" {
+			return "", nil
+		}
+		graphBase := strings.TrimSuffix(p.apiBase, "/me/drive")
+		return graphBase + "/drives/" + url.PathEscape(root.RemoteItem.ParentReference.DriveID) + "/items/" + url.PathEscape(root.RemoteItem.ID), nil
+	}
+	return "", oneDriveError("inspect shared root", resp.StatusCode)
 }
 
 func (p *OneDriveProvider) request(ctx context.Context, method, rawURL string, body io.Reader, authorize bool) (*http.Request, error) {
@@ -640,55 +626,21 @@ func (p *OneDriveProvider) sessionUpload(ctx context.Context, filePath string, s
 }
 
 func (p *OneDriveProvider) uploadChunk(ctx context.Context, uploadURL string, chunk []byte, offset, total int64) error {
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		req, err := p.request(ctx, http.MethodPut, uploadURL, bytes.NewReader(chunk), false)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", "application/octet-stream")
-		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+int64(len(chunk))-1, total))
-		resp, err := p.httpClient.Do(req)
-		if err == nil {
-			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusAccepted {
-				resp.Body.Close()
-				return nil
-			}
-			lastErr = oneDriveError("upload chunk", resp.StatusCode)
-			retryAfter := resp.Header.Get("Retry-After")
-			resp.Body.Close()
-			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
-				return lastErr
-			}
-			if err := oneDriveWait(ctx, retryAfter, attempt); err != nil {
-				return err
-			}
-			continue
-		}
-		lastErr = err
-		if err := oneDriveWait(ctx, "", attempt); err != nil {
-			return err
-		}
+	req, err := p.request(ctx, http.MethodPut, uploadURL, bytes.NewReader(chunk), false)
+	if err != nil {
+		return err
 	}
-	return lastErr
-}
-
-func oneDriveWait(ctx context.Context, retryAfter string, attempt int) error {
-	delay := time.Duration(attempt+1) * time.Second
-	if seconds, err := time.ParseDuration(retryAfter + "s"); err == nil && retryAfter != "" {
-		delay = seconds
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+int64(len(chunk))-1, total))
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return err
 	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusAccepted {
 		return nil
 	}
+	return oneDriveError("upload chunk", resp.StatusCode)
 }
 
 func (p *OneDriveProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {

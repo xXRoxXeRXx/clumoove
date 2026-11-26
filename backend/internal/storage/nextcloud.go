@@ -196,7 +196,10 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 			BaseURL:                baseURL,
 			Username:               username,
 			Password:               password,
-			HTTPClient:             newEgressClient(host, providerHTTPOptions{WrapTransport: newLoggingTransport}),
+			HTTPClient: newEgressClient(host, providerHTTPOptions{
+				WrapTransport: newLoggingTransport,
+				Retry:         true,
+			}),
 			Threads:                8,
 			pb:                     nextcloudPaths{},
 			supportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
@@ -771,7 +774,7 @@ func (p *davProvider) StreamUploadChunkedWithOptions(ctx context.Context, resour
 		// Naming of chunks is limited to be between 1 and 10000. Padded to 5 digits.
 		chunkURL := fmt.Sprintf("%s/%05d", uploadsFolderURL, chunkIndex+1)
 
-		err := p.uploadChunkWithRetry(ctx, chunkURL, chunkData, destURL, fileSize)
+		err := p.uploadChunk(ctx, chunkURL, chunkData, destURL, fileSize)
 		if err != nil {
 			return UploadResult{}, fmt.Errorf("failed to upload chunk %d: %w", chunkIndex+1, err)
 		}
@@ -837,53 +840,31 @@ func (p *davProvider) StreamUploadChunkedWithOptions(ctx context.Context, resour
 	return UploadResult{}, fmt.Errorf("failed to commit chunked upload, status: %d", resp.StatusCode)
 }
 
-func (p *davProvider) uploadChunkWithRetry(ctx context.Context, chunkURL string, data []byte, destURL string, totalSize int64) error {
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		req, err := p.newRequest("PUT", chunkURL, bytes.NewReader(data))
-		if err != nil {
-			return err
-		}
-		req = req.WithContext(ctx)
-		req.Header.Set("Content-Type", "application/octet-stream")
-		req.ContentLength = int64(len(data))
-		req.Header.Set("Destination", destURL)
-		req.Header.Set("OC-Total-Length", strconv.FormatInt(totalSize, 10))
-
-		resp, err := p.HTTPClient.Do(req)
-		if err != nil {
-			lastErr = err
-			if err := waitForRetry(ctx, time.Duration(attempt+1)*2*time.Second); err != nil {
-				return err
-			}
-			continue
-		}
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil
-		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("nextcloud upload chunk: %w", ErrAuth)
-		}
-		lastErr = fmt.Errorf("status code %d", resp.StatusCode)
-		if err := waitForRetry(ctx, time.Duration(attempt+1)*2*time.Second); err != nil {
-			return err
-		}
+func (p *davProvider) uploadChunk(ctx context.Context, chunkURL string, data []byte, destURL string, totalSize int64) error {
+	req, err := p.newRequest("PUT", chunkURL, bytes.NewReader(data))
+	if err != nil {
+		return err
 	}
-	return lastErr
-}
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.ContentLength = int64(len(data))
+	req.Header.Set("Destination", destURL)
+	req.Header.Set("OC-Total-Length", strconv.FormatInt(totalSize, 10))
 
-func waitForRetry(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("nextcloud upload chunk: %w", ErrAuth)
+	}
+	return fmt.Errorf("status code %d", resp.StatusCode)
 }
 
 // globalDAVCreatedDirs caches directory existence across DAV provider instances within the worker process.

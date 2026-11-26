@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +70,12 @@ const seafileResumableChunkSize int64 = 64 * 1024 * 1024
 // retain NewEgressStreamingHTTPClient in production.
 var newSeafileIssuedLinkHTTPClient = NewEgressStreamingHTTPClient
 
+func wrapSeafileTransport(client *http.Client) {
+	if client != nil {
+		client.Transport = newUserAgentTransport(newRetryTransport(client.Transport, retryOptions{}))
+	}
+}
+
 // NewSeafileProvider creates a new Seafile storage provider instance.
 func NewSeafileProvider(urlStr, username, password string) (*SeafileProvider, error) {
 	urlStr = strings.TrimRight(urlStr, "/")
@@ -87,7 +92,7 @@ func NewSeafileProvider(urlStr, username, password string) (*SeafileProvider, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP client for seafile: %w", err)
 	}
-	client.Transport = newUserAgentTransport(client.Transport)
+	wrapSeafileTransport(client)
 
 	return &SeafileProvider{
 		BaseURL:    urlStr,
@@ -122,7 +127,7 @@ func (p *SeafileProvider) issuedLinkClient(rawURL string) (*http.Client, bool, e
 	if err != nil {
 		return nil, false, err
 	}
-	client.Transport = newUserAgentTransport(client.Transport)
+	wrapSeafileTransport(client)
 	return client, !sameHTTPEndpoint(base, link), nil
 }
 
@@ -281,10 +286,8 @@ func (p *SeafileProvider) fetchAccountToken(ctx context.Context) (string, *Retry
 
 func parseRetryAfter(value string, now time.Time) *RetryAfterError {
 	after := time.Second
-	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
-		after = time.Duration(seconds) * time.Second
-	} else if retryAt, err := http.ParseTime(value); err == nil && retryAt.After(now) {
-		after = time.Until(retryAt)
+	if d, ok := parseRetryAfterHeader(value, now); ok && d > 0 {
+		after = d
 	}
 	return &RetryAfterError{After: after}
 }

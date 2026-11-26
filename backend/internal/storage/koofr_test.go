@@ -19,7 +19,10 @@ func newTestKoofrProvider(server *httptest.Server) *KoofrProvider {
 		panic(err)
 	}
 	p.BaseURL = server.URL
-	p.HTTPClient = &http.Client{Transport: server.Client().Transport, CheckRedirect: rejectEgressRedirect}
+	p.HTTPClient = &http.Client{
+		Transport:     newRetryTransport(server.Client().Transport, retryOptions{}),
+		CheckRedirect: rejectEgressRedirect,
+	}
 	return p
 }
 
@@ -510,9 +513,13 @@ func TestNewKoofrProviderUsesPinnedStreamingClient(t *testing.T) {
 	if !ok {
 		t.Fatalf("transport = %T, want *loggingTransport", p.HTTPClient.Transport)
 	}
-	transport, ok := logging.base.(*http.Transport)
+	retryRT, ok := logging.base.(*retryTransport)
+	if !ok {
+		t.Fatalf("logging.base = %T, want *retryTransport", logging.base)
+	}
+	transport, ok := retryRT.base.(*http.Transport)
 	if !ok || transport.DialContext == nil || transport.ResponseHeaderTimeout != 5*time.Minute {
-		t.Fatalf("transport configuration = %#v", logging.base)
+		t.Fatalf("transport configuration = %#v", retryRT.base)
 	}
 }
 

@@ -574,16 +574,12 @@ func (p *OneDriveProvider) pollOneDriveMonitor(ctx context.Context, monitorURL s
 		}
 
 		retryWait := waitInterval
-		if retryHeader := resp.Header.Get("Retry-After"); retryHeader != "" {
-			if secs, err := strconv.Atoi(retryHeader); err == nil && secs > 0 {
-				retryWait = time.Duration(secs) * time.Second
-			}
+		if d, ok := parseRetryAfterHeader(resp.Header.Get("Retry-After"), time.Now()); ok && d > 0 {
+			retryWait = d
 		}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(retryWait):
+		if err := sleepWithContext(ctx, retryWait); err != nil {
+			return err
 		}
 	}
 }

@@ -106,7 +106,10 @@ func NewKoofrProvider(username, password string) (*KoofrProvider, error) {
 		BaseURL:  koofrBaseURL,
 		Username: username,
 		Password: password,
-		HTTPClient: newEgressClient("app.koofr.net", providerHTTPOptions{WrapTransport: newLoggingTransport}),
+		HTTPClient: newEgressClient("app.koofr.net", providerHTTPOptions{
+			WrapTransport: newLoggingTransport,
+			Retry:         true,
+		}),
 	}, nil
 }
 
@@ -612,48 +615,21 @@ func (p *KoofrProvider) newMountedRequest(ctx context.Context, method, prefix, s
 }
 
 func (p *KoofrProvider) do(req *http.Request, statuses ...int) (*http.Response, error) {
-	replayable := req.Body == nil || req.GetBody != nil
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 && req.GetBody != nil {
-			body, err := req.GetBody()
-			if err != nil {
-				return nil, fmt.Errorf("reopen koofr request body: %w", err)
-			}
-			req.Body = body
-		}
-		resp, err := p.HTTPClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("koofr request: %w", err)
-		}
-		for _, status := range statuses {
-			if resp.StatusCode == status {
-				return resp, nil
-			}
-		}
-		if replayable && attempt < 2 && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError) {
-			delay := koofrRetryDelay(resp.Header.Get("Retry-After"))
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-			if err := waitForRetry(req.Context(), delay); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode == http.StatusTooManyRequests {
-			return nil, parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
-		}
-		return nil, koofrHTTPError(resp.StatusCode)
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("koofr request: %w", err)
 	}
-	return nil, fmt.Errorf("koofr request retries exhausted")
-}
-
-func koofrRetryDelay(value string) time.Duration {
-	if retry := parseRetryAfter(value, time.Now()); retry != nil {
-		return retry.After
+	for _, status := range statuses {
+		if resp.StatusCode == status {
+			return resp, nil
+		}
 	}
-	return time.Second
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+	}
+	return nil, koofrHTTPError(resp.StatusCode)
 }
 
 func koofrHTTPError(status int) error {
