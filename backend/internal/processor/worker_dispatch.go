@@ -33,7 +33,7 @@ func (p *Processor) runTransferWorkers(ctx context.Context, notifyTasksCh <-chan
 				case <-ctx.Done():
 					return
 				default:
-					payload, err := p.queue.DequeueSQL(ctx, p.db, p.workerID)
+					payload, err := p.queue.DequeueSQL(ctx, p.tasks, p.workerID)
 					if err != nil {
 						if ctx.Err() != nil {
 							return

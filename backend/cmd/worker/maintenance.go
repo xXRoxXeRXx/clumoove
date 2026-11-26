@@ -12,7 +12,6 @@ import (
 )
 
 type workerMaintenance struct {
-	db                      *sql.DB
 	migrations              db.MigrationStore
 	syncs                   db.SyncStore
 	tasks                   db.TaskStore
@@ -44,7 +43,6 @@ func newWorkerMaintenance(database *sql.DB, q *queue.Queue, idx *indexer.Indexer
 		syncs:         syncs,
 		tasks:         tasks,
 		notifications: notifications,
-		db:            database,
 		queue:         q,
 		indexer:       idx,
 		workerID:      workerID,
@@ -54,7 +52,7 @@ func newWorkerMaintenance(database *sql.DB, q *queue.Queue, idx *indexer.Indexer
 
 // RecoverStartupTasks requeues tasks this worker left behind before a restart.
 func (m *workerMaintenance) RecoverStartupTasks(ctx context.Context) {
-	if err := m.queue.RecoverAbandonedTasks(ctx, m.db, m.workerID); err != nil {
+	if err := m.queue.RecoverAbandonedTasks(ctx, m.tasks, m.workerID); err != nil {
 		workerLogf("maintenance", "[Worker %s] Error recovering abandoned tasks: %v\n", m.workerID, err)
 	}
 }
@@ -117,7 +115,7 @@ func (m *workerMaintenance) runAbandonedWorkerCleanup(ctx context.Context) {
 }
 
 func (m *workerMaintenance) cleanupAbandonedWorkers(ctx context.Context) {
-	deadWorkers, err := m.queue.GetAbandonedWorkerQueues(ctx, m.db)
+	deadWorkers, err := m.queue.GetAbandonedWorkerQueues(ctx, m.tasks)
 	if err != nil {
 		workerLogf("maintenance", "[Liveness] Error scanning for dead workers: %v\n", err)
 		return
@@ -133,10 +131,10 @@ func (m *workerMaintenance) cleanupAbandonedWorkers(ctx context.Context) {
 		if err != nil || !claimed {
 			continue
 		}
-		if err := m.queue.RecoverAbandonedTasks(ctx, m.db, deadWorkerID); err != nil {
+		if err := m.queue.RecoverAbandonedTasks(ctx, m.tasks, deadWorkerID); err != nil {
 			workerLogf("maintenance", "[Liveness] Error recovering tasks for worker %s: %v\n", deadWorkerID, err)
 		} else {
-			m.queue.NotifyTaskAvailable(ctx, m.db)
+			m.queue.NotifyTaskAvailable(ctx, m.tasks)
 		}
 	}
 }
@@ -163,7 +161,7 @@ func (m *workerMaintenance) requeueFailedTasks(ctx context.Context) {
 	}
 	if requeued > 0 {
 		workerLogf("maintenance", "[RetryScheduler] Re-enqueued %d task(s)\n", requeued)
-		m.queue.NotifyTaskAvailable(ctx, m.db)
+		m.queue.NotifyTaskAvailable(ctx, m.tasks)
 	}
 }
 
@@ -206,7 +204,7 @@ func (m *workerMaintenance) reconcileActiveMigrations(ctx context.Context) {
 			workerLogf("maintenance", "[ProgressReconciler] error checking failed tasks retry for migration %s: %v\n", id, err)
 		}
 		if requeued {
-			m.queue.NotifyTaskAvailable(ctx, m.db)
+			m.queue.NotifyTaskAvailable(ctx, m.tasks)
 		}
 		if err := m.migrations.ReconcileMigrationProgress(id); err != nil {
 			workerLogf("maintenance", "[ProgressReconciler] error reconciling migration %s: %v\n", id, err)
@@ -254,6 +252,6 @@ func (m *workerMaintenance) requeueOrphanedRunningTasks(ctx context.Context) {
 	}
 	if count > 0 {
 		workerLogf("maintenance", "[OrphanedTaskRecovery] Re-enqueued %d orphaned RUNNING tasks\n", count)
-		m.queue.NotifyTaskAvailable(ctx, m.db)
+		m.queue.NotifyTaskAvailable(ctx, m.tasks)
 	}
 }

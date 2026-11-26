@@ -36,6 +36,7 @@ type ProviderFactoryFunc func(ctx context.Context, job *db.SyncJob) (PassClient,
 type Engine struct {
 	db              *sql.DB
 	syncs           db.SyncStore
+	tasks           db.TaskStore
 	auditLog        db.AuditStore
 	queue           *queue.Queue
 	encryptionKey   string
@@ -66,6 +67,7 @@ func NewEngine(database *sql.DB, q *queue.Queue, encryptionKey string) *Engine {
 	// Tests build engines without a database; NewSyncStore rejects a nil handle.
 	if database != nil {
 		engine.syncs = db.NewSyncStore(database)
+		engine.tasks = db.NewTaskStore(database)
 		engine.auditLog = db.NewAuditStore(database)
 	}
 	engine.passStore = postgresPassStore{db: database, syncs: engine.syncs, audit: engine.auditLog}
@@ -618,7 +620,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	// transfers.
 	// Wake idle worker threads only after the queue predicate permits them to
 	// claim this pass's tasks, avoiding a fallback-poll delay after indexing.
-	e.queue.NotifyTaskAvailable(ctx, e.db)
+	e.queue.NotifyTaskAvailable(ctx, e.tasks)
 
 	// 8. Poll database until all tasks finish (or context is cancelled)
 	// Poll every 1s: tight enough to react quickly when the last task finishes

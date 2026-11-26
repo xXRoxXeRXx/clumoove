@@ -43,6 +43,7 @@ type SourceFactoryFunc func(ctx context.Context, providerType, urlStr, username,
 type Indexer struct {
 	db            *sql.DB
 	migrations    db.MigrationStore
+	tasks         db.TaskStore
 	auditLog      db.AuditStore
 	encryptionKey string
 	queue         *queue.Queue
@@ -64,14 +65,17 @@ func NewIndexer(database *sql.DB, encryptionKey string, q *queue.Queue, timeout 
 		return nil, errors.New("indexer timeout must be positive")
 	}
 	var migrations db.MigrationStore
+	var tasks db.TaskStore
 	var auditLog db.AuditStore
 	if database != nil {
 		migrations = db.NewMigrationStore(database)
+		tasks = db.NewTaskStore(database)
 		auditLog = db.NewAuditStore(database)
 	}
 	return &Indexer{
 		db:            database,
 		migrations:    migrations,
+		tasks:         tasks,
 		auditLog:      auditLog,
 		encryptionKey: encryptionKey,
 		queue:         q,
@@ -465,7 +469,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	// Wake idle worker threads immediately so they start picking up the freshly
 	// created PENDING tasks without waiting for the fallback poll cycle.
 	if idx.queue != nil {
-		idx.queue.NotifyTaskAvailable(ctx, idx.db)
+		idx.queue.NotifyTaskAvailable(ctx, idx.tasks)
 	}
 
 	logger.Info("indexing_completed", slog.Int("total_files", totalFiles), slog.Int("total_directories", totalDirs), slog.Int64("total_bytes", totalBytes))

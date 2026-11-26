@@ -119,7 +119,7 @@ func TestRequeueFailedTasksGoesThroughTheTaskStore(t *testing.T) {
 	})
 	t.Run("nothing due means no wake-up", func(t *testing.T) {
 		tasks := &fakeMaintenanceTaskStore{}
-		m := &workerMaintenance{tasks: tasks} // a nil queue/db would panic on notify
+		m := &workerMaintenance{tasks: tasks} // a nil queue would panic on notify
 		m.requeueFailedTasks(context.Background())
 		if tasks.requeueCalls != 1 {
 			t.Fatalf("requeue calls = %d, want 1", tasks.requeueCalls)

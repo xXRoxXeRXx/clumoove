@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/db"
 	"github.com/lib/pq"
 )
 
@@ -107,7 +108,7 @@ func TestDequeueSQLSkipsSaturatedJobToClaimNext(t *testing.T) {
 	}
 
 	q := &Queue{}
-	payload, err := q.DequeueSQL(context.Background(), database, "worker-1")
+	payload, err := q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-1")
 	if err != nil {
 		t.Fatalf("dequeue after saturated migration: %v", err)
 	}
@@ -169,7 +170,7 @@ func TestDequeueSQLSerializesMigrationCapacity(t *testing.T) {
 		go func(workerID string) {
 			defer workers.Done()
 			<-start
-			payload, err := q.DequeueSQL(context.Background(), database, workerID)
+			payload, err := q.DequeueSQL(context.Background(), db.NewTaskStore(database), workerID)
 			if err != nil {
 				errs <- err
 				return
@@ -262,7 +263,7 @@ func TestDequeueSQLSerializesSyncCapacity(t *testing.T) {
 		go func(workerID string) {
 			defer workers.Done()
 			<-start
-			payload, err := q.DequeueSQL(context.Background(), database, workerID)
+			payload, err := q.DequeueSQL(context.Background(), db.NewTaskStore(database), workerID)
 			if err != nil {
 				errs <- err
 				return
@@ -363,7 +364,7 @@ func TestDequeueSQLCommitsEmptyWhenCapacitySaturatesAfterCandidateLock(t *testin
 	result := make(chan dequeueResult, 1)
 	q := &Queue{}
 	go func() {
-		payload, err := q.DequeueSQL(context.Background(), database, "capacity-race-worker")
+		payload, err := q.DequeueSQL(context.Background(), db.NewTaskStore(database), "capacity-race-worker")
 		result <- dequeueResult{payload: payload, err: err}
 	}()
 
@@ -431,7 +432,7 @@ func TestDequeueSQLConflictCopyDependency(t *testing.T) {
 	}
 
 	q := &Queue{}
-	payload, err := q.DequeueSQL(context.Background(), database, "worker-1")
+	payload, err := q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-1")
 	if err != nil {
 		t.Fatalf("dequeue conflict copy: %v", err)
 	}
@@ -439,7 +440,7 @@ func TestDequeueSQLConflictCopyDependency(t *testing.T) {
 		t.Fatalf("first dequeue = %+v, want conflict copy", payload)
 	}
 
-	payload, err = q.DequeueSQL(context.Background(), database, "worker-2")
+	payload, err = q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-2")
 	if err != nil {
 		t.Fatalf("dequeue while conflict copy running: %v", err)
 	}
@@ -450,7 +451,7 @@ func TestDequeueSQLConflictCopyDependency(t *testing.T) {
 	if _, err := database.Exec(`UPDATE tasks SET status = 'COMPLETED' WHERE id = '00000000-0000-0000-0000-000000000104'`); err != nil {
 		t.Fatalf("complete conflict copy: %v", err)
 	}
-	payload, err = q.DequeueSQL(context.Background(), database, "worker-2")
+	payload, err = q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-2")
 	if err != nil {
 		t.Fatalf("dequeue after conflict copy completion: %v", err)
 	}
@@ -472,7 +473,7 @@ func TestDequeueSQLSkipsUploadWhenConflictCopyFails(t *testing.T) {
 	}
 
 	q := &Queue{}
-	payload, err := q.DequeueSQL(context.Background(), database, "worker-1")
+	payload, err := q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-1")
 	if err != nil {
 		t.Fatalf("dequeue failed conflict dependency: %v", err)
 	}
@@ -502,7 +503,7 @@ func TestDequeueSQLWaitsForRetryableConflictCopy(t *testing.T) {
 	}
 
 	q := &Queue{}
-	payload, err := q.DequeueSQL(context.Background(), database, "worker-1")
+	payload, err := q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-1")
 	if err != nil {
 		t.Fatalf("dequeue retryable conflict dependency: %v", err)
 	}
@@ -522,7 +523,7 @@ func TestDequeueSQLWaitsForRetryableConflictCopy(t *testing.T) {
 	if _, err := database.Exec(`UPDATE tasks SET next_retry_at = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE id = '00000000-0000-0000-0000-000000000104'`); err != nil {
 		t.Fatalf("make conflict copy retry overdue: %v", err)
 	}
-	payload, err = q.DequeueSQL(context.Background(), database, "worker-1")
+	payload, err = q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-1")
 	if err != nil {
 		t.Fatalf("dequeue overdue retryable conflict dependency: %v", err)
 	}
@@ -539,7 +540,7 @@ func TestDequeueSQLWaitsForRetryableConflictCopy(t *testing.T) {
 	if _, err := database.Exec(`UPDATE tasks SET status = 'COMPLETED', next_retry_at = NULL WHERE id = '00000000-0000-0000-0000-000000000104'`); err != nil {
 		t.Fatalf("complete retried conflict copy: %v", err)
 	}
-	payload, err = q.DequeueSQL(context.Background(), database, "worker-2")
+	payload, err = q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-2")
 	if err != nil {
 		t.Fatalf("dequeue after retried conflict copy completion: %v", err)
 	}
@@ -561,7 +562,7 @@ func TestDequeueSQLUsesOnlyDirectPrerequisite(t *testing.T) {
 		t.Fatalf("insert direct prerequisite tasks: %v", err)
 	}
 
-	payload, err := (&Queue{}).DequeueSQL(context.Background(), database, "worker-1")
+	payload, err := (&Queue{}).DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-1")
 	if err != nil {
 		t.Fatalf("dequeue direct prerequisite: %v", err)
 	}
@@ -581,7 +582,7 @@ func TestDequeueSQLClaimsTaskWithoutConflictDependency(t *testing.T) {
 	}
 
 	q := &Queue{}
-	payload, err := q.DequeueSQL(context.Background(), database, "worker-1")
+	payload, err := q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-1")
 	if err != nil {
 		t.Fatalf("dequeue ordinary upload: %v", err)
 	}
@@ -591,7 +592,7 @@ func TestDequeueSQLClaimsTaskWithoutConflictDependency(t *testing.T) {
 	if _, err := database.Exec(`UPDATE tasks SET status = 'PENDING', worker_hash = NULL WHERE id = '00000000-0000-0000-0000-000000000106'`); err != nil {
 		t.Fatalf("reset task for reclaim: %v", err)
 	}
-	payload, err = q.DequeueSQL(context.Background(), database, "worker-2")
+	payload, err = q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-2")
 	if err != nil {
 		t.Fatalf("reclaim ordinary upload: %v", err)
 	}
@@ -610,7 +611,7 @@ func TestDequeueSQLSyncTasksWaitForRunning(t *testing.T) {
 	}
 
 	q := &Queue{}
-	payload, err := q.DequeueSQL(context.Background(), database, "worker-1")
+	payload, err := q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-1")
 	if err != nil {
 		t.Fatalf("dequeue while indexing: %v", err)
 	}
@@ -629,7 +630,7 @@ func TestDequeueSQLSyncTasksWaitForRunning(t *testing.T) {
 	if _, err := database.Exec(`UPDATE sync_jobs SET status = 'RUNNING' WHERE id = '00000000-0000-0000-0000-000000000004'`); err != nil {
 		t.Fatalf("set sync job running: %v", err)
 	}
-	payload, err = q.DequeueSQL(context.Background(), database, "worker-1")
+	payload, err = q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-1")
 	if err != nil {
 		t.Fatalf("dequeue while running: %v", err)
 	}
@@ -648,7 +649,7 @@ func TestDequeueSQLMigrationTasksMayRunWhileIndexing(t *testing.T) {
 	}
 
 	q := &Queue{}
-	payload, err := q.DequeueSQL(context.Background(), database, "worker-1")
+	payload, err := q.DequeueSQL(context.Background(), db.NewTaskStore(database), "worker-1")
 	if err != nil {
 		t.Fatalf("dequeue while indexing: %v", err)
 	}

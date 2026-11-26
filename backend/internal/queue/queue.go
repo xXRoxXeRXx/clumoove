@@ -3,7 +3,6 @@ package queue
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -113,163 +112,32 @@ func NewQueue(redisAddr, redisPassword string) (*Queue, error) {
 }
 
 // DequeueSQL pops a task from the database queue natively respecting migration/sync thread limits.
-func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) (*Payload, error) {
-	tx, err := dbCon.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("begin dequeue transaction: %w", err)
+func (q *Queue) DequeueSQL(ctx context.Context, tasks db.TaskStore, workerID string) (*Payload, error) {
+	if tasks == nil {
+		return nil, errors.New("task store is required")
 	}
-	defer func() { _ = tx.Rollback() }()
-	commitEmpty := func() (*Payload, error) {
-		if err := tx.Commit(); err != nil {
-			return nil, fmt.Errorf("commit empty dequeue: %w", err)
-		}
-		return nil, nil
+	claim, err := tasks.DequeueTask(ctx, workerID)
+	if err != nil || claim == nil {
+		return nil, err
 	}
-
-	// Skip only direct dependents whose prerequisite reached a terminal failure.
-	if _, err := tx.ExecContext(ctx, `
-		-- A direct prerequisite fences a RENAME conflict-copy before its paired
-		-- upload, preventing another worker from overwriting the unrenamed target.
-		UPDATE tasks AS dependent
-			SET status = 'SKIPPED',
-			    worker_hash = NULL,
-			    error_message = 'conflict_copy prerequisite failed; upload skipped',
-			    updated_at = CURRENT_TIMESTAMP
-			FROM tasks AS prerequisite
-			WHERE dependent.status = 'PENDING'
-			  AND dependent.prerequisite_task_id = prerequisite.id
-			  AND (
-				prerequisite.status IN ('CANCELLED', 'SKIPPED')
-				OR (prerequisite.status = 'FAILED' AND prerequisite.next_retry_at IS NULL)
-			  )`); err != nil {
-		return nil, fmt.Errorf("skip failed conflict dependents: %w", err)
-	}
-
-	// Lock a candidate task first, then lock its parent below. A task lock alone
-	// is insufficient: different workers can lock different tasks for the same
-	// job. The parent lock serializes their capacity check and claim.
-	candidateQuery := `
-		SELECT t.id, t.migration_id, t.sync_job_id, t.pass_generation
-		FROM tasks t
-		LEFT JOIN migrations m ON t.migration_id = m.id
-		LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
-		WHERE t.status = 'PENDING'
-		AND (t.prerequisite_task_id IS NULL OR EXISTS (
-			SELECT 1 FROM tasks AS prerequisite
-			WHERE prerequisite.id = t.prerequisite_task_id AND prerequisite.status = 'COMPLETED'
-		))
-		-- This is an optimistic filter to avoid head-of-line blocking on jobs
-		-- that are inactive or already saturated. The parent lock and count
-		-- below remain authoritative for concurrent claims.
-		AND (
-			(t.migration_id IS NOT NULL AND m.status IN ('RUNNING', 'INDEXING') AND (
-				SELECT COUNT(*) FROM tasks t2
-				WHERE t2.migration_id = m.id AND t2.status = 'RUNNING'
-			) < m.threads)
-			OR
-			(t.sync_job_id IS NOT NULL AND sj.status = 'RUNNING' AND t.pass_generation = sj.run_generation AND (
-				SELECT COUNT(*) FROM tasks t2
-				WHERE t2.sync_job_id = sj.id AND t2.pass_generation = sj.run_generation AND t2.status = 'RUNNING'
-			) < sj.threads)
-		)
-		ORDER BY t.created_at ASC
-		LIMIT 1
-		FOR UPDATE OF t SKIP LOCKED
-	`
-	var taskID string
-	var migID, syncID sql.NullString
-	var taskGeneration int
-	if err := tx.QueryRowContext(ctx, candidateQuery).Scan(&taskID, &migID, &syncID, &taskGeneration); err != nil {
-		if err == sql.ErrNoRows {
-			return commitEmpty()
-		}
-		return nil, fmt.Errorf("select dequeue candidate: %w", err)
-	}
-
-	var capacity int
-	if migID.Valid {
-		var status string
-		var threads int
-		if err := tx.QueryRowContext(ctx, `SELECT status, threads FROM migrations WHERE id = $1 FOR UPDATE`, migID.String).Scan(&status, &threads); err != nil {
-			return nil, fmt.Errorf("lock migration dequeue parent: %w", err)
-		}
-		if status != "RUNNING" && status != "INDEXING" {
-			return commitEmpty()
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE migration_id = $1 AND status = 'RUNNING'`, migID.String).Scan(&capacity); err != nil {
-			return nil, fmt.Errorf("count running migration tasks: %w", err)
-		}
-		if capacity >= threads {
-			return commitEmpty()
-		}
-	} else if syncID.Valid {
-		var status string
-		var generation int
-		var threads int
-		if err := tx.QueryRowContext(ctx, `SELECT status, threads, run_generation FROM sync_jobs WHERE id = $1 FOR UPDATE`, syncID.String).Scan(&status, &threads, &generation); err != nil {
-			return nil, fmt.Errorf("lock sync dequeue parent: %w", err)
-		}
-		if status != "RUNNING" {
-			return commitEmpty()
-		}
-		if taskGeneration != generation {
-			return commitEmpty()
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'RUNNING'`, syncID.String, generation).Scan(&capacity); err != nil {
-			return nil, fmt.Errorf("count running sync tasks: %w", err)
-		}
-		if capacity >= threads {
-			return commitEmpty()
-		}
-	} else {
-		return nil, fmt.Errorf("dequeue candidate %s has no parent", taskID)
-	}
-
-	query := `
-		WITH candidate AS (
-			SELECT t.id
-			FROM tasks t
-			WHERE t.id = $2 AND t.status = 'PENDING'
-		)
-		UPDATE tasks
-		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP, worker_hash = $1,
-		    claim_epoch = claim_epoch + 1
-		WHERE id = (SELECT id FROM candidate)
-		RETURNING id, migration_id, sync_job_id, claim_epoch, pass_generation
-	`
-	var payload Payload
-	err = tx.QueryRowContext(ctx, query, workerID, taskID).Scan(&payload.TaskID, &migID, &syncID, &payload.ClaimEpoch, &payload.PassGeneration)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return commitEmpty() // No tasks available
-		}
-		return nil, fmt.Errorf("failed to dequeue task from sql: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit dequeue task: %w", err)
-	}
-	if migID.Valid {
-		payload.MigrationID = migID.String
-	}
-	if syncID.Valid {
-		payload.SyncJobID = syncID.String
-	}
-	return &payload, nil
+	return &Payload{
+		MigrationID:    claim.MigrationID,
+		SyncJobID:      claim.SyncJobID,
+		TaskID:         claim.TaskID,
+		ClaimEpoch:     claim.ClaimEpoch,
+		PassGeneration: claim.PassGeneration,
+	}, nil
 }
 
 // RecoverAbandonedTasks resets tasks for a dead worker back to PENDING.
-func (q *Queue) RecoverAbandonedTasks(ctx context.Context, db *sql.DB, workerID string) error {
-	query := `
-		UPDATE tasks 
-		SET status = 'PENDING', worker_hash = NULL, updated_at = CURRENT_TIMESTAMP 
-		WHERE status = 'RUNNING' AND worker_hash = $1
-		  AND updated_at < CURRENT_TIMESTAMP - INTERVAL '2 minutes'
-	`
-	res, err := db.ExecContext(ctx, query, workerID)
+func (q *Queue) RecoverAbandonedTasks(ctx context.Context, tasks db.TaskStore, workerID string) error {
+	if tasks == nil {
+		return errors.New("task store is required")
+	}
+	rowsAffected, err := tasks.RecoverAbandonedTasks(ctx, workerID)
 	if err != nil {
 		return err
 	}
-	rowsAffected, _ := res.RowsAffected()
 	if rowsAffected > 0 {
 		log.Printf("[Queue] Recovered %d abandoned tasks for worker %s\n", rowsAffected, workerID)
 	}
@@ -524,21 +392,17 @@ func (q *Queue) DeregisterActiveWorker(ctx context.Context, workerID string) err
 }
 
 // GetAbandonedWorkerQueues scans the database for all workers currently processing tasks and cross-checks their liveness in Redis
-func (q *Queue) GetAbandonedWorkerQueues(ctx context.Context, db *sql.DB) ([]string, error) {
-	query := `SELECT DISTINCT worker_hash FROM tasks WHERE status = 'RUNNING' AND worker_hash IS NOT NULL`
-	rows, err := db.QueryContext(ctx, query)
+func (q *Queue) GetAbandonedWorkerQueues(ctx context.Context, tasks db.TaskStore) ([]string, error) {
+	if tasks == nil {
+		return nil, errors.New("task store is required")
+	}
+	workerIDs, err := tasks.ListRunningWorkerHashes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var abandonedWorkers []string
-	for rows.Next() {
-		var workerID string
-		if err := rows.Scan(&workerID); err != nil {
-			continue
-		}
-
+	for _, workerID := range workerIDs {
 		activeKey := fmt.Sprintf("worker:active:%s", workerID)
 		exists, err := q.client.Exists(ctx, activeKey).Result()
 		if err != nil {
@@ -549,9 +413,6 @@ func (q *Queue) GetAbandonedWorkerQueues(ctx context.Context, db *sql.DB) ([]str
 		if exists == 0 {
 			abandonedWorkers = append(abandonedWorkers, workerID)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 
 	return abandonedWorkers, nil
@@ -738,8 +599,11 @@ func (q *Queue) SubscribeToBandwidthChanges(ctx context.Context, callback func(e
 // NotifyTaskAvailable sends a PostgreSQL NOTIFY on the 'task_available' channel.
 // Call this after inserting PENDING tasks so that idle worker threads wake up
 // immediately instead of waiting for their next 2-second poll cycle.
-func (q *Queue) NotifyTaskAvailable(ctx context.Context, db *sql.DB) {
-	if _, err := db.ExecContext(ctx, "SELECT pg_notify('task_available', '')"); err != nil {
+func (q *Queue) NotifyTaskAvailable(ctx context.Context, tasks db.TaskStore) {
+	if tasks == nil {
+		return
+	}
+	if err := tasks.NotifyTaskAvailable(ctx); err != nil {
 		log.Printf("[Queue] pg_notify task_available failed (non-fatal): %v\n", err)
 	}
 }

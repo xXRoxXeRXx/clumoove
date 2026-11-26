@@ -14,7 +14,7 @@ import (
 //
 // Migration and sync tasks share the table, so the interface carries both
 // flavours; the Sync-named calls are additionally fenced by a pass
-// generation. Dequeueing itself (SKIP LOCKED) stays in internal/queue.
+// generation.
 //
 // Every write that takes a Lease is fenced by the dequeue claim epoch: a task
 // that was recovered or reclaimed reports sql.ErrNoRows (or false) and the
@@ -50,6 +50,12 @@ type TaskStore interface {
 	// untouched for ten minutes whose parent is still active.
 	RequeueDueFailedTasks(ctx context.Context, now time.Time) (int64, error)
 	RequeueOrphanedRunningTasks(ctx context.Context) (int64, error)
+
+	// Queue dequeue, abandoned-worker recovery and wake-up notifications.
+	DequeueTask(ctx context.Context, workerID string) (*DequeuedTask, error)
+	RecoverAbandonedTasks(ctx context.Context, workerID string) (int64, error)
+	ListRunningWorkerHashes(ctx context.Context) ([]string, error)
+	NotifyTaskAvailable(ctx context.Context) error
 }
 
 func (s postgresTaskStore) RequeueDueFailedTasks(ctx context.Context, now time.Time) (int64, error) {
@@ -58,6 +64,22 @@ func (s postgresTaskStore) RequeueDueFailedTasks(ctx context.Context, now time.T
 
 func (s postgresTaskStore) RequeueOrphanedRunningTasks(ctx context.Context) (int64, error) {
 	return requeueOrphanedRunningTasks(ctx, s.db)
+}
+
+func (s postgresTaskStore) DequeueTask(ctx context.Context, workerID string) (*DequeuedTask, error) {
+	return dequeueTask(ctx, s.db, workerID)
+}
+
+func (s postgresTaskStore) RecoverAbandonedTasks(ctx context.Context, workerID string) (int64, error) {
+	return recoverAbandonedTasks(ctx, s.db, workerID)
+}
+
+func (s postgresTaskStore) ListRunningWorkerHashes(ctx context.Context) ([]string, error) {
+	return listRunningWorkerHashes(ctx, s.db)
+}
+
+func (s postgresTaskStore) NotifyTaskAvailable(ctx context.Context) error {
+	return notifyTaskAvailable(ctx, s.db)
 }
 
 type postgresTaskStore struct{ db *sql.DB }
