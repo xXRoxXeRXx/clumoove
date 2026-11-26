@@ -43,33 +43,11 @@ func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, erro
 		return nil, fmt.Errorf("invalid URL format: must be an absolute HTTPS URL with host")
 	}
 
-	tr := &http.Transport{
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          1000,
-		MaxIdleConnsPerHost:   500,
-		MaxConnsPerHost:       500,
-		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		ResponseHeaderTimeout: 5 * time.Minute,
-		ReadBufferSize:        256 * 1024,
-		WriteBufferSize:       256 * 1024,
-		// Pin egress to a re-validated IP on every connection so a DNS
-		// rebind between validation and connect cannot reach internal/metadata
-		// addresses. The original hostname stays in the request URL, preserving
-		// SNI / certificate validation.
-		DialContext: egressDialer(parsed.Hostname()),
-	}
-
 	return &WebDAVProvider{
-		BaseURL:  baseURL,
-		Username: username,
-		Password: password,
-		HTTPClient: &http.Client{
-			Transport:     newLoggingTransport(tr),
-			Timeout:       0,
-			CheckRedirect: rejectEgressRedirect,
-		},
+		BaseURL:    baseURL,
+		Username:   username,
+		Password:   password,
+		HTTPClient: newEgressClient(parsed.Hostname(), providerHTTPOptions{WrapTransport: newLoggingTransport}),
 	}, nil
 }
 

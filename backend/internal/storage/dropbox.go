@@ -93,24 +93,9 @@ type DropboxProvider struct {
 var _ StorageProvider = (*DropboxProvider)(nil)
 
 func NewDropboxProvider(token string) (*DropboxProvider, error) {
-	tr := &http.Transport{
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          1000,
-		MaxIdleConnsPerHost:   500,
-		MaxConnsPerHost:       500,
-		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		ResponseHeaderTimeout: 5 * time.Minute,
-		ReadBufferSize:        256 * 1024,
-		WriteBufferSize:       256 * 1024,
-	}
 	return &DropboxProvider{
 		AccessToken: token,
-		HTTPClient: &http.Client{
-			Transport: newUserAgentTransport(tr),
-			Timeout:   0,
-		},
+		HTTPClient:  newFixedEndpointClient(providerHTTPOptions{WrapTransport: newUserAgentTransport}),
 	}, nil
 }
 

@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 )
 
@@ -79,11 +78,7 @@ func NewMagentacloudProvider(username, password string) (*MagentacloudProvider, 
 			BaseURL:      magentaCloudBaseURL,
 			Username:     username,
 			Password:     password,
-			HTTPClient: &http.Client{
-				Transport:     newLoggingTransport(newDAVTransport("magentacloud.de")),
-				Timeout:       0,
-				CheckRedirect: rejectEgressRedirect,
-			},
+			HTTPClient:             newEgressClient("magentacloud.de", providerHTTPOptions{WrapTransport: newLoggingTransport}),
 			Threads:                8,
 			pb:                     magentaPaths{},
 			supportedResourceTypes: map[string]bool{"files": true},

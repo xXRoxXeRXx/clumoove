@@ -119,17 +119,13 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 		return nil, fmt.Errorf("google provider requires an oauth token")
 	}
 
-	tr := &http.Transport{
-		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        1000,
-		MaxIdleConnsPerHost: 500,
-		MaxConnsPerHost:     500,
-		IdleConnTimeout:     120 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		ReadBufferSize:      256 * 1024,
-		WriteBufferSize:     256 * 1024,
-	}
-	baseClient := &http.Client{Transport: newUserAgentTransport(tr)}
+	baseClient := newFixedEndpointClient(providerHTTPOptions{
+		Transport: func(tr *http.Transport) {
+			tr.ExpectContinueTimeout = 0
+			tr.ResponseHeaderTimeout = 0
+		},
+		WrapTransport: newUserAgentTransport,
+	})
 	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, baseClient)
 
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})

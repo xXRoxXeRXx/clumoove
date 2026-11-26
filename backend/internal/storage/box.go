@@ -57,16 +57,11 @@ func NewBoxProvider(token string) (*BoxProvider, error) {
 	if token == "" {
 		return nil, fmt.Errorf("box provider requires an oauth token: %w", ErrAuth)
 	}
-	transport := &http.Transport{
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   50,
-		MaxConnsPerHost:       50,
-		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 2 * time.Minute,
-	}
-	return newBoxProvider(token, defaultBoxAPIBase, defaultBoxUploadBase, &http.Client{Transport: newUserAgentTransport(transport)}), nil
+	client := newFixedEndpointClient(providerHTTPOptions{
+		BaseTransport: compactProviderTransport(),
+		WrapTransport: newUserAgentTransport,
+	})
+	return newBoxProvider(token, defaultBoxAPIBase, defaultBoxUploadBase, client), nil
 }
 
 // NewBoxTestProvider constructs a BoxProvider targeting local loopback httptest

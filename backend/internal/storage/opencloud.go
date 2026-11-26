@@ -95,11 +95,7 @@ func NewOpenCloudProvider(rawURL, username, password string) (*OpenCloudProvider
 		BaseURL:      baseURL,
 		Username:     username,
 		Password:     password,
-		HTTPClient: &http.Client{
-			Transport:     newLoggingTransport(newDAVTransport(parsed.Hostname())),
-			Timeout:       0,
-			CheckRedirect: rejectEgressRedirect,
-		},
+		HTTPClient:             newEgressClient(parsed.Hostname(), providerHTTPOptions{WrapTransport: newLoggingTransport}),
 		Threads:                8,
 		pb:                     openCloudPaths{},
 		useBearerToken:         strings.HasPrefix(password, "Bearer ") || (username == "" && password != ""),

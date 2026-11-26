@@ -106,11 +106,7 @@ func NewKoofrProvider(username, password string) (*KoofrProvider, error) {
 		BaseURL:  koofrBaseURL,
 		Username: username,
 		Password: password,
-		HTTPClient: &http.Client{
-			Transport:     newLoggingTransport(newDAVTransport("app.koofr.net")),
-			Timeout:       0,
-			CheckRedirect: rejectEgressRedirect,
-		},
+		HTTPClient: newEgressClient("app.koofr.net", providerHTTPOptions{WrapTransport: newLoggingTransport}),
 	}, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -120,16 +121,52 @@ func TestEgressHTTPClientBlocksDNSRebindingAtRequestTime(t *testing.T) {
 	}
 }
 
-func TestSSRFProtectedClientsRejectRedirects(t *testing.T) {
-	webdav, err := NewWebDAVProvider("https://8.8.8.8/dav", "user", "password")
+func TestSSRFProtectedClientsRejectRedirectsAndBlockedDials(t *testing.T) {
+	blockedServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("blocked loopback server received unexpected request %s %s", r.Method, r.URL.Path)
+	}))
+	defer blockedServer.Close()
+
+	_, port, err := net.SplitHostPort(blockedServer.Listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	nextcloud, err := NewNextcloudProvider("https://8.8.8.8", "user", "password")
+
+	// Return a public IP during provider construction (for providers that
+	// pre-validate at New* time), then return a blocked loopback IP during
+	// actual request dialing to verify per-connection SSRF blocking.
+	origLookup := resolveEgressIPsForDial
+	defer func() { resolveEgressIPsForDial = origLookup }()
+	dialPhase := false
+	resolveEgressIPsForDial = func(_ context.Context, _ string) ([]net.IP, error) {
+		if dialPhase {
+			return []net.IP{net.ParseIP("127.0.0.1")}, nil
+		}
+		return []net.IP{net.ParseIP("8.8.8.8")}, nil
+	}
+
+	const testHost = "provider.example.test"
+	webdav, err := NewWebDAVProvider("https://"+testHost+"/dav", "user", "password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	immich, err := NewImmichProvider("https://8.8.8.8", "api-key")
+	nextcloud, err := NewNextcloudProvider("https://"+testHost, "user", "password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opencloud, err := NewOpenCloudProvider("https://"+testHost, "user", "password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	immich, err := NewImmichProvider("https://"+testHost, "api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seafile, err := NewSeafileProvider("https://"+testHost, "user@example.com", "password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	koofr, err := NewKoofrProvider("user", "password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +174,7 @@ func TestSSRFProtectedClientsRejectRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s3Provider, err := NewS3Provider("s3://bucket?endpoint=https%3A%2F%2F8.8.8.8", "access-key", "secret-key")
+	s3Provider, err := NewS3Provider("s3://bucket?endpoint=https%3A%2F%2F"+testHost, "access-key", "secret-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,25 +182,37 @@ func TestSSRFProtectedClientsRejectRedirects(t *testing.T) {
 	if !ok {
 		t.Fatal("S3 provider does not use an *http.Client")
 	}
-	egressClient, err := NewEgressHTTPClient("https://8.8.8.8/webhook")
+	egressClient, err := NewEgressHTTPClient("https://" + testHost + "/webhook")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for name, client := range map[string]*http.Client{
-		"webdav":       webdav.HTTPClient,
-		"nextcloud":    nextcloud.HTTPClient,
-		"immich":       immich.HTTPClient,
-		"magentacloud": magentacloud.HTTPClient,
-		"s3":           s3Client,
-		"egress":       egressClient,
-	} {
-		if client.CheckRedirect == nil {
-			t.Errorf("%s client does not reject redirects", name)
-			continue
+	dialPhase = true
+	clients := []struct {
+		name   string
+		host   string
+		client *http.Client
+	}{
+		{"webdav", testHost, webdav.HTTPClient},
+		{"nextcloud", testHost, nextcloud.HTTPClient},
+		{"opencloud", testHost, opencloud.HTTPClient},
+		{"immich", testHost, immich.HTTPClient},
+		{"seafile", testHost, seafile.HTTPClient},
+		{"koofr", "app.koofr.net", koofr.HTTPClient},
+		{"magentacloud", "magentacloud.de", magentacloud.HTTPClient},
+		{"s3", testHost, s3Client},
+		{"egress", testHost, egressClient},
+	}
+
+	for _, tc := range clients {
+		if tc.client.CheckRedirect == nil {
+			t.Errorf("%s client does not reject redirects", tc.name)
+		} else if err := tc.client.CheckRedirect(nil, nil); !errors.Is(err, http.ErrUseLastResponse) {
+			t.Errorf("%s client follows redirects: %v", tc.name, err)
 		}
-		if err := client.CheckRedirect(nil, nil); !errors.Is(err, http.ErrUseLastResponse) {
-			t.Errorf("%s client follows redirects: %v", name, err)
+
+		if _, err := tc.client.Get("https://" + net.JoinHostPort(tc.host, port) + "/probe"); err == nil {
+			t.Errorf("%s client unexpectedly dialed blocked loopback address", tc.name)
 		}
 	}
 }

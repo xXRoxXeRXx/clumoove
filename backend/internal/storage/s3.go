@@ -63,6 +63,7 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 		return nil, fmt.Errorf("S3 insecure endpoint option is no longer supported; configure an HTTPS endpoint")
 	}
 
+	var customHost string
 	if endpoint != "" {
 		epURL, err := url.Parse(endpoint)
 		if err != nil {
@@ -78,31 +79,19 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 		if err := validateEgressHost(epURL.Hostname()); err != nil {
 			return nil, err
 		}
+		customHost = epURL.Hostname()
 	}
 
-	// Build an HTTP client that pins egress to a re-validated IP on every
-	// connection (closing the DNS-rebinding/TOCTOU window). The keep-alive
-	// pool limits how often DNS is actually hit.
-	transport := &http.Transport{
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          1000,
-		MaxIdleConnsPerHost:   500,
-		MaxConnsPerHost:       500,
-		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		ResponseHeaderTimeout: 5 * time.Minute,
-		ReadBufferSize:        256 * 1024,
-		WriteBufferSize:       256 * 1024,
-	}
-	httpClient := &http.Client{
-		CheckRedirect: rejectEgressRedirect,
-		Transport:     newUserAgentTransport(transport),
-	}
-	if endpoint != "" {
-		if epURL, err := url.Parse(endpoint); err == nil && epURL.Hostname() != "" {
-			transport.DialContext = egressDialer(epURL.Hostname())
-		}
+	var httpClient *http.Client
+	if customHost != "" {
+		httpClient = newEgressClient(customHost, providerHTTPOptions{
+			WrapTransport: newUserAgentTransport,
+		})
+	} else {
+		httpClient = newFixedEndpointClient(providerHTTPOptions{
+			WrapTransport:   newUserAgentTransport,
+			RejectRedirects: true,
+		})
 	}
 
 	// Load default AWS SDK config.

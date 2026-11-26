@@ -40,12 +40,23 @@ func NewImmichProvider(baseURL, apiKey string) (*ImmichProvider, error) {
 	}
 	u.Path = strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), "/api") + "/api"
 	u.RawQuery, u.Fragment = "", ""
-	tr := &http.Transport{DialContext: egressDialer(u.Hostname()), ForceAttemptHTTP2: true, MaxIdleConns: 100, MaxIdleConnsPerHost: 20, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 60 * time.Second}
 	return &ImmichProvider{
-		BaseURL:    strings.TrimSuffix(u.String(), "/"),
-		APIKey:     apiKey,
-		HTTPClient: &http.Client{Transport: newUserAgentTransport(tr), CheckRedirect: rejectEgressRedirect},
-		albums:     make(map[string]string),
+		BaseURL: strings.TrimSuffix(u.String(), "/"),
+		APIKey:  apiKey,
+		HTTPClient: newEgressClient(u.Hostname(), providerHTTPOptions{
+			Transport: func(tr *http.Transport) {
+				tr.MaxIdleConns = 100
+				tr.MaxIdleConnsPerHost = 20
+				tr.MaxConnsPerHost = 0
+				tr.IdleConnTimeout = 90 * time.Second
+				tr.ExpectContinueTimeout = 0
+				tr.ResponseHeaderTimeout = 60 * time.Second
+				tr.ReadBufferSize = 0
+				tr.WriteBufferSize = 0
+			},
+			WrapTransport: newUserAgentTransport,
+		}),
+		albums: make(map[string]string),
 	}, nil
 }
 

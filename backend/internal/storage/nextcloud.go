@@ -173,26 +173,6 @@ func validateDAVMultiStatus(operation string, body io.Reader) error {
 	return nil
 }
 
-func newDAVTransport(host string) *http.Transport {
-	return &http.Transport{
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          1000,
-		MaxIdleConnsPerHost:   500,
-		MaxConnsPerHost:       500,
-		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		ResponseHeaderTimeout: 5 * time.Minute,
-		ReadBufferSize:        256 * 1024,
-		WriteBufferSize:       256 * 1024,
-		// Pin egress to a re-validated IP on every connection so a DNS
-		// rebind between validation and connect cannot reach internal/metadata
-		// addresses. The original hostname stays in the request URL, preserving
-		// SNI / certificate validation.
-		DialContext: egressDialer(host),
-	}
-}
-
 func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
@@ -212,15 +192,11 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 
 	return &NextcloudProvider{
 		davProvider: &davProvider{
-			providerName: "nextcloud",
-			BaseURL:      baseURL,
-			Username:     username,
-			Password:     password,
-			HTTPClient: &http.Client{
-				Transport:     newLoggingTransport(newDAVTransport(host)),
-				Timeout:       0,
-				CheckRedirect: rejectEgressRedirect,
-			},
+			providerName:           "nextcloud",
+			BaseURL:                baseURL,
+			Username:               username,
+			Password:               password,
+			HTTPClient:             newEgressClient(host, providerHTTPOptions{WrapTransport: newLoggingTransport}),
 			Threads:                8,
 			pb:                     nextcloudPaths{},
 			supportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},

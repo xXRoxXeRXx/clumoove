@@ -26,25 +26,10 @@ func NewHiDriveProvider(token string) (*HiDriveProvider, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("hidrive provider requires non-empty access token: %w", ErrAuth)
 	}
-	tr := &http.Transport{
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          1000,
-		MaxIdleConnsPerHost:   500,
-		MaxConnsPerHost:       500,
-		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		ResponseHeaderTimeout: 5 * time.Minute,
-		ReadBufferSize:        256 * 1024,
-		WriteBufferSize:       256 * 1024,
-	}
 	return &HiDriveProvider{
 		AccessToken: token,
 		BaseURL:     defaultHiDriveAPIBase,
-		HTTPClient: &http.Client{
-			Transport: newLoggingTransport(tr),
-			Timeout:   0,
-		},
+		HTTPClient:  newFixedEndpointClient(providerHTTPOptions{WrapTransport: newLoggingTransport}),
 	}, nil
 }
 

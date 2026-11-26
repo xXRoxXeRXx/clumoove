@@ -96,6 +96,110 @@ func ValidateEgressHost(host string) error {
 	return ValidateEgressHostContext(context.Background(), host)
 }
 
+// providerHTTPOptions configures an HTTP client built by newEgressClient or
+// newFixedEndpointClient. Zero values retain the shared high-throughput
+// provider transport defaults and no total request timeout.
+type providerHTTPOptions struct {
+	// Transport mutates the *http.Transport before it is wrapped and pinned.
+	Transport func(*http.Transport)
+	// BaseTransport overrides defaultProviderTransport when non-nil (e.g. a
+	// cloned http.DefaultTransport for standard Go pool defaults).
+	BaseTransport *http.Transport
+	// WrapTransport wraps the configured *http.Transport (e.g.
+	// newLoggingTransport or newUserAgentTransport).
+	WrapTransport func(http.RoundTripper) http.RoundTripper
+	// Timeout sets http.Client.Timeout (0 means no total request deadline).
+	Timeout time.Duration
+	// RejectRedirects sets CheckRedirect to rejectEgressRedirect on
+	// newFixedEndpointClient. newEgressClient always rejects redirects.
+	RejectRedirects bool
+}
+
+func defaultProviderTransport() *http.Transport {
+	return &http.Transport{
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          1000,
+		MaxIdleConnsPerHost:   500,
+		MaxConnsPerHost:       500,
+		IdleConnTimeout:       120 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Minute,
+		ReadBufferSize:        256 * 1024,
+		WriteBufferSize:       256 * 1024,
+	}
+}
+
+func compactProviderTransport() *http.Transport {
+	return &http.Transport{
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   50,
+		MaxConnsPerHost:       50,
+		IdleConnTimeout:       120 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 2 * time.Minute,
+	}
+}
+
+func cloneDefaultTransport() *http.Transport {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Transport{}
+	}
+	return base.Clone()
+}
+
+func buildProviderHTTPClient(opts providerHTTPOptions, dialer func(context.Context, string, string) (net.Conn, error), forceRejectRedirect bool) *http.Client {
+	tr := opts.BaseTransport
+	if tr == nil {
+		tr = defaultProviderTransport()
+	}
+	if opts.Transport != nil {
+		opts.Transport(tr)
+	}
+	if dialer != nil {
+		// Provider transports intentionally do not honor environment proxies: a
+		// proxy dial target cannot be host-pinned by egressDialer.
+		tr.Proxy = nil
+		tr.DialContext = dialer
+	}
+
+	var rt http.RoundTripper = tr
+	if opts.WrapTransport != nil {
+		rt = opts.WrapTransport(tr)
+	}
+
+	var checkRedirect func(*http.Request, []*http.Request) error
+	if forceRejectRedirect || opts.RejectRedirects {
+		checkRedirect = rejectEgressRedirect
+	}
+
+	return &http.Client{
+		Transport:     rt,
+		Timeout:       opts.Timeout,
+		CheckRedirect: checkRedirect,
+	}
+}
+
+// newEgressClient constructs an HTTP client for user-configured or egress-pinned
+// provider endpoints. It always pins TCP dialing through egressDialer(host),
+// disables environment proxies, and rejects HTTP redirects.
+func newEgressClient(host string, opts providerHTTPOptions) *http.Client {
+	// Pin egress to a re-validated IP on every connection so a DNS rebind
+	// between validation and connect cannot reach internal/metadata
+	// addresses. The original hostname stays in the request URL, preserving
+	// SNI / certificate validation.
+	return buildProviderHTTPClient(opts, egressDialer(host), true)
+}
+
+// newFixedEndpointClient constructs an HTTP client for providers whose API
+// endpoints are hardcoded constants rather than user-supplied URLs, so the
+// absence of an egressDialer is explicit and auditable.
+func newFixedEndpointClient(opts providerHTTPOptions) *http.Client {
+	return buildProviderHTTPClient(opts, nil, false)
+}
+
 // NewEgressHTTPClient returns an HTTP client that validates the requested URL
 // and re-validates its hostname immediately before every TCP connection.
 // Redirects are intentionally not followed: a user-configured endpoint must
@@ -109,17 +213,10 @@ func NewEgressHTTPClient(rawURL string) (*http.Client, error) {
 	if err := checkHostEgress(context.Background(), u.Hostname()); err != nil {
 		return nil, err
 	}
-	base, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		base = &http.Transport{}
-	}
-	transport := base.Clone()
-	// Provider transports intentionally do not honor environment proxies: a
-	// proxy dial target cannot be host-pinned by egressDialer. Disable inherited
-	// ProxyFromEnvironment so this client matches the other provider clients.
-	transport.Proxy = nil
-	transport.DialContext = egressDialer(u.Hostname())
-	return &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: rejectEgressRedirect}, nil
+	return newEgressClient(u.Hostname(), providerHTTPOptions{
+		BaseTransport: cloneDefaultTransport(),
+		Timeout:       15 * time.Second,
+	}), nil
 }
 
 // NewEgressStreamingHTTPClient returns an SSRF-protected HTTP client for
@@ -136,15 +233,12 @@ func NewEgressStreamingHTTPClient(rawURL string) (*http.Client, error) {
 	if err := checkHostEgress(context.Background(), u.Hostname()); err != nil {
 		return nil, err
 	}
-	base, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		base = &http.Transport{}
-	}
-	transport := base.Clone()
-	transport.Proxy = nil
-	transport.DialContext = egressDialer(u.Hostname())
-	transport.ResponseHeaderTimeout = 5 * time.Minute
-	return &http.Client{Transport: transport, Timeout: 0, CheckRedirect: rejectEgressRedirect}, nil
+	return newEgressClient(u.Hostname(), providerHTTPOptions{
+		BaseTransport: cloneDefaultTransport(),
+		Transport: func(tr *http.Transport) {
+			tr.ResponseHeaderTimeout = 5 * time.Minute
+		},
+	}), nil
 }
 
 // rejectEgressRedirect returns the redirect response without issuing a request
