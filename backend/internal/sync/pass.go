@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -219,10 +218,7 @@ func IsActivePassStatus(status string) bool {
 	return status == "RUNNING" || status == "INDEXING" || status == "VERIFYING" || status == "PAUSED_CONNECTION_LOSS"
 }
 
-// postgresPassStore keeps its *sql.DB only for the recovery queries, which are
-// not part of db.SyncStore yet.
 type postgresPassStore struct {
-	db    *sql.DB
 	syncs db.SyncStore
 	audit db.AuditStore
 }
@@ -250,55 +246,19 @@ func (s postgresPassStore) Delete(_ context.Context, id string) error {
 }
 
 func (s postgresPassStore) Recover(ctx context.Context) ([]RecoveredPass, error) {
-	const recoveryMsg = "Recovered from stale INDEXING/RUNNING/VERIFYING (coordinator lost)"
-	rows, err := s.db.QueryContext(ctx, `
-		UPDATE sync_jobs sj
-		SET status = 'IDLE', verification_lease_until = NULL, error_message = $1, updated_at = CURRENT_TIMESTAMP
-		WHERE (
-		        sj.status = 'INDEXING'
-		    AND sj.updated_at < NOW() - INTERVAL '30 minutes'
-		  )
-		   OR (
-		        sj.status = 'RUNNING'
-		    AND sj.updated_at < NOW() - INTERVAL '30 minutes'
-		    AND NOT EXISTS (
-		        SELECT 1 FROM tasks t
-		        WHERE t.sync_job_id = sj.id
-		          AND (t.status IN ('PENDING', 'RUNNING') OR (t.status = 'FAILED' AND t.next_retry_at IS NOT NULL))
-		          AND t.updated_at > NOW() - INTERVAL '10 minutes'
-		    )
-		  )
-		   OR (
-		        sj.status = 'VERIFYING'
-		    AND sj.updated_at < NOW() - INTERVAL '30 minutes'
-		    AND (sj.verification_lease_until IS NULL OR sj.verification_lease_until <= NOW())
-		  )
-		RETURNING sj.id, sj.user_id
-	`, recoveryMsg)
+	passes, err := s.syncs.RecoverStaleSyncPasses(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("recover orphaned sync passes: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	var recovered []RecoveredPass
-	for rows.Next() {
-		var pass RecoveredPass
-		var userID sql.NullString
-		if err := rows.Scan(&pass.ID, &userID); err != nil {
-			return nil, fmt.Errorf("scan recovered sync pass: %w", err)
-		}
-		pass.UserID = userID.String
-		recovered = append(recovered, pass)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate recovered sync passes: %w", err)
+	recovered := make([]RecoveredPass, len(passes))
+	for i, p := range passes {
+		recovered[i] = RecoveredPass{ID: p.ID, UserID: p.UserID}
 	}
 	return recovered, nil
 }
 
 func (s postgresPassStore) AdvanceRecovered(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE schedules SET next_run_at = NOW() WHERE task_type = 'sync' AND task_id = $1 AND is_active = TRUE`, id)
-	return err
+	return s.syncs.AdvanceRecoveredSyncSchedule(ctx, id)
 }
 
 func (s postgresPassStore) AuditRecovered(ctx context.Context, pass RecoveredPass) error {

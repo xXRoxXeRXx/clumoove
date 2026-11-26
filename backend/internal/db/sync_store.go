@@ -7,9 +7,8 @@ import (
 )
 
 // SyncStore is the sync domain's persistence seam for sync job passes: pass
-// state, delta baselines and sync task fan-out, delegating to the package-level
-// functions without adding queries. Schedule recovery and the engine's inline
-// queries are not part of this seam yet.
+// state, delta baselines, sync task fan-out, and stale-pass recovery,
+// delegating to the package-level functions without adding queries.
 type SyncStore interface {
 	// Pass claiming and lifecycle. Generation-fenced transitions return false when the pass was superseded.
 	GetSyncJob(id string) (*SyncJob, error)
@@ -93,6 +92,11 @@ type SyncStore interface {
 	GetActiveSyncTaskPaths(ctx context.Context, syncJobID string) ([]string, error)
 	GetVerifyingSyncTaskPaths(ctx context.Context, syncJobID string) ([]string, error)
 	GetExpiringOAuthSyncJobs() ([]ExpiringOAuthSyncJob, error)
+
+	// Stale-pass recovery and engine verification polling.
+	RecoverStaleSyncPasses(ctx context.Context) ([]RecoveredSyncPass, error)
+	AdvanceRecoveredSyncSchedule(ctx context.Context, syncJobID string) error
+	GetSyncJobStatusAndGeneration(ctx context.Context, syncJobID string) (string, int, error)
 }
 
 type postgresSyncStore struct{ db *sql.DB }
@@ -296,4 +300,16 @@ func (s postgresSyncStore) GetExpiringOAuthSyncJobs() ([]ExpiringOAuthSyncJob, e
 
 func (s postgresSyncStore) SyncJobTokenSink(id, role string) OAuthReauthSink {
 	return newSyncJobTokenSink(s.db, id, role)
+}
+
+func (s postgresSyncStore) RecoverStaleSyncPasses(ctx context.Context) ([]RecoveredSyncPass, error) {
+	return recoverStaleSyncPasses(ctx, s.db)
+}
+
+func (s postgresSyncStore) AdvanceRecoveredSyncSchedule(ctx context.Context, syncJobID string) error {
+	return advanceRecoveredSyncSchedule(ctx, s.db, syncJobID)
+}
+
+func (s postgresSyncStore) GetSyncJobStatusAndGeneration(ctx context.Context, syncJobID string) (string, int, error) {
+	return getSyncJobStatusAndGeneration(ctx, s.db, syncJobID)
 }

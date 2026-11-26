@@ -56,6 +56,14 @@ type TaskStore interface {
 	RecoverAbandonedTasks(ctx context.Context, workerID string) (int64, error)
 	ListRunningWorkerHashes(ctx context.Context) ([]string, error)
 	NotifyTaskAvailable(ctx context.Context) error
+
+	// Sync engine pass polling, cleanup, draining and outcome reads.
+	DeleteNonRunningSyncTasks(ctx context.Context, syncJobID string) error
+	CountOpenSyncTasks(ctx context.Context, syncJobID string, generation int) (int, error)
+	CountUnverifiedSyncTasks(ctx context.Context, syncJobID string, generation int) (int, error)
+	HasRunningSyncTasks(ctx context.Context, syncJobID string) (bool, error)
+	HasRunningSyncPassTasks(ctx context.Context, syncJobID string, generation int) (bool, error)
+	ListSyncPassTaskOutcomes(ctx context.Context, syncJobID string, generation int) ([]SyncTaskOutcome, error)
 }
 
 func (s postgresTaskStore) RequeueDueFailedTasks(ctx context.Context, now time.Time) (int64, error) {
@@ -80,6 +88,30 @@ func (s postgresTaskStore) ListRunningWorkerHashes(ctx context.Context) ([]strin
 
 func (s postgresTaskStore) NotifyTaskAvailable(ctx context.Context) error {
 	return notifyTaskAvailable(ctx, s.db)
+}
+
+func (s postgresTaskStore) DeleteNonRunningSyncTasks(ctx context.Context, syncJobID string) error {
+	return deleteNonRunningSyncTasks(ctx, s.db, syncJobID)
+}
+
+func (s postgresTaskStore) CountOpenSyncTasks(ctx context.Context, syncJobID string, generation int) (int, error) {
+	return countOpenSyncTasks(ctx, s.db, syncJobID, generation)
+}
+
+func (s postgresTaskStore) CountUnverifiedSyncTasks(ctx context.Context, syncJobID string, generation int) (int, error) {
+	return countUnverifiedSyncTasks(ctx, s.db, syncJobID, generation)
+}
+
+func (s postgresTaskStore) HasRunningSyncTasks(ctx context.Context, syncJobID string) (bool, error) {
+	return hasRunningSyncTasks(ctx, s.db, syncJobID)
+}
+
+func (s postgresTaskStore) HasRunningSyncPassTasks(ctx context.Context, syncJobID string, generation int) (bool, error) {
+	return hasRunningSyncPassTasks(ctx, s.db, syncJobID, generation)
+}
+
+func (s postgresTaskStore) ListSyncPassTaskOutcomes(ctx context.Context, syncJobID string, generation int) ([]SyncTaskOutcome, error) {
+	return listSyncPassTaskOutcomes(ctx, s.db, syncJobID, generation)
 }
 
 type postgresTaskStore struct{ db *sql.DB }

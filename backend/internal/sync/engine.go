@@ -70,7 +70,7 @@ func NewEngine(database *sql.DB, q *queue.Queue, encryptionKey string) *Engine {
 		engine.tasks = db.NewTaskStore(database)
 		engine.auditLog = db.NewAuditStore(database)
 	}
-	engine.passStore = postgresPassStore{db: database, syncs: engine.syncs, audit: engine.auditLog}
+	engine.passStore = postgresPassStore{syncs: engine.syncs, audit: engine.auditLog}
 	engine.passRunner = engine
 	engine.passSignals = enginePassSignals{engine: engine, queue: q}
 	return engine
@@ -501,10 +501,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	// Only delete terminal tasks from the previous pass. PENDING tasks that
 	// survived the drain (e.g. from a prior incomplete pass) are also cleared
 	// now since we are about to re-enqueue a fresh delta.
-	_, err = e.db.Exec(`
-		DELETE FROM tasks
-		WHERE sync_job_id = $1 AND status IN ('COMPLETED','FAILED','CANCELLED','SKIPPED','PENDING')
-	`, job.ID)
+	err = e.tasks.DeleteNonRunningSyncTasks(ctx, job.ID)
 	if err != nil {
 		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to clear old tasks: %v", err))
 		return
@@ -647,12 +644,7 @@ SyncTaskPoll:
 			slog.Info("sync pass interrupted", "sync_job_id", syncJobID)
 			return
 		case <-ticker.C:
-			var openCount int
-			err := e.db.QueryRowContext(ctx, `
-				SELECT COUNT(*) FROM tasks 
-				WHERE sync_job_id = $1 AND pass_generation = $2
-				  AND (status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL))
-			`, job.ID, generation).Scan(&openCount)
+			openCount, err := e.tasks.CountOpenSyncTasks(ctx, job.ID, generation)
 			if err != nil {
 				slog.Warn("failed to query sync task progress", "sync_job_id", syncJobID, "error", err)
 				continue
@@ -666,8 +658,8 @@ SyncTaskPoll:
 
 	slog.Info("sync tasks finished; checking verification", "sync_job_id", syncJobID)
 
-	var unverifiedCount int
-	if err := e.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID, generation).Scan(&unverifiedCount); err != nil {
+	unverifiedCount, err := e.tasks.CountUnverifiedSyncTasks(ctx, job.ID, generation)
+	if err != nil {
 		e.failSync(syncJobID, generation, "Failed to determine checksum verification requirements")
 		return
 	}
@@ -692,15 +684,12 @@ SyncTaskPoll:
 				_, _ = e.syncs.AbortSyncJobVerification(job.ID, generation)
 				verifying = false
 			case <-verifyTicker.C:
-				var currentStatus string
-				var currentGeneration int
-				if err := e.db.QueryRow(`SELECT status, run_generation FROM sync_jobs WHERE id = $1`, job.ID).Scan(&currentStatus, &currentGeneration); err == nil {
+				if currentStatus, currentGeneration, err := e.syncs.GetSyncJobStatusAndGeneration(ctx, job.ID); err == nil {
 					if currentStatus != "VERIFYING" || currentGeneration != generation {
 						verifying = false
 						continue
 					}
-					var remaining int
-					if err := e.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID, generation).Scan(&remaining); err == nil && remaining == 0 {
+					if remaining, err := e.tasks.CountUnverifiedSyncTasks(ctx, job.ID, generation); err == nil && remaining == 0 {
 						slog.Info("sync verification completed", "sync_job_id", syncJobID)
 						verifying = false
 					}
@@ -805,10 +794,7 @@ SyncTaskPoll:
 // must reach a terminal state before a later pass can begin.
 func (e *Engine) drainRemainingTasks(ctx context.Context, jobID string) error {
 	return waitForNoRunningTasks(ctx, 3*time.Second, func() (int, error) {
-		var running bool
-		err := e.db.QueryRowContext(ctx, `
-			SELECT EXISTS(SELECT 1 FROM tasks WHERE sync_job_id = $1 AND status = 'RUNNING')
-		`, jobID).Scan(&running)
+		running, err := e.tasks.HasRunningSyncTasks(ctx, jobID)
 		if err != nil {
 			return 0, fmt.Errorf("check running tasks for sync job %s: %w", jobID, err)
 		}
@@ -821,8 +807,7 @@ func (e *Engine) drainRemainingTasks(ctx context.Context, jobID string) error {
 
 func (e *Engine) drainGenerationTasks(ctx context.Context, jobID string, generation int) error {
 	return waitForNoRunningTasks(ctx, 3*time.Second, func() (int, error) {
-		var running bool
-		err := e.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'RUNNING')`, jobID, generation).Scan(&running)
+		running, err := e.tasks.HasRunningSyncPassTasks(ctx, jobID, generation)
 		if err != nil {
 			return 0, fmt.Errorf("check running tasks for sync job %s generation %d: %w", jobID, generation, err)
 		}

@@ -947,17 +947,12 @@ type finalTaskStats struct {
 // snapshots.
 func (e *Engine) readFinalTaskOutcomes(ctx context.Context, jobID string, generation int) (finalTaskStats, error) {
 	stats := finalTaskStats{protectedPaths: make(map[string]bool)}
-	rows, err := e.db.QueryContext(ctx, `SELECT file_path, status, metadata FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2`, jobID, generation)
+	outcomes, err := e.tasks.ListSyncPassTaskOutcomes(ctx, jobID, generation)
 	if err != nil {
 		return stats, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var filePath, status string
-		var metadata []byte
-		if err := rows.Scan(&filePath, &status, &metadata); err != nil {
-			return stats, err
-		}
+	for _, outcome := range outcomes {
+		filePath, status, metadata := outcome.FilePath, outcome.Status, outcome.Metadata
 		stats.total++
 		switch status {
 		case "COMPLETED":
@@ -1001,7 +996,7 @@ func (e *Engine) readFinalTaskOutcomes(ctx context.Context, jobID string, genera
 			stats.changed++
 		}
 	}
-	return stats, rows.Err()
+	return stats, nil
 }
 
 // isFileMatchingTarget determines whether a source file and a target file are identical in content/metadata.

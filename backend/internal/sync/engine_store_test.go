@@ -35,6 +35,11 @@ type fakeSyncStore struct {
 	finalizeOK  bool
 	finalizeErr error
 	finalized   Finalization
+
+	recoveredPasses []db.RecoveredSyncPass
+	recoverErr      error
+	advancedID      string
+	advanceErr      error
 }
 
 func (f *fakeSyncStore) GetSyncJobContext(_ context.Context, id string) (*db.SyncJob, error) {
@@ -73,6 +78,39 @@ func (f *fakeSyncStore) FinalizeEmptySyncJobPassWithStates(id string, generation
 	f.calls = append(f.calls, "finalize-empty")
 	f.finalized = Finalization{JobID: id, Generation: generation, Status: status, Error: errMsg, Total: total, Processed: processed, Changed: changed, Deleted: deleted, Failed: failed, StateUpserts: upserts, StateDeletes: deletes}
 	return f.finalizeOK, f.finalizeErr
+}
+
+func (f *fakeSyncStore) RecoverStaleSyncPasses(context.Context) ([]db.RecoveredSyncPass, error) {
+	f.calls = append(f.calls, "recover")
+	return f.recoveredPasses, f.recoverErr
+}
+
+func (f *fakeSyncStore) AdvanceRecoveredSyncSchedule(_ context.Context, syncJobID string) error {
+	f.calls = append(f.calls, "advance:"+syncJobID)
+	f.advancedID = syncJobID
+	return f.advanceErr
+}
+
+type fakeEngineTaskStore struct {
+	db.TaskStore
+	hasRunning     bool
+	hasRunningErr  error
+	hasPassRunning bool
+	hasPassErr     error
+	outcomes       []db.SyncTaskOutcome
+	outcomesErr    error
+}
+
+func (f *fakeEngineTaskStore) HasRunningSyncTasks(context.Context, string) (bool, error) {
+	return f.hasRunning, f.hasRunningErr
+}
+
+func (f *fakeEngineTaskStore) HasRunningSyncPassTasks(context.Context, string, int) (bool, error) {
+	return f.hasPassRunning, f.hasPassErr
+}
+
+func (f *fakeEngineTaskStore) ListSyncPassTaskOutcomes(context.Context, string, int) ([]db.SyncTaskOutcome, error) {
+	return f.outcomes, f.outcomesErr
 }
 
 func TestStartSyncPassReportsAnUnclaimedJobWithoutStartingAPass(t *testing.T) {
@@ -189,5 +227,68 @@ func TestPostgresPassStoreFinalizeReportsASupersededPass(t *testing.T) {
 
 	if err != nil || ok {
 		t.Fatalf("Finalize() = (%v, %v), want (false, nil)", ok, err)
+	}
+}
+
+func TestPostgresPassStoreRecoverAndAdvanceThroughSyncStore(t *testing.T) {
+	store := &fakeSyncStore{
+		recoveredPasses: []db.RecoveredSyncPass{{ID: "sync-1", UserID: "user-1"}},
+	}
+	ps := postgresPassStore{syncs: store}
+
+	recovered, err := ps.Recover(context.Background())
+	if err != nil {
+		t.Fatalf("Recover() error = %v", err)
+	}
+	if len(recovered) != 1 || recovered[0].ID != "sync-1" || recovered[0].UserID != "user-1" {
+		t.Fatalf("Recover() = %+v, want [{ID:sync-1 UserID:user-1}]", recovered)
+	}
+	if err := ps.AdvanceRecovered(context.Background(), "sync-1"); err != nil {
+		t.Fatalf("AdvanceRecovered() error = %v", err)
+	}
+	if store.advancedID != "sync-1" {
+		t.Fatalf("advancedID = %q, want sync-1", store.advancedID)
+	}
+}
+
+func TestEngineDrainTasksThroughTaskStore(t *testing.T) {
+	tasks := &fakeEngineTaskStore{}
+	e := &Engine{tasks: tasks}
+
+	if err := e.drainRemainingTasks(context.Background(), "sync-1"); err != nil {
+		t.Fatalf("drainRemainingTasks() error = %v", err)
+	}
+	if err := e.drainGenerationTasks(context.Background(), "sync-1", 2); err != nil {
+		t.Fatalf("drainGenerationTasks() error = %v", err)
+	}
+
+	tasks.hasRunningErr = errors.New("db down")
+	if err := e.drainRemainingTasks(context.Background(), "sync-1"); err == nil {
+		t.Fatal("expected error from drainRemainingTasks")
+	}
+}
+
+func TestEngineReadFinalTaskOutcomesThroughTaskStore(t *testing.T) {
+	tasks := &fakeEngineTaskStore{
+		outcomes: []db.SyncTaskOutcome{
+			{FilePath: "/a.txt", Status: "COMPLETED", Metadata: []byte(`{"action":"UPLOAD","side":"target"}`)},
+			{FilePath: "/b.txt", Status: "SKIPPED", Metadata: []byte(`{}`)},
+			{FilePath: "/c.txt", Status: "FAILED", Metadata: []byte(`{}`)},
+		},
+	}
+	e := &Engine{tasks: tasks}
+
+	stats, err := e.readFinalTaskOutcomes(context.Background(), "sync-1", 1)
+	if err != nil {
+		t.Fatalf("readFinalTaskOutcomes() error = %v", err)
+	}
+	if stats.total != 3 || stats.completed != 1 || stats.skipped != 1 || stats.failed != 1 {
+		t.Fatalf("stats = %+v, unexpected counts", stats)
+	}
+	if !stats.protectedPaths["/b.txt"] || !stats.protectedPaths["/c.txt"] {
+		t.Fatalf("protectedPaths = %v, want /b.txt and /c.txt", stats.protectedPaths)
+	}
+	if len(stats.completedOperations) != 1 || stats.completedOperations[0].filePath != "/a.txt" {
+		t.Fatalf("completedOperations = %+v, want /a.txt", stats.completedOperations)
 	}
 }
