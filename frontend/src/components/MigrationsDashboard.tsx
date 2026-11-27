@@ -27,7 +27,7 @@ import {
 import { ProgressBar } from './ProgressBar';
 import { BackupSnapshotBrowser } from './BackupSnapshotBrowser';
 import { formatCronHuman } from '../utils/cronFormatter';
-import { canPerform } from '../utils/jobActions';
+import { backupBadgeStatus, canPerform, isActiveBackupStatus, pauseResumeAction } from '../utils/jobActions';
 
 interface MigrationsDashboardProps {
   apiUrl: string;
@@ -181,7 +181,8 @@ export function MigrationsDashboard({
 
   const handleMigrationControl = async (migration: Migration, e: React.MouseEvent) => {
     e.stopPropagation();
-    const action = canPerform(migration, 'resume') ? 'resume' : 'pause';
+    const action = pauseResumeAction(migration);
+    if (!action) return;
     setControlLoading(migration.id);
     try {
       const result = await controlMigration({ apiUrl, token, migrationId: migration.id, action });
@@ -202,7 +203,7 @@ export function MigrationsDashboard({
 
   const activeMigrations = migrations.filter(m => m.status === 'RUNNING' || m.status === 'INDEXING' || m.status === 'VERIFYING').length;
   const activeSyncs = syncJobs.filter(s => s.status === 'RUNNING' || s.status === 'INDEXING' || s.status === 'VERIFYING').length;
-  const activeBackups = backupJobs.filter((job) => ['QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status)).length;
+  const activeBackups = backupJobs.filter((job) => isActiveBackupStatus(job.status)).length;
   const activeTotal = activeMigrations + activeSyncs + activeBackups;
 
   const completedMigrations = migrations.filter(m => m.status === 'COMPLETED' || m.status === 'COMPLETED_WITH_ERRORS').length;
@@ -634,12 +635,13 @@ export function MigrationsDashboard({
                        <td data-label={t('migrations.actions')} className="py-4 px-4 text-right whitespace-nowrap">
                         <div className="flex justify-end items-center gap-2">
                           {(() => {
-                            const isPaused = canPerform(mig, 'resume');
+                            const toggleAction = pauseResumeAction(mig);
+                            const isPaused = toggleAction === 'resume';
                             const label = isPaused ? t('dashboard.resume') : t('dashboard.pause');
                             return (
                           <button
                             onClick={(e) => handleMigrationControl(mig, e)}
-                            disabled={controlLoading === mig.id || !(isPaused || canPerform(mig, 'pause'))}
+                            disabled={controlLoading === mig.id || toggleAction === null}
                             className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
                             aria-label={label}
                             title={label}
@@ -844,7 +846,8 @@ function SyncList({
 
   const handleSyncControl = async (job: SyncJob, e: React.MouseEvent) => {
     e.stopPropagation();
-    const action = canPerform(job, 'resume') ? 'resume' : 'pause';
+    const action = pauseResumeAction(job);
+    if (!action) return;
     setControlLoading(job.id);
     try {
       const result = action === 'pause'
@@ -977,12 +980,13 @@ function SyncList({
               <td className="py-4 px-4 text-right whitespace-nowrap">
                 <div className="flex justify-end items-center gap-2">
                   {(() => {
-                    const isPaused = canPerform(job, 'resume');
+                    const toggleAction = pauseResumeAction(job);
+                    const isPaused = toggleAction === 'resume';
                     const label = isPaused ? t('sync.resume') : t('sync.pause');
                     return (
                   <button
                     onClick={(e) => handleSyncControl(job, e)}
-                    disabled={controlLoading === job.id || !(isPaused || canPerform(job, 'pause'))}
+                    disabled={controlLoading === job.id || toggleAction === null}
                     className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
                     aria-label={label}
                     title={label}
@@ -1137,8 +1141,9 @@ function BackupList({
         </thead>
         <tbody className="divide-y divide-[var(--color-border-light)]">
           {backupJobs.map((job) => {
-            const isPaused = canPerform(job, 'resume');
-            const badgeStatus = job.status === 'QUEUED' ? 'PENDING' : job.status === 'SCANNING' ? 'INDEXING' : job.status;
+            const toggleAction = pauseResumeAction(job);
+            const isPaused = toggleAction === 'resume';
+            const badgeStatus = backupBadgeStatus(job.status);
             const pauseLabel = isPaused ? t('backup.resume') : t('backup.pause');
             return (
               <tr key={job.id} className="hover:bg-[var(--color-bg-tertiary)]">
@@ -1198,8 +1203,8 @@ function BackupList({
                     </button>
                     <button
                       type="button"
-                      onClick={() => void handleAction(job, isPaused ? 'resume' : 'pause')}
-                      disabled={controlLoading !== null || !(isPaused || canPerform(job, 'pause'))}
+                      onClick={() => { if (toggleAction) void handleAction(job, toggleAction); }}
+                      disabled={controlLoading !== null || toggleAction === null}
                       className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
                       aria-label={pauseLabel}
                       title={pauseLabel}

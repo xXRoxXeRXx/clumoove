@@ -22,7 +22,7 @@ import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import { logger } from '../utils/logger';
 import { isAuthFailureError } from '../utils/authFailure';
 import { isOAuthProvider, type JobAction } from '../types';
-import { canPerform } from '../utils/jobActions';
+import { pauseResumeAction } from '../utils/jobActions';
 import {
   QueueListIcon,
   SignalIcon,
@@ -374,23 +374,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       <div className="ui-card p-6 space-y-6">
         <TransferDetailHeader backLabel={t('common.back')} onBack={onReset} title={t('migrations.migrationJobDetail')} id={data.id} actions={
           <>
-            {canPerform(data, 'resume') ? (
-              <button
-                onClick={() => handleMigrationControl('resume')}
-                disabled={controlLoading !== null}
-                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold disabled:opacity-50"
-              >
-                {t('dashboard.resume')}
-              </button>
-            ) : (
-              <button
-                onClick={() => handleMigrationControl('pause')}
-                disabled={controlLoading !== null || !canPerform(data, 'pause')}
-                className="ui-button-secondary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
-              >
-                {t('dashboard.pause')}
-              </button>
-            )}
+            {(() => {
+              const toggleAction = pauseResumeAction(data);
+              return toggleAction === 'resume' ? (
+                <button
+                  onClick={() => handleMigrationControl('resume')}
+                  disabled={controlLoading !== null}
+                  className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold disabled:opacity-50"
+                >
+                  {t('dashboard.resume')}
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleMigrationControl('pause')}
+                  disabled={controlLoading !== null || toggleAction === null}
+                  className="ui-button-secondary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
+                >
+                  {t('dashboard.pause')}
+                </button>
+              );
+            })()}
 
             {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED') && (data.failed_files > 0 || data.processed_files < data.total_files) && (canReauthenticate ? (
               <>

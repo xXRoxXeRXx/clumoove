@@ -19,7 +19,7 @@ import { Tabs, type TabItem } from './Tabs';
 import { EditBackupModal } from './EditBackupModal';
 import { BackupSnapshotBrowser } from './BackupSnapshotBrowser';
 import { formatCronHuman } from '../utils/cronFormatter';
-import { canPerform } from '../utils/jobActions';
+import { backupBadgeStatus, canPerform, isActiveBackupStatus, pauseResumeAction } from '../utils/jobActions';
 import {
   ArrowPathIcon,
   CalendarDaysIcon,
@@ -233,11 +233,10 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
     );
   }
 
-  const isRunning = ['QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status); // presentation only
+  const isRunning = isActiveBackupStatus(job.status); // presentation only
   const canRun = canPerform(job, 'start');
-  const canResume = canPerform(job, 'resume');
-  const canPause = canPerform(job, 'pause');
-  const badgeStatus = job.status === 'QUEUED' ? 'PENDING' : job.status === 'SCANNING' ? 'INDEXING' : job.status;
+  const toggleAction = pauseResumeAction(job);
+  const badgeStatus = backupBadgeStatus(job.status);
 
   const totalBytes = job.total_bytes || 0;
   const processedBytes = job.processed_bytes || 0;
@@ -280,18 +279,18 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
 
             <button
               type="button"
-              onClick={() => void handleAction(canResume ? 'resume' : 'pause')}
-              disabled={actionLoading !== null || (!canResume && !canPause)}
+              onClick={() => { if (toggleAction) void handleAction(toggleAction); }}
+              disabled={actionLoading !== null || toggleAction === null}
               className="ui-button-secondary flex items-center gap-2 px-3 py-1.5 text-xs disabled:opacity-40"
             >
-              {actionLoading === (canResume ? 'resume' : 'pause') ? (
+              {toggleAction !== null && actionLoading === toggleAction ? (
                 <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
-              ) : canResume ? (
+              ) : toggleAction === 'resume' ? (
                 <PlayIcon className="size-4" aria-hidden="true" />
               ) : (
                 <PauseIcon className="size-4" aria-hidden="true" />
               )}
-              <span>{canResume ? t('backup.resume') : t('backup.pause')}</span>
+              <span>{toggleAction === 'resume' ? t('backup.resume') : t('backup.pause')}</span>
             </button>
 
             <button

@@ -14,7 +14,7 @@ import { connectSseLoop } from '../utils/sse';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import { logger } from '../utils/logger';
 import { isAuthFailureError } from '../utils/authFailure';
-import { canPerform } from '../utils/jobActions';
+import { canPerform, pauseResumeAction } from '../utils/jobActions';
 import { ErrorOverview } from './ErrorOverview';
 import { TransferDetailHeader } from './TransferDetailHeader';
 import { TransferProgress } from './TransferProgress';
@@ -319,8 +319,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         ? Math.min(Math.round((job.processed_files / job.total_files) * 100), 100)
         : (job?.status === 'IDLE' || job?.status === 'COMPLETED' ? 100 : 0));
 
-  const canPause = canPerform(job, 'pause');
-  const canResume = canPerform(job, 'resume');
+  const toggleAction = pauseResumeAction(job);
   const canStart = canPerform(job, 'start');
   const isAuthFailure = job.status === 'FAILED' && isAuthFailureError(job.error_message);
   const oauthReauthRoles = (['source', 'target'] as const).filter((role) =>
@@ -347,7 +346,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               </button>
             )}
 
-            {canResume ? (
+            {toggleAction === 'resume' ? (
               <button
                 onClick={handleResume}
                 disabled={actionLoading}
@@ -355,7 +354,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               >
                 {t('sync.resume')}
               </button>
-            ) : canPause ? (
+            ) : toggleAction === 'pause' ? (
               <button
                 onClick={handlePause}
                 disabled={actionLoading}
