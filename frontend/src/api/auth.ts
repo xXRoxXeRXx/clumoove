@@ -1,7 +1,8 @@
 import { apiFetch, apiJson, type ApiJsonResult } from '../utils/apiClient';
+import { authHeaders, jsonAuthHeaders, type AuthenticatedRequest } from './headers';
 
 export type AnonymousAuthRequest = { apiUrl: string };
-export type AuthenticatedAuthRequest = { apiUrl: string; token: string };
+export type AuthenticatedAuthRequest = AuthenticatedRequest;
 
 export type PasswordResetAvailability = { available: boolean };
 export type EmailChangeAvailability = { available: boolean };
@@ -10,8 +11,6 @@ export type TotpSetupData = { otpauth_uri: string; qr_png: string; secret: strin
 export type TotpEnableResponse = { backup_codes?: string[] };
 export type TotpSubmission = { token?: string };
 const json = { 'Content-Type': 'application/json' };
-const authHeaders = (token: string) => ({ Authorization: `Bearer ${token}` });
-const jsonAuthHeaders = (token: string) => ({ ...authHeaders(token), ...json });
 
 export function getPasswordResetAvailability(request: AnonymousAuthRequest): Promise<ApiJsonResult<PasswordResetAvailability>> {
   return apiJson(`${request.apiUrl}/api/auth/password-reset-available`);

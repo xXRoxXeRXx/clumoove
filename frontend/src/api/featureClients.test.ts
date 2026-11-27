@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch, apiJson } from '../utils/apiClient';
-import { updateMigrationBandwidth } from './migrations';
+import { connectMigration, testMigrationConnection, updateMigrationBandwidth } from './migrations';
+import { listConnectionProfilesResponse } from './profiles';
 import { startSync } from './sync';
 import {
   cancelBackupVerify,
@@ -181,7 +182,14 @@ describe('feature API clients', () => {
     await listBackupVerifies(job);
     await startBackupVerify({ ...job, payload: { mode: 'full' } });
     await cancelBackupVerify({ ...job, verifyId: 'ver 1' });
-    await createRestorePreview({ ...job, snapshotId: 'snap 1', payload: { target_root: '/restore' } });
+    const previewPayload = {
+      selected_paths: ['/docs'],
+      target_root: '/restore',
+      conflict_strategy: 'RENAME',
+      threads: 4,
+      bandwidth_mbps: 0,
+    };
+    await createRestorePreview({ ...job, snapshotId: 'snap 1', payload: previewPayload });
     await listRestoreRuns(auth);
     await getRestorePreview({ ...auth, previewId: 'prev 1' });
     await consumeRestorePreview({ ...auth, previewId: 'prev 1' });
@@ -211,7 +219,7 @@ describe('feature API clients', () => {
     expect(apiJson).toHaveBeenNthCalledWith(7, 'https://api.example.test/api/backup/job%201/snapshots/snap%201/restore/previews', {
       method: 'POST',
       headers: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target_root: '/restore' }),
+      body: JSON.stringify(previewPayload),
     });
     expect(apiJson).toHaveBeenNthCalledWith(8, 'https://api.example.test/api/restore', { headers: { Authorization: 'Bearer token' } });
     expect(apiJson).toHaveBeenNthCalledWith(9, 'https://api.example.test/api/restore/previews/prev%201', { headers: { Authorization: 'Bearer token' } });
@@ -221,5 +229,26 @@ describe('feature API clients', () => {
     expect(apiJson).toHaveBeenNthCalledWith(13, 'https://api.example.test/api/restore/runs/run%201/items', { headers: { Authorization: 'Bearer token' } });
     expect(apiJson).toHaveBeenNthCalledWith(14, 'https://api.example.test/api/restore/runs/run%201/cancel', { method: 'POST', headers: { Authorization: 'Bearer token' } });
     expect(apiFetch).toHaveBeenCalledWith('https://api.example.test/api/restore/runs/run%201/report', { headers: { Authorization: 'Bearer token' } });
+  });
+
+  it('routes migration connect helpers and profile list responses through their feature clients', async () => {
+    const auth = { apiUrl: 'https://api.example.test', token: 'token' };
+
+    await testMigrationConnection({ ...auth, payload: { role: 'source' } });
+    await connectMigration({ ...auth, payload: { source_provider: 'nextcloud' } });
+    await listConnectionProfilesResponse(auth.apiUrl, auth.token);
+
+    expect(apiFetch).toHaveBeenNthCalledWith(1, 'https://api.example.test/api/migration/connect/test', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ role: 'source' }),
+    }));
+    expect(apiFetch).toHaveBeenNthCalledWith(2, 'https://api.example.test/api/migration/connect', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ source_provider: 'nextcloud' }),
+    }));
+    expect(apiFetch).toHaveBeenNthCalledWith(3, 'https://api.example.test/api/profiles', {
+      headers: { Authorization: 'Bearer token' },
+      signal: undefined,
+    });
   });
 });

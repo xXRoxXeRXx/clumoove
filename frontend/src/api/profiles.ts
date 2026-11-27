@@ -28,6 +28,17 @@ export async function listConnectionProfiles(
   });
 }
 
+export function listConnectionProfilesResponse(
+  apiUrl: string,
+  token: string,
+  signal?: AbortSignal,
+): Promise<Response> {
+  return apiFetch(`${apiUrl}/api/profiles`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal,
+  });
+}
+
 type ProfileRequest = { apiUrl: string; token: string; profileId: string; signal?: AbortSignal };
 const profileUrl = ({ apiUrl, profileId }: ProfileRequest, suffix = '') => `${apiUrl}/api/profiles/${encodeURIComponent(profileId)}${suffix}`;
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });

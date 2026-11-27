@@ -1,4 +1,5 @@
 import { apiJson, type ApiJsonResult } from '../utils/apiClient';
+import { authHeaders } from './headers';
 
 export type ErrorListItem = {
   id: string;
@@ -23,6 +24,6 @@ export function listErrors(request: {
   offset: number;
 }): Promise<ApiJsonResult<ErrorListResponse>> {
   return apiJson<ErrorListResponse>(`${request.endpoint}?limit=${request.limit}&offset=${request.offset}`, {
-    headers: { Authorization: `Bearer ${request.token}` },
+    headers: authHeaders(request.token),
   });
 }

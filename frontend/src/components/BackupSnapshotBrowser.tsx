@@ -19,6 +19,7 @@ import {
   startBackupVerify,
 } from '../api/backups';
 import { listConnectionProfiles } from '../api/profiles';
+import { apiResponseError } from '../utils/apiClient';
 import { useApiError } from '../utils/apiError';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { isOAuthProvider, RESTORE_TARGET_PROVIDERS } from '../types';
@@ -274,9 +275,9 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   const downloadRestoreReport = async (runID: string) => {
     try {
       const response = await fetchRestoreReport({ apiUrl, token, runId: runID });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({} as { error_code?: string }));
-        setError(translateApiError(body.error_code));
+      const responseError = await apiResponseError(response);
+      if (responseError) {
+        setError(translateApiError(responseError.errorCode));
         return;
       }
       const blobURL = URL.createObjectURL(await response.blob());

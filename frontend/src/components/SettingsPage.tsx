@@ -23,7 +23,7 @@ import { ConnectionManager } from './ConnectionManager';
 import { useThemeContext } from '../contexts/useThemeContext';
 import { useConfirm } from '../contexts/useConfirm';
 import { useApiError } from '../utils/apiError';
-import { apiErrorMessage } from '../utils/apiClient';
+import { apiErrorMessage, type ApiJsonResult } from '../utils/apiClient';
 import {
   changePassword,
   deleteAvatar,
@@ -82,6 +82,12 @@ export function SettingsPage({
 }: SettingsPageProps) {
   const { t } = useTranslation();
   const translateApiError = useApiError();
+  const requireResult = <T,>(result: ApiJsonResult<T>): T => {
+    if (result.ok === false) {
+      throw new Error(translateApiError(result.errorCode));
+    }
+    return result.data;
+  };
   const confirm = useConfirm();
   const userAvatar = safeAvatarUrl(user?.avatar);
 
@@ -154,11 +160,8 @@ export function SettingsPage({
     setTotpMessage(null);
     setSetupLoading(true);
     try {
-      const result = await setupTwoFactor({ apiUrl, token });
-      if (result.ok === false) {
-        throw new Error(translateApiError(result.errorCode));
-      }
-      setSetupData(result.data);
+      const data = requireResult(await setupTwoFactor({ apiUrl, token }));
+      setSetupData(data);
       setBackupCodes([]);
     } catch (err) {
       setTotpMessage({ text: (err as Error).message, type: 'error' });
@@ -177,14 +180,11 @@ export function SettingsPage({
     }
     setEnableLoading(true);
     try {
-      const result = await enableTwoFactor({ apiUrl, token, code });
-      if (result.ok === false) {
-        throw new Error(translateApiError(result.errorCode));
-      }
+      const data = requireResult(await enableTwoFactor({ apiUrl, token, code }));
       setTotpEnabled(true);
       setSetupData(null);
       setEnableCode('');
-      setBackupCodes(result.data.backup_codes || []);
+      setBackupCodes(data.backup_codes || []);
     } catch (err) {
       setTotpMessage({ text: (err as Error).message, type: 'error' });
     } finally {
@@ -201,10 +201,7 @@ export function SettingsPage({
     }
     setDisableLoading(true);
     try {
-      const result = await disableTwoFactor({ apiUrl, token, code: disableCode.trim() });
-      if (result.ok === false) {
-        throw new Error(translateApiError(result.errorCode));
-      }
+      requireResult(await disableTwoFactor({ apiUrl, token, code: disableCode.trim() }));
       setTotpEnabled(false);
       setDisableCode('');
       setSetupData(null);
@@ -305,13 +302,9 @@ export function SettingsPage({
     setProfileLoading(true);
 
     try {
-      const result = await updateCurrentUserProfile({ apiUrl, token, displayName: displayName.trim() });
+      const data = requireResult(await updateCurrentUserProfile({ apiUrl, token, displayName: displayName.trim() }));
 
-      if (result.ok === false) {
-        throw new Error(translateApiError(result.errorCode));
-      }
-
-      onUpdateUser({ ...user, display_name: result.data.display_name });
+      onUpdateUser({ ...user, display_name: data.display_name });
       setProfileMessage({ text: t('settings.messages.profileUpdated'), type: 'success' });
     } catch (err) {
       setProfileMessage({ text: (err as Error).message, type: 'error' });
@@ -346,13 +339,9 @@ export function SettingsPage({
     }
 
     try {
-      const result = await uploadAvatar({ apiUrl, token, avatar: croppedDataUrl });
+      const data = requireResult(await uploadAvatar({ apiUrl, token, avatar: croppedDataUrl }));
 
-      if (result.ok === false) {
-        throw new Error(translateApiError(result.errorCode));
-      }
-
-      onUpdateUser({ ...user, avatar: result.data.avatar });
+      onUpdateUser({ ...user, avatar: data.avatar });
       setAvatarMessage({ text: t('settings.messages.avatarUploaded'), type: 'success' });
     } catch (err) {
       setAvatarMessage({ text: (err as Error).message, type: 'error' });
@@ -368,11 +357,7 @@ export function SettingsPage({
     setAvatarLoading(true);
 
     try {
-      const result = await deleteAvatar({ apiUrl, token });
-
-      if (result.ok === false) {
-        throw new Error(translateApiError(result.errorCode));
-      }
+      requireResult(await deleteAvatar({ apiUrl, token }));
 
       // Remove avatar from state
       const updatedUser = { ...user };
@@ -403,17 +388,13 @@ export function SettingsPage({
     setPasswordLoading(true);
 
     try {
-      const result = await changePassword({
+      requireResult(await changePassword({
         apiUrl,
         token,
         currentPassword,
         newPassword,
         confirmPassword,
-      });
-
-      if (result.ok === false) {
-        throw new Error(translateApiError(result.errorCode));
-      }
+      }));
 
       setPasswordMessage({ text: t('settings.messages.passwordChanged'), type: 'success' });
       setCurrentPassword('');

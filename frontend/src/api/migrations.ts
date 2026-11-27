@@ -77,3 +77,17 @@ export function startMigration(request: FeatureRequest): Promise<Response> {
     body: JSON.stringify(request.payload), signal: request.signal,
   });
 }
+
+export function testMigrationConnection(request: FeatureRequest): Promise<Response> {
+  return apiFetch(`${request.apiUrl}/api/migration/connect/test`, {
+    method: 'POST', headers: { ...auth(request.token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(request.payload), signal: request.signal,
+  });
+}
+
+export function connectMigration(request: FeatureRequest): Promise<Response> {
+  return apiFetch(`${request.apiUrl}/api/migration/connect`, {
+    method: 'POST', headers: { ...auth(request.token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(request.payload), signal: request.signal,
+  });
+}

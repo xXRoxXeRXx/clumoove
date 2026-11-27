@@ -10,8 +10,8 @@
 // saved profile resolves to empty values, so ad-hoc secrets cannot leak next to
 // a profile id.
 import { isOAuthProvider, type CloudFile, type MigrationConfig, type ProviderId } from '../../types';
-import { apiFetch } from '../../utils/apiClient';
-import { createConnectionProfile } from '../../api/profiles';
+import { connectMigration, testMigrationConnection } from '../../api/migrations';
+import { createConnectionProfile, listConnectionProfilesResponse } from '../../api/profiles';
 import { buildFtpUrl, sftpHostKeyFingerprintPattern, type FtpTlsMode } from '../../utils/providerUrls';
 
 export type ConnectionRole = 'source' | 'target';
@@ -185,7 +185,6 @@ async function errorCodeOf(response: Response): Promise<string | undefined> {
 }
 
 export function createConnectionWorkflow({ apiUrl, token }: { apiUrl: string; token: string }): ConnectionWorkflow {
-  const jsonHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const fail = (failure: WorkflowFailure): { ok: false; failure: WorkflowFailure } => ({ ok: false, failure });
   const validation = (messageKey: string) => fail({ kind: 'validation', messageKey });
   const apiFailure = (errorCode?: string) => fail({ kind: 'api', errorCode });
@@ -204,14 +203,14 @@ export function createConnectionWorkflow({ apiUrl, token }: { apiUrl: string; to
       const invalid = validateConnection('source', source);
       if (invalid) return validation(invalid);
       try {
-        const response = await apiFetch(`${apiUrl}/api/migration/connect/test`, {
-          method: 'POST',
-          headers: jsonHeaders,
-          body: JSON.stringify({
+        const response = await testMigrationConnection({
+          apiUrl,
+          token,
+          payload: {
             ...sideFields('source', source, resolveConnection(source)),
             source_profile_id: source.profileId,
             role: 'source',
-          }),
+          },
         });
         const body = await response.json().catch(() => ({} as { success?: boolean; error_code?: string }));
         if (!response.ok || !body.success) return apiFailure(body.error_code);
@@ -228,16 +227,16 @@ export function createConnectionWorkflow({ apiUrl, token }: { apiUrl: string; to
       const resolvedSource = resolveConnection(source);
       const resolvedTarget = resolveConnection(target);
       try {
-        const response = await apiFetch(`${apiUrl}/api/migration/connect`, {
-          method: 'POST',
-          headers: jsonHeaders,
-          body: JSON.stringify({
+        const response = await connectMigration({
+          apiUrl,
+          token,
+          payload: {
             ...sideFields('source', source, resolvedSource),
             ...sideFields('target', target, resolvedTarget),
             source_picker_session_id: '',
             source_profile_id: source.profileId,
             target_profile_id: target.profileId,
-          }),
+          },
         });
         if (!response.ok) return apiFailure(await errorCodeOf(response));
 
@@ -295,7 +294,7 @@ export function createConnectionWorkflow({ apiUrl, token }: { apiUrl: string; to
 
     async listProfiles() {
       try {
-        const res = await apiFetch(`${apiUrl}/api/profiles`, { headers: { Authorization: `Bearer ${token}` } });
+        const res = await listConnectionProfilesResponse(apiUrl, token);
         const data = await res.json().catch(() => ({})) as { profiles?: SavedProfileSummary[] };
         return data.profiles ?? [];
       } catch {
