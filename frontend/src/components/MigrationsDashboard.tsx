@@ -27,7 +27,45 @@ import {
 import { ProgressBar } from './ProgressBar';
 import { BackupSnapshotBrowser } from './BackupSnapshotBrowser';
 import { formatCronHuman } from '../utils/cronFormatter';
-import { backupBadgeStatus, canPerform, isActiveBackupStatus, pauseResumeAction } from '../utils/jobActions';
+import { backupBadgeStatus, isActiveBackupStatus } from '../utils/backupPresentation';
+import { canPerform, pauseResumeAction } from '../utils/jobActions';
+
+interface PauseResumeIconButtonProps {
+  toggleAction: 'resume' | 'pause' | null;
+  loading: boolean;
+  disabled?: boolean;
+  pauseLabel: string;
+  resumeLabel: string;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+}
+
+function PauseResumeIconButton({
+  toggleAction,
+  loading,
+  disabled = false,
+  pauseLabel,
+  resumeLabel,
+  onClick,
+}: PauseResumeIconButtonProps) {
+  const isPaused = toggleAction === 'resume';
+  const label = isPaused ? resumeLabel : pauseLabel;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || toggleAction === null}
+      className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
+      aria-label={label}
+      title={label}
+    >
+      {loading
+        ? <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
+        : isPaused
+          ? <PlayIcon className="size-4" aria-hidden="true" />
+          : <PauseIcon className="size-4" aria-hidden="true" />}
+    </button>
+  );
+}
 
 interface MigrationsDashboardProps {
   apiUrl: string;
@@ -634,26 +672,14 @@ export function MigrationsDashboard({
                       {/* Actions */}
                        <td data-label={t('migrations.actions')} className="py-4 px-4 text-right whitespace-nowrap">
                         <div className="flex justify-end items-center gap-2">
-                          {(() => {
-                            const toggleAction = pauseResumeAction(mig);
-                            const isPaused = toggleAction === 'resume';
-                            const label = isPaused ? t('dashboard.resume') : t('dashboard.pause');
-                            return (
-                          <button
+                          <PauseResumeIconButton
+                            toggleAction={pauseResumeAction(mig)}
+                            loading={controlLoading === mig.id}
+                            disabled={controlLoading === mig.id}
+                            pauseLabel={t('dashboard.pause')}
+                            resumeLabel={t('dashboard.resume')}
                             onClick={(e) => handleMigrationControl(mig, e)}
-                            disabled={controlLoading === mig.id || toggleAction === null}
-                            className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
-                            aria-label={label}
-                            title={label}
-                          >
-                            {controlLoading === mig.id
-                              ? <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
-                              : isPaused
-                                ? <PlayIcon className="size-4" aria-hidden="true" />
-                              : <PauseIcon className="size-4" aria-hidden="true" />}
-                          </button>
-                            );
-                          })()}
+                          />
                           <button
                             onClick={(e) => handleDelete(mig.id, e)}
                             disabled={deleteLoading === mig.id || !isDeletableMigration(mig.status)}
@@ -979,26 +1005,14 @@ function SyncList({
               </td>
               <td className="py-4 px-4 text-right whitespace-nowrap">
                 <div className="flex justify-end items-center gap-2">
-                  {(() => {
-                    const toggleAction = pauseResumeAction(job);
-                    const isPaused = toggleAction === 'resume';
-                    const label = isPaused ? t('sync.resume') : t('sync.pause');
-                    return (
-                  <button
+                  <PauseResumeIconButton
+                    toggleAction={pauseResumeAction(job)}
+                    loading={controlLoading === job.id}
+                    disabled={controlLoading === job.id}
+                    pauseLabel={t('sync.pause')}
+                    resumeLabel={t('sync.resume')}
                     onClick={(e) => handleSyncControl(job, e)}
-                    disabled={controlLoading === job.id || toggleAction === null}
-                    className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
-                    aria-label={label}
-                    title={label}
-                  >
-                    {controlLoading === job.id
-                      ? <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
-                      : isPaused
-                        ? <PlayIcon className="size-4" aria-hidden="true" />
-                        : <PauseIcon className="size-4" aria-hidden="true" />}
-                  </button>
-                    );
-                  })()}
+                  />
                   <button
                     onClick={(e) => handleDelete(job.id, e)}
                     disabled={deleteLoading === job.id}
@@ -1142,9 +1156,7 @@ function BackupList({
         <tbody className="divide-y divide-[var(--color-border-light)]">
           {backupJobs.map((job) => {
             const toggleAction = pauseResumeAction(job);
-            const isPaused = toggleAction === 'resume';
             const badgeStatus = backupBadgeStatus(job.status);
-            const pauseLabel = isPaused ? t('backup.resume') : t('backup.pause');
             return (
               <tr key={job.id} className="hover:bg-[var(--color-bg-tertiary)]">
                 <td data-label={t('migrations.sourceTarget')} className="px-4 py-4">
@@ -1201,22 +1213,14 @@ function BackupList({
                         <ArrowPathIcon className="size-4" aria-hidden="true" />
                       )}
                     </button>
-                    <button
-                      type="button"
+                    <PauseResumeIconButton
+                      toggleAction={toggleAction}
+                      loading={Boolean(controlLoading?.startsWith(`${job.id}:pause`) || controlLoading?.startsWith(`${job.id}:resume`))}
+                      disabled={controlLoading !== null}
+                      pauseLabel={t('backup.pause')}
+                      resumeLabel={t('backup.resume')}
                       onClick={() => { if (toggleAction) void handleAction(job, toggleAction); }}
-                      disabled={controlLoading !== null || toggleAction === null}
-                      className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
-                      aria-label={pauseLabel}
-                      title={pauseLabel}
-                    >
-                      {controlLoading?.startsWith(`${job.id}:pause`) || controlLoading?.startsWith(`${job.id}:resume`) ? (
-                        <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
-                      ) : isPaused ? (
-                        <PlayIcon className="size-4" aria-hidden="true" />
-                      ) : (
-                        <PauseIcon className="size-4" aria-hidden="true" />
-                      )}
-                    </button>
+                    />
                     <button
                       type="button"
                       onClick={() => void handleDelete(job)}

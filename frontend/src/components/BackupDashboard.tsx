@@ -19,7 +19,8 @@ import { Tabs, type TabItem } from './Tabs';
 import { EditBackupModal } from './EditBackupModal';
 import { BackupSnapshotBrowser } from './BackupSnapshotBrowser';
 import { formatCronHuman } from '../utils/cronFormatter';
-import { backupBadgeStatus, canPerform, isActiveBackupStatus, pauseResumeAction } from '../utils/jobActions';
+import { backupBadgeStatus, isActiveBackupStatus } from '../utils/backupPresentation';
+import { canPerform, pauseResumeAction } from '../utils/jobActions';
 import {
   ArrowPathIcon,
   CalendarDaysIcon,
