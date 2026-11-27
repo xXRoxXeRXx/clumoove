@@ -188,16 +188,30 @@ function apiFailure(errorCode: string | undefined, fallbackKey: string, pendingS
   };
 }
 
+async function readJsonOrFail<T>(
+  response: Response,
+  signal: AbortSignal | undefined,
+  fallbackKey: string,
+): Promise<{ data: T } | { fail: SubmitJobResult }> {
+  if (!response.ok) {
+    return { fail: apiFailure(await readErrorCode(response), fallbackKey) };
+  }
+  const data = await response.json() as T;
+  if (signal?.aborted) {
+    return { fail: { ok: false, failure: { kind: 'aborted' } } };
+  }
+  return { data };
+}
+
 export async function submitJob(request: JobRequest, context: SubmitJobContext): Promise<SubmitJobResult> {
   const { apiUrl, token, signal } = context;
   try {
     if (request.jobType === 'backup') {
       const response = await createBackup({ apiUrl, token, signal, payload: request.payload });
-      if (!response.ok) return apiFailure(await readErrorCode(response), 'backup.createFailed');
-      const data = await response.json() as { id?: string };
-      if (signal?.aborted) return { ok: false, failure: { kind: 'aborted' } };
-      return data.id
-        ? { ok: true, id: data.id, jobType: 'backup' }
+      const parsed = await readJsonOrFail<{ id?: string }>(response, signal, 'backup.createFailed');
+      if ('fail' in parsed) return parsed.fail;
+      return parsed.data.id
+        ? { ok: true, id: parsed.data.id, jobType: 'backup' }
         : apiFailure(undefined, 'backup.createFailed');
     }
 
@@ -205,12 +219,15 @@ export async function submitJob(request: JobRequest, context: SubmitJobContext):
       let syncId = request.existingSyncId;
       if (!syncId) {
         const response = await createSync({ apiUrl, token, signal, payload: request.payload });
-        if (!response.ok) return apiFailure(await readErrorCode(response), 'sync.createFailed');
-        const data = await response.json() as { id?: string; success?: boolean; error_code?: string };
-        if (signal?.aborted) return { ok: false, failure: { kind: 'aborted' } };
-        if (data.success === false) return apiFailure(data.error_code, 'sync.createFailed');
-        if (!data.id) return apiFailure(undefined, 'sync.createFailed');
-        syncId = data.id;
+        const parsed = await readJsonOrFail<{ id?: string; success?: boolean; error_code?: string }>(
+          response,
+          signal,
+          'sync.createFailed',
+        );
+        if ('fail' in parsed) return parsed.fail;
+        if (parsed.data.success === false) return apiFailure(parsed.data.error_code, 'sync.createFailed');
+        if (!parsed.data.id) return apiFailure(undefined, 'sync.createFailed');
+        syncId = parsed.data.id;
       }
 
       const startResponse = await startSyncResponse({ apiUrl, token, syncId, signal });
@@ -221,13 +238,16 @@ export async function submitJob(request: JobRequest, context: SubmitJobContext):
     }
 
     const response = await startMigration({ apiUrl, token, payload: request.payload, signal });
-    if (!response.ok) return apiFailure(await readErrorCode(response), 'fileBrowser.errors.startFailed');
-    const data = await response.json() as { success?: boolean; migration_id?: string; error_code?: string };
-    if (signal?.aborted) return { ok: false, failure: { kind: 'aborted' } };
-    if (data.success && data.migration_id) {
-      return { ok: true, id: data.migration_id, jobType: 'migration' };
+    const parsed = await readJsonOrFail<{ success?: boolean; migration_id?: string; error_code?: string }>(
+      response,
+      signal,
+      'fileBrowser.errors.startFailed',
+    );
+    if ('fail' in parsed) return parsed.fail;
+    if (parsed.data.success && parsed.data.migration_id) {
+      return { ok: true, id: parsed.data.migration_id, jobType: 'migration' };
     }
-    return apiFailure(data.error_code, 'fileBrowser.errors.startError');
+    return apiFailure(parsed.data.error_code, 'fileBrowser.errors.startError');
   } catch (err) {
     if (signal?.aborted || isAbortError(err)) {
       return { ok: false, failure: { kind: 'aborted' } };
