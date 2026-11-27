@@ -23,7 +23,7 @@ import { adminApi, type AdminUser, type AdminStats, type AuditEntry, type ApiRes
 import { useFormat } from '../utils/format';
 import { useConfirm } from '../contexts/useConfirm';
 import { MessageBanner } from './MessageBanner';
-import { apiFetch } from '../utils/apiClient';
+import { getInstanceSettings, updateInstanceSetting } from '../api/settings';
 import { logger } from '../utils/logger';
 import { Toggle } from './Toggle';
 import { Badge } from './Badge';
@@ -670,23 +670,15 @@ function SystemTab({ apiUrl, token, onMessage }: {
     const timeoutId = window.setTimeout(() => {
       setRegistrationsLoaded(false);
       void (async () => {
-        try {
-          const res = await apiFetch(`${apiUrl}/api/settings`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!res.ok) {
-            const body = await res.json().catch(() => ({})) as { error_code?: string };
-            throw new Error(translateApiError(body.error_code));
-          }
-          const data = await res.json();
-          if (cancelled) return;
-          setRegistrationsEnabled(String(data.registrations_enabled) === 'true');
-          setRegistrationsLoaded(true);
-        } catch (err) {
-          if (cancelled) return;
-          logger.error('Failed to fetch settings', err);
-          setMessage({ text: err instanceof Error ? err.message : translateApiError(), type: 'error' });
+        const result = await getInstanceSettings({ apiUrl, token });
+        if (cancelled) return;
+        if (result.ok === false) {
+          logger.error('Failed to fetch settings', result);
+          setMessage({ text: result.networkError ? translateApiError() : translateApiError(result.errorCode), type: 'error' });
+          return;
         }
+        setRegistrationsEnabled(String(result.data?.registrations_enabled) === 'true');
+        setRegistrationsLoaded(true);
       })();
     }, 0);
     return () => {
@@ -712,21 +704,15 @@ function SystemTab({ apiUrl, token, onMessage }: {
     setMessage(null);
     setLoading(true);
     try {
-      const res = await apiFetch(`${apiUrl}/api/settings`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          key: 'registrations_enabled',
-          value: checked ? 'true' : 'false',
-        }),
+      const result = await updateInstanceSetting({
+        apiUrl,
+        token,
+        key: 'registrations_enabled',
+        value: checked ? 'true' : 'false',
       });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as { error_code?: string });
-        throw new Error(translateApiError(data.error_code));
+      if (result.ok === false) {
+        throw new Error(translateApiError(result.errorCode));
       }
 
       setRegistrationsEnabled(checked);

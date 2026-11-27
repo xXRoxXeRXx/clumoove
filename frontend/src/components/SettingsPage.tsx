@@ -23,7 +23,19 @@ import { ConnectionManager } from './ConnectionManager';
 import { useThemeContext } from '../contexts/useThemeContext';
 import { useConfirm } from '../contexts/useConfirm';
 import { useApiError } from '../utils/apiError';
-import { apiErrorMessage, apiFetch } from '../utils/apiClient';
+import { apiErrorMessage } from '../utils/apiClient';
+import {
+  changePassword,
+  deleteAvatar,
+  disableTwoFactor,
+  enableTwoFactor,
+  getEmailChangeAvailability,
+  getTwoFactorStatus,
+  requestEmailChange,
+  setupTwoFactor,
+  updateCurrentUserProfile,
+  uploadAvatar,
+} from '../api/auth';
 import { getNotificationSettings, testNotificationSetting, updateNotificationSetting } from '../api/settings';
 import { safeAvatarUrl } from '../utils/avatar';
 import { MessageBanner, type MessageState } from './MessageBanner';
@@ -128,15 +140,9 @@ export function SettingsPage({
   // Fetch 2FA status on mount
   useEffect(() => {
     let cancelled = false;
-    apiFetch(`${apiUrl}/api/auth/2fa/status`, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    })
-      .then((res) => (res.ok ? res.json() : Promise.reject()))
-      .then((data) => {
-        if (!cancelled) setTotpEnabled(Boolean(data.totp_enabled));
-      })
-      .catch(() => {
-        if (!cancelled) setTotpEnabled(false);
+    void getTwoFactorStatus({ apiUrl, token })
+      .then((result) => {
+        if (!cancelled) setTotpEnabled(result.ok ? Boolean(result.data.totp_enabled) : false);
       })
       .finally(() => {
         if (!cancelled) setTotpStatusLoading(false);
@@ -148,16 +154,11 @@ export function SettingsPage({
     setTotpMessage(null);
     setSetupLoading(true);
     try {
-      const res = await apiFetch(`${apiUrl}/api/auth/2fa/setup`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as ApiErrBody);
-        throw new Error(translateApiError((data as ApiErrBody).error_code));
+      const result = await setupTwoFactor({ apiUrl, token });
+      if (result.ok === false) {
+        throw new Error(translateApiError(result.errorCode));
       }
-      const data = await res.json();
-      setSetupData(data);
+      setSetupData(result.data);
       setBackupCodes([]);
     } catch (err) {
       setTotpMessage({ text: (err as Error).message, type: 'error' });
@@ -176,23 +177,14 @@ export function SettingsPage({
     }
     setEnableLoading(true);
     try {
-      const res = await apiFetch(`${apiUrl}/api/auth/2fa/enable`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ code }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as ApiErrBody);
-        throw new Error(translateApiError((data as ApiErrBody).error_code));
+      const result = await enableTwoFactor({ apiUrl, token, code });
+      if (result.ok === false) {
+        throw new Error(translateApiError(result.errorCode));
       }
-      const data = await res.json();
       setTotpEnabled(true);
       setSetupData(null);
       setEnableCode('');
-      setBackupCodes(data.backup_codes || []);
+      setBackupCodes(result.data.backup_codes || []);
     } catch (err) {
       setTotpMessage({ text: (err as Error).message, type: 'error' });
     } finally {
@@ -209,17 +201,9 @@ export function SettingsPage({
     }
     setDisableLoading(true);
     try {
-      const res = await apiFetch(`${apiUrl}/api/auth/2fa/disable`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ code: disableCode.trim() }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as ApiErrBody);
-        throw new Error(translateApiError((data as ApiErrBody).error_code));
+      const result = await disableTwoFactor({ apiUrl, token, code: disableCode.trim() });
+      if (result.ok === false) {
+        throw new Error(translateApiError(result.errorCode));
       }
       setTotpEnabled(false);
       setDisableCode('');
@@ -236,13 +220,9 @@ export function SettingsPage({
   // Fetch whether the system mail service allows email changes
   useEffect(() => {
     let cancelled = false;
-    apiFetch(`${apiUrl}/api/auth/email-change-available`)
-      .then((res) => (res.ok ? res.json() : Promise.reject()))
-      .then((data) => {
-        if (!cancelled) setEmailChangeAvailable(Boolean(data.available));
-      })
-      .catch(() => {
-        if (!cancelled) setEmailChangeAvailable(false);
+    void getEmailChangeAvailability({ apiUrl })
+      .then((result) => {
+        if (!cancelled) setEmailChangeAvailable(result.ok ? Boolean(result.data.available) : false);
       });
     return () => { cancelled = true; };
   }, [apiUrl]);
@@ -325,22 +305,13 @@ export function SettingsPage({
     setProfileLoading(true);
 
     try {
-      const res = await apiFetch(`${apiUrl}/api/auth/me`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ display_name: displayName.trim() }),
-      });
+      const result = await updateCurrentUserProfile({ apiUrl, token, displayName: displayName.trim() });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as ApiErrBody);
-        throw new Error(translateApiError((data as ApiErrBody).error_code));
+      if (result.ok === false) {
+        throw new Error(translateApiError(result.errorCode));
       }
 
-      const data = await res.json();
-      onUpdateUser({ ...user, display_name: data.display_name });
+      onUpdateUser({ ...user, display_name: result.data.display_name });
       setProfileMessage({ text: t('settings.messages.profileUpdated'), type: 'success' });
     } catch (err) {
       setProfileMessage({ text: (err as Error).message, type: 'error' });
@@ -375,22 +346,13 @@ export function SettingsPage({
     }
 
     try {
-      const res = await apiFetch(`${apiUrl}/api/user/avatar`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ avatar: croppedDataUrl }),
-      });
+      const result = await uploadAvatar({ apiUrl, token, avatar: croppedDataUrl });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as ApiErrBody);
-        throw new Error(translateApiError((data as ApiErrBody).error_code));
+      if (result.ok === false) {
+        throw new Error(translateApiError(result.errorCode));
       }
 
-      const data = await res.json();
-      onUpdateUser({ ...user, avatar: data.avatar });
+      onUpdateUser({ ...user, avatar: result.data.avatar });
       setAvatarMessage({ text: t('settings.messages.avatarUploaded'), type: 'success' });
     } catch (err) {
       setAvatarMessage({ text: (err as Error).message, type: 'error' });
@@ -406,16 +368,10 @@ export function SettingsPage({
     setAvatarLoading(true);
 
     try {
-      const res = await apiFetch(`${apiUrl}/api/user/avatar`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+      const result = await deleteAvatar({ apiUrl, token });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as ApiErrBody);
-        throw new Error(translateApiError((data as ApiErrBody).error_code));
+      if (result.ok === false) {
+        throw new Error(translateApiError(result.errorCode));
       }
 
       // Remove avatar from state
@@ -447,22 +403,16 @@ export function SettingsPage({
     setPasswordLoading(true);
 
     try {
-      const res = await apiFetch(`${apiUrl}/api/auth/change-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          current_password: currentPassword,
-          new_password: newPassword,
-          confirm_password: confirmPassword,
-        }),
+      const result = await changePassword({
+        apiUrl,
+        token,
+        currentPassword,
+        newPassword,
+        confirmPassword,
       });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as ApiErrBody);
-        throw new Error(translateApiError((data as ApiErrBody).error_code));
+      if (result.ok === false) {
+        throw new Error(translateApiError(result.errorCode));
       }
 
       setPasswordMessage({ text: t('settings.messages.passwordChanged'), type: 'success' });
@@ -613,23 +563,16 @@ export function SettingsPage({
                   }
                   setEmailChangeLoading(true);
                   try {
-                    const res = await apiFetch(`${apiUrl}/api/auth/change-email`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`,
-                      },
-                      body: JSON.stringify({ new_email: trimmed }),
-                    });
-                    if (res.ok) {
+                    const result = await requestEmailChange({ apiUrl, token, newEmail: trimmed });
+                    if (result.ok === false) {
+                      setEmailChangeMessage({
+                        text: apiErrorMessage(result, translateApiError, t('settings.messages.emailConnectionError')),
+                        type: 'error',
+                      });
+                    } else {
                       setNewEmail('');
                       setEmailChangeMessage({ text: t('settings.messages.emailSent'), type: 'success' });
-                    } else {
-                      const body = await res.json().catch(() => ({})) as ApiErrBody;
-                      setEmailChangeMessage({ text: translateApiError(body.error_code), type: 'error' });
                     }
-                  } catch {
-                    setEmailChangeMessage({ text: t('settings.messages.emailConnectionError'), type: 'error' });
                   } finally {
                     setEmailChangeLoading(false);
                   }

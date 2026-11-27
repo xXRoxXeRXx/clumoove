@@ -2,7 +2,23 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FileIcon } from './FileIcon';
 import { useFormat } from '../utils/format';
-import { apiFetch, apiJson } from '../utils/apiClient';
+import {
+  cancelBackupVerify,
+  cancelRestorePreview,
+  cancelRestoreRun,
+  consumeRestorePreview,
+  createRestorePreview,
+  downloadRestoreReport as fetchRestoreReport,
+  getRestorePreview,
+  getRestoreRun,
+  listBackupSnapshots,
+  listBackupVerifies,
+  listRestoreRunItems,
+  listRestoreRuns,
+  listSnapshotItems,
+  startBackupVerify,
+} from '../api/backups';
+import { listConnectionProfiles } from '../api/profiles';
 import { useApiError } from '../utils/apiError';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { isOAuthProvider, RESTORE_TARGET_PROVIDERS } from '../types';
@@ -36,8 +52,6 @@ type Props = {
   onBack: () => void;
 };
 
-type Profile = { id: string; name: string; provider: string };
-type ProfileResponse = { profiles: Profile[] };
 type RestorePreview = { id: string; status: string; total_files: number; total_directories: number; total_bytes: number; existing_file_conflicts: number; mergeable_directories: number; type_conflicts: number; unavailable_items: number; expected_skips: number; expected_renames: number; metadata_warnings: number; conflict_examples: Array<{ path: string; outcome: string }> };
 type RestoreRun = { id: string; status: string; total_files: number; processed_files: number; total_bytes: number; processed_bytes: number; failed_files: number };
 type RestoreItem = { id: string; snapshot_relative_path: string; target_path: string; status: string; verification_kind: string | null; error_code: string | null };
@@ -55,7 +69,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   const [error, setError] = useState('');
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [restoreOpen, setRestoreOpen] = useState(false);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [profiles, setProfiles] = useState<Array<{ id: string; name: string; provider: string }>>([]);
   const [targetProfileID, setTargetProfileID] = useState('');
   const [targetMode, setTargetMode] = useState<'profile' | 'direct'>('profile');
   const [directProvider, setDirectProvider] = useState('nextcloud');
@@ -99,7 +113,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
 
   useEffect(() => {
     let disposed = false;
-    void apiJson<Snapshot[]>(`${apiUrl}/api/backup/${jobID}/snapshots`, { headers: { Authorization: `Bearer ${token}` } })
+    void listBackupSnapshots<Snapshot>({ apiUrl, token, backupId: jobID })
       .then((result) => {
         if (disposed) return;
         if (result.ok === false) {
@@ -114,20 +128,20 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   }, [apiUrl, jobID, t, token]);
 
   const loadVerifies = async () => {
-    const result = await apiJson<BackupVerify[]>(`${apiUrl}/api/backup/${jobID}/verify`, { headers: { Authorization: `Bearer ${token}` } });
+    const result = await listBackupVerifies<BackupVerify>({ apiUrl, token, backupId: jobID });
     if (result.ok !== false) setVerifies(result.data || []);
   };
 
   useEffect(() => {
     let disposed = false;
-    void apiJson<BackupVerify[]>(`${apiUrl}/api/backup/${jobID}/verify`, { headers: { Authorization: `Bearer ${token}` } })
+    void listBackupVerifies<BackupVerify>({ apiUrl, token, backupId: jobID })
       .then((result) => { if (!disposed && result.ok !== false) setVerifies(result.data || []); });
     return () => { disposed = true; };
   }, [apiUrl, jobID, token]);
 
   useEffect(() => {
     let disposed = false;
-    void apiJson<RestoreRun[]>(`${apiUrl}/api/restore`, { headers: { Authorization: `Bearer ${token}` } })
+    void listRestoreRuns<RestoreRun>({ apiUrl, token })
       .then((result) => { if (!disposed && result.ok !== false) setRestoreRuns(result.data || []); });
     return () => { disposed = true; };
   }, [apiUrl, token]);
@@ -136,7 +150,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   useEffect(() => {
     if (!hasActiveRestoreHistory) return;
     const refresh = () => {
-      void apiJson<RestoreRun[]>(`${apiUrl}/api/restore`, { headers: { Authorization: `Bearer ${token}` } })
+      void listRestoreRuns<RestoreRun>({ apiUrl, token })
         .then((result) => { if (result.ok !== false) setRestoreRuns(result.data || []); });
     };
     const timer = window.setInterval(refresh, 1500);
@@ -147,7 +161,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   useEffect(() => {
     if (!hasActiveVerify) return;
     const refresh = () => {
-      void apiJson<BackupVerify[]>(`${apiUrl}/api/backup/${jobID}/verify`, { headers: { Authorization: `Bearer ${token}` } })
+      void listBackupVerifies<BackupVerify>({ apiUrl, token, backupId: jobID })
         .then((result) => { if (result.ok !== false) setVerifies(result.data || []); });
     };
     const timer = window.setInterval(refresh, 3000);
@@ -157,8 +171,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   useEffect(() => {
     if (!snapshot) return;
     let disposed = false;
-    const query = directory ? `?path=${encodeURIComponent(directory)}` : '';
-    void apiJson<SnapshotItem[]>(`${apiUrl}/api/backup/${jobID}/snapshots/${snapshot.id}/items${query}`, { headers: { Authorization: `Bearer ${token}` } })
+    void listSnapshotItems<SnapshotItem>({ apiUrl, token, backupId: jobID, snapshotId: snapshot.id, path: directory || undefined })
       .then((result) => {
         if (disposed) return;
         if (result.ok === false) {
@@ -174,7 +187,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
 
   useEffect(() => {
     if (!restoreOpen || profiles.length > 0) return;
-    void apiJson<ProfileResponse>(`${apiUrl}/api/profiles`, { headers: { Authorization: `Bearer ${token}` } })
+    void listConnectionProfiles(apiUrl, token)
       .then((result) => result.ok !== false && setProfiles((result.data?.profiles || []).filter((profile) => profile.provider !== 'immich')));
   }, [apiUrl, profiles.length, restoreOpen, token]);
 
@@ -182,7 +195,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
     if (!preview || !['QUEUED', 'RUNNING'].includes(preview.status)) return;
     let disposed = false;
     const timer = window.setInterval(() => {
-      void apiJson<RestorePreview>(`${apiUrl}/api/restore/previews/${preview.id}`, { headers: { Authorization: `Bearer ${token}` } })
+      void getRestorePreview<RestorePreview>({ apiUrl, token, previewId: preview.id })
         .then((result) => {
           if (!disposed && result.ok !== false && result.data) setPreview(result.data);
         });
@@ -193,7 +206,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   useEffect(() => {
     if (!restoreRun || ['COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED'].includes(restoreRun.status)) return;
     const timer = window.setInterval(() => {
-      void apiJson<RestoreRun>(`${apiUrl}/api/restore/runs/${restoreRun.id}`, { headers: { Authorization: `Bearer ${token}` } })
+      void getRestoreRun<RestoreRun>({ apiUrl, token, runId: restoreRun.id })
         .then((result) => result.ok !== false && result.data && setRestoreRun(result.data));
     }, 1500);
     return () => window.clearInterval(timer);
@@ -212,10 +225,16 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
       const target = targetMode === 'profile'
         ? { target_profile_id: targetProfileID }
         : { target_provider: directProvider, target_url: directURL, target_username: directUsername, target_password: directPassword, target_refresh_token: directRefreshToken };
-      const result = await apiJson<{ id: string }>(`${apiUrl}/api/backup/${jobID}/snapshots/${snapshot.id}/restore/previews`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ...target, selected_paths: selectedPaths, target_root: targetRoot, conflict_strategy: strategy, threads: restoreThreads, bandwidth_mbps: restoreBandwidthMbps }) });
+      const result = await createRestorePreview({
+        apiUrl,
+        token,
+        backupId: jobID,
+        snapshotId: snapshot.id,
+        payload: { ...target, selected_paths: selectedPaths, target_root: targetRoot, conflict_strategy: strategy, threads: restoreThreads, bandwidth_mbps: restoreBandwidthMbps },
+      });
       if (result.ok === false) { setError(translateApiError(result.errorCode)); return; }
       if (!result.data?.id) throw new Error();
-      const previewResult = await apiJson<RestorePreview>(`${apiUrl}/api/restore/previews/${result.data.id}`, { headers: { Authorization: `Bearer ${token}` } });
+      const previewResult = await getRestorePreview<RestorePreview>({ apiUrl, token, previewId: result.data.id });
       if (previewResult.ok !== false && previewResult.data) setPreview(previewResult.data);
       setDirectPassword(''); setDirectRefreshToken('');
     } catch { setError(t('backup.restoreFailed')); } finally { setRestoreLoading(false); }
@@ -224,7 +243,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
     if (!preview) return;
     setRestoreLoading(true);
     try {
-      const result = await apiJson<{ restore_run_id: string }>(`${apiUrl}/api/restore/previews/${preview.id}/consume`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const result = await consumeRestorePreview({ apiUrl, token, previewId: preview.id });
       if (result.ok === false) { setError(translateApiError(result.errorCode)); return; }
       if (!result.data?.restore_run_id) throw new Error();
       setRestoreRun({ id: result.data.restore_run_id, status: 'QUEUED', total_files: preview.total_files, processed_files: 0, total_bytes: preview.total_bytes, processed_bytes: 0, failed_files: 0 });
@@ -239,7 +258,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
       const body: { mode: string; byte_budget?: number; confirm_full?: boolean } = { mode: verifyMode };
       if (verifyMode === 'BUDGETED') body.byte_budget = verifyBudgetMiB * 1024 * 1024;
       if (verifyMode === 'FULL') body.confirm_full = true;
-      const result = await apiJson(`${apiUrl}/api/backup/${jobID}/verify`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const result = await startBackupVerify({ apiUrl, token, backupId: jobID, payload: body });
       if (result.ok === false) { setError(translateApiError(result.errorCode)); return; }
       await loadVerifies();
     } catch { setError(t('backup.verifyFailed')); } finally { setVerifyLoading(false); }
@@ -247,14 +266,14 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   const cancelVerify = async (verifyID: string) => {
     setVerifyLoading(true);
     try {
-      const result = await apiJson(`${apiUrl}/api/backup/${jobID}/verify/${verifyID}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const result = await cancelBackupVerify({ apiUrl, token, backupId: jobID, verifyId: verifyID });
       if (result.ok === false) { setError(translateApiError(result.errorCode)); return; }
       await loadVerifies();
     } catch { setError(t('backup.verifyFailed')); } finally { setVerifyLoading(false); }
   };
   const downloadRestoreReport = async (runID: string) => {
     try {
-      const response = await apiFetch(`${apiUrl}/api/restore/runs/${runID}/report`, { headers: { Authorization: `Bearer ${token}` } });
+      const response = await fetchRestoreReport({ apiUrl, token, runId: runID });
       if (!response.ok) {
         const body = await response.json().catch(() => ({} as { error_code?: string }));
         setError(translateApiError(body.error_code));
@@ -270,12 +289,12 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   };
   const loadRestoreItems = async (runID: string) => {
     setSelectedRestoreRunID(runID);
-    const result = await apiJson<RestoreItem[]>(`${apiUrl}/api/restore/runs/${runID}/items`, { headers: { Authorization: `Bearer ${token}` } });
+    const result = await listRestoreRunItems<RestoreItem>({ apiUrl, token, runId: runID });
     if (result.ok === false) { setError(translateApiError(result.errorCode)); return; }
     setRestoreItems(result.data || []);
   };
   const cancelRestoreHistoryRun = async (runID: string) => {
-    const result = await apiJson(`${apiUrl}/api/restore/runs/${runID}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    const result = await cancelRestoreRun({ apiUrl, token, runId: runID });
     if (result.ok === false) { setError(translateApiError(result.errorCode)); return; }
     setRestoreRuns((runs) => runs.map((run) => run.id === runID ? { ...run, status: 'CANCELLING' } : run));
   };
@@ -347,12 +366,12 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
        <div><label htmlFor={targetFolderInputId} className="block text-xs font-medium">{t('backup.restoreFolder')}</label><input id={targetFolderInputId} className="ui-input mt-1 w-full" value={targetRoot} onChange={(event) => setTargetRoot(event.target.value)} /></div>
        <div><label htmlFor={conflictStrategySelectId} className="block text-xs font-medium">{t('backup.restoreConflict')}</label><select id={conflictStrategySelectId} className="ui-input mt-1 w-full" value={strategy} onChange={(event) => setStrategy(event.target.value)}><option value="RENAME">{t('backup.restoreRename')}</option><option value="SKIP">{t('backup.restoreSkip')}</option><option value="OVERWRITE">{t('backup.restoreOverwrite')}</option></select></div>
        <div className="grid gap-3 sm:grid-cols-2"><div><label htmlFor={restoreThreadsInputId} className="block text-xs font-medium">{t('backup.restoreThreads')}</label><input id={restoreThreadsInputId} className="ui-input mt-1 w-full" type="number" min="1" max="16" value={restoreThreads} onChange={(event) => setRestoreThreads(Math.max(1, Math.min(16, Number(event.target.value) || 1)))} /></div><div><label htmlFor={restoreBandwidthInputId} className="block text-xs font-medium">{t('backup.restoreBandwidth')}</label><input id={restoreBandwidthInputId} className="ui-input mt-1 w-full" type="number" min="0" max="1000" value={restoreBandwidthMbps} onChange={(event) => setRestoreBandwidthMbps(Math.max(0, Math.min(1000, Number(event.target.value) || 0)))} /></div></div>
-       {!preview ? <button type="button" className="ui-button-primary px-3 py-2 text-xs" disabled={restoreLoading || (targetMode === 'profile' ? !targetProfileID : (!directPassword && directProvider !== 'local'))} onClick={() => void createPreview()}>{t('backup.restorePreview')}</button> : <div className="space-y-2 text-xs"><div className="flex flex-wrap items-center gap-3"><span>{preview.status === 'READY' ? t('backup.restorePreviewReady') : t('backup.restorePreviewRunning')}</span><span>{t('migrations.filesCount', { processed: preview.total_files, total: preview.total_files })} · {formatBytes(preview.total_bytes)}</span><button type="button" className="ui-button-primary px-3 py-2" disabled={restoreLoading || preview.status !== 'READY'} onClick={() => void consumePreview()}>{t('backup.restoreStart')}</button><button type="button" className="ui-button-secondary px-3 py-2" disabled={restoreLoading} onClick={() => void apiJson(`${apiUrl}/api/restore/previews/${preview.id}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).then(() => setPreview(null))}>{t('backup.restoreCancelPreview')}</button></div>{preview.status === 'READY' && <div className="border border-[var(--color-border)] p-2"><p>{t('backup.restorePreviewAdvisory')}</p><p>{t('backup.restorePreviewCounts', { dirs: preview.total_directories, files: preview.total_files, existing: preview.existing_file_conflicts, merge: preview.mergeable_directories, type: preview.type_conflicts, skipped: preview.expected_skips, renamed: preview.expected_renames, unavailable: preview.unavailable_items, metadata: preview.metadata_warnings })}</p>{preview.conflict_examples?.length > 0 && <ul className="mt-1 list-disc pl-4">{preview.conflict_examples.map((example, index) => <li key={`${example.path}-${index}`}>{example.path} · {example.outcome}</li>)}</ul>}</div>}</div>}
+       {!preview ? <button type="button" className="ui-button-primary px-3 py-2 text-xs" disabled={restoreLoading || (targetMode === 'profile' ? !targetProfileID : (!directPassword && directProvider !== 'local'))} onClick={() => void createPreview()}>{t('backup.restorePreview')}</button> : <div className="space-y-2 text-xs"><div className="flex flex-wrap items-center gap-3"><span>{preview.status === 'READY' ? t('backup.restorePreviewReady') : t('backup.restorePreviewRunning')}</span><span>{t('migrations.filesCount', { processed: preview.total_files, total: preview.total_files })} · {formatBytes(preview.total_bytes)}</span><button type="button" className="ui-button-primary px-3 py-2" disabled={restoreLoading || preview.status !== 'READY'} onClick={() => void consumePreview()}>{t('backup.restoreStart')}</button><button type="button" className="ui-button-secondary px-3 py-2" disabled={restoreLoading} onClick={() => void cancelRestorePreview({ apiUrl, token, previewId: preview.id }).then(() => setPreview(null))}>{t('backup.restoreCancelPreview')}</button></div>{preview.status === 'READY' && <div className="border border-[var(--color-border)] p-2"><p>{t('backup.restorePreviewAdvisory')}</p><p>{t('backup.restorePreviewCounts', { dirs: preview.total_directories, files: preview.total_files, existing: preview.existing_file_conflicts, merge: preview.mergeable_directories, type: preview.type_conflicts, skipped: preview.expected_skips, renamed: preview.expected_renames, unavailable: preview.unavailable_items, metadata: preview.metadata_warnings })}</p>{preview.conflict_examples?.length > 0 && <ul className="mt-1 list-disc pl-4">{preview.conflict_examples.map((example, index) => <li key={`${example.path}-${index}`}>{example.path} · {example.outcome}</li>)}</ul>}</div>}</div>}
       </div>
     </div>}
     {restoreRun && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border border-[var(--color-border)] p-3 text-xs" role="status">
       <span><strong>{t('backup.restoreProgress')}</strong> {restoreRun.status} · {t('migrations.filesCount', { processed: restoreRun.processed_files, total: restoreRun.total_files })} · {formatBytes(restoreRun.processed_bytes)} / {formatBytes(restoreRun.total_bytes)}</span>
-      {!['COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED'].includes(restoreRun.status) && <button type="button" className="ui-button-secondary px-3 py-2 text-xs" onClick={() => void apiJson(`${apiUrl}/api/restore/runs/${restoreRun.id}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })}>{t('backup.restoreCancel')}</button>}
+      {!['COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED'].includes(restoreRun.status) && <button type="button" className="ui-button-secondary px-3 py-2 text-xs" onClick={() => void cancelRestoreRun({ apiUrl, token, runId: restoreRun.id })}>{t('backup.restoreCancel')}</button>}
     </div>}
     {loading && <p className="text-sm text-[var(--color-text-muted)]">{t('common.loading')}</p>}
     {error && <p className="ui-alert ui-alert-error text-sm" role="alert">{error}</p>}

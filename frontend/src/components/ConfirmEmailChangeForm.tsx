@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LoadingIndicator } from './LoadingIndicator';
 import { useApiError } from '../utils/apiError';
-import { apiFetch } from '../utils/apiClient';
+import { confirmEmailChange } from '../api/auth';
 interface ConfirmEmailChangeFormProps {
   apiUrl: string;
   token: string;
@@ -29,17 +29,10 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
       setLoading(true);
       setErrorCode('');
       try {
-        const response = await apiFetch(`${apiUrl}/api/auth/confirm-email-change`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ token }),
-        });
+        const result = await confirmEmailChange({ apiUrl, token });
 
-        if (!response.ok) {
-          const data = (await response.json().catch(() => ({}))) as { error_code?: string };
-          if (!cancelled) setErrorCode(data.error_code || 'UNKNOWN');
+        if (result.ok === false) {
+          if (!cancelled) setErrorCode(result.networkError ? 'NETWORK' : (result.errorCode || 'UNKNOWN'));
           return;
         }
 
@@ -47,8 +40,6 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
           setSuccess(true);
           redirectTimer = window.setTimeout(() => onSuccessRef.current(), 1800);
         }
-      } catch {
-        if (!cancelled) setErrorCode('NETWORK');
       } finally {
         if (!cancelled) setLoading(false);
       }

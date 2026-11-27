@@ -80,7 +80,10 @@ describe('SyncDashboard initial snapshot ordering', () => {
     const snapshot = deferred<ReturnType<typeof jsonResult<SyncJob>>>();
     const streams = new Map<string, SseHandlers>();
     let snapshotSignal: AbortSignal | undefined;
-    vi.mocked(apiJson).mockImplementation((_url, options) => {
+    vi.mocked(apiJson).mockImplementation((url, options) => {
+      if (String(url).includes('/errors?')) {
+        return Promise.resolve(jsonResult({ errors: [], total: 0 }) as unknown as ReturnType<typeof jsonResult<SyncJob>>);
+      }
       snapshotSignal = options?.signal;
       return snapshot.promise;
     });
@@ -311,13 +314,13 @@ describe('SyncDashboard initial snapshot ordering', () => {
 
   it('keeps the localized download fallback for network failures', async () => {
     const job = { ...createSyncJob('https://source.example.test'), failed_files: 1 };
-    vi.mocked(apiJson).mockResolvedValue(jsonResult(job));
-    vi.mocked(apiFetch).mockImplementation((url) => String(url).includes('/errors?')
-      ? Promise.resolve(jsonResponse({
+    vi.mocked(apiJson).mockImplementation((url) => String(url).includes('/errors?')
+      ? Promise.resolve(jsonResult({
         errors: [{ id: 'error-1', kind: 'transfer', resource_type: 'files', path: '/file', status: 'FAILED', attempts: 0, error_message: 'failed', occurred_at: '2026-01-01T00:00:00Z' }],
         total: 1,
       }))
-      : Promise.reject(new TypeError('Failed to fetch')));
+      : Promise.resolve(jsonResult(job)));
+    vi.mocked(apiFetch).mockRejectedValue(new TypeError('Failed to fetch'));
 
     container = document.createElement('div');
     document.body.append(container);

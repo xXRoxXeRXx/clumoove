@@ -194,6 +194,8 @@ export function useFilePreview({
       }
 
       try {
+        // Raw fetch is intentional: download_url may be a pre-signed absolute URL
+        // and must omit credentials/Authorization headers rather than routing through apiFetch.
         const response = await fetch(new URL(ticket.data.download_url, target.apiUrl), {
           cache: 'no-store',
           credentials: 'omit',

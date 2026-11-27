@@ -59,6 +59,8 @@ export function useSession({
     () => !resetToken && !emailChangeToken && hasStoredSession,
   );
   const applyPreferredLanguage = usePreferredLanguage();
+  // Raw fetch is intentional for refresh/logout: both rely on HttpOnly cookie credentials
+  // and must not re-enter apiFetch's 401 refresh-and-retry interceptor.
   const refreshAccessToken = useCallback(async () => {
     const response = await fetch(`${apiUrl}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
     if (!response.ok) throw new Error('Session refresh failed');

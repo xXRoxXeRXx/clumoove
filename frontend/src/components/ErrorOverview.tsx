@@ -1,24 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
-import { apiFetch } from '../utils/apiClient';
+import { listErrors, type ErrorListItem } from '../api/errors';
 import { ExclamationTriangleIcon } from './icons';
-
-interface ErrorListItem {
-  id: string;
-  kind: 'transfer' | 'indexing';
-  resource_type: string;
-  path: string;
-  status: string;
-  attempts: number;
-  error_message: string;
-  occurred_at: string;
-}
-
-interface ErrorListResponse {
-  errors: ErrorListItem[];
-  total: number;
-}
 
 interface ErrorOverviewProps {
   endpoint: string;
@@ -42,23 +26,16 @@ export function ErrorOverview({ endpoint, token, refreshKey, onDownloadReport }:
   useEffect(() => {
     let cancelled = false;
     const requestGeneration = ++requestGenerationRef.current;
-    void apiFetch(`${endpoint}?limit=${PAGE_SIZE}&offset=0`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('error list request failed');
-        return response.json() as Promise<ErrorListResponse>;
-      })
-      .then((data) => {
+    void listErrors({ endpoint, token, limit: PAGE_SIZE, offset: 0 })
+      .then((result) => {
         if (cancelled || requestGeneration !== requestGenerationRef.current) return;
-        setItems(data.errors);
-        setTotal(data.total);
-      })
-      .catch(() => {
-        if (!cancelled && requestGeneration === requestGenerationRef.current) {
+        if (!result.ok) {
           setItems([]);
           setTotal(0);
+          return;
         }
+        setItems(result.data?.errors ?? []);
+        setTotal(result.data?.total ?? 0);
       })
       .finally(() => {
         if (!cancelled && requestGeneration === requestGenerationRef.current) setLoading(false);
@@ -74,20 +51,14 @@ export function ErrorOverview({ endpoint, token, refreshKey, onDownloadReport }:
     setLoadingMore(true);
     setLoadMoreError(false);
     try {
-      const response = await apiFetch(`${endpoint}?limit=${PAGE_SIZE}&offset=${items.length}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const result = await listErrors({ endpoint, token, limit: PAGE_SIZE, offset: items.length });
       if (requestGeneration !== requestGenerationRef.current) return;
-      if (!response.ok) {
+      if (!result.ok) {
         setLoadMoreError(true);
         return;
       }
-      const data = await response.json() as ErrorListResponse;
-      if (requestGeneration !== requestGenerationRef.current) return;
-      setItems((current) => [...current, ...data.errors]);
-      setTotal(data.total);
-    } catch {
-      if (requestGeneration === requestGenerationRef.current) setLoadMoreError(true);
+      setItems((current) => [...current, ...(result.data?.errors ?? [])]);
+      setTotal(result.data?.total ?? 0);
     } finally {
       if (requestGeneration === requestGenerationRef.current) setLoadingMore(false);
     }

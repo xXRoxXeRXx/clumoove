@@ -18,6 +18,7 @@ import type { MigrationConfig, CloudFile } from './types';
 import { safeAvatarUrl } from './utils/avatar';
 import { associateUnlinkedFormLabels } from './utils/formLabels';
 import { resolveFilePath, type FileBreadcrumb } from './api/files';
+import { getPublicSettings } from './api/settings';
 
 function parseSettingsTab(tab: string): SettingsTab {
   if (tab === 'connections' || tab === 'appearance' || tab === 'notifications' || tab === 'about') {
@@ -165,18 +166,18 @@ function App() {
   }, [step, dismissConfirm]);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/settings`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.local_storage_enabled === true) {
+    void getPublicSettings({ apiUrl: API_URL })
+      .then((result) => {
+        if (!result.ok || !result.data) {
+          logger.debug('Settings fetch failed', result);
+          return;
+        }
+        if (result.data.local_storage_enabled === true) {
           setLocalStorageEnabled(true);
         }
-        if (data && data.oauth_providers && typeof data.oauth_providers === 'object') {
-          setOauthProviders(data.oauth_providers);
+        if (result.data.oauth_providers && typeof result.data.oauth_providers === 'object') {
+          setOauthProviders(result.data.oauth_providers);
         }
-      })
-      .catch((error: unknown) => {
-        logger.debug('Settings fetch failed', error);
       });
   }, []);
   const userMenuRef = useRef<HTMLDivElement>(null);

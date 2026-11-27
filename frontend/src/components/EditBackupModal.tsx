@@ -4,7 +4,8 @@ import { XMarkIcon as X, ArrowPathIcon as Spinner } from './icons';
 import type { BackupJob } from '../types';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useApiError } from '../utils/apiError';
-import { apiErrorMessage, apiJson } from '../utils/apiClient';
+import { apiErrorMessage } from '../utils/apiClient';
+import { updateBackup } from '../api/backups';
 import { useToast } from '../contexts/useToast';
 import { BackupOptionsForm } from './BackupOptionsForm';
 import { Button } from './Button';
@@ -46,18 +47,16 @@ export const EditBackupModal: React.FC<EditBackupModalProps> = ({
     setError(null);
 
     try {
-      const result = await apiJson<BackupJob>(`${apiUrl}/api/backup/${job.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
+      const result = await updateBackup<BackupJob>({
+        apiUrl,
+        token,
+        backupId: job.id,
+        payload: {
           cron_expression: cronExpression,
           timezone,
           retention_count: retentionCount,
           threads,
-        }),
+        },
       });
 
       if (result.ok === false) {
