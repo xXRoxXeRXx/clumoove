@@ -26,9 +26,8 @@ import type { CloudFile, MigrationConfig } from "../types";
 import { useTranslation } from "react-i18next";
 import { useFormat } from "../utils/format";
 import { useApiError } from "../utils/apiError";
-import { createMigrationTargetDirectory, browseMigrationSource, browseMigrationTarget, startMigration } from '../api/migrations';
-import { createSync, startSyncResponse } from '../api/sync';
-import { createBackup } from '../api/backups';
+import { createMigrationTargetDirectory, browseMigrationSource, browseMigrationTarget } from '../api/migrations';
+import { buildJobRequest, submitJob } from './fileBrowser/jobWorkflow';
 import { logger } from "../utils/logger";
 import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { Button } from "./Button";
@@ -1155,7 +1154,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   };
 
   const handleStartMigration = async () => {
-    let scheduledTimeISO: string | undefined;
     const calendarsToMigrate = canSelectCalendars
       ? Object.keys(selectedCalendars).filter((p) => selectedCalendars[p])
       : [];
@@ -1163,43 +1161,41 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       ? Object.keys(selectedContacts).filter((p) => selectedContacts[p])
       : [];
 
-    if (
-      (effectiveJobType === "backup" ? backupSelectedPaths.length === 0 : pathsToMigrate.length === 0) &&
-      calendarsToMigrate.length === 0 &&
-      contactsToMigrate.length === 0
-    ) {
-      setError(t("fileBrowser.errors.selectOne"));
-      return;
-    }
+    const existingSyncId = pendingSync?.configurationKey === syncConfigurationKey
+      ? pendingSync.id
+      : null;
 
-    if (effectiveJobType === "backup") {
-      if (!backupAvailable || backupRetentionCount < 1 || backupRetentionCount > 365 || threads < 1 || threads > 16) {
-        setError(t("backup.invalidOptions"));
-        return;
-      }
-    } else if (effectiveJobType === "sync") {
-      if (pathsToMigrate.length === 0) {
-        setError(t("fileBrowser.errors.selectOne"));
-        return;
-      }
-    } else {
-      // Validate scheduled time if scheduling is enabled
-      if (enableScheduling) {
-        if (!scheduledTime) {
-          setError(t("fileBrowser.errors.scheduleTimeRequired"));
-          return;
-        }
-        const scheduledDate = new Date(scheduledTime);
-        if (Number.isNaN(scheduledDate.getTime())) {
-          setError(t("fileBrowser.errors.invalidScheduledTime"));
-          return;
-        }
-        if (scheduledDate <= new Date()) {
-          setError(t("fileBrowser.errors.futureTime"));
-          return;
-        }
-        scheduledTimeISO = scheduledDate.toISOString();
-      }
+    const built = buildJobRequest(
+      effectiveJobType,
+      {
+        paths: pathsToMigrate,
+        syncPaths: syncSelectedPaths,
+        backupPaths: backupSelectedPaths,
+        calendars: calendarsToMigrate,
+        contacts: contactsToMigrate,
+      },
+      {
+        credentials,
+        targetDir,
+        conflictStrategy,
+        threads,
+        bandwidthLimit,
+        enableScheduling,
+        scheduledTime,
+        direction,
+        intervalMinutes,
+        deletePropagation,
+        existingSyncId,
+        backupAvailable,
+        backupCronExpression,
+        backupTimezone,
+        backupRetentionCount,
+      },
+    );
+
+    if (!("request" in built)) {
+      setError(t(built.messageKey));
+      return;
     }
 
     setStarting(true);
@@ -1207,150 +1203,36 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     const controller = createRequestController();
 
     try {
-      if (effectiveJobType === "backup") {
-        const response = await createBackup({ apiUrl, token, signal: controller.signal, payload: {
-            source_profile_id: credentials.source_profile_id,
-            target_profile_id: credentials.target_profile_id,
-            selected_paths: backupSelectedPaths,
-            target_dir: targetDir,
-            cron_expression: backupCronExpression,
-            timezone: backupTimezone,
-            retention_count: backupRetentionCount,
-            threads,
-          } });
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({})) as { error_code?: string };
-          throw new Error(body.error_code ? translateApiError(body.error_code) : t("backup.createFailed"));
-        }
-        const data = await response.json() as { id?: string };
-        if (!controller.signal.aborted && data.id) onStartSuccess(data.id, false, true);
-        else if (!controller.signal.aborted) setError(t("backup.createFailed"));
-      } else if (effectiveJobType === "sync") {
-        // A pending job can only be retried with the exact configuration that
-        // created it. Form edits always create a new sync job instead.
-        let syncId = pendingSync?.configurationKey === syncConfigurationKey
-          ? pendingSync.id
-          : null;
+      const result = await submitJob(built.request, {
+        apiUrl,
+        token,
+        signal: controller.signal,
+      });
 
-        if (!syncId) {
-          const response = await createSync({ apiUrl, token, signal: controller.signal, payload: {
-              source_profile_id: credentials.source_profile_id,
-              target_profile_id: credentials.target_profile_id,
-              source_url: credentials.source_url,
-              source_username: credentials.source_username,
-              source_password: credentials.source_password,
-              source_refresh_token: credentials.source_refresh_token,
-              target_url: credentials.target_url,
-              target_username: credentials.target_username,
-              target_password: credentials.target_password,
-              target_refresh_token: credentials.target_refresh_token,
-              source_provider: credentials.source_provider,
-              target_provider: credentials.target_provider,
-              direction: direction,
-              conflict_strategy: conflictStrategy,
-              delete_propagation: deletePropagation,
-              interval_minutes: intervalMinutes,
-              threads: threads,
-              bandwidth_limit_mbps: bandwidthLimit,
-              target_dir: targetDir,
-              selected_paths: syncSelectedPaths,
-            } });
-
-          if (!response.ok) {
-            const b = await response
-              .json()
-              .catch(() => ({}) as { error_code?: string });
-            throw new Error(
-              b.error_code
-                ? translateApiError(b.error_code)
-                : t("sync.createFailed"),
-            );
-          }
-
-          const data = (await response.json()) as { id?: string; success?: boolean; error_code?: string };
-          if (controller.signal.aborted) return;
-          if (data.success === false) {
-            setError(data.error_code ? translateApiError(data.error_code) : t("sync.createFailed"));
-            return;
-          }
-          if (!data.id) {
-            setError(t("sync.createFailed"));
-            return;
-          }
-
-          syncId = data.id;
-          setPendingSync({ id: syncId, configurationKey: syncConfigurationKey });
-        }
-
-        const resolvedSyncId = syncId;
-        if (!resolvedSyncId) {
-          setError(t("sync.createFailed"));
-          return;
-        }
-
-        // Trigger the first pass immediately. If this fails, pendingSync is
-        // intentionally retained so the next click retries this request only.
-        const startResponse = await startSyncResponse({ apiUrl, token, syncId: resolvedSyncId, signal: controller.signal });
-        if (!startResponse.ok) {
-          const body = await startResponse
-            .json()
-            .catch(() => ({}) as { error_code?: string });
-          throw new Error(
-            body.error_code
-              ? translateApiError(body.error_code)
-              : t("sync.startFailed"),
-          );
-        }
-        setPendingSync(null);
-        onStartSuccess(resolvedSyncId, true);
-      } else {
-        const requestBody: Record<string, unknown> = {
-          ...credentials,
-          conflict_strategy: conflictStrategy,
-          paths: pathsToMigrate,
-          calendars: calendarsToMigrate,
-          contacts: contactsToMigrate,
-          target_dir: targetDir,
-          threads: threads,
-          bandwidth_limit_mbps: bandwidthLimit,
-        };
-
-        // The timestamp was validated before any request is started.
-        if (scheduledTimeISO) {
-          requestBody.scheduled_time = scheduledTimeISO;
-        }
-
-        const response = await startMigration({ apiUrl, token, payload: requestBody, signal: controller.signal });
-
-        if (!response.ok) {
-          const b = await response
-            .json()
-            .catch(() => ({}) as { error_code?: string });
-          throw new Error(
-            b.error_code
-              ? translateApiError(b.error_code)
-              : t("fileBrowser.errors.startFailed"),
-          );
-        }
-
-        const data = await response.json();
-        if (controller.signal.aborted) return;
-        if (data.success && data.migration_id) {
-          onStartSuccess(data.migration_id, false);
+      if (!("failure" in result)) {
+        if (result.jobType === "sync") setPendingSync(null);
+        if (result.jobType === "backup") {
+          onStartSuccess(result.id, false, true);
         } else {
-          setError(
-            data.error_code
-              ? translateApiError(data.error_code)
-              : t("fileBrowser.errors.startError"),
-          );
+          onStartSuccess(result.id, result.jobType === "sync");
         }
+        return;
       }
-    } catch (err) {
-      if (controller.signal.aborted || isAbortError(err)) return;
+
+      if (result.pendingSyncId) {
+        setPendingSync({ id: result.pendingSyncId, configurationKey: syncConfigurationKey });
+      }
+
+      if (result.failure.kind === "aborted") return;
+      if (result.failure.kind === "network") {
+        setError(t("fileBrowser.errors.networkError"));
+        return;
+      }
+
       setError(
-        err instanceof Error
-          ? err.message
-          : t("fileBrowser.errors.networkError"),
+        result.failure.errorCode
+          ? translateApiError(result.failure.errorCode)
+          : t(result.failure.fallbackKey),
       );
     } finally {
       releaseRequestController(controller);
